@@ -13,6 +13,7 @@
 import re
 import bisect
 import logging
+from collections import defaultdict
 from typing import Optional, List, Tuple
 from dataclasses import dataclass
 from ..models import OCRDocument, AmountCandidate, Token
@@ -306,16 +307,8 @@ class AmountExtractor:
         if not tokens:
             return None
 
-        # 提取所有¥金额token
-        yen_tokens = self._extract_yen_tokens(tokens)
-        if len(yen_tokens) < 2:
-            logger.debug("[DualYen] ¥金额token不足2个: %d个", len(yen_tokens))
-            return None
-
-        logger.info("[DualYen] 找到%d个¥金额token", len(yen_tokens))
-
-        # 找同一水平线上的¥金额对
-        pairs = self._find_horizontal_pairs(yen_tokens)
+        # [PERF] 单次遍历：提取¥金额并按Y坐标分组，组内直接找水平对
+        pairs = self._extract_yen_and_pair(tokens)
         if not pairs:
             logger.info("[DualYen] 未找到水平对齐的¥金额对")
             return None
@@ -344,12 +337,18 @@ class AmountExtractor:
                           best_pair.je, best_pair.se)
             return None
 
-    def _extract_yen_tokens(self, tokens: List[Token]) -> List[Tuple[Token, str, float]]:
+    def _extract_yen_and_pair(self, tokens: List[Token]) -> List[AmountPair]:
         """
-        提取带¥的金额token
-        返回: [(token, clean_value, numeric_value), ...]
+        [PERF] 单次遍历：提取¥金额并按Y坐标分组，组内直接找水平对
+        
+        优化点：
+        - 避免先提取所有¥token再遍历找对的两次遍历
+        - 按Y坐标分组后仅同组内比较，减少无效的Y距离检查
         """
-        result = []
+        y_groups = defaultdict(list)
+        yen_count = 0
+        
+        # 单次遍历：提取¥金额并按Y坐标分组
         for t in tokens:
             text = getattr(t, 'text', '')
             m = _YUAN_RE.search(text)
@@ -364,77 +363,65 @@ class AmountExtractor:
             except ValueError:
                 continue
             
-            # 过滤无效金额（太长可能是账号）
             if len(clean_val.replace('-', '').split('.')[0]) >= 10:
                 continue
             
-            result.append((t, clean_val, num_val))
+            y_key = round(t.cy, 1)
+            y_groups[y_key].append((t, clean_val, num_val))
+            yen_count += 1
         
-        # 按Y坐标排序，再按X坐标排序
-        result.sort(key=lambda x: (x[0].cy, x[0].x0))
-        return result
-
-    def _find_horizontal_pairs(self, yen_tokens: List[Tuple]) -> List[AmountPair]:
-        """
-        找同一水平线上的¥金额对
+        logger.info("[DualYen] 找到%d个¥金额token", yen_count)
         
-        规则：
-        - Y中心偏差 <= 字高 * 0.5（同一行）
-        - 左边金额X < 右边金额X
-        - 税前金额 > 总税额
-        """
+        if yen_count < 2:
+            logger.debug("[DualYen] ¥金额token不足2个: %d个", yen_count)
+            return []
+        
+        # 组内找水平对
         pairs = []
-        n = len(yen_tokens)
-        
-        for i in range(n):
-            t1, val1, num1 = yen_tokens[i]
+        for y_key, group in y_groups.values():
+            if len(group) < 2:
+                continue
             
-            for j in range(i + 1, n):
-                t2, val2, num2 = yen_tokens[j]
+            group.sort(key=lambda x: x[0].x0)
+            
+            n = len(group)
+            for i in range(n):
+                t1, val1, num1 = group[i]
                 
-                # Y坐标检查：必须在同一行
-                y_diff = abs(t1.cy - t2.cy)
-                avg_height = (t1.height + t2.height) / 2
-                y_tolerance = max(avg_height * 0.5, 8)  # 最小8像素容差
-                
-                if y_diff > y_tolerance:
-                    continue
-                
-                # X坐标检查：t1必须在t2左边
-                if t1.x0 >= t2.x0:
-                    continue
-                
-                # 数值检查：je > se
-                left_val, right_val = num1, num2
-                left_token, right_token = t1, t2
-                left_str, right_str = val1, val2
-                
-                # 红字发票处理：绝对值比较
-                is_red = (num1 < 0 or num2 < 0)
-                if is_red:
-                    cmp_result = abs(num1) > abs(num2)
-                else:
-                    cmp_result = num1 > num2
-                
-                if not cmp_result:
-                    logger.debug("[DualYen] 跳过: 左值%.2f <= 右值%.2f", num1, num2)
-                    continue
-                
-                pair = AmountPair(
-                    je=left_str,
-                    se=right_str,
-                    je_token=left_token,
-                    se_token=right_token,
-                    y_center=(t1.cy + t2.cy) / 2,
-                    x_gap=t2.x0 - t1.x1,
-                    je_value=left_val,
-                    se_value=right_val
-                )
-                pairs.append(pair)
-                logger.debug("[DualYen] 发现候选对: je=%s se=%s y=%.1f x_gap=%.1f",
-                            left_str, right_str, pair.y_center, pair.x_gap)
+                for j in range(i + 1, n):
+                    t2, val2, num2 = group[j]
+                    
+                    y_diff = abs(t1.cy - t2.cy)
+                    avg_height = (t1.height + t2.height) / 2
+                    y_tolerance = max(avg_height * 0.5, 8)
+                    
+                    if y_diff > y_tolerance:
+                        continue
+                    
+                    is_red = (num1 < 0 or num2 < 0)
+                    if is_red:
+                        cmp_result = abs(num1) > abs(num2)
+                    else:
+                        cmp_result = num1 > num2
+                    
+                    if not cmp_result:
+                        logger.debug("[DualYen] 跳过: 左值%.2f <= 右值%.2f", num1, num2)
+                        continue
+                    
+                    pair = AmountPair(
+                        je=val1,
+                        se=val2,
+                        je_token=t1,
+                        se_token=t2,
+                        y_center=(t1.cy + t2.cy) / 2,
+                        x_gap=t2.x0 - t1.x1,
+                        je_value=num1,
+                        se_value=num2
+                    )
+                    pairs.append(pair)
+                    logger.debug("[DualYen] 发现候选对: je=%s se=%s y=%.1f x_gap=%.1f",
+                                val1, val2, pair.y_center, pair.x_gap)
         
-        # 排序：x_gap小的优先（更紧凑），然后y_center大的优先（更靠下通常是合计行）
         pairs.sort(key=lambda p: (p.x_gap, -p.y_center))
         return pairs
 
