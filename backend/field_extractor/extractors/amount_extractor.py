@@ -1115,19 +1115,19 @@ class AmountExtractor:
 
         # 仅有金额，尝试推导税额
         if je and not se:
-            derived_tax = f"{round(total - net, 2):.2f}"
+            derived_tax_val = round(total - net, 2)
             if abs(total - net) <= 0.02:
                 se = '0.00'
-            elif float(derived_tax) > 0:
-                se = derived_tax
+            elif derived_tax_val > 0:
+                se = f"{derived_tax_val:.2f}"
                 logger.debug("[Validation] Derived tax=%s from total=%s, amount=%s", se, hj, je)
             return hj, je, se
 
         # 仅有税额，尝试推导金额
         if se and not je:
-            derived_net = f"{round(total - tax, 2):.2f}"
-            if float(derived_net) > 0:
-                je = derived_net
+            derived_net_val = round(total - tax, 2)
+            if derived_net_val > 0:
+                je = f"{derived_net_val:.2f}"
                 logger.debug("[Validation] Derived amount=%s from total=%s, tax=%s", je, hj, se)
             return hj, je, se
 
