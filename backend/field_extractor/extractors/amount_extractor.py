@@ -266,18 +266,14 @@ class AmountExtractor:
                 continue
 
             text = getattr(t, 'text', '')
-            # 阶段一：¥ 可选匹配（文本型 PDF，¥ 和金额分开为独立 token）
+            # [PERF] 单次正则匹配（_YEN_AMOUNT_RE 包含 ¥ 可选和必需两种情况）
             m = _YEN_AMOUNT_RE.search(text)
-            if m:
-                clean_val = m.group(1).replace(',', '').replace(' ', '')
-            else:
-                # 阶段二：¥ 必需匹配（OCR 型，¥123.45 在同一 token）
-                m2 = _YUAN_RE.search(text)
-                if not m2:
-                    logger.debug("[XiaoxieAnchor] 排除(非¥): x0=%.1f cy=%.1f text='%s'",
-                                t.x0, t.cy, text[:30])
-                    continue
-                clean_val = m2.group(1).replace(',', '').replace(' ', '')
+            if not m:
+                logger.debug("[XiaoxieAnchor] 排除(非¥): x0=%.1f cy=%.1f text='%s'",
+                            t.x0, t.cy, text[:30])
+                continue
+
+            clean_val = m.group(1).replace(',', '').replace(' ', '')
 
             if not self._is_valid_amount(clean_val):
                 logger.debug("[XiaoxieAnchor] 排除(无效金额): val='%s' text='%s'", clean_val, text[:30])
