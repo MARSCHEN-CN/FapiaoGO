@@ -1,0 +1,13 @@
+flask
+flask-cors
+pdfplumber
+rapidocr==3.9.0
+pdf2image
+numpy
+pillow
+openpyxl
+pytest
+pytest-snapshot
+scikit-learn
+pikepdf
+img2pdf

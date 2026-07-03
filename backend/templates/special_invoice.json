@@ -1,0 +1,297 @@
+{
+  "template_id": "special_invoice",
+  "version": 1,
+  "status": "ACTIVE",
+  "schema_id": "invoice_v1",
+  "schema_version": 1,
+  "match_key": "专票",
+  "fingerprint": {
+    "structural": {
+      "table_count_min": 0,
+      "table_count_max": 100,
+      "region_count_min": 1,
+      "region_count_max": 1000,
+      "region_types": ["text", "table", "image", "stamp"]
+    },
+    "visual": {
+      "simhash": "",
+      "embedding": []
+    }
+  },
+  "extraction_rules": [
+    {
+      "rule_id": "extract_type",
+      "field_id": "type",
+      "locator_type": "regex",
+      "locator_config": {
+        "pattern": "(增值税专用发票|增值税电子专用发票|全电发票|专用发票|电子专票)",
+        "group": 1
+      },
+      "post_process": "strip_whitespace"
+    },
+    {
+      "rule_id": "extract_type_fallback",
+      "field_id": "type",
+      "locator_type": "keyword",
+      "locator_config": {
+        "keywords": ["增值税专用发票", "专用发票", "电子专票", "发票"],
+        "offset_x": 60
+      },
+      "post_process": "strip_whitespace"
+    },
+    {
+      "rule_id": "extract_fphm",
+      "field_id": "fphm",
+      "locator_type": "regex",
+      "locator_config": {
+        "pattern": "发票号码[:：]?\\s*([0-9]{8,20})",
+        "group": 1
+      },
+      "post_process": null
+    },
+    {
+      "rule_id": "extract_fphm_fallback",
+      "field_id": "fphm",
+      "locator_type": "regex",
+      "locator_config": {
+        "pattern": "(?<!电话)(?<!银行)(?<!税)(?<!手机)(?<!传真)(?<!账号)号码[:：]?\\s*([0-9]{8,20})",
+        "group": 1
+      },
+      "post_process": null
+    },
+    {
+      "rule_id": "extract_kprq",
+      "field_id": "kprq",
+      "locator_type": "regex",
+      "locator_config": {
+        "pattern": "开票日期[:：]?\\s*(\\d{4}[-/年]\\d{1,2}[-/月]\\d{1,2}[日号]?)",
+        "group": 1
+      },
+      "post_process": "parse_date"
+    },
+    {
+      "rule_id": "extract_kprq_fallback",
+      "field_id": "kprq",
+      "locator_type": "regex",
+      "locator_config": {
+        "pattern": "(\\d{4}年\\d{1,2}月\\d{1,2}日)",
+        "group": 1
+      },
+      "post_process": "parse_date"
+    },
+    {
+      "rule_id": "extract_amountHj",
+      "field_id": "amountHj",
+      "locator_type": "keyword",
+      "locator_config": {
+        "keywords": ["价税合计", "合计金额", "（小写）", "(小写)", "小写金额", "总额", "总金额", "合计"],
+        "offset_x": 120
+      },
+      "post_process": "clean_amount"
+    },
+    {
+      "rule_id": "extract_amountHj_yen",
+      "field_id": "amountHj",
+      "locator_type": "regex",
+      "locator_config": {
+        "pattern": "[¥￥]\\s*([\\d,]+\\u002e\\d{2})",
+        "group": 1
+      },
+      "post_process": "clean_amount"
+    },
+    {
+      "rule_id": "extract_amountJe",
+      "field_id": "amountJe",
+      "locator_type": "keyword",
+      "locator_config": {
+        "keywords": ["金额", "金额（不含税）", "不含税金额", "不含税", "销售额"],
+        "offset_x": 100
+      },
+      "post_process": "clean_amount"
+    },
+    {
+      "rule_id": "extract_amountSe",
+      "field_id": "amountSe",
+      "locator_type": "keyword",
+      "locator_config": {
+        "keywords": ["税额", "税金", "增值税额", "总税额", "税率"],
+        "offset_x": 80
+      },
+      "post_process": "clean_amount"
+    },
+    {
+      "rule_id": "extract_taxRate",
+      "field_id": "slv",
+      "locator_type": "regex",
+      "locator_config": {
+        "pattern": "(\\d{1,2}(?:\\.\\d+)?%)",
+        "group": 1
+      },
+      "post_process": "strip_whitespace"
+    },
+    {
+      "rule_id": "extract_gmfmc",
+      "field_id": "gmfmc",
+      "locator_type": "regex",
+      "locator_config": {
+        "pattern": "(?:购买方|购方|买方|买家|采购方|客户)(?:名称|单位)?[:：]?\\s*([\\u4e00-\\u9fa5A-Za-z0-9()（）\\-&/.（）（）（）]{2,50})",
+        "group": 1
+      },
+      "post_process": "strip_whitespace"
+    },
+    {
+      "rule_id": "extract_gmfmc_keyword",
+      "field_id": "gmfmc",
+      "locator_type": "keyword",
+      "locator_config": {
+        "keywords": ["名称:", "名称：", "购买方", "购方"],
+        "offset_x": 80
+      },
+      "post_process": "strip_whitespace"
+    },
+    {
+      "rule_id": "extract_gmfsh",
+      "field_id": "gmfsh",
+      "locator_type": "regex",
+      "locator_config": {
+        "pattern": "(?:购买方|购方|买方).*?(?:纳税人识别号|统一社会信用代码|税号|信用代码|识别号)[:：]?\\s*([A-Z0-9]{15,20})",
+        "group": 1
+      },
+      "post_process": "extract_digits"
+    },
+    {
+      "rule_id": "extract_gmfsh_fallback",
+      "field_id": "gmfsh",
+      "locator_type": "regex",
+      "locator_config": {
+        "pattern": "纳税人识别号[:：]?\\s*([A-Z0-9]{15,20})",
+        "group": 1
+      },
+      "post_process": "extract_digits"
+    },
+    {
+      "rule_id": "extract_gmfdzdh",
+      "field_id": "gmfdzdh",
+      "locator_type": "regex",
+      "locator_config": {
+        "pattern": "(?:购买方|购方).*?(?:地址|电话)[:：]?\\s*([\\u4e00-\\u9fa5A-Za-z0-9()（）\\-\\s]{5,80})",
+        "group": 1
+      },
+      "post_process": "strip_whitespace"
+    },
+    {
+      "rule_id": "extract_gmfyhzh",
+      "field_id": "gmfyhzh",
+      "locator_type": "regex",
+      "locator_config": {
+        "pattern": "(?:购买方|购方).*?(?:开户行|银行|账号)[:：]?\\s*([\\u4e00-\\u9fa5A-Za-z0-9\\-\\s]{5,60})",
+        "group": 1
+      },
+      "post_process": "strip_whitespace"
+    },
+    {
+      "rule_id": "extract_xsfmc",
+      "field_id": "xsfmc",
+      "locator_type": "regex",
+      "locator_config": {
+        "pattern": "(?:销售方|销方|卖方|卖家|供应商|收款方|出售方)(?:名称|单位)?[:：]?\\s*([\\u4e00-\\u9fa5A-Za-z0-9()（）\\-&/.（）（）（）]{2,50})",
+        "group": 1
+      },
+      "post_process": "strip_whitespace"
+    },
+    {
+      "rule_id": "extract_xsfmc_keyword",
+      "field_id": "xsfmc",
+      "locator_type": "keyword",
+      "locator_config": {
+        "keywords": ["销售方", "销方", "名称:", "名称："],
+        "offset_x": 80
+      },
+      "post_process": "strip_whitespace"
+    },
+    {
+      "rule_id": "extract_xsfsh",
+      "field_id": "xsfsh",
+      "locator_type": "regex",
+      "locator_config": {
+        "pattern": "(?:销售方|销方|卖方).*?(?:纳税人识别号|统一社会信用代码|税号|信用代码|识别号)[:：]?\\s*([A-Z0-9]{15,20})",
+        "group": 1
+      },
+      "post_process": "extract_digits"
+    },
+    {
+      "rule_id": "extract_xsfdzdh",
+      "field_id": "xsfdzdh",
+      "locator_type": "regex",
+      "locator_config": {
+        "pattern": "(?:销售方|销方).*?(?:地址|电话)[:：]?\\s*([\\u4e00-\\u9fa5A-Za-z0-9()（）\\-\\s]{5,80})",
+        "group": 1
+      },
+      "post_process": "strip_whitespace"
+    },
+    {
+      "rule_id": "extract_xsfyhzh",
+      "field_id": "xsfyhzh",
+      "locator_type": "regex",
+      "locator_config": {
+        "pattern": "(?:销售方|销方).*?(?:开户行|银行|账号)[:：]?\\s*([\\u4e00-\\u9fa5A-Za-z0-9\\-\\s]{5,60})",
+        "group": 1
+      },
+      "post_process": "strip_whitespace"
+    },
+    {
+      "rule_id": "extract_jym",
+      "field_id": "jym",
+      "locator_type": "regex",
+      "locator_config": {
+        "pattern": "校验码[:：]?\\s*([0-9]{6,20})",
+        "group": 1
+      },
+      "post_process": null
+    },
+    {
+      "rule_id": "extract_issuer",
+      "field_id": "kpr",
+      "locator_type": "keyword",
+      "locator_config": {
+        "keywords": ["开票人", "开票员", "经手人"],
+        "offset_x": 80
+      },
+      "post_process": "strip_whitespace"
+    },
+    {
+      "rule_id": "extract_payee",
+      "field_id": "skr",
+      "locator_type": "keyword",
+      "locator_config": {
+        "keywords": ["收款人", "复核人", "复核"],
+        "offset_x": 80
+      },
+      "post_process": "strip_whitespace"
+    },
+    {
+      "rule_id": "extract_reviewer",
+      "field_id": "fhr",
+      "locator_type": "keyword",
+      "locator_config": {
+        "keywords": ["复核人", "复核"],
+        "offset_x": 80
+      },
+      "post_process": "strip_whitespace"
+    }
+  ],
+  "validation_rules": [
+    {
+      "rule_id": "validate_required_keys",
+      "field_id": "fphm",
+      "type": "required",
+      "config": {}
+    },
+    {
+      "rule_id": "validate_kprq",
+      "field_id": "kprq",
+      "type": "required",
+      "config": {}
+    }
+  ]
+}
