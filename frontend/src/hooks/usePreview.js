@@ -720,15 +720,15 @@ export function usePreview({ files, settings, electronAPIRef }) {
     }
   }, [settings.mergeMode])
 
-  // 文件列表键集合（用于稳定比较，包含 status 以感知解析完成）
+  // 文件列表键字符串（仅含 key，不含 status — 避免解析状态变更误触发 effect）
   const filesKeyStr = useMemo(() => {
-    return files.map(f => `${f.key}:${f.status || ''}`).join(',')
+    return files.map(f => f.key).join(',')
   }, [files])
   const filesKeySet = useMemo(() => {
     return new Set(files.map(f => f.key))
-  }, [filesKeyStr])
+  }, [files])
 
-  // ✅ 用 ref 跟踪上一次的 filesKeyStr，仅在文件列表实际变化时才触发合并更新
+  // ✅ 用 ref 跟踪上一次的 filesKeyStr，仅在文件增删时触发合并更新（status 变化不再冒泡）
   const prevFilesKeyStrRef = useRef('')
 
   // ============================
