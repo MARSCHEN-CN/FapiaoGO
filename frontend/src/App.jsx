@@ -24,7 +24,6 @@ import { useSettings } from './hooks/useSettings'
 import { useSort } from './hooks/useSort'
 import { usePreview } from './hooks/usePreview'
 import { useFileOps } from './hooks/useFileOps'
-import { useFileStats } from './hooks/useFileStats'
 import { usePrint } from './hooks/usePrint'
 import { usePrintIntent } from './hooks/usePrintIntent'
 import { useRenamePack } from './hooks/useRenamePack'
@@ -62,7 +61,7 @@ function AppContent() {
   // ============================
   // 共享状态
   // ============================
-  const { files, setFiles } = useFileContext()
+  const { files, setFiles, setMergeMode, printableCount } = useFileContext()
 
   // ============================
   // Hooks
@@ -224,15 +223,11 @@ function AppContent() {
   }, [])
 
   // ============================
-  // 搜索过滤（使用防抖后的 searchQuery，避免每按键都重算）
+  // mergeMode 同步到 FileContext（用于 printableCount 合并调整）
   // ============================
-  // 文件统计（useFileStats hook）
-  // 单次 O(n) 遍历 + _parsedAmount 缓存，替代原 30 行内联 useMemo
-  // ============================
-  const {
-    totalAmount, printableCount, hasFailedFiles, failedFilesCount,
-    totalAmountStr, totalAmountInt, totalAmountDecimal, chineseAmount,
-  } = useFileStats({ files, mergeMode: settings.mergeMode })
+  useEffect(() => {
+    setMergeMode(settings.mergeMode)
+  }, [settings.mergeMode, setMergeMode])
 
   // ============================
   // 合并模式：箭头禁用状态
@@ -487,10 +482,7 @@ function AppContent() {
         parseProgress={parseProgress}
         previewFile={previewFile}
         paperSize={settings.mergeMode || 'none'}
-        totalAmount={totalAmount}
         fileRotations={fileRotations}
-        hasFailedFiles={hasFailedFiles}
-        failedFilesCount={failedFilesCount}
         // drag
         isNativeDragActive={isNativeDragActive}
         handleNativeDrop={handleNativeDrop}
@@ -676,19 +668,12 @@ function AppContent() {
         </div>
 
         <ActionBar
-          filesCount={files.length}
-          chineseAmount={chineseAmount}
-          totalAmountInt={totalAmountInt}
-          totalAmountDecimal={totalAmountDecimal}
           handleRename={handleRename}
           handlePack={handlePack}
           handlePrint={handlePrint}
           packing={packing}
           packProgress={packProgress}
           printing={printing}
-          printableCount={printableCount}
-          hasFailedFiles={hasFailedFiles}
-          failedFilesCount={failedFilesCount}
           removeFailedFiles={removeFailedFiles}
           handleExportExcel={handleExportExcel}
           exporting={exporting}
@@ -771,8 +756,6 @@ function AppContent() {
         <InvoiceDetail
           fileObj={detailFile}
           onClose={() => setDetailFile(null)}
-          files={files}
-          setFiles={setFiles}
         />
       )}
 

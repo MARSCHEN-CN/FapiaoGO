@@ -33,10 +33,7 @@ export default React.memo(function Sidebar({
   parseProgress,
   previewFile,
   paperSize,
-  totalAmount,
   fileRotations,
-  hasFailedFiles,
-  failedFilesCount,
   // drag
   isNativeDragActive, handleNativeDrop,
   handleNativeDragOver, handleNativeDragLeave,
@@ -47,7 +44,7 @@ export default React.memo(function Sidebar({
   // sort
   sortBy, sortOrder, toggleSort,
 }) {
-  const { files, searchQuery, setSearchQuery, filteredFiles, isSearching } = useFileContext()
+  const { files, searchQuery, setSearchQuery, filteredFiles, isSearching, totalAmount, hasFailedFiles, failedFilesCount } = useFileContext()
   const mergeActive = isMergeMode(paperSize)
 
   // ── 排序下拉（纯 UI 状态，不上升到 App 级） ──

@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react'
+import { useFileContext } from '../contexts/FileContext'
 
 /**
  * 现代化操作按钮区域
@@ -6,23 +7,18 @@ import React, { useState, useRef, useEffect } from 'react'
  * 支持执行中状态、进度可视化、禁用状态
  */
 export default React.memo(function ActionBar({
-  filesCount,
-  chineseAmount,
-  totalAmountInt,
-  totalAmountDecimal,
   handleRename,
   handlePack,
   handlePrint,
   packing,
   packProgress,
   printing,
-  printableCount,
-  hasFailedFiles,
-  failedFilesCount,
   removeFailedFiles,
   handleExportExcel,
   exporting,
 }) {
+  const { files, chineseAmount, totalAmountInt, totalAmountDecimal, printableCount, hasFailedFiles, failedFilesCount } = useFileContext()
+  const filesCount = files.length
   // 导出下拉菜单状态
   const [exportDropdownOpen, setExportDropdownOpen] = useState(false)
   const exportDropdownRef = useRef(null)
