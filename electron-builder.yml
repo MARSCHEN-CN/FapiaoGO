@@ -1,0 +1,20 @@
+# Electron Builder 配置
+appId: com.marsprint.app
+productName: MarsPrint
+directories:
+  output: dist
+  buildResources: resources
+files:
+  - "electron/**/*"
+  - "!electron/node_modules/**/*"
+# 打包时额外资源（SumatraPDF）
+extraResources:
+  - from: ../resources/sumatra
+    to: sumatra
+# Windows 打包配置
+win:
+  target: nsis
+  icon: resources/icon.ico
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
