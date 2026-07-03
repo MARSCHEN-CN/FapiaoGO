@@ -209,6 +209,7 @@ async function resolveImageSrc(src) {
 function loadPdfDocument(pdfData) {
   const loadingTask = pdfjs.getDocument({
     data: new Uint8Array(pdfData),
+    verbosity: 0,  // suppress getHexString 等 pdf 内容警告，仅保留错误
     useSystemFonts: false,
     cMapUrl: PDFJS_CMAP_URL,
     standardFontDataUrl: PDFJS_STANDARD_FONT_URL,
