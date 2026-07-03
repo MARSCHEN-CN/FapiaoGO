@@ -1,8 +1,9 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import RenameSettings from './RenameSettings'
 import AutoSaveToast, { useAutoSaveToast } from './AutoSaveToast'
+import SettingsTitlebar from './SettingsTitlebar'
 import '../settings-printer.css'
-import { PAPER_REGISTRY } from '../config'
+import { PAPER_REGISTRY, MARGIN_PRESETS } from '../config'
 
 // 分隔符号选项（用于压缩包重命名）
 const ARCHIVE_SEPARATOR_OPTIONS = ['_', '-', ',', '+', '#', '·', ' ', '']
@@ -34,6 +35,10 @@ export default function SettingsWindow({ settings, saveSettings, printers, elect
     saveSettings(newSettings)
     triggerToast()
   }, [saveSettings, triggerToast])
+
+  // ── 纸张选项 ──
+  // 当前仅使用硬编码注册表，后续可接入打印机能力查询（含 paperkind）
+  const mergedPaperOptions = PAPER_REGISTRY
 
   // 初始化主题 - 从 localStorage 读取并应用到当前 document
   useEffect(() => {
@@ -158,31 +163,25 @@ export default function SettingsWindow({ settings, saveSettings, printers, elect
   ]
 
   return (
-    <div style={{ display: 'flex', height: '100vh', background: 'var(--bg)', color: 'var(--text)' }}>
-      <div style={{ width: '100%', display: 'flex', flexDirection: 'column' }}>
-        <div style={{ display: 'flex', gap: 'clamp(4px, 0.4vw, 6px)', padding: 'clamp(8px, 0.75vw, 12px) clamp(8px, 0.75vw, 12px) 0' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: 'var(--bg)', color: 'var(--text)' }}>
+      <SettingsTitlebar />
+      <div className="settings-layout">
+        {/* 左侧边栏导航 */}
+        <nav className="settings-sidebar">
           {tabs.map(({ key, label, icon }) => (
             <button
               key={key}
+              className={`settings-sidebar-item ${activeTab === key ? 'active' : ''}`}
               onClick={() => setActiveTab(key)}
-              style={{
-                flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center',
-                gap: 'clamp(4px, 0.4vw, 6px)', padding: 'clamp(6px, 0.65vw, 10px) 0', fontSize: 'clamp(0.7rem, 0.65rem + 0.2vw, 0.78rem)',
-                fontWeight: activeTab === key ? 600 : 400,
-                fontFamily: 'inherit', cursor: 'pointer', border: 'none',
-                borderRadius: 'var(--r-md)', transition: 'all 0.15s ease',
-                background: activeTab === key ? 'var(--surface)' : 'transparent',
-                color: activeTab === key ? 'var(--accent)' : 'var(--text-3)',
-                boxShadow: activeTab === key ? '0 1px 3px rgba(0,0,0,0.08)' : 'none',
-              }}
             >
-              {icon}
-              {label}
+              <span className="settings-sidebar-icon">{icon}</span>
+              <span className="settings-sidebar-label">{label}</span>
             </button>
           ))}
-        </div>
+        </nav>
 
-        <div ref={contentRef} style={{ flex: 1, overflow: 'hidden', padding: 'clamp(8px, 0.75vw, 12px) clamp(10px, 1vw, 16px) clamp(10px, 1vw, 16px)' }}>
+        {/* 右侧内容区 */}
+        <div className="settings-content" ref={contentRef}>
           <div style={{
             position: 'relative',
             minHeight: '300px',
@@ -296,17 +295,25 @@ export default function SettingsWindow({ settings, saveSettings, printers, elect
                     value={settings.paperSize}
                     onChange={(e) => {
                       const newSize = e.target.value
-                      // When switching away from Custom, clear customPaper
-                      const updates = { paperSize: newSize }
+                      const updates = { paperSize: newSize, paperkind: undefined }
                       if (newSize !== 'Custom') {
                         delete updates.customPaper
                       }
                       saveSettingsWithToast({ ...settings, ...updates })
                     }}
                   >
-                    {PAPER_REGISTRY.map(p => (
-                      <option key={p.id} value={p.id}>{p.label}</option>
-                    ))}
+                    {mergedPaperOptions.map(p => {
+                      const value = p.name || p.id
+                      const label = p.label || p.name || value
+                      const dims = p.widthMM && p.heightMM
+                        ? `${p.widthMM}×${p.heightMM}mm`
+                        : null
+                      return (
+                        <option key={value} value={value}>
+                          {label}{dims ? ` (${dims})` : ''}
+                        </option>
+                      )
+                    })}
                   </select>
 
                   {/* 自定义尺寸输入 */}
@@ -368,6 +375,132 @@ export default function SettingsWindow({ settings, saveSettings, printers, elect
                     <option value="merge3">三票一页（1页纸3张发票）</option>
                     <option value="merge4">四票一页（1页纸4张发票）</option>
                   </select>
+                </div>
+
+                {/* 页边距设置 */}
+                <div className="printer-margin-section" style={{ marginTop: 'clamp(5px, 0.5vw, 8px)' }}>
+                  <div className="printer-margin-header">
+                    <span className="printer-form-label">页边距</span>
+                    <span className="printer-help-icon"
+                      title="扩展 PDF 白边，防止打印内容被打印机物理裁剪区域切掉。每个方向可独立设置，单位为毫米(mm)。">
+                      ⓘ
+                    </span>
+                  </div>
+
+                  {/* 预设下拉 */}
+                  <div className="printer-form-row">
+                    <div className="printer-form-control">
+                      <select
+                        className="printer-select"
+                        value={settings.marginPreset || 'default'}
+                        onChange={(e) => {
+                          const preset = e.target.value
+                          if (preset !== 'custom' && MARGIN_PRESETS[preset]) {
+                            const p = MARGIN_PRESETS[preset]
+                            saveSettingsWithToast({
+                              ...settings,
+                              marginPreset: preset,
+                              marginLeft: p.left,
+                              marginRight: p.right,
+                              marginTop: p.top,
+                              marginBottom: p.bottom,
+                            })
+                          } else {
+                            saveSettingsWithToast({ ...settings, marginPreset: 'custom' })
+                          }
+                        }}
+                      >
+                        <option value="default">普通安全边距（3mm）</option>
+                        <option value="binding">装订加宽（左8mm）</option>
+                        <option value="label">标签/票据（上10mm）</option>
+                        <option value="leftOffset">打印机左偏（左5mm）</option>
+                        <option value="borderless">无边距（0mm）</option>
+                        <option value="custom">自定义</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* 四方向输入网格 */}
+                  <div className="printer-margin-grid"
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: '1fr 1fr',
+                      gap: 'clamp(4px, 0.4vw, 6px)',
+                      marginTop: 'clamp(4px, 0.4vw, 6px)',
+                    }}>
+                    <div className="printer-margin-input-group">
+                      <label className="printer-margin-input-label">上</label>
+                      <input
+                        type="number"
+                        className="printer-margin-input"
+                        min="0"
+                        max="50"
+                        step="0.5"
+                        value={settings.marginTop ?? 3}
+                        onChange={(e) => saveSettingsWithToast({
+                          ...settings,
+                          marginTop: Math.max(0, parseFloat(e.target.value) || 0),
+                          marginPreset: 'custom',
+                        })}
+                      />
+                      <span className="printer-margin-unit">mm</span>
+                    </div>
+                    <div className="printer-margin-input-group">
+                      <label className="printer-margin-input-label">下</label>
+                      <input
+                        type="number"
+                        className="printer-margin-input"
+                        min="0"
+                        max="50"
+                        step="0.5"
+                        value={settings.marginBottom ?? 3}
+                        onChange={(e) => saveSettingsWithToast({
+                          ...settings,
+                          marginBottom: Math.max(0, parseFloat(e.target.value) || 0),
+                          marginPreset: 'custom',
+                        })}
+                      />
+                      <span className="printer-margin-unit">mm</span>
+                    </div>
+                    <div className="printer-margin-input-group">
+                      <label className="printer-margin-input-label">左</label>
+                      <input
+                        type="number"
+                        className="printer-margin-input"
+                        min="0"
+                        max="50"
+                        step="0.5"
+                        value={settings.marginLeft ?? 3}
+                        onChange={(e) => saveSettingsWithToast({
+                          ...settings,
+                          marginLeft: Math.max(0, parseFloat(e.target.value) || 0),
+                          marginPreset: 'custom',
+                        })}
+                      />
+                      <span className="printer-margin-unit">mm</span>
+                    </div>
+                    <div className="printer-margin-input-group">
+                      <label className="printer-margin-input-label">右</label>
+                      <input
+                        type="number"
+                        className="printer-margin-input"
+                        min="0"
+                        max="50"
+                        step="0.5"
+                        value={settings.marginRight ?? 3}
+                        onChange={(e) => saveSettingsWithToast({
+                          ...settings,
+                          marginRight: Math.max(0, parseFloat(e.target.value) || 0),
+                          marginPreset: 'custom',
+                        })}
+                      />
+                      <span className="printer-margin-unit">mm</span>
+                    </div>
+                  </div>
+
+                  <div className="printer-hint" style={{ marginTop: 'clamp(2px, 0.25vw, 4px)' }}>
+                    扩展 PDF 白边，防止打印内容被裁切。设置在打印前生效，不影响文件本身。
+                  </div>
                 </div>
 
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 'clamp(5px, 0.5vw, 8px)' }}>
@@ -946,7 +1079,7 @@ export default function SettingsWindow({ settings, saveSettings, printers, elect
           </div>
         </div>
       </div>
-      
+
       {/* 自动保存提示 */}
       <AutoSaveToast visible={toastVisible} onHidden={onToastHidden} />
     </div>

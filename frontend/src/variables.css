@@ -66,6 +66,29 @@
   --t-fast: 0.15s;
   --t-normal: 0.25s;
   --t-slow: 0.4s;
+
+  /* ═════════════════════════════════════
+     Responsive Scaling System
+     2K (2560px) is the design baseline → scale = 1
+     ═════════════════════════════════════ */
+  --ui-scale: 1;
+  --sidebar-width: 295px;
+  --topbar-height: 54px;
+  --actionbar-height: 64px;
+  --modal-width-sm: 400px;
+  --modal-width-md: 420px;
+  --modal-width-lg: 480px;
+  --modal-width-xl: 640px;
+  --modal-width-2xl: 800px;
+
+  /* Font scale — smooth responsive sizing between 1080p ↔ 2K ↔ 4K */
+  --fs-xs: clamp(9.5px, 0.39vw, 12px);
+  --fs-sm: clamp(10.5px, 0.43vw, 14px);
+  --fs-base: clamp(12px, 0.49vw, 15px);
+  --fs-md: clamp(12.5px, 0.51vw, 16px);
+  --fs-lg: clamp(13.5px, 0.55vw, 17px);
+  --fs-xl: clamp(15px, 0.63vw, 20px);
+  --fs-2xl: clamp(18px, 0.78vw, 26px);
 }
 
 /* ═════════════════════════════════════
@@ -139,5 +162,47 @@
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
+  }
+}
+
+/* ═════════════════════════════════════
+   Resolution Breakpoints
+   2K (2560×1440) is the design baseline
+   ═════════════════════════════════════ */
+
+/* 1080p and smaller screens — compact layout */
+@media (max-width: 1400px) {
+  :root {
+    --sidebar-width: 260px;
+    --topbar-height: 48px;
+    --actionbar-height: 56px;
+    --modal-width-sm: 360px;
+    --modal-width-md: 380px;
+    --modal-width-lg: 440px;
+    --modal-width-xl: 580px;
+    --modal-width-2xl: 720px;
+  }
+}
+
+/* Very narrow windows — further compact */
+@media (max-width: 1100px) {
+  :root {
+    --sidebar-width: 240px;
+    --topbar-height: 44px;
+    --actionbar-height: 52px;
+  }
+}
+
+/* 4K and larger screens — spacious layout */
+@media (min-width: 3000px) {
+  :root {
+    --sidebar-width: 380px;
+    --topbar-height: 64px;
+    --actionbar-height: 76px;
+    --modal-width-sm: 480px;
+    --modal-width-md: 520px;
+    --modal-width-lg: 580px;
+    --modal-width-xl: 760px;
+    --modal-width-2xl: 960px;
   }
 }

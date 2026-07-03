@@ -77,7 +77,17 @@
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
   outline: none;
   cursor: pointer;
-  appearance: auto;
+  appearance: none;
+  -webkit-appearance: none;
+  text-align: left;
+  line-height: 1.4;
+  min-height: clamp(28px, 3vw, 36px);
+  display: flex;
+  align-items: center;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23666' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right clamp(8px, 0.75vw, 12px) center;
+  padding-right: clamp(28px, 3vw, 36px);
 }
 
 .printer-select:hover {
@@ -218,7 +228,17 @@
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
   outline: none;
   cursor: pointer;
-  appearance: auto;
+  appearance: none;
+  -webkit-appearance: none;
+  text-align: left;
+  line-height: 1.4;
+  min-height: clamp(28px, 3vw, 36px);
+  display: flex;
+  align-items: center;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23666' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right clamp(8px, 0.75vw, 12px) center;
+  padding-right: clamp(28px, 3vw, 36px);
 }
 
 .printer-merge-select:hover {
@@ -261,4 +281,255 @@
 [data-theme="dark"] .printer-orientation-btn.active {
   background: var(--accent-soft);
   border-color: rgba(91, 141, 239, 0.3);
+}
+
+/* ══════════════════════════════════════
+   安全边距设置
+   ══════════════════════════════════════ */
+.printer-margin-section {
+  display: flex;
+  flex-direction: column;
+  gap: clamp(4px, 0.4vw, 6px);
+  padding: clamp(5px, 0.5vw, 8px) 0;
+  border-top: 1px solid var(--border-light);
+  margin-top: clamp(6px, 0.6vw, 10px) !important;
+}
+
+.printer-margin-header {
+  display: flex;
+  align-items: center;
+  gap: clamp(4px, 0.4vw, 6px);
+  margin-bottom: clamp(2px, 0.2vw, 4px);
+}
+
+.printer-margin-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: clamp(4px, 0.4vw, 6px);
+}
+
+.printer-margin-input-group {
+  display: flex;
+  align-items: center;
+  gap: clamp(3px, 0.3vw, 5px);
+}
+
+.printer-margin-input-label {
+  font-size: clamp(0.625rem, 0.6rem + 0.15vw, 0.7rem);
+  color: var(--text-3);
+  min-width: 14px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.printer-margin-input {
+  width: 100%;
+  @apply rounded-md;
+  padding: clamp(3px, 0.3vw, 5px) clamp(5px, 0.5vw, 8px);
+  font-size: clamp(0.75rem, 0.7rem + 0.25vw, 0.85rem);
+  background: var(--bg);
+  border: 1px solid var(--border-light);
+  color: var(--text);
+  font-family: inherit;
+  text-align: center;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  outline: none;
+  min-height: clamp(24px, 2.5vw, 30px);
+  max-width: 70px;
+  -moz-appearance: textfield;
+}
+
+.printer-margin-input::-webkit-inner-spin-button,
+.printer-margin-input::-webkit-outer-spin-button {
+  opacity: 1;
+  height: clamp(16px, 1.5vw, 22px);
+}
+
+.printer-margin-input:hover {
+  border-color: var(--accent);
+}
+
+.printer-margin-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.printer-margin-unit {
+  font-size: clamp(0.625rem, 0.6rem + 0.15vw, 0.7rem);
+  color: var(--text-4);
+  flex-shrink: 0;
+  min-width: 20px;
+}
+
+/* 深色模式 */
+[data-theme="dark"] .printer-margin-input {
+  background: var(--surface-hover);
+  border-color: var(--border);
+}
+
+[data-theme="dark"] .printer-margin-input:hover {
+  border-color: var(--accent);
+}
+
+/* ================================================================
+   设置窗口标题栏
+   ================================================================ */
+.settings-titlebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 40px;
+  padding: 0 12px 0 16px;
+  flex-shrink: 0;
+  -webkit-app-region: drag;
+  user-select: none;
+}
+
+.settings-titlebar-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  -webkit-app-region: no-drag;
+}
+
+.settings-titlebar-logo {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.settings-titlebar-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  line-height: 1;
+}
+
+.settings-titlebar-controls {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  -webkit-app-region: no-drag;
+}
+
+.settings-titlebar-btn {
+  width: 32px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  transition: background 0.15s ease;
+  color: var(--text-2);
+}
+
+.settings-titlebar-btn:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.settings-titlebar-btn svg {
+  width: 13px;
+  height: 13px;
+}
+
+.settings-titlebar-close:hover {
+  background: var(--red);
+  color: #fff;
+}
+
+/* ══════════════════════════════════════
+   设置窗口侧边栏导航
+   ══════════════════════════════════════ */
+.settings-layout {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.settings-sidebar {
+  width: 180px;
+  flex-shrink: 0;
+  background: var(--surface);
+  border-right: 1px solid var(--border-light);
+  padding: 8px 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.settings-sidebar-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  font-size: 13px;
+  color: var(--text-3);
+  cursor: pointer;
+  border: none;
+  background: none;
+  width: 100%;
+  text-align: left;
+  font-family: inherit;
+  position: relative;
+  transition: background 0.15s ease, color 0.15s ease;
+  user-select: none;
+}
+
+.settings-sidebar-item:hover {
+  background: var(--hover-bg);
+  color: var(--text-2);
+}
+
+.settings-sidebar-item.active {
+  color: var(--accent);
+  background: var(--accent-soft);
+  font-weight: 500;
+}
+
+.settings-sidebar-item.active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 20px;
+  background: var(--accent);
+  border-radius: 0 2px 2px 0;
+}
+
+.settings-sidebar-icon {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.settings-sidebar-item.active .settings-sidebar-icon {
+  color: var(--accent);
+}
+
+.settings-sidebar-label {
+  font-size: 13px;
+  line-height: 1;
+}
+
+/* ══════════════════════════════════════
+   设置窗口内容区域
+   ══════════════════════════════════════ */
+.settings-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: clamp(10px, 1vw, 16px);
+}
+
+/* 深色模式适配 */
+[data-theme="dark"] .settings-sidebar {
+  background: var(--surface-hover);
+  border-right-color: var(--border);
+}
+
+[data-theme="dark"] .settings-sidebar-item.active {
+  background: var(--accent-soft);
 }

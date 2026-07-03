@@ -4,19 +4,23 @@ export function useSettings(electronAPIRef) {
   const [settings, setSettings] = useState({
     printerName: '', copies: 1, paperSize: 'A4', grayscale: false,
     landscape: false, collate: true, extraSpecial: false, scaleFactor: 100,
+    marginLeft: 3, marginRight: 3, marginTop: 3, marginBottom: 3,
+    marginPreset: 'default',
   })
   const [settingsWindowOpen, setSettingsWindowOpen] = useState(false)
   const [printers, setPrinters] = useState([])
   const saveSettingsTimerRef = useRef(null)
 
   const saveSettings = useCallback((newSettings) => {
-    setSettings(newSettings)
+    // 支持函数式更新：saveSettings(prev => ({ ...prev, key: val }))
+    const resolved = typeof newSettings === 'function' ? newSettings(settings) : newSettings
+    setSettings(resolved)
     if (saveSettingsTimerRef.current) clearTimeout(saveSettingsTimerRef.current)
     saveSettingsTimerRef.current = setTimeout(() => {
       const ipc = electronAPIRef.current?.ipcRenderer
-      if (ipc) ipc.invoke('save-print-settings', newSettings)
+      if (ipc) ipc.invoke('save-print-settings', resolved)
     }, 300)
-  }, [electronAPIRef])
+  }, [settings, electronAPIRef])
 
   const updateSettings = useCallback((partialSettings) => {
     const newSettings = { ...settings, ...partialSettings }

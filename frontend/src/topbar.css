@@ -19,8 +19,8 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 16px;
-  height: 54px;
+  padding: 0 clamp(12px, 0.8vw, 24px);
+  height: var(--topbar-height);
   background: var(--white);
   border-bottom: 1px solid var(--border-light);
   flex-shrink: 0;
@@ -204,10 +204,10 @@
 }
 
 .tb-filename {
-  font-size: 13px;
+  font-size: var(--fs-md);
   font-weight: 500;
   color: var(--text);
-  max-width: 240px;
+  max-width: clamp(180px, 10vw, 300px);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

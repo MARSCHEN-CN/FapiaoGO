@@ -6,8 +6,8 @@ const ROW_HEIGHT = 64
 const OVERSCAN = 5
 
 // ─── FileCard 行组件 ─────────────────────────────────────────────
-const FileCardRow = memo(({ index, style, files, previewFileKey, mergeActive, mergeCount, duplicateInfo, fileRotations, onPreview, onRemove, onRotate }) => {
-  const fileObj = files[index]
+const FileCardRow = memo(({ index, style, filesRef, previewFileKey, mergeActive, mergeCount, duplicateInfo, fileRotations, onPreview, onRemove, onRotate, onHoverFile }) => {
+  const fileObj = filesRef.current?.[index]
   if (!fileObj) return null
 
   const mergeGroupStart = mergeActive ? getMergeGroupStart(index, mergeCount) : -1
@@ -24,6 +24,12 @@ const FileCardRow = memo(({ index, style, files, previewFileKey, mergeActive, me
   }
   const handleRemove = (e) => { e.stopPropagation(); onRemove(fileObj.key) }
   const handleRotate = (e) => { e.stopPropagation(); onRotate(fileObj.key) }
+  const handleMouseEnter = () => {
+    // 只对已解析的文件触发预加载
+    if (fileObj.status === 'parsed' && typeof onHoverFile === 'function') {
+      onHoverFile(fileObj)
+    }
+  }
 
   let statusDotClass = 'pending'
   if (fileObj.status === 'parsed') {
@@ -42,6 +48,7 @@ const FileCardRow = memo(({ index, style, files, previewFileKey, mergeActive, me
       style={style}
       className={`file-card ${previewFileKey === fileObj.key ? 'active' : ''} ${isGroupFirst ? 'merge-group-first' : ''} ${isGroupLast ? 'merge-group-last' : ''} ${fileObj.failedFields?.length > 0 ? 'has-failed' : ''} ${fileObj.status === 'parsing' ? 'parsing' : ''} ${isDuplicate ? 'duplicate' : ''}`}
       onClick={handleClick}
+      onMouseEnter={handleMouseEnter}
     >
       {isDupFirst && <div className="duplicate-bar"></div>}
       {isDupFirst && <div className="duplicate-label">重复组 {dupGroupIndex}</div>}
@@ -90,6 +97,20 @@ const FileCardRow = memo(({ index, style, files, previewFileKey, mergeActive, me
       )}
     </div>
   )
+  // 自定义 memo 比较：只在自己索引的文件对象引用变化时才重渲染
+}, (prev, next) => {
+  if (prev.index !== next.index) return false
+  if (prev.style?.top !== next.style?.top || prev.style?.height !== next.style?.height) return false
+  if (prev.filesRef?.current?.[prev.index] !== next.filesRef?.current?.[next.index]) return false
+  if (prev.onPreview !== next.onPreview) return false
+  if (prev.onRemove !== next.onRemove) return false
+  if (prev.onRotate !== next.onRotate) return false
+  if (prev.onHoverFile !== next.onHoverFile) return false
+  if (prev.previewFileKey !== next.previewFileKey) return false
+  if (prev.mergeActive !== next.mergeActive || prev.mergeCount !== next.mergeCount) return false
+  if (prev.duplicateInfo !== next.duplicateInfo) return false
+  if (prev.fileRotations !== next.fileRotations) return false
+  return true
 })
 
 // ─── FileList 主组件 ────────────────────────────────────────────
@@ -102,15 +123,19 @@ export default memo(function FileList({
   onPreview,
   onRemove,
   onRotate,
+  onHoverFile,
 }) {
   const mergeActive = isMergeMode(paperSize)
   const mergeCount = mergeActive ? parseInt(paperSize.replace('merge', ''), 10) : 2
   const previewFileKey = previewFile?.key || null
   const listRef = useRef(null)
+  // filesRef: 用 ref 持有最新 files 引用，避免 rowProps 因数组引用变化而重建
+  const filesRef = useRef(files)
+  filesRef.current = files
 
-  // react-window v2 用 rowProps 传递额外数据
+  // react-window v2 用 rowProps 传递额外数据（files 通过 ref 传递，避免整列重渲染）
   const rowProps = useMemo(() => ({
-    files,
+    filesRef,
     previewFileKey,
     mergeActive,
     mergeCount,
@@ -119,7 +144,8 @@ export default memo(function FileList({
     onPreview,
     onRemove,
     onRotate,
-  }), [files, previewFileKey, mergeActive, mergeCount, duplicateInfo, fileRotations, onPreview, onRemove, onRotate])
+    onHoverFile,
+  }), [previewFileKey, mergeActive, mergeCount, duplicateInfo, fileRotations, onPreview, onRemove, onRotate, onHoverFile])
 
   // 选中文件自动滚动（react-window v2 API：scrollToRow({ index, align })）
   useEffect(() => {

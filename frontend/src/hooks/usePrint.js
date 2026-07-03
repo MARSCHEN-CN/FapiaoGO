@@ -1,13 +1,14 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { PREVIEW_DPI, PRINT_PIPELINE, PRINT_SETTINGS_DEFAULTS } from '../config'
 import {
-  isMergeMode, b64toBlob,
+  isMergeMode, b64toBlob, getExtension,
 } from '../utils'
 import { rotateContentOnPaper } from '../utils/canvasUtils'
 import { getForcedLandscape } from '../utils/mergeMode'
 import { renderPrintContent } from '../utils/printRenderer'
 import { buildRenderModel } from '../utils/renderModelBuilder'
 import { validateRenderModel } from '../utils/renderModelValidator'
+import { detectDocumentOrientation } from '../utils/detectOrientation'
 
 // ✅ 懒加载 PDF 渲染模块，避免首屏加载 1.4 MB 的 pdfjs-dist + react-pdf
 let _printRenderers = null
@@ -26,7 +27,7 @@ const DIRECT_PRINT_EXTENSIONS = ['.pdf', '.jpg', '.jpeg', '.png', '.bmp', '.tiff
 
 function canDirectPrint(filePath) {
   if (!filePath) return false
-  const ext = filePath.split('.').pop().toLowerCase()
+  const ext = getExtension(filePath)
   return DIRECT_PRINT_EXTENSIONS.includes('.' + ext)
 }
 
@@ -581,7 +582,7 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
     try {
       // 确定文件格式
       let fileFormat = file.fileFormat || 'pdf'
-      const ext = file.name?.split('.').pop().toLowerCase()
+      const ext = getExtension(file.name)
       if (!fileFormat || fileFormat === 'unknown') {
         if (ext === 'ofd') fileFormat = 'ofd'
         else if (['jpg', 'jpeg', 'png', 'bmp', 'tiff', 'tif', 'gif'].includes(ext)) fileFormat = 'image'
@@ -607,14 +608,26 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
 
       // 构建 PrintSettings（rotation 按文件独立，从 fileRotations 读取）
       const fileRotation = fileRotations?.[file.key] || 0
+
+      // 从文件元数据获取内容方向（前端在导入时已检测）
+      const contentOrientation = detectDocumentOrientation(file)
+
       const ps = {
-        rotation: fileRotation,   // 优先使用文件旋转
-        fit: printSettings?.fit || PRINT_SETTINGS_DEFAULTS.fit,
+        rotation: fileRotation,
+        paperkind: settings.paperkind || printSettings?.paperkind,
         paper: printSettings?.paperSize || settings.paperSize || PRINT_SETTINGS_DEFAULTS.paper,
+        fit: printSettings?.fit || PRINT_SETTINGS_DEFAULTS.fit,
+        contentOrientation,
         duplex: printSettings?.duplex ?? PRINT_SETTINGS_DEFAULTS.duplex,
         grayscale: printSettings?.grayscale ?? settings.grayscale ?? PRINT_SETTINGS_DEFAULTS.grayscale,
         copies: printSettings?.copies ?? settings.copies ?? PRINT_SETTINGS_DEFAULTS.copies,
+        marginLeft: settings.marginLeft ?? 3,
+        marginRight: settings.marginRight ?? 3,
+        marginTop: settings.marginTop ?? 3,
+        marginBottom: settings.marginBottom ?? 3,
       }
+
+      console.log('[PRINT] contentOrientation:', contentOrientation, '(from detectDocumentOrientation)')
 
       const ipc = electronAPIRef.current?.ipcRenderer
       if (!ipc) {
@@ -658,23 +671,139 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
     }
   }, [files, settings, fileRotations, electronAPIRef])
 
-  // ═══════════════════════════════════════════════════════════
-// executePrint — 唯一打印执行入口 (Step 3.2)
-// V2 orchestration: load → render (pure) → submit
-// ═══════════════════════════════════════════════════════════
-const executePrint = useCallback(async (previewFile, printSettings) => {
-  // ✅ 合并模式：委托给 doPrint()（已对接 print-merged-images 通道）
-  // V2 路径仅支持单文件，合并模式需要 renderMergeGroupToPrintImage 的多文件渲染
-  const mergeMode = settings.mergeMode || 'none'
-  if (isMergeMode(mergeMode)) {
-    console.log('[PRINT] Merge mode detected → doPrint()')
-    return doPrint()
-  }
+  /**
+   * 打印单个源文件（调用 IPC 直通 Sumatra，不管理全局进度）
+   * 用于批量场景中逐文件调用
+   */
+  const printSingleSourceFile = useCallback(async (f, printSettings) => {
+    const ipc = electronAPIRef.current?.ipcRenderer
+    if (!ipc) return { success: false, error: 'IPC 不可用' }
 
-  if (PRINT_PIPELINE.mode === 'source') {
-    console.log('[PRINT] Source pipeline → direct Sumatra')
-    return executeSourcePrint(previewFile, printSettings)
-  }
+    const filePath = f.printPath || f.path
+    const ext = getExtension(f.name)
+    let fileFormat = f.fileFormat || 'pdf'
+    if (!fileFormat || fileFormat === 'unknown') {
+      if (ext === 'ofd') fileFormat = 'ofd'
+      else if (['jpg', 'jpeg', 'png', 'bmp', 'tiff', 'tif', 'gif'].includes(ext)) fileFormat = 'image'
+      else fileFormat = 'pdf'
+    }
+
+    const hasReliableOrient = f._pdfPageWidth > 0 && f._pdfPageHeight > 0
+    const contentOrientation = detectDocumentOrientation(f)
+    const fileRotation = fileRotations?.[f.key] || 0
+    const ps = {
+      rotation: fileRotation,
+      paperkind: settings.paperkind || printSettings?.paperkind,
+      paper: printSettings?.paperSize || settings.paperSize || PRINT_SETTINGS_DEFAULTS.paper,
+      fit: printSettings?.fit || PRINT_SETTINGS_DEFAULTS.fit,
+      ...(hasReliableOrient ? { contentOrientation } : {}),
+      duplex: printSettings?.duplex ?? PRINT_SETTINGS_DEFAULTS.duplex,
+      grayscale: printSettings?.grayscale ?? settings.grayscale ?? PRINT_SETTINGS_DEFAULTS.grayscale,
+      copies: printSettings?.copies ?? settings.copies ?? PRINT_SETTINGS_DEFAULTS.copies,
+      marginLeft: settings.marginLeft ?? 3,
+      marginRight: settings.marginRight ?? 3,
+      marginTop: settings.marginTop ?? 3,
+      marginBottom: settings.marginBottom ?? 3,
+    }
+
+    const printerName = printSettings?.printerName || printSettings?.printer || settings.printerName || ''
+    if (!printerName) return { success: false, error: '请选择打印机' }
+
+    return await ipc.invoke('print-source-file', {
+      target: { printer: printerName, filePath, fileFormat },
+      settings: ps,
+      pipeline: { backend: 'sumatra' },
+    })
+  }, [settings, fileRotations, electronAPIRef, detectDocumentOrientation])
+
+  /**
+   * 批量打印（source 管线），管理总进度
+   */
+  const printAllSourceFiles = useCallback(async (filesToPrint, printSettings) => {
+    if (filesToPrint.length === 0) return
+    const completed = []
+    const failed = []
+
+    setPrinting(true)
+    setPrintFilesAndRef(filesToPrint.map(f => ({ key: f.key, name: f.name })))
+    const init = {}
+    for (const f of filesToPrint) init[f.key] = { status: 'waiting' }
+    setPrintProgress(init)
+
+    for (const f of filesToPrint) {
+      setPrintProgress(prev => ({ ...prev, [f.key]: { status: 'printing' } }))
+      try {
+        const result = await printSingleSourceFile(f, printSettings)
+        if (result?.success) {
+          setPrintProgress(prev => ({ ...prev, [f.key]: { status: 'done' } }))
+          completed.push(f)
+        } else {
+          const msg = result?.message || result?.error || '打印失败'
+          setPrintProgress(prev => ({ ...prev, [f.key]: { status: 'error', error: msg } }))
+          failed.push(f)
+        }
+      } catch (err) {
+        setPrintProgress(prev => ({ ...prev, [f.key]: { status: 'error', error: err?.message || '未知异常' } }))
+        failed.push(f)
+      }
+    }
+
+    setPrinting(false)
+    return { completed: completed.length, failed: failed.length }
+  }, [printSingleSourceFile])
+
+  /**
+   * 显示打印完成摘要
+   */
+  const showPrintSummary = useCallback((completed, failed) => {
+    if (failed > 0) {
+      setAlertModal({
+        visible: true, title: '打印完成（部分失败）',
+        message: `成功: ${completed} 个，失败: ${failed} 个`, type: 'warning',
+      })
+    } else {
+      setAlertModal({
+        visible: true, title: '打印完成',
+        message: `已发送 ${completed} 个文件到打印队列`, type: 'success',
+      })
+    }
+  }, [setAlertModal])
+
+  // ═══════════════════════════════════════════════════════════
+  // executePrint — 唯一打印执行入口 (Step 3.2)
+  // V2 orchestration: load → render (pure) → submit
+  // ═══════════════════════════════════════════════════════════
+  const executePrint = useCallback(async (previewFile, printSettings) => {
+    // ✅ 合并模式：委托给 doPrint()
+    const mergeMode = settings.mergeMode || 'none'
+    if (isMergeMode(mergeMode)) {
+      console.log('[PRINT] Merge mode detected → doPrint()')
+      return doPrint()
+    }
+
+    const allParsed = files.filter(f => f.status === 'parsed' && (f.printPath || f.path))
+    if (allParsed.length === 0) return
+
+    // ── Source 管线：批量打印所有已解析文件 ──
+    if (PRINT_PIPELINE.mode === 'source') {
+      if (settings.extraSpecial) {
+        // 一普二专：先全部，再专票
+        const specialFiles = allParsed.filter(f => f.invoiceType?.includes('专票'))
+        console.log('[PRINT] 一普二专: 第1轮 %d 个 → 第2轮 %d 个', allParsed.length, specialFiles.length)
+        const r1 = await printAllSourceFiles(allParsed, printSettings)
+        if (specialFiles.length > 0) {
+          const r2 = await printAllSourceFiles(specialFiles, printSettings)
+          showPrintSummary(r1.completed + r2.completed, r1.failed + r2.failed)
+        } else {
+          showPrintSummary(r1.completed, r1.failed)
+        }
+      } else {
+        console.log('[PRINT] Source → 批量打印 %d 个文件', allParsed.length)
+        const r = await printAllSourceFiles(allParsed, printSettings)
+        showPrintSummary(r.completed, r.failed)
+      }
+      return
+    }
 
   // Legacy V2 pipeline (PRINT_PIPELINE.mode === 'legacy')
   console.log('[PRINT] Legacy V2 router → orchestrate')

@@ -2,8 +2,8 @@ import { useState, useCallback, useRef, useEffect } from 'react'
 import { useDropzone } from 'react-dropzone'
 import { BACKEND_URL, SUPPORTED_EXTENSIONS } from '../config'
 import {
-  getElectronAPI, getFilePath, getFileFormat, concurrentBatch, applySort,
-  buildSearchText,
+  getElectronAPI, getFilePath, getFileFormat, getExtension, getExtensionWithDot,
+  getMimeType, concurrentBatch, applySort, buildSearchText,
 } from '../utils'
 import { buildFileObj, processPdfFile } from '../utils/fileHelpers'
 import { db } from '../db'
@@ -49,13 +49,8 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
       } else if (fileObj.printPath && ipc) {
         const fileData = await ipc.invoke('read-file', fileObj.printPath)
         if (fileData.success) {
-          const ext = fileObj.name.split('.').pop().toLowerCase()
-          let mimeType = 'application/pdf'
-          if (ext === 'ofd') mimeType = 'application/ofd'
-          else if (['jpg', 'jpeg'].includes(ext)) mimeType = 'image/jpeg'
-          else if (ext === 'png') mimeType = 'image/png'
-          else if (ext === 'bmp') mimeType = 'image/bmp'
-          else if (['tiff', 'tif'].includes(ext)) mimeType = 'image/tiff'
+          const ext = getExtension(fileObj.name)
+          const mimeType = getMimeType(ext)
 
           const blob = new Blob([new Uint8Array(fileData.data)], { type: mimeType })
           preparedFiles.push(new File([blob], fileObj.name, { type: mimeType }))
@@ -256,13 +251,8 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
             } else if (fileObj.printPath && ipc) {
               const fileData = await ipc.invoke('read-file', fileObj.printPath)
               if (fileData.success) {
-                const ext = fileObj.name.split('.').pop().toLowerCase()
-                let mimeType = 'application/pdf'
-                if (ext === 'ofd') mimeType = 'application/ofd'
-                else if (['jpg', 'jpeg'].includes(ext)) mimeType = 'image/jpeg'
-                else if (ext === 'png') mimeType = 'image/png'
-                else if (ext === 'bmp') mimeType = 'image/bmp'
-                else if (['tiff', 'tif'].includes(ext)) mimeType = 'image/tiff'
+                const ext = getExtension(fileObj.name)
+                const mimeType = getMimeType(ext)
 
                 const blob = new Blob([new Uint8Array(fileData.data)], { type: mimeType })
                 const file = new File([blob], fileObj.name, { type: mimeType })
@@ -409,13 +399,8 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
         if (!fileData && f.path && ipc) {
           const result = await ipc.invoke('read-file', f.path)
           if (result.success) {
-            const ext = f.name.split('.').pop().toLowerCase()
-            let mimeType = 'application/pdf'
-            if (ext === 'ofd') mimeType = 'application/ofd'
-            else if (['jpg', 'jpeg'].includes(ext)) mimeType = 'image/jpeg'
-            else if (ext === 'png') mimeType = 'image/png'
-            else if (ext === 'bmp') mimeType = 'image/bmp'
-            else if (['tiff', 'tif'].includes(ext)) mimeType = 'image/tiff'
+            const ext = getExtension(f.name)
+            const mimeType = getMimeType(ext)
 
             const blob = new Blob([new Uint8Array(result.data)], { type: mimeType })
             fileData = new File([blob], f.name, { type: mimeType })
@@ -519,7 +504,7 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
   const onDrop = useCallback(async (acceptedFiles) => {
     if (acceptedFiles.length === 0) return
     const validFiles = acceptedFiles.filter(f => {
-      const ext = '.' + f.name.split('.').pop().toLowerCase()
+      const ext = getExtensionWithDot(f.name)
       return SUPPORTED_EXTENSIONS.includes(ext)
     })
     if (validFiles.length === 0) return

@@ -1,6 +1,5 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
-import { compression } from 'vite-plugin-compression2'
 import path from 'path'
 import { fileURLToPath } from 'url'
 
@@ -12,10 +11,6 @@ export default defineConfig({
 
   plugins: [
     react(),
-    compression({
-      algorithms: ['gzip', 'brotliCompress'],
-      threshold: 1024,
-    }),
   ],
   publicDir: '../public',
 
@@ -69,6 +64,15 @@ export default defineConfig({
   server: {
     fs: {
       strict: false
+    },
+    // Windows 下 fsevents 不稳定，改用 polling 避免进程意外退出
+    watch: {
+      usePolling: true,
+      interval: 500,
+      binaryInterval: 1000,
+    },
+    hmr: {
+      overlay: true,
     },
     proxy: {
       '/api': {

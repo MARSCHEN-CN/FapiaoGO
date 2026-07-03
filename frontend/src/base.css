@@ -121,9 +121,4 @@ button:active:not(:disabled) {
 }
 
 /* ======================== Focus & Responsive ======================== */
-@media (max-width: 1100px) {
-  .sidebar {
-    width: 260px;
-    min-width: 260px;
-  }
-}
+/* Sidebar width is now managed via --sidebar-width in variables.css */

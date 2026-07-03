@@ -23,6 +23,16 @@ export const PRINT_SETTINGS_DEFAULTS = {
 
 export const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000'
 
+// ─── 安全边距预设 ─────────────────────────────────────────────────
+export const MARGIN_PRESETS = {
+  default:    { label: '普通安全边距', left: 3, right: 3, top: 3, bottom: 3 },
+  binding:    { label: '装订加宽',     left: 8, right: 3, top: 3, bottom: 3 },
+  label:      { label: '标签/票据',    left: 3, right: 3, top: 10, bottom: 3 },
+  leftOffset: { label: '打印机左偏',   left: 5, right: 2, top: 3, bottom: 3 },
+  borderless: { label: '无边距',       left: 0, right: 0, top: 0, bottom: 0 },
+  custom:     { label: '自定义',       left: 3, right: 3, top: 3, bottom: 3 },
+}
+
 // 缩放档位
 export const ZOOM_STEPS = [25, 50, 75, 100, 125, 150, 200]
 
@@ -46,7 +56,7 @@ const REGISTRY_DATA = [
   { id: 'A5',            label: 'A5',                  widthMM: 148,   heightMM: 210,   source: 'system' },
   { id: 'A3',            label: 'A3',                  widthMM: 297,   heightMM: 420,   source: 'system' },
   { id: 'Letter',        label: 'Letter',              widthMM: 215.9, heightMM: 279.4, source: 'system' },
-  { id: 'Voucher240x140',label: '凭证纸 240×140mm',    widthMM: 240,   heightMM: 140,   source: 'system' },
+  { id: 'Voucher240x140',label: '凭证纸',    widthMM: 240,   heightMM: 140,   source: 'system' },
   { id: 'Custom',        label: '自定义尺寸',           widthMM: 0,     heightMM: 0,     source: 'system' },
 ]
 

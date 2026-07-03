@@ -29,12 +29,51 @@ export function getFilePath(file) {
   return file.path || ''
 }
 
+/**
+ * 获取文件名的小写扩展名（不含点号）
+ * @param {string} filename - 文件名或路径
+ * @returns {string} 小写扩展名，空字符串表示无扩展名
+ */
+export function getExtension(filename) {
+  if (!filename) return ''
+  const parts = filename.split('.')
+  return parts.length > 1 ? parts.pop().toLowerCase() : ''
+}
+
+/**
+ * 获取带点号的小写扩展名
+ * @param {string} filename - 文件名或路径
+ * @returns {string} 如 '.pdf'，空字符串表示无扩展名
+ */
+export function getExtensionWithDot(filename) {
+  const ext = getExtension(filename)
+  return ext ? '.' + ext : ''
+}
+
 export function getFileFormat(filename) {
   if (!filename) return 'pdf'
-  const ext = filename.split('.').pop().toLowerCase()
+  const ext = getExtension(filename)
   if (ext === 'ofd') return 'ofd'
   if (['jpg', 'jpeg', 'png', 'bmp', 'tiff', 'tif'].includes(ext)) return 'image'
   return 'pdf'
+}
+
+/**
+ * 根据文件扩展名获取 MIME 类型
+ * @param {string} ext - 小写扩展名（不含点号）
+ * @returns {string} MIME 类型字符串，未知扩展名默认返回 'application/pdf'
+ */
+export function getMimeType(ext) {
+  const MAP = {
+    'ofd': 'application/ofd',
+    'jpg': 'image/jpeg',
+    'jpeg': 'image/jpeg',
+    'png': 'image/png',
+    'bmp': 'image/bmp',
+    'tiff': 'image/tiff',
+    'tif': 'image/tiff',
+  }
+  return MAP[ext] || 'application/pdf'
 }
 
 export function b64toBlob(b64Data, contentType = 'image/png') {
@@ -168,21 +207,21 @@ export function isFailedFile(file) {
 }
 
 export function applySort(list, field, order) {
-  const sorted = [...list]
   const dir = order === 'desc' ? -1 : 1
 
-  // 解析失败的文件置顶（不受排序规则影响）
-  sorted.sort((a, b) => {
-    const aFailed = isFailedFile(a)
-    const bFailed = isFailedFile(b)
-    if (aFailed && !bFailed) return -1
-    if (!aFailed && bFailed) return 1
-    return 0
-  })
+  // 单次遍历分区：将失败文件与正常文件分开
+  // 避免先 sort 再 filter 导致的多次 isFailedFile 调用
+  const failedFiles = []
+  const normalFiles = []
+  for (let i = 0; i < list.length; i++) {
+    if (isFailedFile(list[i])) {
+      failedFiles.push(list[i])
+    } else {
+      normalFiles.push(list[i])
+    }
+  }
 
   // 在失败的文件内部，以及正常的文件之间应用排序规则
-  const failedFiles = sorted.filter(f => isFailedFile(f))
-  const normalFiles = sorted.filter(f => !isFailedFile(f))
 
   // 对失败文件内部应用排序规则
   const sortFn = (a, b) => {
@@ -268,27 +307,12 @@ export function filterFiles(files, query) {
   if (!q) return files
 
   return files.filter(file => {
-    // 优先使用预计算的 searchText
+    // 文件一旦创建即预计算 searchText（buildFileObj 中设置），解析成功后更新为全字段搜索文本
     if (file.searchText) {
       return file.searchText.includes(q)
     }
-    // 回退到动态构建
-    const fields = [
-      file.name,
-      file.invoiceNumber,
-      file.invoiceType,
-      file.amount,
-      file.invoiceDate,
-      // 注意：不再搜索 raw_text，避免性能问题
-      file.invoice_fields?.gmfmc,
-      file.invoice_fields?.xsfmc,
-      file.invoice_fields?.note,
-      file.invoice_fields?.xmmc,
-    ]
-
-    return fields.some(f =>
-      typeof f === 'string' && f.toLowerCase().includes(q)
-    )
+    // 兜底：极低概率的边界情况（如外部注入的文件对象）
+    return file.name?.toLowerCase()?.includes(q)
   })
 }
 

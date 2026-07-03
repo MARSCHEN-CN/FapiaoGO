@@ -1,314 +1,355 @@
-/* ================================================================
-   canvas.css ?Canvas Area, Paper, Navigation Arrows
-   ================================================================ */
-
-/* ======================== Canvas & Paper ======================== */
-.canvas {
-  flex: 1;
-  position: relative;
-  background: var(--bg);
-  /* 不再负责滚动，滚动交?.canvas-scroll */
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-/* 滚动层：专门负责内容滚动，控件不在这里面 */
-.canvas-scroll {
-  flex: 1;
-  overflow: auto;
-  display: flex;
-  padding: 30px;
-  /* 手型光标：提示可拖拽 */
-  cursor: grab;
-}
-
-/* 拖拽进行?*/
-.canvas-scroll.is-dragging {
-  cursor: grabbing;
-  user-select: none;
-}
-
-.canvas.has-noise {
-  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitch='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.035'/%3E%3C/svg%3E");
-}
-
-/* ======================== Canvas Arrow Navigation ======================== */
-.canvas-arrow {
-  position: absolute;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 44px;
-  height: 44px;
-  border: none;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.92);
-  color: var(--text-2);
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 10;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
-  transition: all 0.2s var(--ease);
-  opacity: 0;
-  animation: arrowFadeIn 0.2s var(--ease) forwards;
-}
-
-.canvas-arrow:hover {
-  background: var(--white);
-  color: var(--accent);
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
-  transform: translateY(-50%) scale(1.08);
-}
-
-[data-theme="dark"] .canvas-arrow {
-  background: var(--canvas-float-bg);
-  color: var(--text-2);
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.5);
-  border: 1px solid var(--canvas-float-border);
-}
-
-[data-theme="dark"] .canvas-arrow:hover {
-  background: rgba(38, 42, 56, 0.96);
-  color: var(--accent);
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.6);
-}
-
-.canvas-arrow:active {
-  transform: translateY(-50%) scale(0.95);
-}
-
-.canvas-arrow:disabled {
-  opacity: 0.3;
-  cursor: not-allowed;
-  pointer-events: none;
-}
-
-.canvas-arrow svg {
-  width: 22px;
-  height: 22px;
-}
-
-.canvas-arrow-left {
-  left: 20px;
-}
-
-.canvas-arrow-right {
-  right: 20px;
-}
-
-@keyframes arrowFadeIn {
-  from { opacity: 0; transform: translateY(-50%) scale(0.85); }
-  to   { opacity: 1; transform: translateY(-50%) scale(1); }
-}
-
-/* Loading Spinner */
-
-/* 绝对居中基类 ?.canvas-loading ?.canvas-empty 共享 */
-.canvas-center-overlay {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-}
-
-/* 加载?/ OFD 不支持预览：绝对定位?.canvas 层居中，不随滚动/放大移动 */
-.canvas-loading {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 14px;
-  color: var(--text-2);
-  z-index: 1;
-}
-
-/* 环形 spinner：双层圆环，背景轨半透明 + 前景弧段旋转 */
-.canvas-loading-spinner {
-  width: 36px;
-  height: 36px;
-  color: var(--brand);
-  animation: canvasRingSpin 1.1s linear infinite;
-}
-
-.canvas-loading-spinner .ring-track {
-  stroke: currentColor;
-  opacity: 0.18;
-}
-
-@keyframes canvasRingSpin {
-  to { transform: rotate(360deg); }
-}
-
-/* 空状态：绝对定位?.canvas 层居中，不随滚动/放大移动 */
-.canvas-empty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  color: var(--text-3);
-  z-index: 1;
-  pointer-events: none;
-}
-
-.canvas-empty p {
-  margin: 0;
-}
-
-.canvas-empty .canvas-empty-title {
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--text-2);
-}
-
-.canvas-empty .canvas-empty-sub {
-  font-size: 13px;
-  color: var(--text-3);
-}
-
-.paper {
-  background: var(--paper-bg);
-  @apply rounded-lg;
-  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.08);
-  overflow: hidden;
-  flex-shrink: 0;
-  position: relative;
-  z-index: 1;
-  animation: paperIn 0.5s var(--ease) forwards;
-  transform-origin: top center;
-  transition: box-shadow var(--t-normal) var(--ease);
-  /* 关键：用 margin:auto 居中，溢出时自动退化为 0，滚动行为正?*/
-  margin: auto;
-}
-
-.paper:hover {
-  box-shadow: 0 4px 32px rgba(0, 0, 0, 0.15);
-}
-
-.paper img {
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-}
-
-/* ======================== Canvas Zoom Control ======================== */
-/* 缩放控制 - 定位在预览区顶部居中 */
-.canvas-zoom-control {
-  position: absolute;
-  top: 12px;
-  left: 50%;
-  transform: translateX(-50%);
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  padding: 4px 8px;
-  background: var(--canvas-float-bg);
-  @apply rounded-lg;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
-  z-index: 10;
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
-  border: 1px solid var(--canvas-float-border);
-}
-
-[data-theme="dark"] .canvas-zoom-control {
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
-}
-
-/* ======================== Status Indicator ======================== */
-/* ======================== Status Indicator ======================== */
-/* 状态指示器 - 定位?canvas 容器右下?*/
-.status-indicator {
-  position: absolute;
-  bottom: 12px;
-  right: 12px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 6px 12px;
-  background: var(--canvas-float-bg);
-  @apply rounded-lg;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
-  font-size: 12px;
-  color: var(--text-2, #4a5568);
-  z-index: 10;
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
-  border: 1px solid var(--canvas-float-border);
-}
-
-[data-theme="dark"] .status-indicator {
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
-  color: var(--text-2);
-}
-
-.status-indicator-item {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.status-indicator-item + .status-indicator-item {
-  padding-left: 10px;
-  border-left: 1px solid rgba(0, 0, 0, 0.1);
-}
-
-[data-theme="dark"] .status-indicator-item + .status-indicator-item {
-  border-left-color: var(--border);
-}
-
-.status-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #22c55e;
-  box-shadow: 0 0 6px rgba(34, 197, 94, 0.5);
-  animation: statusPulse 2s ease-in-out infinite;
-}
-
-.status-special {
-  color: #f59e0b;
-  font-weight: 500;
-}
-
-@keyframes statusPulse {
-  0%, 100% {
-    opacity: 1;
-    transform: scale(1);
-  }
-  50% {
-    opacity: 0.85;
-    transform: scale(0.95);
-  }
-}
-
-/* ================================================================
-   DARK MODE ?canvas extras
-   ================================================================ */
-[data-theme="dark"] .paper {
-  background: var(--paper-bg);
-  box-shadow: var(--shadow-xl), 0 0 0 1px rgba(91, 141, 239, 0.04);
-}
-
-[data-theme="dark"] .paper:hover {
-  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.55);
-}
-
-[data-theme="dark"] .canvas-empty .canvas-empty-title {
-  color: var(--text-2);
-}
-
-[data-theme="dark"] .canvas-loading {
-  color: var(--text-2);
-}
-
-
-.cz-separator {
-  width: 1px;
-  height: 20px;
-  background: rgba(0, 0, 0, 0.1);
-  margin: 0 4px;
-}
+/* ================================================================
+   canvas.css ?Canvas Area, Paper, Navigation Arrows
+   ================================================================ */
+
+/* ======================== Canvas & Paper ======================== */
+.canvas {
+  flex: 1;
+  position: relative;
+  background: var(--bg);
+  /* 不再负责滚动，滚动交?.canvas-scroll */
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* 滚动层：专门负责内容滚动，控件不在这里面 */
+.canvas-scroll {
+  flex: 1;
+  overflow: auto;
+  display: flex;
+  padding: clamp(20px, 1.5vw, 40px);
+  /* 手型光标：提示可拖拽 */
+  cursor: grab;
+}
+
+/* 拖拽进行?*/
+.canvas-scroll.is-dragging {
+  cursor: grabbing;
+  user-select: none;
+}
+
+.canvas.has-noise {
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitch='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.035'/%3E%3C/svg%3E");
+}
+
+/* ======================== Canvas Arrow Navigation ======================== */
+.canvas-arrow {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 44px;
+  height: 44px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--text-2);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
+  transition: all 0.2s var(--ease);
+  opacity: 0;
+  animation: arrowFadeIn 0.2s var(--ease) forwards;
+}
+
+.canvas-arrow:hover {
+  background: var(--white);
+  color: var(--accent);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+  transform: translateY(-50%) scale(1.08);
+}
+
+[data-theme="dark"] .canvas-arrow {
+  background: var(--canvas-float-bg);
+  color: var(--text-2);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.5);
+  border: 1px solid var(--canvas-float-border);
+}
+
+[data-theme="dark"] .canvas-arrow:hover {
+  background: rgba(38, 42, 56, 0.96);
+  color: var(--accent);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.6);
+}
+
+.canvas-arrow:active {
+  transform: translateY(-50%) scale(0.95);
+}
+
+.canvas-arrow:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.canvas-arrow svg {
+  width: 22px;
+  height: 22px;
+}
+
+.canvas-arrow-left {
+  left: 20px;
+}
+
+.canvas-arrow-right {
+  right: 20px;
+}
+
+@keyframes arrowFadeIn {
+  from { opacity: 0; transform: translateY(-50%) scale(0.85); }
+  to   { opacity: 1; transform: translateY(-50%) scale(1); }
+}
+
+/* Loading Spinner */
+
+/* 绝对居中基类 ?.canvas-loading ?.canvas-empty 共享 */
+.canvas-center-overlay {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+}
+
+/* 加载?/ OFD 不支持预览：绝对定位?.canvas 层居中，不随滚动/放大移动 */
+.canvas-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  color: var(--text-2);
+  z-index: 1;
+}
+
+/* 环形 spinner：双层圆环，背景轨半透明 + 前景弧段旋转 */
+.canvas-loading-spinner {
+  width: 36px;
+  height: 36px;
+  color: var(--brand);
+  animation: canvasRingSpin 1.1s linear infinite;
+}
+
+.canvas-loading-spinner .ring-track {
+  stroke: currentColor;
+  opacity: 0.18;
+}
+
+@keyframes canvasRingSpin {
+  to { transform: rotate(360deg); }
+}
+
+/* 空状态：绝对定位?.canvas 层居中，不随滚动/放大移动 */
+.canvas-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  color: var(--text-3);
+  z-index: 1;
+  pointer-events: none;
+}
+
+.canvas-empty p {
+  margin: 0;
+}
+
+.canvas-empty .canvas-empty-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.canvas-empty .canvas-empty-sub {
+  font-size: 13px;
+  color: var(--text-3);
+}
+
+.paper {
+  background: var(--paper-bg);
+  @apply rounded-lg;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.08);
+  overflow: hidden;
+  flex-shrink: 0;
+  position: relative;
+  z-index: 1;
+  animation: paperIn 0.5s var(--ease) forwards;
+  transform-origin: top center;
+  transition: box-shadow var(--t-normal) var(--ease);
+  /* 关键：用 margin:auto 居中，溢出时自动退化为 0，滚动行为正?*/
+  margin: auto;
+}
+
+.paper:hover {
+  box-shadow: 0 4px 32px rgba(0, 0, 0, 0.15);
+}
+
+.paper img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+/* ======================== Canvas Zoom Control ======================== */
+/* 缩放控制 - 定位在预览区顶部居中 */
+.canvas-zoom-control {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 8px;
+  background: var(--canvas-float-bg);
+  @apply rounded-lg;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+  z-index: 10;
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  border: 1px solid var(--canvas-float-border);
+}
+
+[data-theme="dark"] .canvas-zoom-control {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+}
+
+/* ======================== Status Indicator ======================== */
+/* ======================== Status Indicator ======================== */
+/* 状态指示器 - 定位?canvas 容器右下?*/
+.status-indicator {
+  position: absolute;
+  bottom: 12px;
+  right: 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  background: var(--canvas-float-bg);
+  @apply rounded-lg;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+  font-size: 12px;
+  color: var(--text-2, #4a5568);
+  z-index: 10;
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  border: 1px solid var(--canvas-float-border);
+}
+
+[data-theme="dark"] .status-indicator {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+  color: var(--text-2);
+}
+
+.status-indicator-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.status-indicator-item + .status-indicator-item {
+  padding-left: 10px;
+  border-left: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+[data-theme="dark"] .status-indicator-item + .status-indicator-item {
+  border-left-color: var(--border);
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #22c55e;
+  box-shadow: 0 0 6px rgba(34, 197, 94, 0.5);
+  animation: statusPulse 2s ease-in-out infinite;
+}
+
+.status-special {
+  color: #f59e0b;
+  font-weight: 500;
+}
+
+@keyframes statusPulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.85;
+    transform: scale(0.95);
+  }
+}
+
+/* ================================================================
+   DARK MODE ?canvas extras
+   ================================================================ */
+[data-theme="dark"] .paper {
+  background: var(--paper-bg);
+  box-shadow: var(--shadow-xl), 0 0 0 1px rgba(91, 141, 239, 0.04);
+}
+
+[data-theme="dark"] .paper:hover {
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.55);
+}
+
+[data-theme="dark"] .canvas-empty .canvas-empty-title {
+  color: var(--text-2);
+}
+
+[data-theme="dark"] .canvas-loading {
+  color: var(--text-2);
+}
+
+
+/* ======================== 预览骨架屏 ======================== */
+/* 高清未就绪时显示纸张轮廓+加载态，不显示模糊/旧内容 */
+.preview-skeleton {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+}
+
+.preview-skeleton-paper {
+  width: min(70%, 420px);
+  aspect-ratio: 1 / 1.414;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
+}
+
+.preview-skeleton-loader {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  color: var(--text-3);
+  font-size: 13px;
+}
+
+.preview-skeleton-spinner {
+  animation: sk-spin 1s linear infinite;
+  color: var(--accent);
+}
+
+@keyframes sk-spin {
+  to { transform: rotate(360deg); }
+}
+
+
+.cz-separator {
+  width: 1px;
+  height: 20px;
+  background: rgba(0, 0, 0, 0.1);
+  margin: 0 4px;
+}

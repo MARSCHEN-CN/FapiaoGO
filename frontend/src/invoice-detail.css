@@ -1,259 +1,263 @@
-/* ================================================================
-   InvoiceDetail.css ?发票详情编辑面板
-   ================================================================ */
-
-.invoice-detail-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 1000;
-  background: rgba(0, 0, 0, 0.4);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  animation: fadeIn 0.2s var(--ease);
-}
-
-.invoice-detail-panel {
-  background: var(--white);
-  @apply rounded-xl;
-  width: 800px;
-  max-width: 90vw;
-  max-height: 85vh;
-  display: flex;
-  flex-direction: column;
-  @apply shadow-2xl;
-  overflow: hidden;
-  animation: modalScaleIn 0.25s var(--ease);
-}
-
-.invoice-detail-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 16px 20px;
-  border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
-}
-
-.invoice-detail-header h2 {
-  margin: 0;
-  font-size: 16px;
-  font-weight: 600;
-  color: var(--text);
-}
-
-.invoice-detail-header-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-/* ── Buttons ───────────────────────────────────────────────────── */
-.id-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 14px;
-  border: 1px solid var(--border);
-  @apply rounded-sm;
-  background: var(--white);
-  color: var(--text-2);
-  font-size: 13px;
-  cursor: pointer;
-  transition: all var(--t-fast);
-}
-
-.id-btn:hover { background: var(--surface-hover); }
-
-.id-btn-primary { border-color: var(--accent); color: var(--accent); }
-.id-btn-primary:hover { background: var(--accent); color: var(--white); }
-
-.id-btn-success { border-color: var(--success); color: var(--success); }
-.id-btn-success:hover { background: var(--success); color: var(--white); }
-.id-btn-success:disabled { opacity: 0.5; cursor: not-allowed; }
-
-.id-btn-ghost { border-color: transparent; color: var(--text-2); }
-.id-btn-ghost:hover { background: var(--surface-hover); }
-
-.id-btn-close {
-  border: none;
-  background: transparent;
-  color: var(--text-3);
-  padding: 4px 8px;
-  cursor: pointer;
-}
-.id-btn-close:hover { color: var(--text); }
-
-.id-btn-small {
-  font-size: 12px;
-  padding: 3px 10px;
-  border-color: var(--accent);
-  color: var(--accent);
-  background: transparent;
-  @apply rounded-sm;
-  cursor: pointer;
-}
-.id-btn-small:hover { background: var(--accent); color: var(--white); }
-
-.id-btn-danger-small {
-  border: none;
-  background: transparent;
-  color: var(--danger);
-  padding: 4px;
-  cursor: pointer;
-  @apply rounded-sm;
-}
-.id-btn-danger-small:hover { background: var(--danger-bg); }
-
-/* ── Alert ─────────────────────────────────────────────────────── */
-.id-alert {
-  padding: 10px 20px;
-  font-size: 13px;
-  flex-shrink: 0;
-}
-.id-alert-error   { background: var(--danger-bg);  color: var(--danger);  border-bottom: 1px solid var(--danger-bg); }
-
-/* ── Body ──────────────────────────────────────────────────────── */
-.invoice-detail-body {
-  padding: 16px 20px;
-  overflow-y: auto;
-  flex: 1;
-}
-
-.id-field-row {
-  display: flex;
-  align-items: center;
-  padding: 6px 0;
-  border-bottom: 1px solid var(--border-light);
-  gap: 12px;
-}
-
-.id-field-label {
-  width: 120px;
-  min-width: 120px;
-  font-size: 13px;
-  color: var(--text-2);
-  flex-shrink: 0;
-}
-
-.id-field-value {
-  font-size: 13px;
-  color: var(--text);
-  word-break: break-all;
-}
-
-.id-field-input {
-  flex: 1;
-  padding: 4px 8px;
-  border: 1px solid var(--border);
-  @apply rounded-sm;
-  font-size: 13px;
-  outline: none;
-  transition: border-color var(--t-fast);
-  background: var(--white);
-  color: var(--text);
-}
-.id-field-input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(59, 108, 245, 0.1); }
-
-.id-empty { color: var(--text-4); }
-
-/* ── Section title ─────────────────────────────────────────────── */
-.id-section-title {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-top: 20px;
-  margin-bottom: 10px;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text);
-}
-
-.id-empty-section {
-  padding: 20px;
-  text-align: center;
-  color: var(--text-4);
-  font-size: 13px;
-}
-
-/* ── Line items table ──────────────────────────────────────────── */
-.id-line-items-table {
-  border: 1px solid var(--border);
-  @apply rounded-sm;
-  overflow: hidden;
-}
-
-.id-table-header {
-  display: flex;
-  background: var(--surface);
-  border-bottom: 1px solid var(--border);
-}
-
-.id-table-th {
-  padding: 6px 8px;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-2);
-  white-space: nowrap;
-}
-
-.id-table-row {
-  display: flex;
-  border-bottom: 1px solid var(--border-light);
-}
-.id-table-row:last-child { border-bottom: none; }
-
-.id-table-td {
-  padding: 4px 8px;
-  font-size: 13px;
-  color: var(--text-2);
-  display: flex;
-  align-items: center;
-  min-height: 28px;
-}
-
-.id-cell-input {
-  width: 100%;
-  padding: 2px 4px;
-  border: 1px solid var(--border);
-  @apply rounded-sm;
-  font-size: 12px;
-  outline: none;
-  background: var(--white);
-  color: var(--text);
-}
-.id-cell-input:focus { border-color: var(--accent); }
-
+/* ================================================================
+   InvoiceDetail.css ?发票详情编辑面板
+   ================================================================ */
+
+.invoice-detail-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: fadeIn 0.2s var(--ease);
+}
+
+.invoice-detail-panel {
+  background: var(--white);
+  @apply rounded-xl;
+  width: var(--modal-width-2xl);
+  max-width: 90vw;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  @apply shadow-2xl;
+  overflow: hidden;
+  animation: modalScaleIn 0.25s var(--ease);
+}
+
+.invoice-detail-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.invoice-detail-header h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.invoice-detail-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ── Buttons ───────────────────────────────────────────────────── */
+.id-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  @apply rounded-sm;
+  background: var(--white);
+  color: var(--text-2);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all var(--t-fast);
+}
+
+.id-btn:hover { background: var(--surface-hover); }
+
+.id-btn-primary { border-color: var(--accent); color: var(--accent); }
+.id-btn-primary:hover { background: var(--accent); color: var(--white); }
+
+.id-btn-success { border-color: var(--success); color: var(--success); }
+.id-btn-success:hover { background: var(--success); color: var(--white); }
+.id-btn-success:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.id-btn-ghost { border-color: transparent; color: var(--text-2); }
+.id-btn-ghost:hover { background: var(--surface-hover); }
+
+.id-btn-close {
+  border: none;
+  background: transparent;
+  color: var(--text-3);
+  padding: 4px 8px;
+  cursor: pointer;
+}
+.id-btn-close:hover { color: var(--text); }
+
+.id-btn-small {
+  font-size: 12px;
+  padding: 3px 10px;
+  border-color: var(--accent);
+  color: var(--accent);
+  background: transparent;
+  @apply rounded-sm;
+  cursor: pointer;
+}
+.id-btn-small:hover { background: var(--accent); color: var(--white); }
+
+.id-btn-danger-small {
+  border: none;
+  background: transparent;
+  color: var(--danger);
+  padding: 4px;
+  cursor: pointer;
+  @apply rounded-sm;
+}
+.id-btn-danger-small:hover { background: var(--danger-bg); }
+
+/* ── Alert ─────────────────────────────────────────────────────── */
+.id-alert {
+  padding: 10px 20px;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+.id-alert-error   { background: var(--danger-bg);  color: var(--danger);  border-bottom: 1px solid var(--danger-bg); }
+
+/* ── Body ──────────────────────────────────────────────────────── */
+.invoice-detail-body {
+  padding: 16px 20px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.id-field-row {
+  display: flex;
+  align-items: center;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border-light);
+  gap: 12px;
+}
+
+.id-field-label {
+  width: 120px;
+  min-width: 120px;
+  font-size: 13px;
+  color: var(--text-2);
+  flex-shrink: 0;
+}
+
+.id-field-value {
+  font-size: 13px;
+  color: var(--text);
+  word-break: break-all;
+}
+
+.id-field-input {
+  flex: 1;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  @apply rounded-sm;
+  font-size: 13px;
+  outline: none;
+  transition: border-color var(--t-fast);
+  background: var(--white);
+  color: var(--text);
+}
+.id-field-input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(59, 108, 245, 0.1); }
+
+.id-empty { color: var(--text-4); }
+
+/* ── Section title ─────────────────────────────────────────────── */
+.id-section-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 20px;
+  margin-bottom: 10px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.id-empty-section {
+  padding: 20px;
+  text-align: center;
+  color: var(--text-4);
+  font-size: 13px;
+}
+
+/* ── Line items table ──────────────────────────────────────────── */
+.id-line-items-table {
+  border: 1px solid var(--border);
+  @apply rounded-sm;
+  overflow: hidden;
+}
+
+.id-table-header {
+  display: flex;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.id-table-th {
+  padding: 6px 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-2);
+  white-space: nowrap;
+  border-right: 1px solid var(--border-light);
+}
+.id-table-th:last-child { border-right: none; }
+
+.id-table-row {
+  display: flex;
+  border-bottom: 1px solid var(--border-light);
+}
+.id-table-row:last-child { border-bottom: none; }
+
+.id-table-td {
+  padding: 4px 8px;
+  font-size: 13px;
+  color: var(--text-2);
+  display: flex;
+  align-items: center;
+  min-height: 28px;
+  border-right: 1px solid var(--border-light);
+}
+.id-table-td:last-child { border-right: none; }
+
+.id-cell-input {
+  width: 100%;
+  padding: 2px 4px;
+  border: 1px solid var(--border);
+  @apply rounded-sm;
+  font-size: 12px;
+  outline: none;
+  background: var(--white);
+  color: var(--text);
+}
+.id-cell-input:focus { border-color: var(--accent); }
+
 /* ════════════════════════════════════?
-   DARK MODE
-   ════════════════════════════════════?*/
-[data-theme="dark"] .invoice-detail-overlay {
-  background: rgba(0, 0, 0, 0.6);
-}
-
-[data-theme="dark"] .id-field-input:focus {
-  box-shadow: 0 0 0 2px rgba(91, 141, 239, 0.15);
-}
-
-[data-theme="dark"] .id-table-header {
-  background: var(--surface);
-  color: var(--text-2);
-  border-bottom-color: var(--border);
-}
-
-[data-theme="dark"] .id-table-th {
-  color: var(--text-2);
-}
-
-[data-theme="dark"] .id-table-row {
-  background: var(--white);
-}
-
-[data-theme="dark"] .id-table-row:nth-child(even) {
-  background: rgba(255, 255, 255, 0.03);
-}
-
-[data-theme="dark"] .id-table-td {
-  color: var(--text);
-  border-bottom-color: var(--border);
-}
+   DARK MODE
+   ════════════════════════════════════?*/
+[data-theme="dark"] .invoice-detail-overlay {
+  background: rgba(0, 0, 0, 0.6);
+}
+
+[data-theme="dark"] .id-field-input:focus {
+  box-shadow: 0 0 0 2px rgba(91, 141, 239, 0.15);
+}
+
+[data-theme="dark"] .id-table-header {
+  background: var(--surface);
+  color: var(--text-2);
+  border-bottom-color: var(--border);
+}
+
+[data-theme="dark"] .id-table-th {
+  color: var(--text-2);
+}
+
+[data-theme="dark"] .id-table-row {
+  background: var(--white);
+}
+
+[data-theme="dark"] .id-table-row:nth-child(even) {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+[data-theme="dark"] .id-table-td {
+  color: var(--text);
+  border-bottom-color: var(--border);
+}

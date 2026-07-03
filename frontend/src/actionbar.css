@@ -7,8 +7,8 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 20px;
-  height: 64px;
+  padding: 0 clamp(14px, 1vw, 28px);
+  height: var(--actionbar-height);
   background: var(--white);
   border-top: 1px solid var(--border-light);
   flex-shrink: 0;
@@ -33,7 +33,7 @@
 }
 
 .abm-amount-label {
-  font-size: 11px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--text-3);
   text-transform: uppercase;
@@ -47,7 +47,7 @@
 }
 
 .abm-amount-int {
-  font-size: 22px;
+  font-size: clamp(18px, 1vw + 0.3rem, 26px);
   font-weight: 600;
   color: var(--text);
   letter-spacing: -0.02em;
@@ -92,7 +92,7 @@
   padding: 8px 14px;
   border: none;
   border-radius: 10px;
-  font-size: 13px;
+  font-size: var(--fs-md);
   font-weight: 500;
   font-family: inherit;
   cursor: pointer;
@@ -100,7 +100,7 @@
   white-space: nowrap;
   line-height: 1;
   outline: none;
-  height: 38px;
+  height: clamp(34px, 2vw + 0.3rem, 44px);
   box-sizing: border-box;
 }
 
@@ -145,13 +145,13 @@
 }
 
 .abm-btn-text {
-  font-size: 13px;
+  font-size: var(--fs-md);
   font-weight: 500;
   color: inherit;
 }
 
 .abm-btn-progress {
-  font-size: 10px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   opacity: 0.7;
   font-family: 'JetBrains Mono', 'SF Mono', 'Consolas', monospace;
@@ -245,6 +245,80 @@
   color: var(--accent);
   border-color: rgba(59, 108, 245, 0.2);
   cursor: not-allowed;
+}
+
+.abm-btn-export.open {
+  background: #e0e6f2;
+  color: var(--accent);
+  border-color: rgba(59, 108, 245, 0.15);
+}
+
+/* ---- 下拉菜单（上方弹出） ---- */
+.abm-dropdown {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  right: 0;
+  min-width: 180px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.14);
+  padding: 5px;
+  z-index: 200;
+  transform-origin: bottom right;
+  animation: abmDropdownIn 0.15s ease;
+}
+
+@keyframes abmDropdownIn {
+  from {
+    opacity: 0;
+    transform: scale(0.92) translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.abm-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 12px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-2);
+  font-size: var(--fs-md);
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all var(--t-fast) var(--ease);
+  text-align: left;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.abm-dropdown-item:hover {
+  background: #eef1f8;
+  color: var(--text);
+}
+
+.abm-dropdown-item svg {
+  width: 17px;
+  height: 17px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  flex-shrink: 0;
+  opacity: 0.65;
+}
+
+.abm-dropdown-item:hover svg {
+  opacity: 1;
 }
 
 /* ---- 打包导出按钮 ?重要操作 ---- */
@@ -384,6 +458,13 @@
   border-color: rgba(91, 141, 239, 0.25);
 }
 
+[data-theme="dark"] .abm-btn-export.open,
+[data-theme="dark"] .abm-btn-export:focus-within {
+  background: #e0e6f2;
+  color: var(--text);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
 [data-theme="dark"] .abm-btn-pack {
   background: rgba(76, 175, 80, 0.1);
   color: #4CAF50;
@@ -466,7 +547,7 @@
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
 }
 
-[data-theme="dark"] .abm-dropdown-item::after {
-  background: var(--sidebar-bg);
-  border-color: var(--border);
+[data-theme="dark"] .abm-dropdown-item:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text);
 }

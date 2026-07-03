@@ -2,7 +2,7 @@
  * 文件对象构建与多页 PDF 处理
  */
 import { BACKEND_URL } from '../config'
-import { getFileFormat } from '../utils'
+import { getFileFormat, buildSearchText } from '../utils'
 
 /**
  * 生成唯一的文件 key
@@ -29,6 +29,8 @@ export function buildFileObj(file, name, path, previewImage = null) {
     fileFormat: getFileFormat(name),
     previewImage: previewImage ? `data:image/jpeg;base64,${previewImage}` : null,
     printPath: path,
+    // 预计算 searchText，确保所有文件（含未解析或解析失败的）都能快速搜索
+    searchText: buildSearchText({ name }),
   }
 }
 

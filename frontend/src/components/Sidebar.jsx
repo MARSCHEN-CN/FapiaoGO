@@ -42,7 +42,7 @@ export default React.memo(function Sidebar({
   handleNativeDragOver, handleNativeDragLeave,
   getRootProps, getInputProps, isDragActive,
   // actions
-  handleOpenDialog, handleOpenFolder, handlePreview, removeFile, clearFiles,
+  handleOpenDialog, handleOpenFolder, handlePreview, handleHoverFile, removeFile, clearFiles,
   removeFailedFiles, removeDuplicateFiles, handleRotate,
   // sort
   sortBy, sortOrder, toggleSort,
@@ -340,6 +340,7 @@ export default React.memo(function Sidebar({
                   duplicateInfo={duplicateInfo}
                   fileRotations={fileRotations}
                   onPreview={handlePreview}
+                  onHoverFile={handleHoverFile}
                   onRemove={removeFile}
                   onRotate={handleRotate}
                 />

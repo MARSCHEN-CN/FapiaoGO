@@ -20,11 +20,11 @@ const LINE_ITEM_FIELDS = [
   { key: 'xmmc', label: '项目名称', width: '25%' },
   { key: 'ggxh', label: '规格型号', width: '15%' },
   { key: 'dw', label: '单位', width: '8%' },
-  { key: 'sl', label: '数量', width: '8%' },
-  { key: 'dj', label: '单价', width: '10%' },
+  { key: 'sl', label: '数量', width: '10%' },
+  { key: 'dj', label: '单价', width: '17%' },
   { key: 'je', label: '金额', width: '10%' },
-  { key: 'slv', label: '税率', width: '8%' },
-  { key: 'se', label: '税额', width: '10%' },
+  { key: 'slv', label: '税率', width: '7%' },
+  { key: 'se', label: '税额', width: '7%' },
 ]
 
 // 后端返回的 export-data 字段名 → 编辑面板显示字段名

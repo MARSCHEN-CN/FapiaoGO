@@ -1,0 +1,140 @@
+/* ================================================================
+   responsive.css — Resolution Adaptive Overrides
+   ================================================================
+   Design baseline: 2K (2560×1440)
+   Scaling infrastructure lives in variables.css (--sidebar-width,
+   --topbar-height, --actionbar-height, --modal-width-*, --fs-*).
+   This file handles layout-level adjustments that can't be
+   expressed purely through custom properties.
+   ================================================================ */
+
+/* ══════════════════════════════════════════════════
+   4K+ — spacious layout (complements min-width: 3000px in variables.css)
+   ══════════════════════════════════════════════════ */
+@media (min-width: 3000px) {
+  /* Canvas paper preview: more breathing room */
+  .canvas-scroll {
+    padding: 48px;
+  }
+
+  /* File list: larger gap for visual breathing */
+  .sb-files {
+    gap: clamp(8px, 0.4vw, 12px);
+  }
+
+  /* Stats section: more vertical padding */
+  .sb-stat {
+    padding: 18px 0;
+  }
+
+  /* Buttons: slightly heavier padding */
+  .sb-btn {
+    padding: 14px 20px;
+  }
+
+  .abm-btn {
+    padding: 10px 20px;
+  }
+
+  /* Action bar button container gap */
+  .abm-right {
+    gap: 10px;
+  }
+
+  /* Sidebar brand: bigger gap */
+  .sb-brand {
+    gap: 14px;
+  }
+}
+
+/* ══════════════════════════════════════════════════
+   1080p — compact layout (complements max-width: 1400px in variables.css)
+   ══════════════════════════════════════════════════ */
+@media (max-width: 1400px) {
+  /* Canvas: less padding to maximize preview space */
+  .canvas-scroll {
+    padding: 20px;
+  }
+
+  /* File list: tighter gap */
+  .sb-files {
+    gap: 4px;
+  }
+
+  /* Stats: compact */
+  .sb-stat {
+    padding: 10px 0;
+  }
+
+  /* Action bar: tighter spacing */
+  .abm-right {
+    gap: 4px;
+  }
+
+  /* Dropdown menus: smaller */
+  .tb-dropdown {
+    min-width: 160px;
+  }
+
+  .sort-dropdown {
+    min-width: 140px;
+  }
+}
+
+/* ══════════════════════════════════════════════════
+   Very narrow / 1024px — extra compact
+   ══════════════════════════════════════════════════ */
+@media (max-width: 1100px) {
+  /* Topbar: compress button groups */
+  .tb-right {
+    gap: 6px;
+  }
+
+  .tb-left {
+    gap: 6px;
+  }
+
+  /* Hide less-important topbar elements */
+  .tb-tag {
+    display: none;
+  }
+
+  /* Sidebar brand: slightly smaller logo */
+  .sb-brand-logo {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+  }
+
+  /* Action bar: hide text labels, show only icons */
+  .abm-btn-text {
+    display: none;
+  }
+
+  .abm-btn {
+    padding: 8px 10px;
+  }
+
+  /* Amount section: slightly smaller */
+  .abm-amount-int {
+    font-size: 18px;
+  }
+
+  .abm-amount-decimal {
+    font-size: 11px;
+  }
+
+  .abm-amount-cn {
+    max-width: 160px;
+  }
+}
+
+/* ══════════════════════════════════════════════════
+   4K on narrower-than-expected windows (e.g. split screen)
+   ══════════════════════════════════════════════════ */
+@media (min-width: 1920px) and (max-width: 2999px) {
+  /* Smooth transition zone — clamp() handles most of the work */
+  .canvas-scroll {
+    padding: clamp(20px, 1.5vw, 40px);
+  }
+}

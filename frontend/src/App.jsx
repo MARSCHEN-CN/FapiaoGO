@@ -1,6 +1,4 @@
 import { useState, useCallback, useEffect, useRef, useMemo, Suspense, lazy } from 'react'
-import 'react-pdf/dist/Page/AnnotationLayer.css'
-import 'react-pdf/dist/Page/TextLayer.css'
 
 // 懒加载设置窗口（已有）
 const SettingsWindow = lazy(() => import('./components/SettingsWindow'))
@@ -20,6 +18,16 @@ import {
   detectDuplicateInvoices, filterFiles,
 } from './utils'
 import { generateFileKey } from './utils/fileHelpers'
+
+// ── 通用防抖 Hook ──────────────────────────────────────────────
+function useDebounce(value, delay = 250) {
+  const [debounced, setDebounced] = useState(value)
+  useEffect(() => {
+    const timer = setTimeout(() => setDebounced(value), delay)
+    return () => clearTimeout(timer)
+  }, [value, delay])
+  return debounced
+}
 
 import { useSettings } from './hooks/useSettings'
 import { useSort } from './hooks/useSort'
@@ -56,6 +64,8 @@ function App() {
   // ============================
   const [files, setFiles] = useState([])
   const [searchQuery, setSearchQuery] = useState('')
+  // 防抖后的搜索词（250ms），用于过滤文件，避免每次按键都重算
+  const debouncedSearchQuery = useDebounce(searchQuery, 250)
 
   // ============================
   // Hooks
@@ -78,7 +88,7 @@ function App() {
     displayInfo,
   } = preview.state
   const {
-    handlePreview, handleRotate, prevPage, nextPage,
+    handlePreview, preloadHD, handleRotate, prevPage, nextPage,
     handlePrevFile, handleNextFile, cleanupPreviewUrl,
   } = preview.actions
   const {
@@ -219,13 +229,13 @@ function App() {
   }, [previewFile, cleanupPreviewUrl])
 
   // ============================
-  // 搜索过滤（使用预计算的 searchText）
+  // 搜索过滤（使用防抖后的 searchQuery，避免每按键都重算）
   // ============================
   const { filteredFiles, isSearching } = useMemo(() => {
-    const query = searchQuery.trim()
+    const query = debouncedSearchQuery.trim()
     if (!query) return { filteredFiles: files, isSearching: false }
     return { filteredFiles: filterFiles(files, query), isSearching: true }
-  }, [files, searchQuery])
+  }, [files, debouncedSearchQuery])
 
   // ============================
   // 文件统计（useFileStats hook）
@@ -344,29 +354,10 @@ function App() {
   }, [currentAlert, renamePreviewVisible, setRenamePreviewVisible])
 
   useKeyboardShortcuts({
-    onPrevFile: (position) => {
-      if (position === 'first' && files.length > 0) {
-        const firstParsed = files.find(f => f.status === 'parsed')
-        if (firstParsed) handlePreview(firstParsed)
-      } else if (position === 'last' && files.length > 0) {
-        const lastParsed = [...files].reverse().find(f => f.status === 'parsed')
-        if (lastParsed) handlePreview(lastParsed)
-      } else {
-        handlePrevFile()
-      }
-    },
-    onNextFile: (position) => {
-      if (position === 'last' && files.length > 0) {
-        const lastParsed = [...files].reverse().find(f => f.status === 'parsed')
-        if (lastParsed) handlePreview(lastParsed)
-      } else {
-        handleNextFile()
-      }
-    },
+    onPrevFile: handlePrevFile,
+    onNextFile: handleNextFile,
     onPrint: onCtrlP,
     onDelete: handleDeleteCurrent,
-    onPreview: () => previewFile && handlePreview(previewFile),
-    onSelectAll: handleSelectAll,
     onEscape: handleEscape,
   })
 
@@ -529,6 +520,7 @@ function App() {
         handleOpenDialog={handleOpenDialog}
         handleOpenFolder={handleOpenFolder}
         handlePreview={handlePreview}
+        handleHoverFile={preloadHD}
         removeFile={removeFile}
         clearFiles={clearFiles}
         removeFailedFiles={removeFailedFiles}
@@ -790,11 +782,14 @@ function App() {
       <PrintConfirmModal
         visible={!!printConfirmModal}
         settings={settings}
+        saveSettings={saveSettings}
+        printers={printers}
         totalFiles={printableCount}
         mergeMode={isMergeMode(settings.mergeMode)}
         isOneNormalTwoSpecial={settings.extraSpecial || false}
         onConfirm={onPrintConfirm}
         onCancel={handlePrintCancel}
+        onSettingsChange={updateSettings}
       />
 
       {detailFile && (

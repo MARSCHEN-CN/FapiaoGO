@@ -75,6 +75,18 @@ export function useExport({ files, electronAPIRef }) {
         }),
       })
 
+      // 检查非 2xx 响应，从 JSON 体中提取错误信息
+      if (!response.ok) {
+        let errorMsg = `服务器返回 ${response.status}`
+        try {
+          const errBody = await response.json()
+          if (errBody.error) errorMsg = errBody.error
+        } catch (_) {}
+        setExportResult({ success: false, error: errorMsg })
+        setExporting(false)
+        return
+      }
+
       // 消费 SSE 事件流
       const reader = response.body.getReader()
       const decoder = new TextDecoder()

@@ -95,6 +95,7 @@ const pdfRenderCache = new LRUCache(30, 'pdfRender')
 
 // ✅ 渲染结果缓存：缓存 renderMultipleItemsToCanvas 的 Canvas 输出
 // 预览和打印使用相同参数时直接命中，避免重复渲染
+// 容量 30 个：对应 ~30 个 A4@300DPI 文件（~1GB 预算），大幅提升"来回切换"命中率
 class RenderResultCache {
   constructor(maxSize = 10) {
     this.cache = new Map()
@@ -105,12 +106,10 @@ class RenderResultCache {
     const entry = this.cache.get(key)
     this.cache.delete(key)
     this.cache.set(key, entry) // move to end (LRU)
-    // ✅ 克隆 Canvas 避免引用共享问题
-    const cloned = document.createElement('canvas')
-    cloned.width = entry.width
-    cloned.height = entry.height
-    cloned.getContext('2d').drawImage(entry, 0, 0)
-    return cloned
+    // ✅ 直接返回缓存 canvas，跳过克隆
+    //   - 所有调用方只读不写（drawImage/toDataURL）
+    //   - 消除 ~35MB（A4@300DPI）的同步 drawImage 像素拷贝
+    return entry
   }
   set(key, canvas) {
     if (this.cache.has(key)) this.cache.delete(key)
@@ -140,7 +139,7 @@ class RenderResultCache {
   get size() { return this.cache.size }
 }
 
-const renderResultCache = new RenderResultCache(10)
+const renderResultCache = new RenderResultCache(30)
 
 // ========== 常量 ==========
 const SEPARATOR_MARGIN = 20        // 分隔线边距（像素）
@@ -349,17 +348,56 @@ export async function renderPDFToCanvas(
  * @returns {Promise<{canvas: HTMLCanvasElement, width: number, height: number} | null>}
  */
 
-// ✅ PDF 渲染序列化锁：防止多个并发渲染同时访问同一个 PDFDocumentProxy
-let _pdfRenderQueue = Promise.resolve()
+// ✅ PDF 渲染序列化锁：同文件串行（防止 pdfjs Canvas 竞争），不同文件并发
+//    key 为 fileKey，不同文件使用独立队列
+const _renderQueues = new Map()
 
-async function renderPDFPageRaw(pdfData, dpi) {
-  // ✅ 排队执行，确保同一时刻只有一个 PDF 渲染任务
-  const result = _pdfRenderQueue.then(async () => {
+function _getRenderQueueKey(pdfData, fileKey) {
+  // fileKey 优先（显式、可预测），fallback 到数据引用
+  return fileKey || pdfData
+}
+
+// ✅ 每文件渲染版本计数器：过期渲染自动跳过，解除串行锁
+//    当用户快速切换 A→B→A 时，第一次 A 的渲染在队列中，
+//    但版本号已被后续请求覆盖，队列中的渲染检查到版本超期即跳过
+const _renderVersions = new Map()
+
+async function renderPDFPageRaw(pdfData, dpi, fileKey) {
+  // 按文件隔离队列
+  const queueKey = _getRenderQueueKey(pdfData, fileKey)
+  let queue = _renderQueues.get(queueKey)
+  if (!queue) {
+    queue = Promise.resolve()
+    _renderQueues.set(queueKey, queue)
+  }
+
+  // 递增版本号，使旧渲染过期
+  const version = (_renderVersions.get(queueKey) || 0) + 1
+  _renderVersions.set(queueKey, version)
+
+  // 控制版本 Map 大小
+  if (_renderVersions.size > 100) {
+    const firstKey = _renderVersions.keys().next().value
+    _renderVersions.delete(firstKey)
+  }
+
+  // 检查当前版本是否仍是最新
+  const isLatest = () => _renderVersions.get(queueKey) === version
+
+  // 排队执行，同文件串行，不同文件并发
+  const result = queue.then(async () => {
+    // 版本已过期，跳过
+    if (!isLatest()) return null
+
     let pdf = null
     let page = null
     try {
       pdf = await getOrLoadPdfDocument(pdfData)
+      // 加载 pdf 文档后再次检查版本
+      if (!isLatest()) { return null }
+
       page = await pdf.getPage(1)
+      if (!isLatest()) { return null }
 
       const viewport = page.getViewport({ scale: 1 })
       const scale = dpi / 72
@@ -374,20 +412,30 @@ async function renderPDFPageRaw(pdfData, dpi) {
       ctx.fillStyle = '#ffffff'
       ctx.fillRect(0, 0, width, height)
 
+      // page.render 前再次检查版本（此为最耗时操作）
+      if (!isLatest()) { return null }
+
       const scaledViewport = page.getViewport({ scale })
       await page.render({ canvasContext: ctx, viewport: scaledViewport }).promise
 
       return { canvas, width, height }
     } catch (e) {
-      console.error('[renderPDFPageRaw] PDF 渲染失败:', e)
+      if (isLatest()) {
+        console.error('[renderPDFPageRaw] PDF 渲染失败:', e)
+      }
       return null
     }
-    // ✅ 不调用 page.cleanup()：PDFDocumentProxy 是缓存的，
-    //    并发渲染共享文档状态，提前 cleanup 会导致白屏
   })
 
-  // ✅ 更新队列：当前任务完成（无论成功失败）后才开始下一个
-  _pdfRenderQueue = result.then(() => {}).catch(() => {})
+  // 更新队列：当前任务完成后才能开始下一个（同文件内串行）
+  _renderQueues.set(queueKey, result.then(() => {}).catch(() => {}))
+
+  // 控制 Map 大小：只保留最近用过的队列
+  if (_renderQueues.size > 100) {
+    const firstKey = _renderQueues.keys().next().value
+    _renderQueues.delete(firstKey)
+  }
+
   return result
 }
 
@@ -590,7 +638,7 @@ export async function renderMultipleItemsToCanvas(
     try {
       if (item._pdfData) {
         // PDF: 用 renderPDFPageRaw 渲染原始内容（目标 DPI 像素，无纸张适配）
-        const result = await renderPDFPageRaw(item._pdfData, dpi)
+        const result = await renderPDFPageRaw(item._pdfData, dpi, item.key)
         if (result) {
           contentSources.set(id, { source: result.canvas, width: result.width, height: result.height })
         }

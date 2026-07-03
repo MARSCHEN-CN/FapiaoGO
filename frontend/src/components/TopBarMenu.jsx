@@ -120,13 +120,9 @@ export default function TopBarMenu({
           <div className="tb-shortcuts-grid">
             {[
               { label: '打印', key: 'Ctrl+P' },
-              { label: '全选', key: 'Ctrl+A' },
               { label: '删除', key: 'Delete' },
-              { label: '预览', key: 'Space' },
               { label: '上一个', key: '\u2190' },
               { label: '下一个', key: '\u2192' },
-              { label: '第一个', key: 'Home' },
-              { label: '最后一个', key: 'End' },
               { label: '取消', key: 'Esc' },
             ].map(({ label, key }) => (
               <div className="tb-shortcut-item" key={label}>

@@ -4,6 +4,7 @@
 import { BACKEND_URL } from './config'
 
 const API = BACKEND_URL || 'http://localhost:5000'
+const DEFAULT_TIMEOUT_MS = 30000
 
 /**
  * 统一的 DB 错误对象
@@ -21,14 +22,32 @@ function isDbError(res) {
 
 /**
  * 通用 HTTP 请求封装
+ *
+ * 特性：
+ * - 默认 30s 超时（通过 AbortController 实现）
+ * - 支持通过 options.timeout 自定义超时时长
+ * - 超时/Abort 时返回 DB_ERROR，不会挂起 UI
  */
 async function api(path, options = {}) {
+  const controller = new AbortController()
+  const timeoutMs = options.timeout ?? DEFAULT_TIMEOUT_MS
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
+
   try {
     const url = `${API}${path}`
     const res = await fetch(url, {
       headers: { 'Content-Type': 'application/json' },
+      signal: controller.signal,
       ...options,
     })
+    clearTimeout(timeoutId)
+
+    if (!res.ok) {
+      const errMsg = `HTTP ${res.status}: ${res.statusText}`
+      console.error(`[DB] ${path} 失败:`, errMsg)
+      return dbError(errMsg, 'HTTP_ERROR')
+    }
+
     const data = await res.json()
     if (data.success === false) {
       console.error(`[DB] ${path} 失败:`, data.error)
@@ -36,8 +55,12 @@ async function api(path, options = {}) {
     }
     return data.data !== undefined ? data.data : data
   } catch (err) {
-    console.error(`[DB] ${path} 网络错误:`, err.message)
-    return dbError(err.message, 'NETWORK_ERROR')
+    clearTimeout(timeoutId)
+    const errMsg = err.name === 'AbortError'
+      ? `请求超时（${timeoutMs}ms）`
+      : err.message
+    console.error(`[DB] ${path} 请求失败:`, errMsg)
+    return dbError(errMsg, 'NETWORK_ERROR')
   }
 }
 

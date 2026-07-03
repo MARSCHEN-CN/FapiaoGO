@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
-import { PREVIEW_DPI, ZOOM_STEPS } from '../config'
+import { PREVIEW_DPI, ZOOM_STEPS, PAPER_SIZE_MAP } from '../config'
 import {
-  b64toBlob, getFileFormat, isMergeMode, getMergePair,
+  b64toBlob, getFileFormat, getExtension, isMergeMode, getMergePair,
 } from '../utils'
 import * as pdfjs from 'pdfjs-dist'
 import pdfjsWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
@@ -61,6 +61,21 @@ export function usePreview({ files, settings, electronAPIRef }) {
   const zoomMenuCloseTimeoutRef = useRef(null)
   // ✅ 保存 handlePreview 最新引用，避免 useEffect 闭包陷阱
   const handlePreviewRef = useRef(null)
+  // ✅ L2 缓存：预渲染高清画布（通过 hover 提前填充）
+  //    与 renderResultCache 共享同一 canvas 引用（无额外内存）
+  const fullCacheRef = useRef(new Map())
+  // ✅ 当前 hover 预加载的 AbortController（只保留最后一个）
+  const currentPreloadRef = useRef(null)
+  // ✅ 渲染跳过标记：handlePreview 从 fullCache 取到 canvas 时，
+  //    设置此标记让 render effect 跳过，避免重复渲染
+  const skipRenderRef = useRef(false)
+  // ✅ previewFile 的同步 ref：解决 async handlePreview 期间 state 未更新的竞态问题
+  //    handleNextFile / handlePrevFile 等依赖索引计算的逻辑通过此 ref 读取最新值
+  const previewFileRef = useRef(null)
+  // ✅ loadFilePreview 数据缓存：避免每次文件切换都重复 b64toBlob / IPC 读文件
+  //    图片缓存 Blob 对象，PDF 缓存 Uint8Array
+  //    LRU 自清理（max 50 条），文件删除后 key 自然失效
+  const previewLoadCacheRef = useRef(new Map())
   const filesRef = useRef(files)
   const fileIndexMapRef = useRef(new Map())
   useEffect(() => {
@@ -85,13 +100,13 @@ export function usePreview({ files, settings, electronAPIRef }) {
   // ── 旋转 ──
   // ✅ 只更新 fileRotations，移除对 previewRotation 的更新
   const handleRotate = useCallback((targetKey) => {
-    const key = targetKey || previewFile?.key
+    const key = targetKey || previewFileRef.current?.key
     if (!key) return
     setFileRotations(prev => ({
       ...prev,
       [key]: ((prev[key] || 0) + 90) % 360
     }))
-  }, [previewFile])
+  }, [])
 
   // ── 清理预览 URL ──
   const cleanupPreviewUrl = useCallback(() => {
@@ -177,6 +192,9 @@ export function usePreview({ files, settings, electronAPIRef }) {
   // 预览渲染
   // ============================
   useEffect(() => {
+    // ✅ L2 缓存旁路：fullCache 命中时跳过整个渲染流程
+    if (skipRenderRef.current) { skipRenderRef.current = false; return }
+
     if (!previewFile) { setPreviewCanvas(null); return }
 
     const isImageOrOfd =
@@ -190,8 +208,14 @@ export function usePreview({ files, settings, electronAPIRef }) {
     }
 
     const { paperSize } = settings
-    // isLandscape 由 detectDocumentOrientation 自动判断（图片/OFD 看宽高比，PDF 默认竖版）
-    const isLandscape = detectDocumentOrientation(previewFile) === 'landscape'
+    // isLandscape = paperShouldShowAsLandscape
+    // 规则：纸张与内容方向不同时才 swap（让内容能铺满）
+    //   横向内容+横向纸 → isLandscape=false（纸保持横向，内容不旋转直接铺）
+    //   竖向内容+横向纸 → isLandscape=true （纸 swap 成竖向，内容旋转 90° 铺）
+    const contentOrient = detectDocumentOrientation(previewFile)
+    const paperDims = PAPER_SIZE_MAP[paperSize]
+    const paperOrient = paperDims && paperDims.widthMM > paperDims.heightMM ? 'landscape' : 'portrait'
+    const isLandscape = contentOrient !== paperOrient
     // ✅ renderKey 必须包含合并模式、合并组所有文件的旋转值，以确保模式切换和多文件旋转都能触发重渲染
     const mergeRotations = mergePair?.map(m => `${m?.key}:${fileRotations[m?.key] || 0}`).join(',') || ''
     const renderKey = `${previewFile.key}-${paperSize}-${isLandscape}-${currentRotation}-${settings.mergeMode || ''}-${mergePair?.map(m => m?.key).join(',') || ''}-${mergeRotations}`
@@ -388,7 +412,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
     
     // 如果没有，根据文件扩展名检测
     if (!fmt && fObj.name) {
-      const ext = fObj.name.split('.').pop().toLowerCase()
+      const ext = getExtension(fObj.name)
       const formatMap = {
         'pdf': 'pdf',
         'png': 'image',
@@ -410,9 +434,20 @@ export function usePreview({ files, settings, electronAPIRef }) {
         if (fObj.key === currentKey && currentUrl) {
           _previewImageUrl = currentUrl
         }
-        // 从 previewImage 加载
+        // 从 previewImage 加载（带 Blob 缓存，避免重复 b64toBlob）
         else if (fObj.previewImage) {
-          const blob = b64toBlob(fObj.previewImage, 'image/png')
+          const cacheKey = 'blob_' + fObj.key
+          let blob = previewLoadCacheRef.current.get(cacheKey)
+          if (!blob || blob.size === 0) {
+            blob = b64toBlob(fObj.previewImage, 'image/png')
+            if (blob.size > 0) {
+              if (previewLoadCacheRef.current.size >= 50) {
+                const firstKey = previewLoadCacheRef.current.keys().next().value
+                previewLoadCacheRef.current.delete(firstKey)
+              }
+              previewLoadCacheRef.current.set(cacheKey, blob)
+            }
+          }
           if (blob.size > 0) {
             _previewImageUrl = URL.createObjectURL(blob)
             pendingBlobUrlsRef.current.push(_previewImageUrl)
@@ -433,20 +468,28 @@ export function usePreview({ files, settings, electronAPIRef }) {
           }
         }
 
-        // 提取图片/OFD 尺寸用于方向检测
+        // 提取图片/OFD 尺寸用于方向检测（带缓存）
         if (_previewImageUrl && !fObj._imageWidth && !fObj.previewWidth) {
-          try {
-            const img = new Image()
-            const dims = await new Promise((resolve) => {
-              img.onload = () => resolve({ w: img.naturalWidth, h: img.naturalHeight })
-              img.onerror = () => resolve(null)
-              img.src = _previewImageUrl
-            })
-            if (dims) {
-              fObj._imageWidth = dims.w
-              fObj._imageHeight = dims.h
-            }
-          } catch (e) { /* 尺寸提取失败 fallback portrait */ }
+          const dimsKey = 'dims_' + fObj.key
+          const cachedDims = previewLoadCacheRef.current.get(dimsKey)
+          if (cachedDims) {
+            fObj._imageWidth = cachedDims.w
+            fObj._imageHeight = cachedDims.h
+          } else {
+            try {
+              const img = new Image()
+              const dims = await new Promise((resolve) => {
+                img.onload = () => resolve({ w: img.naturalWidth, h: img.naturalHeight })
+                img.onerror = () => resolve(null)
+                img.src = _previewImageUrl
+              })
+              if (dims) {
+                fObj._imageWidth = dims.w
+                fObj._imageHeight = dims.h
+                previewLoadCacheRef.current.set(dimsKey, dims)
+              }
+            } catch (e) { /* 尺寸提取失败 fallback portrait */ }
+          }
         }
 
         return { ...fObj, _previewImageUrl, _fileFormat: fmt }
@@ -454,27 +497,49 @@ export function usePreview({ files, settings, electronAPIRef }) {
 
       if (fmt === 'pdf') {
         let buffer = null
-        if (fObj.file) {
-          buffer = await fObj.file.arrayBuffer()
-        } else if (electronAPIRef.current?.ipcRenderer && fObj.printPath) {
-          const fd = await electronAPIRef.current.ipcRenderer.invoke('read-file', fObj.printPath)
-          if (fd.success) {
-            buffer = fd.data.buffer
+        // ✅ 尝试从缓存取 Uint8Array（_pdfData），避免重复 IPC read-file + pdfjs 解析
+        const pdfKey = 'pdf_' + fObj.key
+        const cachedPdfData = previewLoadCacheRef.current.get(pdfKey)
+        if (cachedPdfData) {
+          _pdfData = cachedPdfData
+        } else {
+          if (fObj.file) {
+            buffer = await fObj.file.arrayBuffer()
+          } else if (electronAPIRef.current?.ipcRenderer && fObj.printPath) {
+            const fd = await electronAPIRef.current.ipcRenderer.invoke('read-file', fObj.printPath)
+            if (fd.success) {
+              buffer = fd.data.buffer
+            }
+          }
+          if (buffer) {
+            _pdfData = new Uint8Array(buffer)
+            if (previewLoadCacheRef.current.size >= 50) {
+              const firstKey = previewLoadCacheRef.current.keys().next().value
+              previewLoadCacheRef.current.delete(firstKey)
+            }
+            previewLoadCacheRef.current.set(pdfKey, _pdfData)
           }
         }
-        if (buffer) {
-          _pdfData = new Uint8Array(buffer)
-          // 提取第一页尺寸用于方向检测（轻量，不渲染 Canvas）
-          // ⚠️ 必须传副本：pdfjs.getDocument 会接管 ArrayBuffer，后续 destroy 会 detached buffer
-          try {
-            const pdfDoc = await pdfjs.getDocument({ data: new Uint8Array(_pdfData) }).promise
-            const page = await pdfDoc.getPage(1)
-            const vp = page.getViewport({ scale: 1 })
-            fObj._pdfPageWidth = vp.width
-            fObj._pdfPageHeight = vp.height
-            pdfDoc.destroy()
-          } catch (pdfErr) {
-            // PDF 尺寸提取失败不影响预览，仅方向检测 fallback 到 portrait
+        if (_pdfData) {
+          // 提取第一页尺寸用于方向检测（带缓存）
+          const dimsKey = 'pdfDims_' + fObj.key
+          const cachedDims = previewLoadCacheRef.current.get(dimsKey)
+          if (cachedDims) {
+            fObj._pdfPageWidth = cachedDims.w
+            fObj._pdfPageHeight = cachedDims.h
+          } else {
+            // ⚠️ 必须传副本：pdfjs.getDocument 会接管 ArrayBuffer，后续 destroy 会 detached buffer
+            try {
+              const pdfDoc = await pdfjs.getDocument({ data: new Uint8Array(_pdfData) }).promise
+              const page = await pdfDoc.getPage(1)
+              const vp = page.getViewport({ scale: 1 })
+              fObj._pdfPageWidth = vp.width
+              fObj._pdfPageHeight = vp.height
+              pdfDoc.destroy()
+              previewLoadCacheRef.current.set(dimsKey, { w: vp.width, h: vp.height })
+            } catch (pdfErr) {
+              // PDF 尺寸提取失败不影响预览，仅方向检测 fallback 到 portrait
+            }
           }
         }
         return { ...fObj, _pdfData, _fileFormat: 'pdf' }
@@ -520,6 +585,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
         const validLoaded = loaded.filter(Boolean)
         // ✅ 检查版本号，确保只处理最新请求
         if (validLoaded.length > 0 && version === previewVersionRef.current) {
+          previewFileRef.current = validLoaded[0]
           setMergePair(validLoaded)
           setPreviewFile(validLoaded[0])
           setPreviewPage(1)
@@ -530,9 +596,39 @@ export function usePreview({ files, settings, electronAPIRef }) {
     }
 
     // ── 单文件预览 ──
+    // ✅ L2 缓存命中：fullCache 已有预渲染画布，直接瞬时显示
+    const cachedCanvas = fullCacheRef.current.get(fileObj.key)
+    if (cachedCanvas) {
+      // 仍需加载文件数据以使 render effect 通过守卫条件
+      const loadedFile = await loadFilePreview(fileObj)
+      if (version !== previewVersionRef.current) return
+      skipRenderRef.current = true
+      previewFileRef.current = loadedFile
+      setMergePair(null)
+      setPreviewFile(loadedFile)
+      setPreviewPage(1)
+      setNumPages(loadedFile._fileFormat === 'pdf' ? 0 : 1)
+      // 直接设置缓存画布，跳过整个异步渲染管线
+      setPreviewCanvas(cachedCanvas)
+      if (loadedFile._previewImageUrl) {
+        previewUrlRef.current = loadedFile._previewImageUrl
+      }
+      // 清理旧 blob URL
+      oldBlobUrls.forEach(url => { try { URL.revokeObjectURL(url) } catch (e) {} })
+      pendingBlobUrlsRef.current = pendingBlobUrlsRef.current.filter(
+        url => !oldBlobUrls.includes(url)
+      )
+      if (oldPreviewUrl && oldPreviewUrl !== previewUrlRef.current) {
+        try { URL.revokeObjectURL(oldPreviewUrl) } catch (e) {}
+      }
+      return
+    }
+
+    // ── 正常预览加载（全缓存未命中） ──
     const loadedFile = await loadFilePreview(fileObj)
     // ✅ 检查版本号，确保只处理最新请求
     if (version === previewVersionRef.current) {
+      previewFileRef.current = loadedFile
       setMergePair(null)
       setPreviewFile(loadedFile)
       setPreviewPage(1)
@@ -560,6 +656,55 @@ export function usePreview({ files, settings, electronAPIRef }) {
       }
     }
   }, [settings.mergeMode, loadPairItemForPreview, loadFilePreview])
+
+  // ============================
+  // Hover 预加载：低优先级，可取消
+  // ============================
+  const preloadHD = useCallback(async (fileObj) => {
+    if (!fileObj?.key || !fileObj.name) return
+    // 已缓存，跳过
+    if (fullCacheRef.current.has(fileObj.key)) return
+    // 取消上一个预加载
+    if (currentPreloadRef.current) {
+      currentPreloadRef.current.abort()
+    }
+
+    const controller = new AbortController()
+    currentPreloadRef.current = controller
+    const preloadVersion = Date.now()
+
+    try {
+      // 加载预览数据（填充 previewLoadCache）
+      const loadedFile = await loadFilePreview(fileObj)
+      if (controller.signal.aborted) return
+
+      // 计算渲染参数（与 render effect 中单文件逻辑保持一致）
+      const contentOrient = detectDocumentOrientation(loadedFile)
+      const paperDims = PAPER_SIZE_MAP[settings.paperSize || 'A4']
+      const paperOrient = paperDims && paperDims.widthMM > paperDims.heightMM ? 'landscape' : 'portrait'
+      const isLandscape = contentOrient !== paperOrient
+      const rotation = fileRotations[fileObj.key] || 0
+      const effectiveLandscape = (rotation % 180 !== 0) ? !isLandscape : isLandscape
+
+      if (controller.signal.aborted) return
+
+      const { renderMultipleItemsToCanvas } = await getRenderers()
+      const canvas = await renderMultipleItemsToCanvas(
+        [{ ...loadedFile }],
+        settings.paperSize || 'A4', PREVIEW_DPI, effectiveLandscape,
+        { [fileObj.key]: rotation },
+        1, false,
+        { strategy: 'vertical' }
+      )
+
+      if (controller.signal.aborted) return
+      if (canvas) {
+        fullCacheRef.current.set(fileObj.key, canvas)
+      }
+    } catch (e) {
+      // 预加载失败非关键错误，静默处理
+    }
+  }, [loadFilePreview, settings.paperSize, fileRotations])
 
   // ✅ 保存 handlePreview 最新引用，避免 useEffect 闭包陷阱
   useEffect(() => {
@@ -610,6 +755,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
         }, 0)
         handlePreview(files[0])
       } else {
+        previewFileRef.current = null
         setPreviewFile(null)
         setMergePair(null)
         setPreviewCanvas(null)
@@ -639,11 +785,12 @@ export function usePreview({ files, settings, electronAPIRef }) {
   }, [])
 
   const handlePrevFile = useCallback(() => {
-    if (!previewFile || filesRef.current.length <= 1) return
+    const currentKey = previewFileRef.current?.key
+    if (!currentKey || filesRef.current.length <= 1) return
 
     if (isMergeMode(settings.mergeMode)) {
       const groupSize = parseInt(settings.mergeMode?.replace('merge', '')) || 2
-      const pair = getMergePair(filesRef.current, previewFile.key, groupSize)
+      const pair = getMergePair(filesRef.current, currentKey, groupSize)
 
       if (pair && pair.length > 0) {
         const idx = fileIndexMapRef.current.get(pair[0].key) ?? -1
@@ -653,16 +800,17 @@ export function usePreview({ files, settings, electronAPIRef }) {
       }
     }
 
-    const idx = fileIndexMapRef.current.get(previewFile.key) ?? -1
+    const idx = fileIndexMapRef.current.get(currentKey) ?? -1
     if (idx > 0) handlePreview(filesRef.current[idx - 1])
-  }, [previewFile, settings.mergeMode, handlePreview])
+  }, [settings.mergeMode, handlePreview])
 
   const handleNextFile = useCallback(() => {
-    if (!previewFile || filesRef.current.length <= 1) return
+    const currentKey = previewFileRef.current?.key
+    if (!currentKey || filesRef.current.length <= 1) return
 
     if (isMergeMode(settings.mergeMode)) {
       const groupSize = parseInt(settings.mergeMode?.replace('merge', '')) || 2
-      const pair = getMergePair(filesRef.current, previewFile.key, groupSize)
+      const pair = getMergePair(filesRef.current, currentKey, groupSize)
 
       if (pair && pair.length > 0) {
         const idx = fileIndexMapRef.current.get(pair[0].key) ?? -1
@@ -672,9 +820,9 @@ export function usePreview({ files, settings, electronAPIRef }) {
       }
     }
 
-    const idx = fileIndexMapRef.current.get(previewFile.key) ?? -1
+    const idx = fileIndexMapRef.current.get(currentKey) ?? -1
     if (idx < filesRef.current.length - 1) handlePreview(filesRef.current[idx + 1])
-  }, [previewFile, settings.mergeMode, handlePreview])
+  }, [settings.mergeMode, handlePreview])
 
   const onDocumentLoadSuccess = useCallback(({ numPages }) => setNumPages(numPages), [])
 
@@ -682,6 +830,15 @@ export function usePreview({ files, settings, electronAPIRef }) {
   useEffect(() => {
     return () => {
       cleanupAllBlobUrls()
+      // ✅ 清理 preview 数据缓存（释放 Blob / Uint8Array 引用）
+      previewLoadCacheRef.current.clear()
+      // ✅ 清理 fullCache（预渲染画布在 renderResultCache 中已有引用，此处只是清空映射）
+      fullCacheRef.current.clear()
+      // ✅ 取消进行中的预加载
+      if (currentPreloadRef.current) {
+        currentPreloadRef.current.abort()
+        currentPreloadRef.current = null
+      }
       // ✅ 清理 zoom menu 关闭动画的 timeout
       if (zoomMenuCloseTimeoutRef.current) {
         clearTimeout(zoomMenuCloseTimeoutRef.current)
@@ -725,6 +882,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
      */
     actions: {
       handlePreview,
+      preloadHD,
       handleRotate,
       prevPage,
       nextPage,

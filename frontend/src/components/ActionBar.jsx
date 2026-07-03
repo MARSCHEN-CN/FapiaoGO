@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useRef, useEffect } from 'react'
 
 /**
  * 现代化操作按钮区域
@@ -23,6 +23,23 @@ export default React.memo(function ActionBar({
   handleExportExcel,
   exporting,
 }) {
+  // 导出下拉菜单状态
+  const [exportDropdownOpen, setExportDropdownOpen] = useState(false)
+  const exportDropdownRef = useRef(null)
+
+  // 点击外部关闭下拉
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (exportDropdownRef.current && !exportDropdownRef.current.contains(e.target)) {
+        setExportDropdownOpen(false)
+      }
+    }
+    if (exportDropdownOpen) {
+      document.addEventListener('mousedown', handleClickOutside)
+      return () => document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [exportDropdownOpen])
+
   // 计算进度百分比
   const renameProgress = packing && packProgress.total > 0
     ? Math.round((packProgress.current / packProgress.total) * 100)
@@ -46,12 +63,12 @@ export default React.memo(function ActionBar({
 
       {/* 右侧：操作按钮组 */}
       <div className="abm-right">
-        {/* 导出按钮 */}
+        {/* 导出按钮（点击上方弹出下拉菜单） */}
         {filesCount > 0 && (
-          <div className="abm-btn-wrapper">
+          <div className="abm-btn-wrapper" ref={exportDropdownRef}>
             <button
-              className={`abm-btn abm-btn-export ${exporting ? 'executing' : ''}`}
-              onClick={handleExportExcel}
+              className={`abm-btn abm-btn-export ${exporting ? 'executing' : ''} ${exportDropdownOpen ? 'open' : ''}`}
+              onClick={() => setExportDropdownOpen(prev => !prev)}
               disabled={exporting || packing}
               aria-label={exporting ? '导出中...' : '导出'}
             >
@@ -67,8 +84,36 @@ export default React.memo(function ActionBar({
                   </svg>
                 )}
               </div>
-              <span className="abm-btn-text">导出</span>
+              <span className="abm-btn-text">{exporting ? '导出中...' : '导出'}</span>
             </button>
+
+            {exportDropdownOpen && (
+              <div className="abm-dropdown">
+                <button
+                  className="abm-dropdown-item"
+                  onClick={() => { handleExportExcel(); setExportDropdownOpen(false) }}
+                >
+                  <svg viewBox="0 0 48 48" fill="none">
+                    <path d="M10 6H30L38 14V40C38 41.1046 37.1046 42 36 42H10C8.89543 42 8 41.1046 8 40V8C8 6.89543 8.89543 6 10 6Z" stroke="currentColor" strokeWidth="4" strokeLinejoin="round"/>
+                    <path d="M28 6V14H38" stroke="currentColor" strokeWidth="4" strokeLinejoin="round"/>
+                    <path d="M18 24L24 30L30 24" stroke="currentColor" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round"/>
+                    <path d="M24 30V18" stroke="currentColor" strokeWidth="4" strokeLinecap="round"/>
+                  </svg>
+                  导出为Excel
+                </button>
+                <button
+                  className="abm-dropdown-item"
+                  onClick={() => { handlePack(); setExportDropdownOpen(false) }}
+                >
+                  <svg viewBox="0 0 48 48" fill="none">
+                    <path d="M4 10C4 8.89543 4.89543 8 6 8H18L24 14H42C43.1046 14 44 14.8954 44 16V38C44 39.1046 43.1046 40 42 40H6C4.89543 40 4 39.1046 4 38V10Z" stroke="currentColor" strokeWidth="4" strokeLinejoin="round"/>
+                    <path d="M30 26H18" stroke="currentColor" strokeWidth="4" strokeLinecap="round"/>
+                    <path d="M28 22L32 26L28 30" stroke="currentColor" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                  导出为压缩包
+                </button>
+              </div>
+            )}
           </div>
         )}
 
@@ -96,49 +141,6 @@ export default React.memo(function ActionBar({
               <div className="abm-btn-content">
                 <span className="abm-btn-text">
                   {packing ? `重命名中` : '重命名'}
-                </span>
-                {packing && (
-                  <span className="abm-btn-progress">
-                    {packProgress.current}/{packProgress.total}
-                  </span>
-                )}
-              </div>
-              {packing && (
-                <div className="abm-progress-bar">
-                  <div className="abm-progress-fill" style={{ width: `${renameProgress}%` }} />
-                </div>
-              )}
-            </button>
-          </div>
-        )}
-
-        {/* 打包导出按钮 */}
-        {filesCount > 0 && (
-          <div className="abm-btn-wrapper">
-            <button
-              className={`abm-btn abm-btn-pack ${packing ? 'executing' : ''}`}
-              onClick={handlePack}
-              disabled={packing}
-              aria-label={packing ? `打包中 ${packProgress.current}/${packProgress.total}` : '打包导出'}
-            >
-              <div className="abm-btn-icon">
-                {packing ? (
-                  <svg className="abm-spinner" viewBox="0 0 24 24">
-                    <circle cx="12" cy="12" r="10" fill="none" strokeWidth="2" stroke="currentColor" strokeDasharray="31.4 31.4" />
-                  </svg>
-                ) : (
-                  <svg viewBox="0 0 24 24">
-                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                    <polyline points="7 10 12 15 17 10" />
-                    <line x1="12" y1="15" x2="12" y2="3" />
-                    <path d="M14.5 10.5l-5-5" />
-                    <path d="M14.5 5.5l-5 5" />
-                  </svg>
-                )}
-              </div>
-              <div className="abm-btn-content">
-                <span className="abm-btn-text">
-                  {packing ? `打包中` : '打包'}
                 </span>
                 {packing && (
                   <span className="abm-btn-progress">
