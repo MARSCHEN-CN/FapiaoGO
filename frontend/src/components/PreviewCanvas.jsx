@@ -30,12 +30,14 @@ export default memo(function PreviewCanvas({ previewFile, displayInfo, previewCa
       return (
         <div className="preview-skeleton">
           <div className="preview-skeleton-paper">
+            <div className="preview-skeleton-shimmer" />
             <div className="preview-skeleton-loader">
-              <svg className="preview-skeleton-spinner" viewBox="0 0 24 24" width="24" height="24">
-                <circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" strokeWidth="2"
-                  strokeDasharray="31.4 31.4" strokeLinecap="round" />
-              </svg>
-              <span>高清渲染中…</span>
+              <div className="ps-loader-dots">
+                <span className="ps-dot" />
+                <span className="ps-dot" />
+                <span className="ps-dot" />
+              </div>
+              <span className="ps-loader-text">高清渲染中</span>
             </div>
           </div>
         </div>
