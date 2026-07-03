@@ -67,7 +67,7 @@ _REVIEWER_RE2 = re.compile(
     re.IGNORECASE
 )
 _ISSUER_RE = re.compile(
-    r'开\s*票\s*人[:：]\s*(.+?)(?=\s+项目名称|\s+规格型号|\s+收款人|\s+复核|\s+审核|\s*$)',
+    r'开\s*票\s*人[:：]\s*(.+?)(?=\s+项目名称|\s+规格型号|\s+收款人|\s+复核|\s+审核|\s+电子发票|\s+发票号码|\s+开票日期|\s*$)',
     re.IGNORECASE
 )
 

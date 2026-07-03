@@ -70,6 +70,7 @@ class MiscExtractor:
         """结构化提取：用表格几何定位备注 + 底部反向扫描开票人"""
         tokens = doc.bbox_tokens
         if not tokens:
+            logger.info("[kpr] 无 bbox_tokens，回退纯文本 extract()")
             return self.extract(doc)
 
         # ── 备注：单元格几何定位 ──
@@ -84,7 +85,9 @@ class MiscExtractor:
         # ── 收款人/复核人/开票人：坐标增强 ──
         skr = self._extract_payee_with_bbox(tokens) or self._extract_payee(doc)
         fhr = self._extract_reviewer_with_bbox(tokens) or self._extract_reviewer(doc)
-        kpr = self._extract_issuer_with_bbox(tokens) or self._extract_issuer(doc)
+        kpr_bbox = self._extract_issuer_with_bbox(tokens)
+        kpr = kpr_bbox or self._extract_issuer(doc)
+        logger.info("[kpr] bbox=%r  text=%r  final=%r", kpr_bbox, '' if kpr_bbox else '(fallback)', kpr)
 
         return (self._clean_misc_text(note),
                 self._clean_misc_text(skr),
@@ -602,6 +605,10 @@ class MiscExtractor:
         """从页面底部反向扫描找标签，取同行右侧值"""
         # 按 y 坐标降序排列
         sorted_tokens = sorted(tokens, key=lambda t: self._gcy(t), reverse=True)
+        logger.info("[kpr] _extract_person_from_bottom label=%s 总token数=%d", label_text, len(tokens))
+        for i, t in enumerate(sorted_tokens[:30]):
+            text = self._gtext(t).strip()
+            logger.info("[kpr]   bottom[%d] (y=%.1f) text=%r", i, self._gcy(t), text[:80])
         for t in sorted_tokens:
             text = self._gtext(t).strip()
             if label_text in text:
@@ -616,8 +623,30 @@ class MiscExtractor:
                     right_tokens.sort(key=lambda x: self._gattr(x, 'x0'))
                     val = self._gtext(right_tokens[0]).strip()
                     val = re.split(r'[:：]', val)[0].strip()
+                    logger.info("[kpr]   找到标签 %r → 右侧候选=%d, 首值=%r, len=%d",
+                                label_text, len(right_tokens), val, len(val))
                     if val and len(val) <= 10:
+                        logger.info("[kpr]   ✅ 采用: %r", val)
                         return val
+                    else:
+                        logger.info("[kpr]   ⛔ 值无效: %r (len=%d)", val, len(val))
+                else:
+                    # 无右侧 token，尝试从同一个 token 提取（如"开票人：李宜华"）
+                    val = ''
+                    for sep in ['：', ':']:
+                        parts = text.split(sep, 1)
+                        if len(parts) == 2 and parts[1].strip():
+                            val = parts[1].strip()
+                            break
+                    if val and len(val) <= 10:
+                        logger.info("[kpr]   同token提取: %r ✅", val)
+                        return val
+                    else:
+                        logger.info("[kpr]   同token提取: %r (len=%d) ⛔", val, len(val))
+            else:
+                # 打印前几个非匹配的底部行用于调试
+                pass
+        logger.info("[kpr] 未找到标签 %r", label_text)
         return ''
 
     # ═══════════════════════════════════════════════════
@@ -1030,17 +1059,22 @@ class MiscExtractor:
 
     # ─── 开票人 ───
     def _extract_issuer(self, doc: OCRDocument) -> str:
+        logger.info("[kpr] _extract_issuer 文本回退: lines=%d, collapsed_len=%d", len(doc.lines), len(doc.collapsed or ''))
         result = self._extract_person_by_line(doc.lines, _ISSUER_RE)
         if result:
+            logger.info("[kpr]  _extract_person_by_line 找到: %r", result)
             return result
         result = self._search_person_after_label(doc.lines, r'开\s*票\s*人[:：]')
         if result:
+            logger.info("[kpr]  _search_person_after_label 找到: %r", result)
             return result
         m = _ISSUER_RE.search(doc.collapsed)
         if m:
             val = self._clean_person_name(m.group(1))
+            logger.info("[kpr]  全文正则匹配: group=%r → clean=%r", m.group(1), val)
             if val:
                 return val
+        logger.info("[kpr]  文本回退全部失败，返回空")
         return ''
 
     # ─── 工具方法 ───
