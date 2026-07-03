@@ -530,14 +530,17 @@ export function usePreview({ files, settings, electronAPIRef }) {
             fObj._pdfPageWidth = cachedDims.w
             fObj._pdfPageHeight = cachedDims.h
           } else {
-            // ⚠️ 必须传副本：pdfjs.getDocument 会接管 ArrayBuffer，后续 destroy 会 detached buffer
+            // ✅ 使用 renderers 的 getOrLoadPdfDocument（共享 pdfDocCache），
+            //    避免每次预览都独立打开 PDF 文档仅获取尺寸
             try {
-              const pdfDoc = await pdfjs.getDocument({ data: new Uint8Array(_pdfData) }).promise
+              const { getOrLoadPdfDocument: sharedLoadPdf } = await getRenderers()
+              const pdfDoc = await sharedLoadPdf(_pdfData)
               const page = await pdfDoc.getPage(1)
               const vp = page.getViewport({ scale: 1 })
               fObj._pdfPageWidth = vp.width
               fObj._pdfPageHeight = vp.height
-              pdfDoc.destroy()
+              // ❌ 不调用 pdfDoc.destroy() — pdfDocCache 管理生命周期，
+              //    后续 renderers 中的渲染可直接复用同一份文档
               previewLoadCacheRef.current.set(dimsKey, { w: vp.width, h: vp.height })
             } catch (pdfErr) {
               // PDF 尺寸提取失败不影响预览，仅方向检测 fallback 到 portrait
