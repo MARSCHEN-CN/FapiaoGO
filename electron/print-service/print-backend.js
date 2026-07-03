@@ -21,8 +21,10 @@
 
 const { spawn } = require('child_process');
 const path = require('path');
+const fs = require('fs');
 const { resolvePrintTarget } = require('./print-target');
-const { buildPrintSettings } = require('./print-settings');
+const { buildPrintSettings, getPaperOrientation } = require('./print-settings');
+const { enhanceWithCapability } = require('./printer-capability');
 
 // ─── SumatraPDF 路径查找 ──────────────────────────────────────────
 
@@ -68,6 +70,40 @@ function getSumatraPath() {
   return 'sumatraPDF.exe';
 }
 
+/**
+ * 检测 PDF 的页面自然方向（从 /MediaBox 读取）
+ * @param {string} pdfPath - PDF 文件路径
+ * @returns {'portrait'|'landscape'|null} 方向（null = 无法检测）
+ */
+function detectPdfOrientation(pdfPath) {
+  try {
+    if (!pdfPath || !fs.existsSync(pdfPath)) return null;
+    // 仅对 PDF 文件尝试检测
+    if (!pdfPath.toLowerCase().endsWith('.pdf')) return null;
+
+    const fd = fs.openSync(pdfPath, 'r');
+    const buffer = Buffer.alloc(8192);
+    const bytesRead = fs.readSync(fd, buffer, 0, 8192, 0);
+    fs.closeSync(fd);
+
+    const content = buffer.toString('latin1', 0, bytesRead);
+
+    // 匹配 /MediaBox [0 0 width height]
+    const match = content.match(/\/MediaBox\s*\[\s*0\s+0\s+([\d.]+)\s+([\d.]+)\s*\]/);
+    if (match) {
+      const w = parseFloat(match[1]);
+      const h = parseFloat(match[2]);
+      const orient = w > h ? 'landscape' : 'portrait';
+      console.log('[detectPdfOrientation] %s: MediaBox=%s×%s, %s', path.basename(pdfPath), w, h, orient);
+      return orient;
+    }
+    return null;
+  } catch (e) {
+    console.warn('[detectPdfOrientation] Failed for %s: %s', pdfPath, e.message);
+    return null;
+  }
+}
+
 // ─── CommandBuilder ───────────────────────────────────────────────
 
 /**
@@ -82,7 +118,40 @@ function getSumatraPath() {
 function buildSumatraCommand(target, settings) {
   const exe = getSumatraPath();
   const resolved = resolvePrintTarget(target);
-  const printSettingsStr = buildPrintSettings(settings);
+
+  // 归一化字段名：前端发来 paperSize，管线需要 paper
+  const normalizedSettings = { ...settings };
+  if (normalizedSettings.paperSize && !normalizedSettings.paper) {
+    normalizedSettings.paper = normalizedSettings.paperSize;
+  }
+
+  // 内容方向：优先使用前端传入的 contentOrientation（导入时已检测），
+  // 未传或格式不对时回退到后端 MediaBox 检测
+  let contentOrient = normalizedSettings.contentOrientation;
+  if (contentOrient !== 'portrait' && contentOrient !== 'landscape') {
+    contentOrient = detectPdfOrientation(resolved.filePath);
+    if (contentOrient) {
+      normalizedSettings.contentOrientation = contentOrient;
+    }
+  }
+
+  // 纸张方向由所选纸张的宽高比硬编码决定（如 A4 竖向、凭证纸 240×140 横向）
+  if (contentOrient) {
+    normalizedSettings.paperOrientation = getPaperOrientation(
+      normalizedSettings.paper,
+      normalizedSettings.customPaper
+    );
+    console.log('[CommandBuilder] orient: content=%s (src=%s), paper=%s (paper=%s), rotation=%d',
+      contentOrient,
+      settings.contentOrientation ? 'frontend' : 'mediaBox',
+      normalizedSettings.paperOrientation,
+      normalizedSettings.paper, normalizedSettings.rotation || 0);
+  }
+
+  // Step 2: Capability 自动映射 — 从缓存补齐 paperkind
+  enhanceWithCapability(normalizedSettings, target.printer);
+
+  const printSettingsStr = buildPrintSettings(normalizedSettings);
 
   const args = [
     '-print-to', target.printer,

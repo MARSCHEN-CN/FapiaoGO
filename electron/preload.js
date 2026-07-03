@@ -1,25 +1,33 @@
 // preload.js
 const { contextBridge, ipcRenderer, webUtils } = require('electron')
 
-// IPC 通道白名单（精确匹配）
+// IPC 通道白名单（精确匹配 — 仅保留前缀匹配无法覆盖的通道）
 const ALLOWED_SEND = ['open-settings-window', 'close-settings-window', 'window-minimize', 'window-maximize', 'window-close', 'window-drag-start', 'window-drag-move', 'window-drag-end', 'settings-changed']
 const ALLOWED_INVOKE = [
-  'load-print-settings', 'save-print-settings', 'get-printers',
-  'read-file', 'get-file-stats', 'open-file-dialog', 'open-folder-dialog',
-  'rename-invoices', 'pack-invoices',
-  'resize-settings-window', 'select-folder', 'select-save-path',
-  'window-is-maximized',
-  'scan-dropped-paths',
-  'submit-print-job',
-  'generate-print-pdf',
-  'print-file-direct',
-  'print-merged-images',
-  'print-source-file',
+  // 前缀匹配无法覆盖的精确通道写在这里
+  // 大部分已被 ALLOWED_INVOKE_PREFIXES 覆盖，无需重复
 ]
 
 // IPC 通道前缀白名单（前缀匹配）
-// 注意：db: 前缀已移除，数据操作改为 HTTP API 调用后端
-const ALLOWED_INVOKE_PREFIXES = []
+// 添加新 IPC handler 时只需确保 channel 名以某个前缀开头即可，无需手动加精确匹配
+// 安全模型：所有 IPC handler 由主进程 ipcMain.handle() 注册，预加载仅做第一道防线
+const ALLOWED_INVOKE_PREFIXES = [
+  'print-',    // print-source-file, print-file-direct, print-merged-images
+  'preview-',  // preview-rename-names
+  'get-',      // get-printers, get-file-stats, get-printer-capabilities
+  'load-',     // load-print-settings
+  'save-',     // save-print-settings
+  'rename-',   // rename-invoices
+  'pack-',     // pack-invoices
+  'generate-', // generate-print-pdf
+  'open-',     // open-file-dialog, open-folder-dialog
+  'select-',   // select-folder, select-save-path
+  'window-',   // window-is-maximized
+  'resize-',   // resize-settings-window
+  'scan-',     // scan-dropped-paths
+  'read-',     // read-file
+  'submit-',   // submit-print-job
+]
 
 const ALLOWED_ON = ['print-progress', 'settings-window-closed', 'context-menu-files', 'rename-progress', 'pack-progress', 'excel-progress', 'settings-changed', 'print-job-completed', 'print-job-failed']
 

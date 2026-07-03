@@ -91,7 +91,8 @@ function registerRenameHandlers(ctx) {
         }
 
         const ext = path.extname(originalPath)
-        const newBaseName = generateNewName(file.invoiceFields)
+        // 优先使用前端传入的预计算名称（预览结果已算好，直接复用）
+        const newBaseName = file.newBaseName || generateNewName(file.invoiceFields)
         const newName = `${newBaseName}${ext}`
         console.log(`[rename] generated name: "${newBaseName}" from fields:`, JSON.stringify(file.invoiceFields))
 
@@ -114,6 +115,13 @@ function registerRenameHandlers(ctx) {
         }
 
         // 执行重命名/复制（支持跨磁盘操作）
+        // 如果新路径与原路径相同，跳过（文件本身就是目标名，无需操作）
+        if (newPath === originalPath) {
+          result.renamed++
+          console.log('[rename] Skipped (same name):', originalPath)
+          continue
+        }
+
         const sameDisk = path.parse(originalPath).root.toLowerCase() === path.parse(newPath).root.toLowerCase()
 
         let unlinkSucceeded = true
@@ -139,7 +147,12 @@ function registerRenameHandlers(ctx) {
           }
         } else {
           // 没有目标文件夹，就地重命名（同盘不会出问题）
-          fs.renameSync(originalPath, newPath)
+          if (newPath !== originalPath) {
+            fs.renameSync(originalPath, newPath)
+          } else {
+            // 文件名与原名相同，无需操作
+            console.log('[rename] Skipped (same name):', originalPath)
+          }
         }
 
         result.renamed++
@@ -162,6 +175,31 @@ function registerRenameHandlers(ctx) {
     }
 
     return result
+  })
+
+  // ==========================================
+  // ✅ 重命名预览（复用后端的 buildNameParts，保证结果与真实重命名一致）
+  // ==========================================
+  ipcMain.handle('preview-rename-names', async (_event, payload) => {
+    const files = payload.files || []
+    const renameSettings = payload.renameSettings || {}
+    const fields = renameSettings.fields || []
+    const separator = renameSettings.separator || '_'
+    const showIndex = renameSettings.showIndex ?? false
+    const showPrefix = renameSettings.showPrefix ?? false
+
+    const previews = files.map((file, index) => {
+      const newBaseName = buildNameParts(file.invoiceFields, fields, { separator, showIndex, showPrefix }) || '未命名'
+      const ext = path.extname(file.originalPath || file.name || '.pdf')
+      const newName = `${newBaseName}${ext}`
+      return {
+        key: file.key,
+        originalName: file.name || path.basename(file.originalPath || ''),
+        newName,
+      }
+    })
+
+    return { success: true, previews }
   })
 }
 

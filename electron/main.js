@@ -16,6 +16,10 @@ const { cleanupAllTempFiles } = require('./temp-manager')
 const { registerFileOpsHandlers } = require('./ipc-file-ops')
 const { registerRenameHandlers } = require('./ipc-rename')
 const { registerPackHandlers } = require('./ipc-pack')
+const pdfMargin = require('./print-service/pdf-margin-processor')
+
+// 启动时预热 Python 环境检测，避免首次打印等环境检查
+pdfMargin.checkPythonEnv().catch(() => {})
 
 // ============================
 // PDF 方向检测
@@ -285,12 +289,13 @@ function createSettingsWindow() {
   settingsWindow = new BrowserWindow({
     width: 400,
     height: 450,
-    parent: mainWindow,
     modal: false,
     resizable: true,
+    minimizable: true,
     minWidth: 360,
     minHeight: 480,
     show: false,
+    frame: false,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -411,10 +416,63 @@ ipcMain.handle('print-source-file', async (_event, { target, settings, pipeline 
     return { success: false, exitCode: -1, message: 'Printer name is required' }
   }
 
+  // 日志：完整 settings（含边距字段）
+  console.log('[print-source-file] settings=%j', settings)
+
+  // 安全边距预处理（仅对 PDF 或图片文件）
+  const imgExts = ['.pdf', '.png', '.jpg', '.jpeg', '.bmp', '.tiff', '.tif']
+  const fileExt = target.filePath ? path.extname(target.filePath).toLowerCase() : ''
+  let printTarget = target
+  const marginL = Number(settings?.marginLeft) || 0
+  const marginR = Number(settings?.marginRight) || 0
+  const marginT = Number(settings?.marginTop) || 0
+  const marginB = Number(settings?.marginBottom) || 0
+  console.log('[print-source-file] margin fields: left=%d right=%d top=%d bottom=%d', marginL, marginR, marginT, marginB)
+  const hasMargins = pdfMargin.hasMargins(settings)
+  console.log('[print-source-file] hasMargins=%s fileExt=%s', hasMargins, fileExt)
+  if (hasMargins && imgExts.includes(fileExt)) {
+    console.log('[print-source-file] Margins WILL be applied')
+    const margins = pdfMargin.extractMargins(settings)
+    const orient = settings.contentOrientation  // 'portrait'|'landscape'|undefined
+    const isImage = fileExt !== '.pdf'
+    const result = await pdfMargin.process(target.filePath, margins, isImage, orient)
+    if (result.path !== target.filePath) {
+      console.log('[print-source-file] Using margin-processed PDF:', result.path,
+        'orientation:', result.orientation || '?')
+      printTarget = { ...target, filePath: result.path }
+      // 如果 Python 检测了方向且和当前 settings 不同，同步更新
+      if (result.orientation && result.orientation !== settings.contentOrientation) {
+        settings.contentOrientation = result.orientation
+        console.log('[print-source-file] Updated contentOrientation to:', result.orientation)
+      }
+    } else {
+      console.log('[print-source-file] Margin processing returned original file (no change or fallback)')
+    }
+  } else {
+    console.log('[print-source-file] No margins to apply (reason: hasMargins=%s, ext=%s)', hasMargins, fileExt)
+  }
+
   const backend = createBackend(pipeline?.backend || 'sumatra')
-  const result = await backend.print(target, settings || {})
+  console.log('[print-source-file] Using backend=%s', pipeline?.backend || 'sumatra')
+  const result = await backend.print(printTarget, settings || {})
+  console.log('[print-source-file] result=%j', result)
 
   return result
+})
+
+// ── 打印机能力查询 ──
+const { PrinterCapabilityService } = require('./print-service/printer-capability')
+
+ipcMain.handle('get-printer-capabilities', async (_event, printerName) => {
+  console.log('[get-printer-capabilities] printer=%s', printerName)
+  try {
+    const service = PrinterCapabilityService.getInstance()
+    const result = await service.getCapabilities(printerName)
+    return result
+  } catch (e) {
+    console.error('[get-printer-capabilities] error:', e.message)
+    return { error: e.message }
+  }
 })
 
 // ── 合并打印 IPC ──
@@ -506,15 +564,32 @@ ipcMain.handle('print-merged-images', async (_event, { images, settings }) => {
       console.log(`[print-merged-images] PNG ${i + 1} → PDF: ${pdfPath}, MediaBox=${JSON.stringify(mediaBox)}`)
     }
 
-    // 3. 构建打印参数
+    // 3.5 应用安全边距
+    if (pdfMargin.hasMargins(settings)) {
+      console.log('[print-merged-images] Applying margins:', pdfMargin.extractMargins(settings))
+      for (let i = 0; i < pdfPaths.length; i++) {
+        const margins = pdfMargin.extractMargins(settings)
+        const res = await pdfMargin.process(pdfPaths[i], margins)
+        pdfPaths[i] = res.path
+      }
+    } else {
+      console.log('[print-merged-images] No margins to apply (hasMargins=false)')
+    }
+
+    // 4. 构建打印参数
     const sumatraExe = getSumatraPath()
 
     const printSettings = []
     const paperSize = settings.paperSize || 'A4'
-    if (paperSize !== 'Custom') {
-      printSettings.push(`paper=${paperSize}`)
-    } else if (settings.customPaper?.widthMM && settings.customPaper?.heightMM) {
-      printSettings.push(`paper=${settings.customPaper.widthMM}mm x ${settings.customPaper.heightMM}mm`)
+    switch (paperSize) {
+      case 'Custom':
+        if (settings.customPaper?.widthMM && settings.customPaper?.heightMM) {
+          printSettings.push(`paper=${settings.customPaper.widthMM}mm x ${settings.customPaper.heightMM}mm`)
+        }
+        break;
+      default:
+        printSettings.push(`paper=${paperSize}`)
+        break;
     }
     printSettings.push('fit')
     printSettings.push('disable-auto-rotation')
@@ -588,32 +663,36 @@ ipcMain.handle('print-merged-images', async (_event, { images, settings }) => {
   }
 })
 
-// --- 窗口控制 ---
-ipcMain.on('window-minimize', () => {
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.minimize()
+// --- 窗口控制（通用：通过 sender 获取当前窗口，同时支持主窗口和设置窗口） ---
+ipcMain.on('window-minimize', (event) => {
+  const win = BrowserWindow.fromWebContents(event.sender)
+  if (win && !win.isDestroyed()) {
+    win.minimize()
   }
 })
 
-ipcMain.on('window-maximize', () => {
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    if (mainWindow.isMaximized()) {
-      mainWindow.unmaximize()
+ipcMain.on('window-maximize', (event) => {
+  const win = BrowserWindow.fromWebContents(event.sender)
+  if (win && !win.isDestroyed()) {
+    if (win.isMaximized()) {
+      win.unmaximize()
     } else {
-      mainWindow.maximize()
+      win.maximize()
     }
   }
 })
 
-ipcMain.on('window-close', () => {
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.close()
+ipcMain.on('window-close', (event) => {
+  const win = BrowserWindow.fromWebContents(event.sender)
+  if (win && !win.isDestroyed()) {
+    win.close()
   }
 })
 
-ipcMain.handle('window-is-maximized', () => {
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    return mainWindow.isMaximized()
+ipcMain.handle('window-is-maximized', (event) => {
+  const win = BrowserWindow.fromWebContents(event.sender)
+  if (win && !win.isDestroyed()) {
+    return win.isMaximized()
   }
   return false
 })

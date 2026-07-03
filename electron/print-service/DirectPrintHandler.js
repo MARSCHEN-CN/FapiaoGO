@@ -100,6 +100,7 @@ async function handle(filePath, settings) {
     printerName: settings?.printerName || '',
     copies: settings?.copies || 1,
     paperSize: settings?.paperSize || 'A4',
+    paperkind: settings?.paperkind != null ? settings.paperkind : undefined,
     orientation: settings?.landscape ? 'landscape' : 'portrait',
     grayscale: settings?.grayscale || false,
     scaleFactor: settings?.scaleFactor || 100,
@@ -110,6 +111,7 @@ async function handle(filePath, settings) {
   // ========== [DEBUG] 链路追踪 ==========
   console.log(`[DEBUG-DPH] job.orientation: ${printJob.orientation}`)
   console.log(`[DEBUG-DPH] job.paperSize: ${printJob.paperSize}`)
+  console.log(`[DEBUG-DPH] job.paperkind: ${printJob.paperkind}`)
 
   try {
     const result = await printService.submitDirect(printJob);

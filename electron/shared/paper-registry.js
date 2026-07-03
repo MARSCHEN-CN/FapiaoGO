@@ -24,7 +24,7 @@ const SYSTEM_PAPERS = [
   { id: 'A5',            label: 'A5',                  widthMM: 148,   heightMM: 210,   source: 'system' },
   { id: 'A3',            label: 'A3',                  widthMM: 297,   heightMM: 420,   source: 'system' },
   { id: 'Letter',        label: 'Letter',              widthMM: 215.9, heightMM: 279.4, source: 'system' },
-  { id: 'Voucher240x140',label: '凭证纸 240×140mm',    widthMM: 240,   heightMM: 140,   source: 'system' },
+  { id: 'Voucher240x140',label: '凭证纸',    widthMM: 240,   heightMM: 140,   source: 'system' },
   // Runtime custom paper: selector only, no widthMM/heightMM
   { id: 'Custom',        label: '自定义尺寸',           widthMM: 0,     heightMM: 0,     source: 'system' },
 ]

@@ -24,6 +24,7 @@ const { execFile, execSync, spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const { EventEmitter } = require('events');
+const { resolveOrientationCommands, getPaperOrientation } = require('./print-settings');
 
 // ─── SumatraPDF Path ──────────────────────────────────────────────
 
@@ -230,15 +231,20 @@ function decidePrintSpec(job) {
     paperName = SUMATRA_PAPER_SIZES[job.paperSize] || job.paperSize
   }
 
-  const orientation = job.orientation === 'landscape' ? 'landscape' : 'portrait';
+  // 纸张方向由所选纸张的宽高比硬编码决定（如 A4 竖向、凭证纸 240×140 横向）
+  const orientation = getPaperOrientation(job.paperSize, job.customPaper);
 
   // ========== [DEBUG] 链路追踪 ==========
-  console.log(`[DEBUG-OLB] job.orientation: ${job.orientation}`)
+  console.log(`[DEBUG-OLB] job.paperSize: ${job.paperSize}`)
   console.log(`[DEBUG-OLB] spec.orientation: ${orientation}`)
   console.log(`[DEBUG-OLB] spec.paper: ${paperName}`)
+  if (job.paperkind != null) {
+    console.log(`[DEBUG-OLB] spec.paperkind: ${job.paperkind}`)
+  }
 
   return {
     paper: paperName,
+    paperkind: job.paperkind != null ? job.paperkind : undefined,
     orientation,
     scale: 'fit',
     grayscale: job.grayscale || false,
@@ -283,7 +289,16 @@ function toSumatraArgs(spec, job) {
 
   // Build single combined -print-settings string
   const parts = [];
-  if (spec.paper && (SUMATRA_PAPER_SIZES[spec.paper] || /\d+mm\s*x\s*\d+mm/.test(spec.paper))) {
+
+  // paperkind 优先于 paper name（Sumatra 两者都认，paperkind 更精准）
+  const paperkind = spec.paperkind != null ? spec.paperkind : undefined;
+  if (paperkind != null) {
+    parts.push(`paperkind=${paperkind}`);
+    // paper name 作为 fallback 同时输出
+    if (spec.paper && SUMATRA_PAPER_SIZES[spec.paper]) {
+      parts.push(`paper=${spec.paper.toLowerCase()}`);
+    }
+  } else if (spec.paper && (SUMATRA_PAPER_SIZES[spec.paper] || /\d+mm\s*x\s*\d+mm/.test(spec.paper))) {
     parts.push(`paper=${spec.paper}`);
   }
 
@@ -291,34 +306,36 @@ function toSumatraArgs(spec, job) {
   console.log(`[DEBUG-TSA] spec.orientation: ${spec.orientation}`)
   console.log(`[DEBUG-TSA] spec.scale: ${spec.scale}`)
 
-  // 检测 PDF 方向，智能决定是否旋转
+  // 检测 PDF 方向，基于表格驱动生成正确的 baseFlag 和 rotate
+  // 旧管线没有显式 rotation 字段，desiredRotation 固定为 0
   const filePath = job?.pdfPath || job?.sourcePath;
   console.log(`[DEBUG-TSA] filePath: ${filePath}`)
 
   if (filePath) {
-    const mediaBox = extractMediaBox(filePath)
-    console.log(`[DEBUG-TSA] mediaBox: ${JSON.stringify(mediaBox)}`)
-
     const pdfOrientation = detectPdfOrientation(filePath);
-    const wantLandscape = spec.orientation === 'landscape';
+    console.log(`[DEBUG-TSA] pdfOrientation: ${pdfOrientation}`)
 
-    console.log(`[DEBUG-TSA] pdfOrientation: ${pdfOrientation}, wantLandscape: ${wantLandscape}`)
-
-    if ((pdfOrientation === 'portrait' && wantLandscape) ||
-        (pdfOrientation === 'landscape' && !wantLandscape)) {
-      // 方向不一致：需要旋转内容
-      parts.push(wantLandscape ? 'landscape' : 'portrait');
-      console.log(`[DEBUG-TSA] ROTATING: PDF=${pdfOrientation}, want=${wantLandscape ? 'landscape' : 'portrait'}`);
+    if (pdfOrientation) {
+      const orientResult = resolveOrientationCommands(
+        pdfOrientation,
+        spec.orientation || 'portrait',
+        0  // old pipeline: 无显式旋转, 默认为不旋转
+      );
+      parts.push(orientResult.baseFlag);
+      if (orientResult.rotate !== 0) {
+        parts.push(`rotate=${orientResult.rotate}`);
+      }
+      console.log(`[DEBUG-TSA] orientation resolved: base=${orientResult.baseFlag}, rotate=${orientResult.rotate}`);
     } else {
-      // 方向一致：不旋转，让打印机驱动按 MediaBox 自动识别
-      console.log(`[DEBUG-TSA] NO ROTATION: PDF=${pdfOrientation}, want=${wantLandscape ? 'landscape' : 'portrait'}`);
+      // 无法检测方向时用 disable-auto-rotation 兜底
+      parts.push('disable-auto-rotation');
     }
   } else {
-    console.log(`[DEBUG-TSA] No filePath, skipping orientation detection`);
+    console.log(`[DEBUG-TSA] No filePath, defaulting to disable-auto-rotation`);
+    parts.push('disable-auto-rotation');
   }
 
   parts.push(spec.scale);
-  parts.push('disable-auto-rotation');
   if (spec.center) {
     parts.push('center');
   }
@@ -578,6 +595,7 @@ class OsLauncherBridge extends EventEmitter {
     const orientation = job.orientation === 'landscape' ? 'landscape' : 'portrait';
     return {
       paper: paperName,
+      paperkind: job.paperkind != null ? job.paperkind : undefined,
       orientation,
       scale: 'fit',
       grayscale: job.grayscale || false,
