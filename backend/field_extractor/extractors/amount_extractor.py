@@ -11,6 +11,7 @@
 - 双¥水平对齐：左=je，右=se
 """
 import re
+import bisect
 import logging
 from typing import Optional, List, Tuple
 from dataclasses import dataclass
@@ -457,6 +458,10 @@ class AmountExtractor:
         
         logger.info("[DualYen] 找到%d个合计/计锚点", len(heji_tokens))
         
+        # [PERF] 按 Y 坐标预排序候选对，使用 bisect 快速定位最近候选
+        sorted_pairs = sorted(pairs, key=lambda p: p.y_center)
+        pair_ys = [p.y_center for p in sorted_pairs]
+        
         # 找最接近的金额对
         best_pair = None
         best_score = float('inf')
@@ -465,7 +470,18 @@ class AmountExtractor:
             ht_cy = ht.cy
             ht_x = ht.x0
             
-            for pair in pairs:
+            # [PERF] 使用 bisect 快速找到最近的候选对（O(log m) vs O(m)）
+            idx = bisect.bisect_left(pair_ys, ht_cy)
+            
+            # 检查 idx 和 idx-1（可能是最近的两个候选对）
+            candidates = []
+            if idx < len(sorted_pairs):
+                candidates.append(sorted_pairs[idx])
+            if idx > 0:
+                candidates.append(sorted_pairs[idx - 1])
+            
+            # [PERF] 只对候选对计算精确评分
+            for pair in candidates:
                 # Y距离
                 y_dist = abs(pair.y_center - ht_cy)
                 # X距离：合计应该在金额对左边或附近
