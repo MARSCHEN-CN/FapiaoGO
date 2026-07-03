@@ -1,5 +1,6 @@
 import React, { useMemo, useRef, useCallback, useEffect, useState } from 'react'
 import { isMergeMode, getDuplicateGroupInfo, getElectronAPI } from '../utils'
+import { useFileContext } from '../contexts/FileContext'
 import FileList from './FileList'
 
 function isFailed(fileObj, fieldKey) {
@@ -28,7 +29,6 @@ const SORT_OPTIONS = [
 ]
 
 export default React.memo(function Sidebar({
-  files,
   parsing,
   parseProgress,
   previewFile,
@@ -46,10 +46,8 @@ export default React.memo(function Sidebar({
   removeFailedFiles, removeDuplicateFiles, handleRotate,
   // sort
   sortBy, sortOrder, toggleSort,
-  // search
-  searchQuery, setSearchQuery,
-  filteredFiles, isSearching,
 }) {
+  const { files, searchQuery, setSearchQuery, filteredFiles, isSearching } = useFileContext()
   const mergeActive = isMergeMode(paperSize)
 
   // ── 排序下拉（纯 UI 状态，不上升到 App 级） ──

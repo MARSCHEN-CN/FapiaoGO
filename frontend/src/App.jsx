@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useRef, useMemo, Suspense, lazy } from 'react'
+import { FileProvider, useFileContext } from './contexts/FileContext'
 
 // 懒加载设置窗口（已有）
 const SettingsWindow = lazy(() => import('./components/SettingsWindow'))
@@ -15,19 +16,9 @@ const ExportProgressModal = lazy(() => import('./components/ExportProgressModal'
 import { PREVIEW_DPI, SUPPORTED_EXTENSIONS, ZOOM_STEPS } from './config'
 import {
   getElectronAPI, getFilePath, getFileFormat, isMergeMode, getMergePair,
-  detectDuplicateInvoices, filterFiles,
+  detectDuplicateInvoices,
 } from './utils'
 import { generateFileKey } from './utils/fileHelpers'
-
-// ── 通用防抖 Hook ──────────────────────────────────────────────
-function useDebounce(value, delay = 250) {
-  const [debounced, setDebounced] = useState(value)
-  useEffect(() => {
-    const timer = setTimeout(() => setDebounced(value), delay)
-    return () => clearTimeout(timer)
-  }, [value, delay])
-  return debounced
-}
 
 import { useSettings } from './hooks/useSettings'
 import { useSort } from './hooks/useSort'
@@ -39,6 +30,7 @@ import { usePrintIntent } from './hooks/usePrintIntent'
 import { useRenamePack } from './hooks/useRenamePack'
 import { useExport } from './hooks/useExport'
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts'
+import { useAlertQueue } from './hooks/useAlertQueue'
 
 import Sidebar from './components/Sidebar'
 import TopBar from './components/TopBar'
@@ -56,16 +48,21 @@ const ModalFallback = () => (
 );
 
 function App() {
+  return (
+    <FileProvider>
+      <AppContent />
+    </FileProvider>
+  )
+}
+
+function AppContent() {
   const isSettingsWindow = window.location.hash === '#/settings'
   const electronAPIRef = useRef(null)
 
   // ============================
   // 共享状态
   // ============================
-  const [files, setFiles] = useState([])
-  const [searchQuery, setSearchQuery] = useState('')
-  // 防抖后的搜索词（250ms），用于过滤文件，避免每次按键都重算
-  const debouncedSearchQuery = useDebounce(searchQuery, 250)
+  const { files, setFiles } = useFileContext()
 
   // ============================
   // Hooks
@@ -101,6 +98,7 @@ function App() {
   const {
     setPreviewFile, setNumPages, handleCanvasMouseMove, handleCanvasMouseLeave,
     setZoomMenuOpen,
+    skipAutoNavRef,
   } = preview.internal
 
   // ── Invoice Detail Edit Modal ──
@@ -182,9 +180,12 @@ function App() {
     setFiles((prev) => prev.filter((f) => f.key !== key))
 
     if (nextPreviewFile) {
-      setTimeout(() => handlePreview(nextPreviewFile), 0)
+      // ✅ 直接在 React 18 批处理中调用 handlePreview，移除 setTimeout hack
+      // skipAutoNavRef 阻止 usePreview 的自动导航 useEffect 重复触发
+      skipAutoNavRef.current = true
+      handlePreview(nextPreviewFile)
     }
-  }, [previewFile, files, cleanupPreviewUrl, handlePreview])
+  }, [previewFile, files, cleanupPreviewUrl, handlePreview, skipAutoNavRef])
 
   const clearFiles = useCallback(() => {
     setFiles([])
@@ -200,13 +201,11 @@ function App() {
         !fileObj.parseMethod?.includes('数据缺失') &&
         !fileObj.parseMethod?.includes('缺失')
       )
-      if (previewFile && !filtered.find(f => f.key === previewFile.key)) {
-        cleanupPreviewUrl()
-        setPreviewFile(null)
-      }
+      // ✅ 移除 updater 内副作用 — usePreview 的 auto-nav useEffect 会在
+      // previewFile 被移除时自动处理导航和清理
       return filtered
     })
-  }, [previewFile, cleanupPreviewUrl])
+  }, [])
 
   const removeDuplicateFiles = useCallback(() => {
     setFiles(prev => {
@@ -219,24 +218,13 @@ function App() {
           }
         })
       })
-      const filtered = prev.filter(fileObj => !duplicateKeys.has(fileObj.key))
-      if (previewFile && !filtered.find(f => f.key === previewFile.key)) {
-        cleanupPreviewUrl()
-        setPreviewFile(null)
-      }
-      return filtered
+      // ✅ 移除 updater 内副作用 — usePreview 的 auto-nav useEffect 会自动处理
+      return prev.filter(fileObj => !duplicateKeys.has(fileObj.key))
     })
-  }, [previewFile, cleanupPreviewUrl])
+  }, [])
 
   // ============================
   // 搜索过滤（使用防抖后的 searchQuery，避免每按键都重算）
-  // ============================
-  const { filteredFiles, isSearching } = useMemo(() => {
-    const query = debouncedSearchQuery.trim()
-    if (!query) return { filteredFiles: files, isSearching: false }
-    return { filteredFiles: filterFiles(files, query), isSearching: true }
-  }, [files, debouncedSearchQuery])
-
   // ============================
   // 文件统计（useFileStats hook）
   // 单次 O(n) 遍历 + _parsedAmount 缓存，替代原 30 行内联 useMemo
@@ -300,16 +288,13 @@ function App() {
   }, [files, handlePreview])
 
   // ============================
-  // Alert 队列管理：合并 renamePackAlert / exportAlert / printAlert
+  // Alert 队列管理（抽为独立 hook）
   // ============================
-  const [alertQueue, setAlertQueue] = useState([]);
-  const showAlert = useCallback((message, title, type, onClose, source) => {
-    setAlertQueue(prev => {
-      if (prev.some(a => a.source === source)) return prev;
-      return [...prev, { id: Date.now(), message, title, type, onClose, source }];
-    });
-  }, []);
-  const currentAlert = alertQueue[0] || null;
+  const {
+    currentAlert,
+    showAlert,
+    dismissWithCleanup,
+  } = useAlertQueue()
 
   // 桥接 hook 内部 alert → 队列
   useEffect(() => {
@@ -342,16 +327,15 @@ function App() {
   const handleEscape = useCallback(() => {
     // 关闭队列中的 alert
     if (currentAlert) {
-      currentAlert.onClose?.();
-      setAlertQueue(prev => prev.slice(1));
-      return;
+      dismissWithCleanup()
+      return
     }
     if (renamePreviewVisible) {
       setRenamePreviewVisible(false)
       return
     }
     // ESC 不再退出预览
-  }, [currentAlert, renamePreviewVisible, setRenamePreviewVisible])
+  }, [currentAlert, dismissWithCleanup, renamePreviewVisible, setRenamePreviewVisible])
 
   useKeyboardShortcuts({
     onPrevFile: handlePrevFile,
@@ -499,7 +483,6 @@ function App() {
   return (
     <div style={{ display: 'flex', height: '100vh' }}>
       <Sidebar
-        files={files}
         parsing={parsing}
         parseProgress={parseProgress}
         previewFile={previewFile}
@@ -530,11 +513,6 @@ function App() {
         sortBy={sortBy}
         sortOrder={sortOrder}
         toggleSort={toggleSort}
-        // search
-        searchQuery={searchQuery}
-        setSearchQuery={setSearchQuery}
-        filteredFiles={filteredFiles}
-        isSearching={isSearching}
       />
 
       <main className="main">
@@ -772,10 +750,7 @@ function App() {
           title={currentAlert?.title || '提示'}
           message={currentAlert?.message || ''}
           type={currentAlert?.type || 'warning'}
-          onClose={() => {
-            currentAlert?.onClose?.();
-            setAlertQueue(prev => prev.slice(1));
-          }}
+          onClose={dismissWithCleanup}
         />
       </Suspense>
 

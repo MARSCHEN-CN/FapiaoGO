@@ -76,6 +76,8 @@ export function usePreview({ files, settings, electronAPIRef }) {
   //    图片缓存 Blob 对象，PDF 缓存 Uint8Array
   //    LRU 自清理（max 50 条），文件删除后 key 自然失效
   const previewLoadCacheRef = useRef(new Map())
+  // ✅ App 在删除文件并直接调用 handlePreview 时，设置此标记跳过 useEffect 自动导航
+  const skipAutoNavRef = useRef(false)
   const filesRef = useRef(files)
   const fileIndexMapRef = useRef(new Map())
   useEffect(() => {
@@ -749,6 +751,11 @@ export function usePreview({ files, settings, electronAPIRef }) {
 
     // 当前预览的文件已不存在，切换到第一个
     if (!filesKeySet.has(previewFile.key)) {
+      // ✅ App 删除文件后已直接调用 handlePreview，跳过此处的自动导航
+      if (skipAutoNavRef.current) {
+        skipAutoNavRef.current = false
+        return
+      }
       if (files.length) {
         setTimeout(() => {
           cleanupAllBlobUrls()
@@ -936,6 +943,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
       onDocumentLoadSuccess,
       handleCanvasMouseMove,
       handleCanvasMouseLeave,
+      skipAutoNavRef,
     },
   }
 }
