@@ -42,15 +42,7 @@ _TAX_ID_ONLY_RE = re.compile(
     r'纳税人识别号[:：]?\s*([A-Z0-9]{15,20})',
     re.IGNORECASE
 )
-# [修复2] .*? → [\s\S]*?，支持跨行匹配"购买方"与"纳税人识别号"不在同一行的情况
-_BUYER_TAX_FULL_RE = re.compile(
-    r'购?\s*买\s*方[\s\S]*?(?:统一社会信用代码\s*[/／]\s*)?纳税人识别号[:：]?\s*([A-Z0-9]{15,20})',
-    re.IGNORECASE
-)
-_SELLER_TAX_FULL_RE = re.compile(
-    r'销?\s*售\s*方[\s\S]*?(?:统一社会信用代码\s*[/／]\s*)?纳税人识别号[:：]?\s*([A-Z0-9]{15,20})',
-    re.IGNORECASE
-)
+
 
 # ============================
 # 备注/人员正则
@@ -75,7 +67,7 @@ _REVIEWER_RE2 = re.compile(
     re.IGNORECASE
 )
 _ISSUER_RE = re.compile(
-    r'开\s*票\s*人[:：]\s*(.+?)(?=\s+项目名称|\s+规格型号|\s+收款人|\s+复核|\s+审核|\s*$)',
+    r'开\s*票\s*人[:：]\s*(.+?)(?=\s+项目名称|\s+规格型号|\s+收款人|\s+复核|\s+审核|\s+电子发票|\s+发票号码|\s+开票日期|\s*$)',
     re.IGNORECASE
 )
 

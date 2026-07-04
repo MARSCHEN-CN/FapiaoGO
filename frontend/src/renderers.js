@@ -209,6 +209,7 @@ async function resolveImageSrc(src) {
 function loadPdfDocument(pdfData) {
   const loadingTask = pdfjs.getDocument({
     data: new Uint8Array(pdfData),
+    verbosity: 0,  // suppress getHexString 等 pdf 内容警告，仅保留错误
     useSystemFonts: false,
     cMapUrl: PDFJS_CMAP_URL,
     standardFontDataUrl: PDFJS_STANDARD_FONT_URL,
@@ -228,7 +229,7 @@ const pdfDocCache = new LRUCache(10, 'pdfDoc')
  * @param {Uint8Array} pdfData - PDF 数据
  * @returns {Promise<PDFDocumentProxy>} PDF 文档对象
  */
-async function getOrLoadPdfDocument(pdfData) {
+export async function getOrLoadPdfDocument(pdfData) {
   const pdfId = getPdfId(pdfData)
   
   // 检查是否有缓存的 PDF 文档
@@ -387,17 +388,26 @@ async function renderPDFPageRaw(pdfData, dpi, fileKey) {
   // 排队执行，同文件串行，不同文件并发
   const result = queue.then(async () => {
     // 版本已过期，跳过
-    if (!isLatest()) return null
+    if (!isLatest()) {
+      console.debug('[renderPDFPageRaw] 版本过期跳过渲染:', { fileKey, version, currentVersion: _renderVersions.get(queueKey) })
+      return null
+    }
 
     let pdf = null
     let page = null
     try {
       pdf = await getOrLoadPdfDocument(pdfData)
       // 加载 pdf 文档后再次检查版本
-      if (!isLatest()) { return null }
+      if (!isLatest()) {
+        console.debug('[renderPDFPageRaw] 版本过期（加载后）:', { fileKey, version })
+        return null
+      }
 
       page = await pdf.getPage(1)
-      if (!isLatest()) { return null }
+      if (!isLatest()) {
+        console.debug('[renderPDFPageRaw] 版本过期（获取页后）:', { fileKey, version })
+        return null
+      }
 
       const viewport = page.getViewport({ scale: 1 })
       const scale = dpi / 72
@@ -413,7 +423,10 @@ async function renderPDFPageRaw(pdfData, dpi, fileKey) {
       ctx.fillRect(0, 0, width, height)
 
       // page.render 前再次检查版本（此为最耗时操作）
-      if (!isLatest()) { return null }
+      if (!isLatest()) {
+        console.debug('[renderPDFPageRaw] 版本过期（渲染前）:', { fileKey, version })
+        return null
+      }
 
       const scaledViewport = page.getViewport({ scale })
       await page.render({ canvasContext: ctx, viewport: scaledViewport }).promise
@@ -421,7 +434,9 @@ async function renderPDFPageRaw(pdfData, dpi, fileKey) {
       return { canvas, width, height }
     } catch (e) {
       if (isLatest()) {
-        console.error('[renderPDFPageRaw] PDF 渲染失败:', e)
+        console.error('[renderPDFPageRaw] PDF 渲染失败:', { fileKey, dpi, pdfDataLength: pdfData?.length, error: e.message, stack: e.stack })
+      } else {
+        console.debug('[renderPDFPageRaw] 版本过期（异常时）:', { fileKey, version, error: e.message })
       }
       return null
     }
@@ -641,6 +656,8 @@ export async function renderMultipleItemsToCanvas(
         const result = await renderPDFPageRaw(item._pdfData, dpi, item.key)
         if (result) {
           contentSources.set(id, { source: result.canvas, width: result.width, height: result.height })
+        } else {
+          console.warn('[renderMultipleItemsToCanvas] PDF 渲染返回 null，将使用 fallback:', { id, fileKey: item.key, pdfDataLength: item._pdfData?.length })
         }
       } else if (item._previewImageUrl) {
         // 图片/OFD: 加载获取原始像素尺寸

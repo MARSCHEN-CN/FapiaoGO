@@ -76,6 +76,8 @@ export function usePreview({ files, settings, electronAPIRef }) {
   //    图片缓存 Blob 对象，PDF 缓存 Uint8Array
   //    LRU 自清理（max 50 条），文件删除后 key 自然失效
   const previewLoadCacheRef = useRef(new Map())
+  // ✅ App 在删除文件并直接调用 handlePreview 时，设置此标记跳过 useEffect 自动导航
+  const skipAutoNavRef = useRef(false)
   const filesRef = useRef(files)
   const fileIndexMapRef = useRef(new Map())
   useEffect(() => {
@@ -528,14 +530,17 @@ export function usePreview({ files, settings, electronAPIRef }) {
             fObj._pdfPageWidth = cachedDims.w
             fObj._pdfPageHeight = cachedDims.h
           } else {
-            // ⚠️ 必须传副本：pdfjs.getDocument 会接管 ArrayBuffer，后续 destroy 会 detached buffer
+            // ✅ 使用 renderers 的 getOrLoadPdfDocument（共享 pdfDocCache），
+            //    避免每次预览都独立打开 PDF 文档仅获取尺寸
             try {
-              const pdfDoc = await pdfjs.getDocument({ data: new Uint8Array(_pdfData) }).promise
+              const { getOrLoadPdfDocument: sharedLoadPdf } = await getRenderers()
+              const pdfDoc = await sharedLoadPdf(_pdfData)
               const page = await pdfDoc.getPage(1)
               const vp = page.getViewport({ scale: 1 })
               fObj._pdfPageWidth = vp.width
               fObj._pdfPageHeight = vp.height
-              pdfDoc.destroy()
+              // ❌ 不调用 pdfDoc.destroy() — pdfDocCache 管理生命周期，
+              //    后续 renderers 中的渲染可直接复用同一份文档
               previewLoadCacheRef.current.set(dimsKey, { w: vp.width, h: vp.height })
             } catch (pdfErr) {
               // PDF 尺寸提取失败不影响预览，仅方向检测 fallback 到 portrait
@@ -718,15 +723,15 @@ export function usePreview({ files, settings, electronAPIRef }) {
     }
   }, [settings.mergeMode])
 
-  // 文件列表键集合（用于稳定比较，包含 status 以感知解析完成）
+  // 文件列表键字符串（仅含 key，不含 status — 避免解析状态变更误触发 effect）
   const filesKeyStr = useMemo(() => {
-    return files.map(f => `${f.key}:${f.status || ''}`).join(',')
+    return files.map(f => f.key).join(',')
   }, [files])
   const filesKeySet = useMemo(() => {
     return new Set(files.map(f => f.key))
-  }, [filesKeyStr])
+  }, [files])
 
-  // ✅ 用 ref 跟踪上一次的 filesKeyStr，仅在文件列表实际变化时才触发合并更新
+  // ✅ 用 ref 跟踪上一次的 filesKeyStr，仅在文件增删时触发合并更新（status 变化不再冒泡）
   const prevFilesKeyStrRef = useRef('')
 
   // ============================
@@ -749,6 +754,11 @@ export function usePreview({ files, settings, electronAPIRef }) {
 
     // 当前预览的文件已不存在，切换到第一个
     if (!filesKeySet.has(previewFile.key)) {
+      // ✅ App 删除文件后已直接调用 handlePreview，跳过此处的自动导航
+      if (skipAutoNavRef.current) {
+        skipAutoNavRef.current = false
+        return
+      }
       if (files.length) {
         setTimeout(() => {
           cleanupAllBlobUrls()
@@ -936,6 +946,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
       onDocumentLoadSuccess,
       handleCanvasMouseMove,
       handleCanvasMouseLeave,
+      skipAutoNavRef,
     },
   }
 }

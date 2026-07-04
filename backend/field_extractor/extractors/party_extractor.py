@@ -208,10 +208,10 @@ def _h(t) -> float:
     return max(y1 - y0, 5)
 
 
-def _cluster_into_lines(tokens: List[Dict], tol: float = _LINE_CLUSTER_TOL) -> List[List[Dict]]:
+def _cluster_into_lines(tokens: List[Dict], tol: float = _LINE_CLUSTER_TOL, _sorted: bool = False) -> List[List[Dict]]:
     if not tokens:
         return []
-    s = sorted(tokens, key=lambda t: _cy(t))
+    s = tokens if _sorted else sorted(tokens, key=lambda t: _cy(t))
     lines, cur = [], [s[0]]
     for t in s[1:]:
         if abs(_cy(t) - _cy(cur[0])) < max(_h(cur[0]), _h(t)) * tol:
@@ -1223,7 +1223,7 @@ class PartyExtractor:
         return candidates
 
     def _group_tokens_by_lines(self, tokens):
-        return _cluster_into_lines(tokens, tol=_LINE_CLUSTER_TOL)
+        return _cluster_into_lines(tokens, tol=_LINE_CLUSTER_TOL, _sorted=True)
 
     def _is_plausible_tax_char(self, ch: str) -> bool:
         """判断字符是否可能出现在税号中（字母、数字、空格）"""

@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect } from 'react'
 import { BACKEND_URL } from '../config'
+import { useFileContext } from '../contexts/FileContext'
 
 const FIELD_LABELS = {
   invoiceType: '发票类型',
@@ -43,7 +44,8 @@ const EXPORT_TO_EDIT_MAP = {
   issuer: 'issuer',
 }
 
-export default function InvoiceDetail({ fileObj, onClose, files, setFiles }) {
+export default function InvoiceDetail({ fileObj, onClose }) {
+  const { files, setFiles } = useFileContext()
   // 从后端获取导出数据（与 Excel 导出同一来源）
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(null)
