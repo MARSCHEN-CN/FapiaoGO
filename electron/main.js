@@ -37,16 +37,16 @@ function extractMediaBox(pdfPath) {
 
     const content = buffer.toString('latin1', 0, bytesRead)
 
-    // 匹配 /MediaBox [0 0 width height]
-    const match = content.match(/\/MediaBox\s*\[\s*0\s+0\s+([\d.]+)\s+([\d.]+)\s*\]/)
+    // 匹配 /MediaBox [left bottom right top]（任意 left/bottom，如加边距后为负值）
+    const match = content.match(/\/MediaBox\s*\[\s*([\d.-]+)\s+([\d.-]+)\s+([\d.-]+)\s+([\d.-]+)\s*\]/)
     if (match) {
-      return { width: parseFloat(match[1]), height: parseFloat(match[2]) }
+      return { width: parseFloat(match[3]) - parseFloat(match[1]), height: parseFloat(match[4]) - parseFloat(match[2]) }
     }
 
     // 如果没找到 MediaBox，尝试找 /CropBox
-    const cropMatch = content.match(/\/CropBox\s*\[\s*0\s+0\s+([\d.]+)\s+([\d.]+)\s*\]/)
+    const cropMatch = content.match(/\/CropBox\s*\[\s*([\d.-]+)\s+([\d.-]+)\s+([\d.-]+)\s+([\d.-]+)\s*\]/)
     if (cropMatch) {
-      return { width: parseFloat(cropMatch[1]), height: parseFloat(cropMatch[2]) }
+      return { width: parseFloat(cropMatch[3]) - parseFloat(cropMatch[1]), height: parseFloat(cropMatch[4]) - parseFloat(cropMatch[2]) }
     }
 
     return null
@@ -80,21 +80,21 @@ function detectPdfOrientation(filePath) {
 
     const content = buffer.toString('latin1', 0, bytesRead)
 
-    // PDF: 匹配 /MediaBox [0 0 width height]
-    const match = content.match(/\/MediaBox\s*\[\s*0\s+0\s+([\d.]+)\s+([\d.]+)\s*\]/)
+    // PDF: 匹配 /MediaBox [left bottom right top]（任意 left/bottom）
+    const match = content.match(/\/MediaBox\s*\[\s*([\d.-]+)\s+([\d.-]+)\s+([\d.-]+)\s+([\d.-]+)\s*\]/)
     if (match) {
-      const width = parseFloat(match[1])
-      const height = parseFloat(match[2])
+      const width = parseFloat(match[3]) - parseFloat(match[1])
+      const height = parseFloat(match[4]) - parseFloat(match[2])
       const orientation = width > height ? 'landscape' : 'portrait'
       console.log(`[detectPdfOrientation] ${filePath}: MediaBox=${width}x${height}, ${orientation}`)
       return orientation
     }
 
     // 如果没找到 MediaBox，尝试找 /CropBox 或 /ArtBox
-    const cropMatch = content.match(/\/CropBox\s*\[\s*0\s+0\s+([\d.]+)\s+([\d.]+)\s*\]/)
+    const cropMatch = content.match(/\/CropBox\s*\[\s*([\d.-]+)\s+([\d.-]+)\s+([\d.-]+)\s+([\d.-]+)\s*\]/)
     if (cropMatch) {
-      const width = parseFloat(cropMatch[1])
-      const height = parseFloat(cropMatch[2])
+      const width = parseFloat(cropMatch[3]) - parseFloat(cropMatch[1])
+      const height = parseFloat(cropMatch[4]) - parseFloat(cropMatch[2])
       const orientation = width > height ? 'landscape' : 'portrait'
       console.log(`[detectPdfOrientation] ${filePath}: CropBox=${width}x${height}, ${orientation}`)
       return orientation
@@ -477,8 +477,6 @@ ipcMain.handle('get-printer-capabilities', async (_event, printerName) => {
 
 // ── 合并打印 IPC ──
 const { spawn } = require('child_process')
-const { decidePrintSpec, toSumatraArgs, getSumatraPath, toLongPath } = require('./print-service/OsLauncherBridge')
-
 /**
  * 将 IPC 传入的图片数据转换为 Buffer。
  * Uint8Array 经过 contextBridge + structured clone 后可能变为普通对象 {0:..,1:..,length:N}，
@@ -495,6 +493,48 @@ function toImageBuffer(raw) {
     buf[i] = raw[i]
   }
   return buf
+}
+
+// ── Python 子进程调用（img2pdf + pikepdf） ──────────────────────
+
+const _isDev = !app || !app.isPackaged
+
+function _getPythonPaths() {
+  if (_isDev) {
+    return {
+      exe: path.join(__dirname, '../backend/venv/Scripts/python.exe'),
+      script: path.join(__dirname, '../pyscripts/pdf_tool.py'),
+    }
+  }
+  return {
+    exe: path.join(process.resourcesPath, 'backend/venv/Scripts/python.exe'),
+    script: path.join(process.resourcesPath, 'pyscripts/pdf_tool.py'),
+  }
+}
+
+async function callPython(args, timeoutMs = 30000) {
+  const { exe, script } = _getPythonPaths()
+  return new Promise((resolve, reject) => {
+    const child = spawn(exe, [script, ...args], {
+      windowsHide: true,
+      timeout: timeoutMs,
+      env: {
+        ...process.env,
+        PYTHONIOENCODING: 'utf-8',
+      }
+    })
+    let stdout = ''
+    let stderr = ''
+    child.stdout.on('data', d => stdout += d)
+    child.stderr.on('data', d => stderr += d)
+    const timer = setTimeout(() => { child.kill(); reject(new Error('Python 超时')) }, timeoutMs)
+    child.on('close', code => {
+      clearTimeout(timer)
+      if (code !== 0) reject(new Error(stderr.slice(0, 500) || `退出码 ${code}`))
+      else resolve(JSON.parse(stdout))
+    })
+    child.on('error', reject)
+  })
 }
 
 ipcMain.handle('print-merged-images', async (_event, { images, settings }) => {
@@ -527,6 +567,15 @@ ipcMain.handle('print-merged-images', async (_event, { images, settings }) => {
       // ✅ 验证实际写入的文件大小
       const actualSize = fs.statSync(filePath).size
       filePaths.push(filePath)
+
+      // 🐛 DEBUG: 复制 PNG 到桌面
+      try {
+        const debugDir = 'C:\\Users\\Mars_chen\\Desktop\\test'
+        fs.mkdirSync(debugDir, { recursive: true })
+        fs.copyFileSync(filePath, path.join(debugDir, `debug_${i + 1}.png`))
+        console.log('[print-merged-images] [DEBUG] 已复制 PNG → %s\\debug_%d.png', debugDir, i + 1)
+      } catch (de) { console.warn('[print-merged-images] [DEBUG] PNG 复制失败:', de.message) }
+
       console.log('[print-merged-images] PNG %d: buf=%d bytes, file=%d bytes, rawType=%s, rawLen=%d, header=%s',
         i + 1, buf.length, actualSize,
         Object.prototype.toString.call(images[i]), images[i]?.length,
@@ -534,25 +583,27 @@ ipcMain.handle('print-merged-images', async (_event, { images, settings }) => {
     }
     console.log('[print-merged-images] 已写入 %d 个 PNG 到 %s', filePaths.length, tempDir)
 
-    // 2. ✅ PNG → PDF 转换：为每个 PNG 生成带正确 MediaBox 的 PDF
-    // SumatraPDF 通过 MediaBox 识别方向，PNG 没有 MediaBox 会导致方向丢失
-    const wantLandscape = settings.landscape
-    let { widthMM, heightMM } = PaperRegistryProvider.resolvePaperDimensionsFromSettings({
-      paperSize: settings.paperSize || 'A4',
-      customPaper: settings.customPaper || null,
-    })
-    // landscape 时交换宽高，使 PDF MediaBox 为横向
-    if (wantLandscape) {
-      ;[widthMM, heightMM] = [heightMM, widthMM]
-    }
-    console.log(`[print-merged-images] paper: ${widthMM}x${heightMM}mm, landscape=${wantLandscape}`)
-
+    // 2. ✅ PNG → PDF 转换（img2pdf 无损 + pikepdf 边距，一步完成）
     const pdfPaths = []
     for (let i = 0; i < filePaths.length; i++) {
-      const pngBuf = fs.readFileSync(filePaths[i])
-      const pdfBuf = pngToPdf(pngBuf, widthMM, heightMM)
       const pdfPath = path.join(tempDir, `page_${i + 1}.pdf`)
-      fs.writeFileSync(pdfPath, pdfBuf)
+      const margins = pdfMargin.extractMargins(settings)
+
+      await callPython([
+        'png-to-pdf',
+        filePaths[i],
+        pdfPath,
+        JSON.stringify(margins),
+        '300',  // dpi
+      ])
+
+      // 🐛 DEBUG: 复制转换后的 PDF 到桌面
+      try {
+        const debugDir = 'C:\\Users\\Mars_chen\\Desktop\\test'
+        fs.mkdirSync(debugDir, { recursive: true })
+        fs.copyFileSync(pdfPath, path.join(debugDir, `debug_png2pdf_${i + 1}.pdf`))
+        console.log('[print-merged-images] [DEBUG] 已复制 PDF → %s\\debug_png2pdf_%d.pdf', debugDir, i + 1)
+      } catch (de) { console.warn('[print-merged-images] [DEBUG] PDF 复制失败:', de.message) }
 
       const validation = validatePdfStructure(pdfPath)
       if (!validation.valid) {
@@ -563,93 +614,16 @@ ipcMain.handle('print-merged-images', async (_event, { images, settings }) => {
       const mediaBox = extractMediaBox(pdfPath)
       console.log(`[print-merged-images] PNG ${i + 1} → PDF: ${pdfPath}, MediaBox=${JSON.stringify(mediaBox)}`)
     }
+    // 边距已在 Python 内由 pikepdf 处理，不再需要 Electron 侧的 pdfMargin 步骤
 
-    // 3.5 应用安全边距
-    if (pdfMargin.hasMargins(settings)) {
-      console.log('[print-merged-images] Applying margins:', pdfMargin.extractMargins(settings))
-      for (let i = 0; i < pdfPaths.length; i++) {
-        const margins = pdfMargin.extractMargins(settings)
-        const res = await pdfMargin.process(pdfPaths[i], margins)
-        pdfPaths[i] = res.path
+    // 4. 走 DirectPrintHandler 打印每个 PDF（与非合并模式相同的管线）
+    //    复用其 SumatraPDF 参数构建、spawn、超时、清理逻辑
+    for (let i = 0; i < pdfPaths.length; i++) {
+      const result = await DirectPrintHandler.handle(pdfPaths[i], settings)
+      if (!result.success) {
+        throw new Error(`PDF ${i + 1} 打印失败: ${result.error}`)
       }
-    } else {
-      console.log('[print-merged-images] No margins to apply (hasMargins=false)')
     }
-
-    // 4. 构建打印参数
-    const sumatraExe = getSumatraPath()
-
-    const printSettings = []
-    const paperSize = settings.paperSize || 'A4'
-    switch (paperSize) {
-      case 'Custom':
-        if (settings.customPaper?.widthMM && settings.customPaper?.heightMM) {
-          printSettings.push(`paper=${settings.customPaper.widthMM}mm x ${settings.customPaper.heightMM}mm`)
-        }
-        break;
-      default:
-        printSettings.push(`paper=${paperSize}`)
-        break;
-    }
-    printSettings.push('fit')
-    printSettings.push('disable-auto-rotation')
-    printSettings.push('center')
-
-    // ✅ 智能方向判断（与 OsLauncherBridge.toSumatraArgs 一致）
-    // PDF 有 MediaBox，方向一致时不传 landscape，让打印机驱动自动识别
-    // 方向不一致时才传 landscape/portrait 旋转内容
-    const pdfOrientation = detectPdfOrientation(pdfPaths[0])
-    if ((pdfOrientation === 'portrait' && wantLandscape) ||
-        (pdfOrientation === 'landscape' && !wantLandscape)) {
-      printSettings.push(wantLandscape ? 'landscape' : 'portrait')
-      console.log(`[print-merged-images] ROTATING: PDF=${pdfOrientation}, want=${wantLandscape ? 'landscape' : 'portrait'}`)
-    } else {
-      console.log(`[print-merged-images] NO ROTATION: PDF=${pdfOrientation}, want=${wantLandscape ? 'landscape' : 'portrait'}`)
-    }
-
-    // 4. 构建完整命令行参数（PDF 路径转长路径，SumatraPDF 无法解析 8.3 短路径）
-    const printerName = settings.printerName || ''
-    const args = [...pdfPaths.map(toLongPath)]
-    if (printerName && printerName.trim()) {
-      args.push('-print-to', printerName.trim())
-    } else {
-      args.push('-print-to-default')
-    }
-    if (printSettings.length > 0) {
-      args.push('-print-settings', printSettings.join(','))
-    }
-    args.push('-silent')
-    // -exit-when-done 仅适用于 -print-dialog / -stress-test，-print-to 完成后自动退出
-    if (settings.copies && settings.copies > 1) {
-      args.push('-print-copies', settings.copies.toString())
-    }
-
-    console.log('[print-merged-images] 执行: %s %s', sumatraExe, args.join(' '))
-
-    // 5. 执行打印（不使用 shell: true，避免带空格的打印机名被拆分）
-    await new Promise((resolve, reject) => {
-      const proc = spawn(sumatraExe, args, {
-        windowsHide: true,
-        timeout: 120000,
-      })
-      let stdout = ''
-      let stderr = ''
-      proc.stdout.on('data', (d) => { stdout += d.toString() })
-      proc.stderr.on('data', (d) => { stderr += d.toString() })
-      proc.on('close', (code) => {
-        if (code === 0) {
-          resolve()
-        } else {
-          reject(new Error(`SumatraPDF 退出码: ${code}\nstderr: ${stderr}`))
-        }
-      })
-      proc.on('error', (err) => reject(err))
-      const timer = setTimeout(() => {
-        proc.kill()
-        reject(new Error('打印超时 (120s)'))
-      }, 120000)
-      proc.on('close', () => clearTimeout(timer))
-    })
 
     console.log('[print-merged-images] 打印完成')
     return { success: true }

@@ -639,7 +639,10 @@ export async function renderMultipleItemsToCanvas(
   // ✅ 渲染结果缓存（L2）：预览和打印使用相同参数时直接命中
   // ═══════════════════════════════════════════════
   const _rotKeys = Object.keys(rotations || {}).sort().map(k => `${k}:${rotations[k]}`).join(',')
-  const _cacheKey = `multi_${paperKey}_${dpi}_${isLandscape ? 'L' : 'P'}_${slotCount || items.length}_${layoutOptions.strategy || 'vertical'}_${_rotKeys}_${items.map(i => i.key || i.id).join(',')}`
+  const _marginKey = layoutOptions.userMargins
+    ? `m${layoutOptions.userMargins.left||0}_${layoutOptions.userMargins.right||0}_${layoutOptions.userMargins.top||0}_${layoutOptions.userMargins.bottom||0}`
+    : 'm0'
+  const _cacheKey = `multi_${paperKey}_${dpi}_${isLandscape ? 'L' : 'P'}_${slotCount || items.length}_${layoutOptions.strategy || 'vertical'}_${_rotKeys}_${_marginKey}_${items.map(i => i.key || i.id).join(',')}`
 
   const cachedCanvas = renderResultCache.get(_cacheKey)
   if (cachedCanvas) {
@@ -803,6 +806,25 @@ export async function renderMultipleItemsToCanvas(
   }
 
   drawSeparators()
+
+  // ── 用户安全边距（预览用，模拟打印输出效果） ──
+  const userMargins = layoutOptions.userMargins
+  if (userMargins) {
+    const mL = Math.round((userMargins.left || 0) * dpi / 25.4)
+    const mR = Math.round((userMargins.right || 0) * dpi / 25.4)
+    const mT = Math.round((userMargins.top || 0) * dpi / 25.4)
+    const mB = Math.round((userMargins.bottom || 0) * dpi / 25.4)
+    if (mL || mR || mT || mB) {
+      const newCanvas = document.createElement('canvas')
+      newCanvas.width = canvas.width + mL + mR
+      newCanvas.height = canvas.height + mT + mB
+      const newCtx = newCanvas.getContext('2d')
+      newCtx.fillStyle = '#ffffff'
+      newCtx.fillRect(0, 0, newCanvas.width, newCanvas.height)
+      newCtx.drawImage(canvas, mL, mT)
+      canvas = newCanvas
+    }
+  }
 
   // ✅ 缓存渲染结果，后续打印可直接命中
   renderResultCache.set(_cacheKey, canvas)

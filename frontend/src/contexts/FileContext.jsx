@@ -1,16 +1,6 @@
-import { createContext, useContext, useReducer, useCallback, useState, useMemo, useEffect } from 'react'
+import { createContext, useContext, useReducer, useCallback, useState, useMemo, useEffect, useDeferredValue } from 'react'
 import { filterFiles, isFailedFile, isMergeMode } from '../utils'
 import { BACKEND_URL } from '../config'
-
-// ── 通用防抖 Hook ──────────────────────────────────────────
-function useDebounce(value, delay = 250) {
-  const [debounced, setDebounced] = useState(value)
-  useEffect(() => {
-    const timer = setTimeout(() => setDebounced(value), delay)
-    return () => clearTimeout(timer)
-  }, [value, delay])
-  return debounced
-}
 
 // ── Reducer ──────────────────────────────────────────────────
 
@@ -38,7 +28,7 @@ export function FileProvider({ children }) {
   const [state, dispatch] = useReducer(fileReducer, INITIAL_STATE)
   const [searchQuery, setSearchQuery] = useState('')
   const [mergeMode, setMergeMode] = useState(null)
-  const debouncedSearchQuery = useDebounce(searchQuery, 250)
+  const deferredQuery = useDeferredValue(searchQuery)
 
   // 兼容现有所有 setFiles 调用（直接值 + updater 函数）
   const setFiles = useCallback((arg) => {
@@ -47,12 +37,14 @@ export function FileProvider({ children }) {
 
   const files = state.files
 
-  // 搜索过滤（使用防抖后的 searchQuery，避免每按键都重算）
-  const { filteredFiles, isSearching } = useMemo(() => {
-    const query = debouncedSearchQuery.trim()
-    if (!query) return { filteredFiles: files, isSearching: false }
-    return { filteredFiles: filterFiles(files, query), isSearching: true }
-  }, [files, debouncedSearchQuery])
+  // 搜索过滤（使用 useDeferredValue 延迟计算，避免阻塞输入）
+  const filteredFiles = useMemo(() => {
+    const query = deferredQuery.trim()
+    if (!query) return files
+    return filterFiles(files, query)
+  }, [files, deferredQuery])
+
+  const isSearching = searchQuery.trim() !== ''
 
   // ── 文件统计（从 useFileStats 移入 Context，Sidebar / ActionBar 直接消费） ──
 
@@ -121,7 +113,6 @@ export function FileProvider({ children }) {
     setFiles,
     searchQuery,
     setSearchQuery,
-    debouncedSearchQuery,
     filteredFiles,
     isSearching,
     // merge 模式（由 AppContent 通过 setMergeMode 同步）

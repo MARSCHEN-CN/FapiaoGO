@@ -88,11 +88,11 @@ function detectPdfOrientation(pdfPath) {
 
     const content = buffer.toString('latin1', 0, bytesRead);
 
-    // 匹配 /MediaBox [0 0 width height]
-    const match = content.match(/\/MediaBox\s*\[\s*0\s+0\s+([\d.]+)\s+([\d.]+)\s*\]/);
+    // 匹配 /MediaBox [left bottom right top]（任意 left/bottom）
+    const match = content.match(/\/MediaBox\s*\[\s*([\d.-]+)\s+([\d.-]+)\s+([\d.-]+)\s+([\d.-]+)\s*\]/);
     if (match) {
-      const w = parseFloat(match[1]);
-      const h = parseFloat(match[2]);
+      const w = parseFloat(match[3]) - parseFloat(match[1]);
+      const h = parseFloat(match[4]) - parseFloat(match[2]);
       const orient = w > h ? 'landscape' : 'portrait';
       console.log('[detectPdfOrientation] %s: MediaBox=%s×%s, %s', path.basename(pdfPath), w, h, orient);
       return orient;

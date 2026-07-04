@@ -77,16 +77,16 @@ function extractMediaBox(pdfPath) {
 
     const content = buffer.toString('latin1', 0, bytesRead)
 
-    // 匹配 /MediaBox [0 0 width height]
-    const match = content.match(/\/MediaBox\s*\[\s*0\s+0\s+([\d.]+)\s+([\d.]+)\s*\]/)
+    // 匹配 /MediaBox [left bottom right top]（任意 left/bottom）
+    const match = content.match(/\/MediaBox\s*\[\s*([\d.-]+)\s+([\d.-]+)\s+([\d.-]+)\s+([\d.-]+)\s*\]/)
     if (match) {
-      return { width: parseFloat(match[1]), height: parseFloat(match[2]) }
+      return { width: parseFloat(match[3]) - parseFloat(match[1]), height: parseFloat(match[4]) - parseFloat(match[2]) }
     }
 
     // 如果没找到 MediaBox，尝试找 /CropBox
-    const cropMatch = content.match(/\/CropBox\s*\[\s*0\s+0\s+([\d.]+)\s+([\d.]+)\s*\]/)
+    const cropMatch = content.match(/\/CropBox\s*\[\s*([\d.-]+)\s+([\d.-]+)\s+([\d.-]+)\s+([\d.-]+)\s*\]/)
     if (cropMatch) {
-      return { width: parseFloat(cropMatch[1]), height: parseFloat(cropMatch[2]) }
+      return { width: parseFloat(cropMatch[3]) - parseFloat(cropMatch[1]), height: parseFloat(cropMatch[4]) - parseFloat(cropMatch[2]) }
     }
 
     return null
@@ -110,21 +110,21 @@ function detectPdfOrientation(pdfPath) {
 
     const content = buffer.toString('latin1', 0, bytesRead)
 
-    // 匹配 /MediaBox [0 0 width height]
-    const match = content.match(/\/MediaBox\s*\[\s*0\s+0\s+([\d.]+)\s+([\d.]+)\s*\]/)
+    // 匹配 /MediaBox [left bottom right top]（任意 left/bottom）
+    const match = content.match(/\/MediaBox\s*\[\s*([\d.-]+)\s+([\d.-]+)\s+([\d.-]+)\s+([\d.-]+)\s*\]/)
     if (match) {
-      const width = parseFloat(match[1])
-      const height = parseFloat(match[2])
+      const width = parseFloat(match[3]) - parseFloat(match[1])
+      const height = parseFloat(match[4]) - parseFloat(match[2])
       const orientation = width > height ? 'landscape' : 'portrait'
       console.log(`[detectPdfOrientation] ${pdfPath}: MediaBox=${width}x${height}, ${orientation}`)
       return orientation
     }
 
     // 如果没找到 MediaBox，尝试找 /CropBox 或 /ArtBox
-    const cropMatch = content.match(/\/CropBox\s*\[\s*0\s+0\s+([\d.]+)\s+([\d.]+)\s*\]/)
+    const cropMatch = content.match(/\/CropBox\s*\[\s*([\d.-]+)\s+([\d.-]+)\s+([\d.-]+)\s+([\d.-]+)\s*\]/)
     if (cropMatch) {
-      const width = parseFloat(cropMatch[1])
-      const height = parseFloat(cropMatch[2])
+      const width = parseFloat(cropMatch[3]) - parseFloat(cropMatch[1])
+      const height = parseFloat(cropMatch[4]) - parseFloat(cropMatch[2])
       const orientation = width > height ? 'landscape' : 'portrait'
       console.log(`[detectPdfOrientation] ${pdfPath}: CropBox=${width}x${height}, ${orientation}`)
       return orientation

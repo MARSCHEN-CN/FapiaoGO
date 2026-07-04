@@ -406,9 +406,10 @@ export function usePreview({ files, settings, electronAPIRef }) {
    * @param {Object} fObj - 文件对象
    * @param {string} [currentKey] - 当前文件key（用于版本判断）
    * @param {string} [currentUrl] - 当前blob URL（用于复用）
+   * @param {AbortSignal} [signal] - 中止信号，用于取消加载
    * @returns {Promise<Object>} 包含 _previewImageUrl 或 _pdfData 的文件对象
    */
-  const loadFilePreview = useCallback(async (fObj, currentKey = null, currentUrl = null) => {
+  const loadFilePreview = useCallback(async (fObj, currentKey = null, currentUrl = null, signal = null) => {
     // ✅ 优先使用后端返回的格式
     let fmt = fObj.fileFormat
     
@@ -463,6 +464,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
         // 从文件系统加载（仅图片）
         else if (fmt === 'image' && electronAPIRef.current?.ipcRenderer && fObj.printPath) {
           const fd = await electronAPIRef.current.ipcRenderer.invoke('read-file', fObj.printPath)
+          if (signal?.aborted) return fObj
           if (fd.success) {
             const blob = new Blob([new Uint8Array(fd.data)])
             _previewImageUrl = URL.createObjectURL(blob)
@@ -507,8 +509,10 @@ export function usePreview({ files, settings, electronAPIRef }) {
         } else {
           if (fObj.file) {
             buffer = await fObj.file.arrayBuffer()
+            if (signal?.aborted) return fObj
           } else if (electronAPIRef.current?.ipcRenderer && fObj.printPath) {
             const fd = await electronAPIRef.current.ipcRenderer.invoke('read-file', fObj.printPath)
+            if (signal?.aborted) return fObj
             if (fd.success) {
               buffer = fd.data.buffer
             }
@@ -534,8 +538,11 @@ export function usePreview({ files, settings, electronAPIRef }) {
             //    避免每次预览都独立打开 PDF 文档仅获取尺寸
             try {
               const { getOrLoadPdfDocument: sharedLoadPdf } = await getRenderers()
+              if (signal?.aborted) return fObj
               const pdfDoc = await sharedLoadPdf(_pdfData)
+              if (signal?.aborted) return fObj
               const page = await pdfDoc.getPage(1)
+              if (signal?.aborted) return fObj
               const vp = page.getViewport({ scale: 1 })
               fObj._pdfPageWidth = vp.width
               fObj._pdfPageHeight = vp.height
@@ -680,7 +687,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
 
     try {
       // 加载预览数据（填充 previewLoadCache）
-      const loadedFile = await loadFilePreview(fileObj)
+      const loadedFile = await loadFilePreview(fileObj, null, null, controller.signal)
       if (controller.signal.aborted) return
 
       // 计算渲染参数（与 render effect 中单文件逻辑保持一致）

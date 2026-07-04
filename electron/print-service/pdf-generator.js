@@ -97,8 +97,28 @@ function pngToPdf(pngBuffer, pageWMM, pageHMM) {
   const pxH = img.getSize().height
 
   // Convert to JPEG then strip ICC_PROFILE for SumatraPDF 3.6.x compatibility
-  const jpegBuffer = stripJpegIccProfile(img.toJPEG(95))
-  const streamLen = jpegBuffer.length
+  // 🐛 FIX: stripJpegIccProfile 对特定的 JPEG 输出会损坏数据，直接使用原始 JPEG
+  const rawJpeg = img.toJPEG(95)
+  const jpegBuffer = stripJpegIccProfile(rawJpeg)
+  // 如果经过 ICC 剥离后比原始小太多（损坏），回退到原始 JPEG
+  const jpegOk = (jpegBuffer.length >= rawJpeg.length * 0.9)
+  const finalJpeg = jpegOk ? jpegBuffer : rawJpeg
+  if (!jpegOk) {
+    console.warn('[pdf-generator] stripJpegIccProfile 可能损坏了 JPEG（原始=%d → 剥离后=%d），回退到原始', rawJpeg.length, jpegBuffer.length)
+  }
+  const streamLen = finalJpeg.length
+
+  // 🐛 DEBUG: 保存 JPEG 中间结果到桌面
+  try {
+    const path = require('path')
+    const fs = require('fs')
+    const debugDir = 'C:\\Users\\Mars_chen\\Desktop\\test'
+    fs.mkdirSync(debugDir, { recursive: true })
+    fs.writeFileSync(path.join(debugDir, 'debug_rawjpeg.jpg'), img.toJPEG(95))
+    fs.writeFileSync(path.join(debugDir, 'debug_stripped.jpg'), jpegBuffer)
+    console.log('[pdf-generator] [DEBUG] pxW=%d pxH=%d rawJPEG=%d strippedJPEG=%d',
+      pxW, pxH, img.toJPEG(95).length, jpegBuffer.length)
+  } catch (de) { console.warn('[pdf-generator] [DEBUG] JPEG 保存失败:', de.message) }
 
   const enc = 'latin1'
   const scaleX = pageW / pxW
@@ -126,7 +146,7 @@ function pngToPdf(pngBuffer, pageWMM, pageHMM) {
 
   const offsets = []
   let pos = 0
-  for (const part of [p1, p2, p3, p4, p5h, jpegBuffer, p5t]) {
+  for (const part of [p1, p2, p3, p4, p5h, finalJpeg, p5t]) {
     offsets.push(pos); pos += part.length
   }
   const xrefPos = pos
