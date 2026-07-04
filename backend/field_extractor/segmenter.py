@@ -1191,15 +1191,25 @@ class DocumentSegmenter:
         # 同一行的 token cy 差不超过 8px（可配置）
         Y_ROW_TOLERANCE = 8.0
         rows = []  # list of list[Token]
+        row_cy_sums = []
+        row_cy_counts = []
         for token in tokens:
             if not rows:
                 rows.append([token])
+                row_cy_sums.append(token.cy)
+                row_cy_counts.append(1)
             else:
-                last_row_cy = sum(t.cy for t in rows[-1]) / len(rows[-1])
+                last_sum = row_cy_sums[-1]
+                last_count = row_cy_counts[-1]
+                last_row_cy = last_sum / last_count
                 if abs(token.cy - last_row_cy) <= Y_ROW_TOLERANCE:
                     rows[-1].append(token)
+                    row_cy_sums[-1] = last_sum + token.cy
+                    row_cy_counts[-1] = last_count + 1
                 else:
                     rows.append([token])
+                    row_cy_sums.append(token.cy)
+                    row_cy_counts.append(1)
 
         # 每行 token 分配到对应 line index 的 region
         for row_idx, row_tokens in enumerate(rows):
