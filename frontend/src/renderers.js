@@ -93,7 +93,10 @@ class LRUCache {
 // ✅ 统一渲染缓存（预览和打印共享，DPI 已统一为 300）
 const pdfRenderCache = new LRUCache(30, 'pdfRender')
 
-// ✅ 渲染结果缓存：缓存 renderMultipleItemsToCanvas 的 Canvas 输出
+// ✅ 单项渲染缓存（L1）：合并模式下跨文件组复���单项结果
+const itemRenderCache = new LRUCache(30, 'itemRender')
+
+// ✅ 渲染结果缓存（L2）：缓存 renderMultipleItemsToCanvas 的 Canvas 输出
 // 预览和打印使用相同参数时直接命中，避免重复渲染
 // 容量 30 个：对应 ~30 个 A4@300DPI 文件（~1GB 预算），大幅提升"来回切换"命中率
 class RenderResultCache {
@@ -633,7 +636,7 @@ export async function renderMultipleItemsToCanvas(
   layoutOptions = {}
 ) {
   // ═══════════════════════════════════════════════
-  // ✅ 渲染结果缓存：预览和打印使用相同参数时直接命中
+  // ✅ 渲染结果缓存（L2）：预览和打印使用相同参数时直接命中
   // ═══════════════════════════════════════════════
   const _rotKeys = Object.keys(rotations || {}).sort().map(k => `${k}:${rotations[k]}`).join(',')
   const _cacheKey = `multi_${paperKey}_${dpi}_${isLandscape ? 'L' : 'P'}_${slotCount || items.length}_${layoutOptions.strategy || 'vertical'}_${_rotKeys}_${items.map(i => i.key || i.id).join(',')}`
@@ -644,23 +647,34 @@ export async function renderMultipleItemsToCanvas(
   }
 
   // ═══════════════════════════════════════════════
-  // Phase 1: 预加载所有内容，获取真实尺寸
+  // Phase 1: 预加载所有内容（走 L1 单项缓存，合并模式下跨组复用）
   // ═══════════════════════════════════════════════
   const contentSources = new Map() // itemId → { source, width, height }
 
   await Promise.all(items.map(async (item) => {
     const id = item.id || item.key
+    const rotate = (rotations && rotations[id]) || 0
+    const l1Key = `itemRender_${id}_${dpi}_${rotate}`
+
+    // L1 命中：复用单项渲染结果
+    const l1Hit = itemRenderCache.get(l1Key)
+    if (l1Hit) {
+      contentSources.set(id, l1Hit)
+      return
+    }
+
+    // L1 未命中：渲染并缓存
     try {
       if (item._pdfData) {
-        // PDF: 用 renderPDFPageRaw 渲染原始内容（目标 DPI 像素，无纸张适配）
         const result = await renderPDFPageRaw(item._pdfData, dpi, item.key)
         if (result) {
-          contentSources.set(id, { source: result.canvas, width: result.width, height: result.height })
+          const entry = { source: result.canvas, width: result.width, height: result.height }
+          itemRenderCache.set(l1Key, entry)
+          contentSources.set(id, entry)
         } else {
           console.warn('[renderMultipleItemsToCanvas] PDF 渲染返回 null，将使用 fallback:', { id, fileKey: item.key, pdfDataLength: item._pdfData?.length })
         }
       } else if (item._previewImageUrl) {
-        // 图片/OFD: 加载获取原始像素尺寸
         const { src: srcToLoad, expired } = await resolveImageSrc(item._previewImageUrl)
         if (!expired) {
           const img = await new Promise((resolve) => {
@@ -670,7 +684,9 @@ export async function renderMultipleItemsToCanvas(
             image.src = srcToLoad
           })
           if (img) {
-            contentSources.set(id, { source: img, width: img.naturalWidth, height: img.naturalHeight })
+            const entry = { source: img, width: img.naturalWidth, height: img.naturalHeight }
+            itemRenderCache.set(l1Key, entry)
+            contentSources.set(id, entry)
           }
         }
       }
@@ -812,6 +828,7 @@ export function clearPdfCache(pdfData, paperKey, dpi, isLandscape) {
 export function clearAllPdfCache() {
   pdfRenderCache.clear()
   renderResultCache.clear()
+  itemRenderCache.clear()
 }
 
 /**
@@ -819,6 +836,7 @@ export function clearAllPdfCache() {
  */
 export function clearRenderCache() {
   renderResultCache.clear()
+  itemRenderCache.clear()
 }
 
 /**
