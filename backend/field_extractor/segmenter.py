@@ -1123,17 +1123,37 @@ class DocumentSegmenter:
                 doc.regions[name] = Region(name=name)
                 continue
 
-            all_y0 = [l.y0 for l in sl] + [t.y0 for t in bt]
-            all_y1 = [l.y1 for l in sl] + [t.y1 for t in bt]
-            all_x0 = [l.x0 for l in sl] + [t.x0 for t in bt]
-            all_x1 = [l.x1 for l in sl] + [t.x1 for t in bt]
+            min_x0 = float('inf')
+            min_y0 = float('inf')
+            max_x1 = float('-inf')
+            max_y1 = float('-inf')
+
+            for l in sl:
+                if l.x0 < min_x0:
+                    min_x0 = l.x0
+                if l.y0 < min_y0:
+                    min_y0 = l.y0
+                if l.x1 > max_x1:
+                    max_x1 = l.x1
+                if l.y1 > max_y1:
+                    max_y1 = l.y1
+
+            for t in bt:
+                if t.x0 < min_x0:
+                    min_x0 = t.x0
+                if t.y0 < min_y0:
+                    min_y0 = t.y0
+                if t.x1 > max_x1:
+                    max_x1 = t.x1
+                if t.y1 > max_y1:
+                    max_y1 = t.y1
 
             doc.regions[name] = Region(
                 name=name,
-                x0=min(all_x0) if all_x0 else 0,
-                y0=min(all_y0) if all_y0 else 0,
-                x1=max(all_x1) if all_x1 else 0,
-                y1=max(all_y1) if all_y1 else 0,
+                x0=min_x0 if min_x0 != float('inf') else 0,
+                y0=min_y0 if min_y0 != float('inf') else 0,
+                x1=max_x1 if max_x1 != float('-inf') else 0,
+                y1=max_y1 if max_y1 != float('-inf') else 0,
                 lines=list(sl),
                 tokens=list(bt),
             )
