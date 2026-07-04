@@ -156,6 +156,10 @@ _RIGHT_DIST_WEIGHT_DY = RIGHT_DIST_WEIGHT_DY
 # 来源优先级
 _SOURCE_PRIORITY = SOURCE_PRIORITY
 
+# 互斥关键词集合（用于 _fuzzy_match 中的交叉过滤）
+_BUYER_EXCLUSIVE = {'购买方', '购方信息', '购买方信息'}
+_SELLER_EXCLUSIVE = {'销售方', '销方信息', '销售方信息'}
+
 # ═══════════════════════════════════════════════════════════
 # Token 辅助函数
 # ═══════════════════════════════════════════════════════════
@@ -237,12 +241,10 @@ def _fuzzy_match(text: str, keywords: list, min_ratio: float = _FUZZY_MATCH_MIN_
 
     # [PERF] 交叉过滤：seller/buyer 互斥关键词剔除
     if '销售' in tc or '销方' in tc:
-        buyer_exclusive = {'购买方', '购方信息', '购买方信息'}
-        kw_set -= buyer_exclusive
+        kw_set -= _BUYER_EXCLUSIVE
 
     if '购买' in tc or '购方' in tc:
-        seller_exclusive = {'销售方', '销方信息', '销售方信息'}
-        kw_set -= seller_exclusive
+        kw_set -= _SELLER_EXCLUSIVE
 
     # [PERF] 覆盖率计算前增加快速过滤：字符集交集不足则跳过
     tc_set = set(tc)
