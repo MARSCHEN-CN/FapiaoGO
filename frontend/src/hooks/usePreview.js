@@ -59,6 +59,24 @@ export function usePreview({ files, settings, electronAPIRef }) {
   // ✅ L2 缓存：预渲染高清画布（通过 hover 提前填充）
   //    与 renderResultCache 共享同一 canvas 引用（无额外内存）
   const fullCacheRef = useRef(new Map())
+  // ✅ 有上限的 fullCache setter：超 10 项时淘汰最旧并释放 canvas 内存
+  const setFullCache = useCallback((key, canvas) => {
+    const map = fullCacheRef.current
+    // 覆盖旧值：先释放旧 canvas
+    if (map.has(key)) {
+      const old = map.get(key)
+      if (old instanceof HTMLCanvasElement) { old.width = 0; old.height = 0 }
+      map.delete(key)
+    }
+    map.set(key, canvas)
+    // 限制 10 项，超限时淘汰最旧的
+    if (map.size > 10) {
+      const firstKey = map.keys().next().value
+      const first = map.get(firstKey)
+      if (first instanceof HTMLCanvasElement) { first.width = 0; first.height = 0 }
+      map.delete(firstKey)
+    }
+  }, [])
   // ✅ 当前 hover 预加载的 AbortController（只保留最后一个）
   const currentPreloadRef = useRef(null)
   // ✅ 渲染跳过标记：handlePreview 从 fullCache 取到 canvas 时，
@@ -722,7 +740,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
 
       if (controller.signal.aborted) return
       if (canvas) {
-        fullCacheRef.current.set(fileObj.key, canvas)
+        setFullCache(fileObj.key, canvas)
       }
     } catch (e) {
       // 预加载失败非关键错误，静默处理
@@ -862,7 +880,10 @@ export function usePreview({ files, settings, electronAPIRef }) {
       cleanupAllBlobUrls()
       // ✅ 清理 preview 数据缓存（释放 Blob / Uint8Array 引用）
       previewLoadCacheRef.current.clear()
-      // ✅ 清理 fullCache（预渲染画布在 renderResultCache 中已有引用，此处只是清空映射）
+      // ✅ 清理 fullCache（释放 canvas 内存）
+      for (const canvas of fullCacheRef.current.values()) {
+        if (canvas instanceof HTMLCanvasElement) { canvas.width = 0; canvas.height = 0 }
+      }
       fullCacheRef.current.clear()
       // ✅ 取消进行中的预加载
       if (currentPreloadRef.current) {

@@ -751,6 +751,14 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
     }
 
     setPrinting(false)
+
+    // ✅ 打印完成，释放 L2 缓存（~1GB 峰值），保留 L1 加速下次预览重建
+    try {
+      const renderers = await getPrintRenderers()
+      if (renderers.clearRenderCache) renderers.clearRenderCache()
+      console.log('[Cache] L2 cleared after print.')
+    } catch (_) {}
+
     return { completed: completed.length, failed: failed.length }
   }, [printSingleSourceFile])
 

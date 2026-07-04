@@ -40,8 +40,7 @@ class LRUCache {
 
   set(key, value) {
     if (this.cache.has(key)) {
-      // 已存在，移到末尾
-      this.cache.delete(key)
+      this.delete(key)  // LRUCache.delete，触发 _returnPoolCanvas
     } else if (this.cache.size >= this.maxSize) {
       // 超出限制，删除最久未使用的（第一个）
       const oldestKey = this.cache.keys().next().value
@@ -57,19 +56,23 @@ class LRUCache {
     const value = this.cache.get(key)
     this.cache.delete(key)
 
-    // 清理 Canvas 资源（放回复用池，避免频繁创建/销毁）
-    // 缓存值格式: { source: canvas, width, height } 或直接 HTMLCanvasElement
     const canvas = value?.source || value?.canvas || value
     if (canvas instanceof HTMLCanvasElement) {
       _returnPoolCanvas(canvas)
     }
+
+    if (value && typeof value._destroyFn === 'function') {
+      value._destroyFn().catch(() => {})
+    }
   }
 
   clear() {
-    // 清理所有 Canvas 资源
     for (const value of this.cache.values()) {
       const canvas = value?.source || value?.canvas || value
       if (canvas instanceof HTMLCanvasElement) _returnPoolCanvas(canvas)
+      if (value && typeof value._destroyFn === 'function') {
+        value._destroyFn().catch(() => {})
+      }
     }
     this.cache.clear()
   }
@@ -108,8 +111,10 @@ class RenderResultCache {
     return entry
   }
   set(key, canvas) {
-    if (this.cache.has(key)) this.cache.delete(key)
-    else if (this.cache.size >= this.maxSize) {
+    if (this.cache.has(key)) {
+      this._cleanup(this.cache.get(key))
+      this.cache.delete(key)
+    } else if (this.cache.size >= this.maxSize) {
       const oldest = this.cache.keys().next().value
       this._cleanup(this.cache.get(oldest))
       this.cache.delete(oldest)
@@ -215,30 +220,33 @@ function loadPdfDocument(pdfData) {
   }
 }
 
-// PDF 文档缓存（缓存 PDFDocumentProxy 对象）
 const pdfDocCache = new LRUCache(10, 'pdfDoc')
+const _pdfLoadingLocks = new Map()
 
-/**
- * 获取或加载 PDF 文档（带缓存）
- * @param {Uint8Array} pdfData - PDF 数据
- * @returns {Promise<PDFDocumentProxy>} PDF 文档对象
- */
 export async function getOrLoadPdfDocument(pdfData) {
   const pdfId = getPdfId(pdfData)
   
-  // 检查是否有缓存的 PDF 文档
   const cachedDoc = pdfDocCache.get(pdfId)
-  if (cachedDoc) {
+  if (cachedDoc) return cachedDoc
   
-    return cachedDoc
+  if (_pdfLoadingLocks.has(pdfId)) {
+    return _pdfLoadingLocks.get(pdfId)
   }
   
-  // 加载新的 PDF 文档
-  const { pdf } = await loadPdfDocument(pdfData)
-  pdfDocCache.set(pdfId, pdf)
-
+  const loadPromise = (async () => {
+    try {
+      const { pdf: pdfPromise, destroy } = loadPdfDocument(pdfData)
+      const pdf = await pdfPromise
+      pdf._destroyFn = destroy
+      pdfDocCache.set(pdfId, pdf)
+      return pdf
+    } finally {
+      _pdfLoadingLocks.delete(pdfId)
+    }
+  })()
   
-  return pdf
+  _pdfLoadingLocks.set(pdfId, loadPromise)
+  return loadPromise
 }
 
 /**
@@ -357,6 +365,21 @@ function _getRenderQueueKey(pdfData, fileKey) {
 //    但版本号已被后续请求覆盖，队列中的渲染检查到版本超期即跳过
 const _renderVersions = new Map()
 
+// _renderDirect 版本控制（快速切换时跳过过期渲染）
+const _directVersions = new Map()
+
+// ✅ Worker 渲染版本控制：过期 Worker 结果直接丢弃，不绘制、不缓存
+const _workerVersions = new Map()
+
+// 版本 Map 工具：记录版本号并自动清理超过 100 项的旧条目
+// 防止高频切换时 Map 无限膨胀（string→number，1000 项 ≈ 72KB）
+function setVersion(map, key, value, maxSize = 100) {
+  map.set(key, value)
+  if (map.size > maxSize) {
+    map.delete(map.keys().next().value)
+  }
+}
+
 async function renderPDFPageRaw(pdfData, dpi, fileKey) {
   // 按文件隔离队列
   const queueKey = _getRenderQueueKey(pdfData, fileKey)
@@ -368,7 +391,7 @@ async function renderPDFPageRaw(pdfData, dpi, fileKey) {
 
   // 递增版本号，使旧渲染过期
   const version = (_renderVersions.get(queueKey) || 0) + 1
-  _renderVersions.set(queueKey, version)
+  setVersion(_renderVersions, queueKey, version)
 
   // 控制版本 Map 大小
   if (_renderVersions.size > 100) {
@@ -389,6 +412,7 @@ async function renderPDFPageRaw(pdfData, dpi, fileKey) {
 
     let pdf = null
     let page = null
+    let canvas = null  // 提升到 try 外，catch 才能访问
     try {
       pdf = await getOrLoadPdfDocument(pdfData)
       // 加载 pdf 文档后再次检查版本
@@ -415,7 +439,7 @@ async function renderPDFPageRaw(pdfData, dpi, fileKey) {
         return null
       }
 
-      const canvas = _getPoolCanvas(width, height)
+      canvas = _getPoolCanvas(width, height)
       const ctx = canvas.getContext('2d')
       ctx.fillStyle = '#ffffff'
       ctx.fillRect(0, 0, width, height)
@@ -430,8 +454,15 @@ async function renderPDFPageRaw(pdfData, dpi, fileKey) {
       const scaledViewport = page.getViewport({ scale })
       await page.render({ canvasContext: ctx, viewport: scaledViewport }).promise
 
+      // ✅ 渲染完成后检查版本是否仍最新（page.render 耗时几百毫秒，期间可能切换文件）
+      if (!isLatest()) {
+        _returnPoolCanvas(canvas)
+        return null
+      }
+
       return { canvas, width, height }
     } catch (e) {
+      if (canvas) _returnPoolCanvas(canvas)  // ← 异常时归还到池
       if (isLatest()) {
         console.error('[renderPDFPageRaw] PDF 渲染失败:', { fileKey, dpi, pdfDataLength: pdfData?.length, error: e.message, stack: e.stack })
       } else {
@@ -636,18 +667,20 @@ const _pendingRequests = new Map()
 const _canvasPool = new Map()  // "wxh" → [canvas, ...]
 
 function _getPoolCanvas(w, h) {
-  const key = `${w}x${h}`
+  const rw = Math.round(w)
+  const rh = Math.round(h)
+  const key = `${rw}x${rh}`
   const pool = _canvasPool.get(key)
   if (pool && pool.length > 0) {
     const c = pool.pop()
     // 清空内容（尺寸不变，不需要重新设置 width/height）
     const ctx = c.getContext('2d')
-    ctx.clearRect(0, 0, w, h)
+    ctx.clearRect(0, 0, c.width, c.height)
     return c
   }
   const c = document.createElement('canvas')
-  c.width = w
-  c.height = h
+  c.width = rw
+  c.height = rh
   return c
 }
 
@@ -660,16 +693,34 @@ function _returnPoolCanvas(canvas) {
 }
 
 function _dispatchWorkerMessage(e) {
-  const { type, id, bitmap, cacheKey, error } = e.data
+  const { type, id, bitmap, cacheKey, error, version } = e.data
   if (type === 'ready') return
+  if (type === 'debug') {
+    console.log('[Worker]', e.data.msg)
+    return
+  }
+
   const handler = _pendingRequests.get(id)
-  if (!handler) return
+  if (!handler) {
+    bitmap?.close()
+    return
+  }
+
   _pendingRequests.delete(id)
+
   if (type === 'error') {
     handler.reject(new Error(error))
     return
   }
-  // type === 'result': 将 ImageBitmap 转存到复用池 canvas
+
+  // ✅ 版本检查：已过期则丢弃 bitmap，返回缓存（或 null）
+  if (_workerVersions.get(cacheKey) !== version) {
+    bitmap?.close()
+    handler.resolve(renderResultCache.get(cacheKey) || null)
+    return
+  }
+
+  // 版本仍最新 → 正常绘制并缓存
   const canvas = _getPoolCanvas(bitmap.width, bitmap.height)
   const ctx = canvas.getContext('2d')
   ctx.drawImage(bitmap, 0, 0)
@@ -681,7 +732,7 @@ function _dispatchWorkerMessage(e) {
 function _getWorker() {
   if (!_renderWorker) {
     _renderWorker = new Worker(
-      new URL('./render.worker.js', import.meta.url),
+      new URL('./render.worker.js?v=10', import.meta.url),
       { type: 'module' }
     )
     _renderWorker.onmessage = _dispatchWorkerMessage
@@ -704,11 +755,19 @@ async function _renderViaWorker(items, paperKey, dpi, isLandscape, rotations, sl
   const _customKey = layoutOptions.customPaper?.widthMM ? `c${layoutOptions.customPaper.widthMM}x${layoutOptions.customPaper.heightMM}` : ''
   const _cacheKey = `multi_${paperKey}_${dpi}_${isLandscape ? 'L' : 'P'}_${slotCount || items.length}_${layoutOptions.strategy || 'vertical'}_${_rotKeys}_${_marginKey}_${_customKey}_${items.map(i => i.key || i.id).join(',')}`
 
+  // ✅ 版本控制：同 cacheKey 递增版本号
+  const version = (_workerVersions.get(_cacheKey) || 0) + 1
+  setVersion(_workerVersions, _cacheKey, version)
+  if (_workerVersions.size > 100) {
+    const firstKey = _workerVersions.keys().next().value
+    _workerVersions.delete(firstKey)
+  }
+
   const cached = renderResultCache.get(_cacheKey)
   if (cached) return cached
 
   // ═══════════════════════════════════════════════════════
-  // Phase 1: 主线程预加载（与 _renderDirect 的 Phase 1 一致）
+  // Phase 1: 主线程预加载
   // ═══════════════════════════════════════════════════════
   const contentSources = new Map()
 
@@ -752,6 +811,11 @@ async function _renderViaWorker(items, paperKey, dpi, isLandscape, rotations, sl
     }
   }))
 
+  // ✅ Phase 1 后检查：已过期则直接返回
+  if (_workerVersions.get(_cacheKey) !== version) {
+    return renderResultCache.get(_cacheKey) || null
+  }
+
   // Layout（主线程计算，纯函数）
   const normalizedItems = items.map(item => {
     const id = item.id || item.key
@@ -762,7 +826,6 @@ async function _renderViaWorker(items, paperKey, dpi, isLandscape, rotations, sl
     return normalizeLayoutItem(item, dpi)
   })
 
-  // 用户边距 → createLayout margin 参数（缩小内容区域，纸张大小不变）
   const userMargins = layoutOptions.userMargins
   const marginMm = userMargins ? {
     top: userMargins.top || 0, bottom: userMargins.bottom || 0,
@@ -776,7 +839,7 @@ async function _renderViaWorker(items, paperKey, dpi, isLandscape, rotations, sl
   })
 
   // ═══════════════════════════════════════════════════════
-  // Phase 1.5: HTMLCanvasElement/Image → ImageBitmap（零拷贝传送）
+  // Phase 1.5: HTMLCanvasElement/Image → ImageBitmap
   // ═══════════════════════════════════════════════════════
   const imageBitmaps = await Promise.all(
     items.map(async (item) => {
@@ -792,6 +855,12 @@ async function _renderViaWorker(items, paperKey, dpi, isLandscape, rotations, sl
     })
   )
 
+  // ✅ 发送 Worker 前检查：已过期则清理 bitmaps 并返回
+  if (_workerVersions.get(_cacheKey) !== version) {
+    imageBitmaps.forEach(b => b?.close())
+    return renderResultCache.get(_cacheKey) || null
+  }
+
   // ═══════════════════════════════════════════════════════
   // Phase 2: 交给 Worker 合成
   // ═══════════════════════════════════════════════════════
@@ -802,7 +871,7 @@ async function _renderViaWorker(items, paperKey, dpi, isLandscape, rotations, sl
   const transferables = imageBitmaps.filter(Boolean)
 
   return new Promise((resolve, reject) => {
-    _pendingRequests.set(id, { resolve, reject })
+    _pendingRequests.set(id, { resolve, reject, version, cacheKey: _cacheKey })
 
     worker.postMessage({
       sources: imageBitmaps,
@@ -811,12 +880,17 @@ async function _renderViaWorker(items, paperKey, dpi, isLandscape, rotations, sl
       layoutOptions: { ...layoutOptions, _dpi: dpi },
       cacheKey: _cacheKey,
       id,
+      version,
     }, transferables)
 
-    // 超时保护（30s）
+    // 超时保护（30s）：过期时清理 bitmaps
     setTimeout(() => {
       const h = _pendingRequests.get(id)
-      if (h) { _pendingRequests.delete(id); reject(new Error('Worker 合成超时')) }
+      if (h) {
+        _pendingRequests.delete(id)
+        imageBitmaps.forEach(b => b?.close())
+        reject(new Error('Worker 合成超时'))
+      }
     }, 30000)
   })
 }
@@ -882,6 +956,15 @@ async function _renderDirect(
     return cachedCanvas
   }
 
+  // ✅ 版本控制：快速切换时跳过过期渲染
+  const _directVer = (_directVersions.get(_cacheKey) || 0) + 1
+  setVersion(_directVersions, _cacheKey, _directVer)
+  const _isDirectLatest = () => _directVersions.get(_cacheKey) === _directVer
+  if (_directVersions.size > 100) {
+    const firstKey = _directVersions.keys().next().value
+    _directVersions.delete(firstKey)
+  }
+
   // ═══════════════════════════════════════════════
   // Phase 1: 预加载所有内容（走 L1 单项缓存，合并模式下跨组复用）
   // ═══════════════════════════════════════════════
@@ -930,6 +1013,11 @@ async function _renderDirect(
       console.error('[renderMultipleItemsToCanvas] 预加载失败:', id, e)
     }
   }))
+
+  // ✅ Phase 1 完成后检查版本，过期请求不进入 Phase 2
+  if (!_isDirectLatest()) {
+    return renderResultCache.get(_cacheKey) || null
+  }
 
   // 用真实内容尺寸构建 layout item
   const normalizedItems = items.map(item => {
@@ -1044,6 +1132,12 @@ async function _renderDirect(
   }
 
   drawSeparators()
+
+  // ✅ 存入缓存前检查版本，过期 canvas 归还池
+  if (!_isDirectLatest()) {
+    _returnPoolCanvas(canvas)
+    return renderResultCache.get(_cacheKey) || null
+  }
 
   // ✅ 缓存渲染结果，后续打印可直接命中
   renderResultCache.set(_cacheKey, canvas)

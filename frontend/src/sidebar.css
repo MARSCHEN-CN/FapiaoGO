@@ -710,9 +710,9 @@
   color: var(--text);
   display: block;
   line-height: 1.2;
-  animation: countPop 0.4s var(--ease) both;
 }
 
+.sb-stat-val.pop { animation: countPop 0.4s var(--ease) both; }
 .sb-stat-val.brand { color: var(--accent); }
 .sb-stat-val.error { color: var(--danger); font-weight: 600; }
 .sb-stat-val.orange { color: var(--orange); font-weight: 600; }

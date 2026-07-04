@@ -14,9 +14,9 @@ export default function ImportProgressModal({ importing, parsing, parseProgress 
     }
   }, [importing])
 
-  // 导入结束后等关闭动画完成再卸载
-  const handleAnimationEnd = (e) => {
-    if (e.animationName === 'importOverlayOut') setVisible(false)
+  // 导入结束后等动画完再卸载
+  const handleTransitionEnd = () => {
+    if (!importing) setVisible(false)
   }
 
   if (!visible) return null
@@ -28,7 +28,7 @@ export default function ImportProgressModal({ importing, parsing, parseProgress 
   return (
     <div
       className={`import-modal-overlay ${!importing ? 'import-modal-out' : ''}`}
-      onAnimationEnd={handleAnimationEnd}
+      onTransitionEnd={handleTransitionEnd}
     >
       <div className={`import-modal-box ${!importing ? 'import-modal-box-out' : ''}`}>
         {/* 旋转图标 */}

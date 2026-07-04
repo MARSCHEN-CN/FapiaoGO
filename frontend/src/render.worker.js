@@ -1,5 +1,7 @@
+console.log('[Worker] VERSION 10 — sources.close enabled')
 // ═══════════════════════════════════════════════════════════════
 // render.worker.js — Phase 2 合成专用 Worker
+self.postMessage({ type: 'debug', msg: 'VERSION 10 — sources.close enabled' })
 // 主线程完成 Phase 1 (pdfjs/图片渲染) + Layout 计算后，
 // 将 ImageBitmap + layout 传入 Worker，由 Worker 执行 slot 合成。
 // ═══════════════════════════════════════════════════════════════
@@ -94,13 +96,19 @@ function compositeCanvas(sources, layout, rotations, layoutOptions) {
 
 // ── onmessage ──
 self.onmessage = async (e) => {
-  const { sources, layout, rotations, layoutOptions, cacheKey, id } = e.data
+  const { sources, layout, rotations, layoutOptions, cacheKey, id, version } = e.data
 
   try {
     const resultCanvas = compositeCanvas(sources, layout, rotations, layoutOptions)
     const bitmap = resultCanvas.transferToImageBitmap()
-    self.postMessage({ type: 'result', bitmap, cacheKey, id }, [bitmap])
+
+    // ✅ 关闭输入的 ImageBitmap，释放 GPU 纹理
+    sources.forEach(b => b?.close())
+
+    self.postMessage({ type: 'result', bitmap, cacheKey, id, version }, [bitmap])
   } catch (err) {
-    self.postMessage({ type: 'error', cacheKey, id, error: err.message })
+    // ✅ 异常分支也要关闭
+    sources.forEach(b => b?.close())
+    self.postMessage({ type: 'error', cacheKey, id, version, error: err.message })
   }
 }
