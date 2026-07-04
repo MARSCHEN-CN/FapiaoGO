@@ -1,3 +1,5 @@
+\database\uploads
+\backend\database
 .mimocode/
 .pytest_cache/
 .qoder/
