@@ -24,9 +24,6 @@ from ..regex_patterns import (
 
 logger = logging.getLogger(__name__)
 
-# ¥ 前缀金额提取
-_YEN_PREFIX_RE = re.compile(r'[¥￥]\s*([\d,]+\.\d{2})')
-
 # 表头列检测
 _HEADER_AMOUNT_COL = re.compile(r'金\s*额')
 _HEADER_TAX_COL = re.compile(r'税\s*额')
@@ -722,7 +719,7 @@ class AmountExtractor:
 
         # ── 1.10 末尾 ¥ 前缀金额回退 → amountHj ──
         if not candidates['hj']:
-            all_yen = _YEN_PREFIX_RE.findall(doc.collapsed)
+            all_yen = _YUAN_RE.findall(doc.collapsed)
             if all_yen:
                 last = self._clean_amount(all_yen[-1])
                 if last and self._is_valid_amount(last):

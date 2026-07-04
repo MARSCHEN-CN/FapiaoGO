@@ -1,6 +1,7 @@
 """
 发票字段数据模型
 """
+import re
 from dataclasses import dataclass, field
 from typing import List, Optional, Dict
 
