@@ -583,38 +583,42 @@ ipcMain.handle('print-merged-images', async (_event, { images, settings }) => {
     }
     console.log('[print-merged-images] 已写入 %d 个 PNG 到 %s', filePaths.length, tempDir)
 
-    // 2. ✅ PNG → PDF 转换（img2pdf 无损 + pikepdf 边距，一步完成）
-    const pdfPaths = []
-    for (let i = 0; i < filePaths.length; i++) {
-      const pdfPath = path.join(tempDir, `page_${i + 1}.pdf`)
-      const margins = pdfMargin.extractMargins(settings)
+    // 2. ✅ 批量 PNG → PDF 转换（一次 Python 进程处理全部，节省 spawn 开销）
+    const margins = pdfMargin.extractMargins(settings)
+    const pdfPaths = filePaths.map((_, i) => path.join(tempDir, `page_${i + 1}.pdf`))
+    const batchFiles = filePaths.map((png, i) => ({ png, pdf: pdfPaths[i] }))
 
-      await callPython([
-        'png-to-pdf',
-        filePaths[i],
-        pdfPath,
-        JSON.stringify(margins),
-        '300',  // dpi
-      ])
+    const batchResult = await callPython([
+      'batch-png-to-pdf',
+      JSON.stringify({ files: batchFiles, margins, dpi: 300 }),
+    ])
+
+    if (!batchResult.success) {
+      throw new Error(`批量 PDF 转换失败: ${batchResult.error}`)
+    }
+
+    for (let i = 0; i < pdfPaths.length; i++) {
+      const result = batchResult.results?.[i]
+      if (result && !result.success) {
+        console.warn(`[print-merged-images] PNG ${i + 1} 转换警告:`, result.error)
+      }
 
       // 🐛 DEBUG: 复制转换后的 PDF 到桌面
       try {
         const debugDir = 'C:\\Users\\Mars_chen\\Desktop\\test'
         fs.mkdirSync(debugDir, { recursive: true })
-        fs.copyFileSync(pdfPath, path.join(debugDir, `debug_png2pdf_${i + 1}.pdf`))
+        fs.copyFileSync(pdfPaths[i], path.join(debugDir, `debug_png2pdf_${i + 1}.pdf`))
         console.log('[print-merged-images] [DEBUG] 已复制 PDF → %s\\debug_png2pdf_%d.pdf', debugDir, i + 1)
       } catch (de) { console.warn('[print-merged-images] [DEBUG] PDF 复制失败:', de.message) }
 
-      const validation = validatePdfStructure(pdfPath)
+      const validation = validatePdfStructure(pdfPaths[i])
       if (!validation.valid) {
         console.warn(`[print-merged-images] PDF ${i + 1} validation issues:`, validation.issues)
       }
 
-      pdfPaths.push(pdfPath)
-      const mediaBox = extractMediaBox(pdfPath)
-      console.log(`[print-merged-images] PNG ${i + 1} → PDF: ${pdfPath}, MediaBox=${JSON.stringify(mediaBox)}`)
+      const mediaBox = extractMediaBox(pdfPaths[i])
+      console.log(`[print-merged-images] PNG ${i + 1} → PDF: ${pdfPaths[i]}, MediaBox=${JSON.stringify(mediaBox)}`)
     }
-    // 边距已在 Python 内由 pikepdf 处理，不再需要 Electron 侧的 pdfMargin 步骤
 
     // 4. 走 DirectPrintHandler 打印每个 PDF（与非合并模式相同的管线）
     //    复用其 SumatraPDF 参数构建、spawn、超时、清理逻辑

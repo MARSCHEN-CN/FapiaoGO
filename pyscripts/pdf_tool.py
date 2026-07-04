@@ -90,6 +90,28 @@ def main():
                 "action": "png-to-pdf-with-margin"
             }))
 
+        elif cmd == "batch-png-to-pdf":
+            # 批量处理：一次 spawn 处理多个 PNG → PDF
+            # sys.argv[2] = JSON: { files: [{ png, pdf }], margins: {...}, dpi: 300 }
+            payload = json.loads(sys.argv[2])
+            files = payload.get("files", [])
+            margins = payload.get("margins", {})
+            dpi = payload.get("dpi", 300)
+            results = []
+
+            for f in files:
+                try:
+                    png_to_pdf_with_margin(f["png"], f["pdf"], margins, dpi)
+                    results.append({"png": f["png"], "pdf": f["pdf"], "success": True})
+                except Exception as e:
+                    results.append({"png": f["png"], "pdf": f["pdf"], "success": False, "error": str(e)})
+
+            print(json.dumps({
+                "success": True,
+                "results": results,
+                "action": "batch-png-to-pdf"
+            }))
+
         else:
             raise ValueError(f"Unknown command: {cmd}")
 

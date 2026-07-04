@@ -627,10 +627,212 @@ export function createHiDPICanvas(width, height) {
   return { canvas, ctx }
 }
 
+// ═══════════════════════════════════════════════════════════════
+// Worker 单例 + 请求分发（主线程封装）
+// ═══════════════════════════════════════════════════════════════
+
+let _renderWorker = null
+let _workerReady = null
+let _msgId = 0
+const _pendingRequests = new Map()
+
+function _dispatchWorkerMessage(e) {
+  const { type, id, bitmap, cacheKey, error } = e.data
+  if (type === 'ready') return
+  const handler = _pendingRequests.get(id)
+  if (!handler) return
+  _pendingRequests.delete(id)
+  if (type === 'error') {
+    handler.reject(new Error(error))
+    return
+  }
+  // type === 'result': 将 ImageBitmap 转为 HTMLCanvasElement 存入 L2 缓存
+  const canvas = document.createElement('canvas')
+  canvas.width = bitmap.width
+  canvas.height = bitmap.height
+  const ctx = canvas.getContext('2d')
+  ctx.drawImage(bitmap, 0, 0)
+  bitmap.close()
+  renderResultCache.set(cacheKey, canvas)
+  handler.resolve(canvas)
+}
+
+function _getWorker() {
+  if (!_renderWorker) {
+    _renderWorker = new Worker(
+      new URL('./render.worker.js', import.meta.url),
+      { type: 'module' }
+    )
+    _renderWorker.onmessage = _dispatchWorkerMessage
+    _workerReady = new Promise(resolve => {
+      const listener = (e) => {
+        if (e.data.type === 'ready') { resolve(); _renderWorker.removeEventListener('message', listener) }
+      }
+      _renderWorker.addEventListener('message', listener)
+    })
+  }
+  return _renderWorker
+}
+
+async function _renderViaWorker(items, paperKey, dpi, isLandscape, rotations, slotCount, layoutOptions) {
+  // L2 cache key（与 _renderDirect 一致）
+  const _rotKeys = Object.keys(rotations || {}).sort().map(k => `${k}:${rotations[k]}`).join(',')
+  const _marginKey = layoutOptions.userMargins
+    ? `m${layoutOptions.userMargins.left||0}_${layoutOptions.userMargins.right||0}_${layoutOptions.userMargins.top||0}_${layoutOptions.userMargins.bottom||0}`
+    : 'm0'
+  const _cacheKey = `multi_${paperKey}_${dpi}_${isLandscape ? 'L' : 'P'}_${slotCount || items.length}_${layoutOptions.strategy || 'vertical'}_${_rotKeys}_${_marginKey}_${items.map(i => i.key || i.id).join(',')}`
+
+  const cached = renderResultCache.get(_cacheKey)
+  if (cached) return cached
+
+  // ═══════════════════════════════════════════════════════
+  // Phase 1: 主线程预加载（与 _renderDirect 的 Phase 1 一致）
+  // ═══════════════════════════════════════════════════════
+  const contentSources = new Map()
+
+  await Promise.all(items.map(async (item) => {
+    const id = item.id || item.key
+    const rotate = (rotations && rotations[id]) || 0
+    const l1Key = `itemRender_${id}_${dpi}_${rotate}`
+
+    const l1Hit = itemRenderCache.get(l1Key)
+    if (l1Hit) {
+      contentSources.set(id, l1Hit)
+      return
+    }
+
+    try {
+      if (item._pdfData) {
+        const result = await renderPDFPageRaw(item._pdfData, dpi, item.key)
+        if (result) {
+          const entry = { source: result.canvas, width: result.width, height: result.height }
+          itemRenderCache.set(l1Key, entry)
+          contentSources.set(id, entry)
+        }
+      } else if (item._previewImageUrl) {
+        const { src: srcToLoad, expired } = await resolveImageSrc(item._previewImageUrl)
+        if (!expired) {
+          const img = await new Promise((resolve) => {
+            const image = new Image()
+            image.onload = () => resolve(image)
+            image.onerror = () => resolve(null)
+            image.src = srcToLoad
+          })
+          if (img) {
+            const entry = { source: img, width: img.naturalWidth, height: img.naturalHeight }
+            itemRenderCache.set(l1Key, entry)
+            contentSources.set(id, entry)
+          }
+        }
+      }
+    } catch (e) {
+      console.error('[Worker path] Phase 1 失败:', id, e)
+    }
+  }))
+
+  // Layout（主线程计算，纯函数）
+  const normalizedItems = items.map(item => {
+    const id = item.id || item.key
+    const cs = contentSources.get(id)
+    if (cs) {
+      return { id, type: item._pdfData ? 'pdf' : 'image', meta: { width: cs.width, height: cs.height } }
+    }
+    return normalizeLayoutItem(item, dpi)
+  })
+
+  const layout = createLayout(normalizedItems, paperKey, dpi, isLandscape, {
+    slotCount,
+    margin: 0,
+    ...layoutOptions
+  })
+
+  // ═══════════════════════════════════════════════════════
+  // Phase 1.5: HTMLCanvasElement/Image → ImageBitmap（零拷贝传送）
+  // ═══════════════════════════════════════════════════════
+  const imageBitmaps = await Promise.all(
+    items.map(async (item) => {
+      const id = item.id || item.key
+      const cs = contentSources.get(id)
+      if (!cs) return null
+      try {
+        return await createImageBitmap(cs.source)
+      } catch (e) {
+        console.error('createImageBitmap 失败:', id, e)
+        return null
+      }
+    })
+  )
+
+  // ═══════════════════════════════════════════════════════
+  // Phase 2: 交给 Worker 合成
+  // ═══════════════════════════════════════════════════════
+  await _workerReady
+  const worker = _getWorker()
+  const id = ++_msgId
+
+  const transferables = imageBitmaps.filter(Boolean)
+
+  return new Promise((resolve, reject) => {
+    _pendingRequests.set(id, { resolve, reject })
+
+    worker.postMessage({
+      sources: imageBitmaps,
+      layout,
+      rotations,
+      layoutOptions: { ...layoutOptions, _dpi: dpi },
+      cacheKey: _cacheKey,
+      id,
+    }, transferables)
+
+    // 超时保护（30s）
+    setTimeout(() => {
+      const h = _pendingRequests.get(id)
+      if (h) { _pendingRequests.delete(id); reject(new Error('Worker 合成超时')) }
+    }, 30000)
+  })
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 公开 API：自动选择 Worker 路径或直接渲染路径
+// ═══════════════════════════════════════════════════════════════
+
+export async function renderMultipleItemsToCanvas(
+  items, paperKey, dpi = PREVIEW_DPI, isLandscape = false, rotations = {}, slotCount, isPrint = false,
+  showSafeMargin = false,
+  layoutOptions = {}
+) {
+  // L2 缓存命中检查
+  const _rotKeys = Object.keys(rotations || {}).sort().map(k => `${k}:${rotations[k]}`).join(',')
+  const _marginKey = layoutOptions.userMargins
+    ? `m${layoutOptions.userMargins.left||0}_${layoutOptions.userMargins.right||0}_${layoutOptions.userMargins.top||0}_${layoutOptions.userMargins.bottom||0}`
+    : 'm0'
+  const _cacheKey = `multi_${paperKey}_${dpi}_${isLandscape ? 'L' : 'P'}_${slotCount || items.length}_${layoutOptions.strategy || 'vertical'}_${_rotKeys}_${_marginKey}_${items.map(i => i.key || i.id).join(',')}`
+
+  const cachedCanvas = renderResultCache.get(_cacheKey)
+  if (cachedCanvas) return cachedCanvas
+
+  // 打印路径或环境不支持 Worker → 直接渲染
+  if (isPrint || typeof OffscreenCanvas === 'undefined') {
+    return _renderDirect(items, paperKey, dpi, isLandscape, rotations, slotCount, isPrint, showSafeMargin, layoutOptions)
+  }
+
+  // 预览路径 → Worker 渲染（失败自动回退到主线程）
+  try {
+    return await _renderViaWorker(items, paperKey, dpi, isLandscape, rotations, slotCount, layoutOptions)
+  } catch (e) {
+    console.warn('[renderMultipleItemsToCanvas] Worker 失败，回退到主线程:', e.message)
+    return _renderDirect(items, paperKey, dpi, isLandscape, rotations, slotCount, isPrint, showSafeMargin, layoutOptions)
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 直接渲染路径（原 renderMultipleItemsToCanvas 代码）
+// ═══════════════════════════════════════════════════════════════
+
 // 渲染多个项目到一张 Canvas（等分纸张，支持 PDF/图片/OFD 混合）
 // ✅ 两阶段架构：Phase 1 预加载内容获取真实尺寸 → Layout → Phase 2 绘制
 // ✅ 预览和打印共享渲染结果缓存，相同参数直接命中，避免重复渲染
-export async function renderMultipleItemsToCanvas(
+async function _renderDirect(
   items, paperKey, dpi = PREVIEW_DPI, isLandscape = false, rotations = {}, slotCount, isPrint = false,
   showSafeMargin = false,
   layoutOptions = {}
@@ -721,7 +923,7 @@ export async function renderMultipleItemsToCanvas(
   // ═══════════════════════════════════════════════
   // Phase 2: 绘制内容到 slot
   // ═══════════════════════════════════════════════
-  const canvas = document.createElement('canvas')
+  let canvas = document.createElement('canvas')
   canvas.width = page.width
   canvas.height = page.height
   const ctx = canvas.getContext('2d')

@@ -21,7 +21,7 @@ export default defineConfig({
   },
 
   build: {
-    target: 'es2020',
+    target: 'chrome150',
     // 代码分割优化（Vite 8 使用 Rolldown codeSplitting）
     rolldownOptions: {
       output: {
