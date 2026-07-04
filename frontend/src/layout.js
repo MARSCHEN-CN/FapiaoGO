@@ -18,8 +18,13 @@ import { PAPER_SIZE_MAP } from './config'
  * }
  */
 
-export function getPaperPixels(paperKey, dpi, isLandscape = false) {
-  const paper = PAPER_SIZE_MAP[paperKey] || PAPER_SIZE_MAP.A4
+export function getPaperPixels(paperKey, dpi, isLandscape = false, customPaper = null) {
+  let paper
+  if (paperKey === 'Custom' && customPaper?.widthMM > 0 && customPaper?.heightMM > 0) {
+    paper = { widthMM: customPaper.widthMM, heightMM: customPaper.heightMM }
+  } else {
+    paper = PAPER_SIZE_MAP[paperKey] || PAPER_SIZE_MAP.A4
+  }
   let w = paper.widthMM
   let h = paper.heightMM
   if (isLandscape) {
@@ -81,10 +86,10 @@ export function getPrintableArea(pixels, margin = 0) {
 }
 
 export function createLayout(items, paperKey, dpi, isLandscape = false, options = {}) {
-  const { slotCount, strategy = 'vertical', margin = 0, gridCols = 2, gridRows = 2 } = options
+  const { slotCount, strategy = 'vertical', margin = 0, gridCols = 2, gridRows = 2, customPaper } = options
 
   
-  const page = getPaperPixels(paperKey, dpi, isLandscape)
+  const page = getPaperPixels(paperKey, dpi, isLandscape, customPaper)
   const area = getPrintableArea(page, margin)
   
   const count = slotCount || items.length

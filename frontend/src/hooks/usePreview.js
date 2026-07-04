@@ -215,7 +215,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
     const isLandscape = contentOrient !== paperOrient
     // ✅ renderKey 必须包含合并模式、合并组所有文件的旋转值，以确保模式切换和多文件旋转都能触发重渲染
     const mergeRotations = mergePair?.map(m => `${m?.key}:${fileRotations[m?.key] || 0}`).join(',') || ''
-    const renderKey = `${previewFile.key}-${paperSize}-${isLandscape}-${currentRotation}-${settings.mergeMode || ''}-${mergePair?.map(m => m?.key).join(',') || ''}-${mergeRotations}`
+    const renderKey = `${previewFile.key}-${paperSize}-${isLandscape}-${currentRotation}-${settings.mergeMode || ''}-${mergePair?.map(m => m?.key).join(',') || ''}-${mergeRotations}-m${settings.marginLeft}_${settings.marginRight}_${settings.marginTop}_${settings.marginBottom}-c${settings.customPaper?.widthMM}x${settings.customPaper?.heightMM}`
     if (lastRenderKeyRef.current === renderKey) return
     lastRenderKeyRef.current = renderKey
 
@@ -248,7 +248,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
               mergeModeGroupSize,
               false,
               false,  // showSafeMargin
-              { strategy: mergeLayoutStrategy, gridCols: 2, gridRows: 2, userMargins }
+              { strategy: mergeLayoutStrategy, gridCols: 2, gridRows: 2, userMargins, customPaper: settings.customPaper }
             )
           } else {
             // ✅ 单文件：旋转改为旋转画布（交换横竖），而不是旋转内容
@@ -266,7 +266,8 @@ export function usePreview({ files, settings, electronAPIRef }) {
               { [previewFile.key]: effectiveRotation },
               1,
               false,
-              { strategy: 'vertical', userMargins }
+              false,  // showSafeMargin
+              { strategy: 'vertical', userMargins, customPaper: settings.customPaper }
             )
           }
         }
@@ -288,7 +289,8 @@ export function usePreview({ files, settings, electronAPIRef }) {
     renderToCanvas()
     return () => { renderCancelledRef.current = true }
   }, [previewFile, mergePair, settings.paperSize, currentRotation, fileRotations, settings.mergeMode,
-      settings.marginLeft, settings.marginRight, settings.marginTop, settings.marginBottom])
+      settings.marginLeft, settings.marginRight, settings.marginTop, settings.marginBottom,
+      settings.customPaper?.widthMM, settings.customPaper?.heightMM])
 
   // ResizeObserver ✅ 使用 requestAnimationFrame 节流，避免频繁重绘
   useEffect(() => {
@@ -714,7 +716,8 @@ export function usePreview({ files, settings, electronAPIRef }) {
         settings.paperSize || 'A4', PREVIEW_DPI, effectiveLandscape,
         { [fileObj.key]: rotation },
         1, false,
-        { strategy: 'vertical', userMargins }
+        false,  // showSafeMargin
+        { strategy: 'vertical', userMargins, customPaper: settings.customPaper }
       )
 
       if (controller.signal.aborted) return
@@ -725,7 +728,8 @@ export function usePreview({ files, settings, electronAPIRef }) {
       // 预加载失败非关键错误，静默处理
     }
   }, [loadFilePreview, settings.paperSize, fileRotations,
-      settings.marginLeft, settings.marginRight, settings.marginTop, settings.marginBottom])
+      settings.marginLeft, settings.marginRight, settings.marginTop, settings.marginBottom,
+      settings.customPaper?.widthMM, settings.customPaper?.heightMM])
 
   // ✅ 保存 handlePreview 最新引用，避免 useEffect 闭包陷阱
   useEffect(() => {

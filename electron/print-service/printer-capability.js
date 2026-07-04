@@ -26,6 +26,7 @@
 const { spawn, exec } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const { PaperRegistryProvider } = require('../shared/PaperRegistryProvider');
 
 // ─── SumatraPDF 路径查找（复用 print-backend 逻辑） ──────────────
 
@@ -672,11 +673,28 @@ function enhanceWithCapability(settings, printerName) {
 
   if (!capabilities || !capabilities.papers) return;
 
-  // 从 capability 中查找匹配的纸张
+  // 第 1 层：名称精确匹配（最快路径）
   const paperLower = paperName.toLowerCase();
-  const match = capabilities.papers.find(p =>
+  let match = capabilities.papers.find(p =>
     p.name && p.name.toLowerCase() === paperLower && p.paperkind != null
   );
+
+  // 第 2 层：尺寸匹配（名称不匹配时，按宽高找）
+  if (!match) {
+    const paperMap = PaperRegistryProvider.getEffectivePaperMap();
+    const dims = paperMap[paperName];
+    if (dims && dims.widthMM > 0 && dims.heightMM > 0) {
+      const w = dims.widthMM, h = dims.heightMM;
+      match = capabilities.papers.find(p =>
+        p.paperkind != null &&
+        p.widthMM != null && p.heightMM != null &&
+        Math.abs(p.widthMM - w) < 1 && Math.abs(p.heightMM - h) < 1
+      );
+      if (match && _DEBUG()) {
+        console.log(`[Capability-Debug] ${paperName} matched by size: ${w}x${h} → paperkind=${match.paperkind} (printer name: ${match.name})`);
+      }
+    }
+  }
 
   if (match) {
     settings.paperkind = match.paperkind;

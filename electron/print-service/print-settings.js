@@ -194,12 +194,29 @@ function buildPrintSettings(ps) {
     if (paper && paper !== 'Custom') {
       parts.push(`paper=${paper.toLowerCase()}`);
     }
-  } else if (paper === 'Custom' && normalized.customPaper?.widthMM && normalized.customPaper?.heightMM) {
-    const w = normalized.customPaper.widthMM;
-    const h = normalized.customPaper.heightMM;
-    parts.push(`paper=${w}mm x ${h}mm`);
   } else if (paper) {
-    parts.push(`paper=${paper.toLowerCase()}`);
+    // 标准纸张（A4/A5/A3等）用名字匹配（打印机普遍识别）
+    // 特种纸（Voucher240x140等）用尺寸（避免名字不匹配回退A4）
+    const A_SERIES = /^(A\d|Letter|Legal|Tabloid)$/i;
+    if (A_SERIES.test(paper)) {
+      parts.push(`paper=${paper.toLowerCase()}`);
+    } else {
+      // 优先从 PaperRegistry 取尺寸，失败则从 customPaper 取
+      let w = 0, h = 0;
+      const { PaperRegistryProvider } = require('../shared/PaperRegistryProvider');
+      const paperMap = PaperRegistryProvider.getEffectivePaperMap();
+      const dims = paperMap[paper];
+      if (dims && dims.widthMM > 0 && dims.heightMM > 0) {
+        w = dims.widthMM; h = dims.heightMM;
+      } else if (normalized.customPaper?.widthMM && normalized.customPaper?.heightMM) {
+        w = normalized.customPaper.widthMM; h = normalized.customPaper.heightMM;
+      }
+      if (w > 0 && h > 0) {
+        parts.push(`paper=${w}mm x ${h}mm`);
+      } else {
+        parts.push(`paper=${paper.toLowerCase()}`);
+      }
+    }
   }
 
   // 4. 双面打印

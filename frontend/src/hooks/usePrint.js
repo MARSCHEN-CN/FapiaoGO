@@ -217,7 +217,7 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
         1,  // slotCount = 1（单个文件）
         false,  // ✅ isPrint = false（与预览保持一致）
         false,  // showSafeMargin
-        { strategy: 'vertical' }
+        { strategy: 'vertical', customPaper: settings.customPaper }
       )
       
       if (!canvas) {
@@ -295,7 +295,7 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
         groupSize,
         false,  // ✅ isPrint = false（与预览保持一致）
         false,  // showSafeMargin
-        { strategy: groupSize === 4 ? 'grid' : 'vertical', gridCols: 2, gridRows: 2 }
+        { strategy: groupSize === 4 ? 'grid' : 'vertical', gridCols: 2, gridRows: 2, customPaper: settings.customPaper }
       )
 
       // ✅ 返回 Uint8Array 而非 blob URL
@@ -625,6 +625,7 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
         marginRight: settings.marginRight ?? 3,
         marginTop: settings.marginTop ?? 3,
         marginBottom: settings.marginBottom ?? 3,
+        customPaper: settings.customPaper,
       }
 
       console.log('[PRINT] contentOrientation:', contentOrientation, '(from detectDocumentOrientation)')
@@ -704,6 +705,7 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
       marginRight: settings.marginRight ?? 3,
       marginTop: settings.marginTop ?? 3,
       marginBottom: settings.marginBottom ?? 3,
+      customPaper: settings.customPaper,
     }
 
     const printerName = printSettings?.printerName || printSettings?.printer || settings.printerName || ''

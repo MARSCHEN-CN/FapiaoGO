@@ -171,7 +171,11 @@
 .paper {
   background: var(--paper-bg);
   @apply rounded-lg;
-  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.08);
+  /* 三层阴影模拟纸张厚度：紧贴阴影 + 中距投影 + 远距环境光 */
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.04),
+    0 6px 20px rgba(0, 0, 0, 0.07),
+    0 20px 50px rgba(0, 0, 0, 0.04);
   overflow: hidden;
   flex-shrink: 0;
   position: relative;
@@ -184,7 +188,10 @@
 }
 
 .paper:hover {
-  box-shadow: 0 4px 32px rgba(0, 0, 0, 0.15);
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.06),
+    0 8px 28px rgba(0, 0, 0, 0.10),
+    0 24px 60px rgba(0, 0, 0, 0.06);
 }
 
 .paper img {
@@ -196,6 +203,18 @@
 
 /* ======================== Canvas Zoom Control ======================== */
 /* 缩放控制 - 定位在预览区顶部居中 */
+/* 入场动画：文件加载完成后延迟淡入 + 微上移 */
+@keyframes zoomControlIn {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+
 .canvas-zoom-control {
   position: absolute;
   top: 12px;
@@ -212,6 +231,10 @@
   backdrop-filter: blur(4px);
   -webkit-backdrop-filter: blur(4px);
   border: 1px solid var(--canvas-float-border);
+  /* 入场：初始隐藏，300ms 后淡入上移 */
+  opacity: 0;
+  transform: translateX(-50%) translateY(-4px);
+  animation: zoomControlIn 0.35s 0.3s var(--ease) forwards;
 }
 
 [data-theme="dark"] .canvas-zoom-control {
@@ -290,11 +313,19 @@
    ================================================================ */
 [data-theme="dark"] .paper {
   background: var(--paper-bg);
-  box-shadow: var(--shadow-xl), 0 0 0 1px rgba(91, 141, 239, 0.04);
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.30),
+    0 8px 24px rgba(0, 0, 0, 0.40),
+    0 24px 60px rgba(0, 0, 0, 0.25),
+    0 0 0 1px rgba(91, 141, 239, 0.06);
 }
 
 [data-theme="dark"] .paper:hover {
-  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.55);
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.35),
+    0 12px 32px rgba(0, 0, 0, 0.50),
+    0 28px 70px rgba(0, 0, 0, 0.35),
+    0 0 0 1px rgba(91, 141, 239, 0.10);
 }
 
 [data-theme="dark"] .canvas-empty .canvas-empty-title {

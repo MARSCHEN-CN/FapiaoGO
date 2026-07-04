@@ -57,26 +57,19 @@ class LRUCache {
     const value = this.cache.get(key)
     this.cache.delete(key)
 
-    // 清理 Canvas 资源
-    // 缓存值可能是 HTMLCanvasElement 或 { canvas, width, height } 对象
-    const canvas = value?.canvas || value
+    // 清理 Canvas 资源（放回复用池，避免频繁创建/销毁）
+    // 缓存值格式: { source: canvas, width, height } 或直接 HTMLCanvasElement
+    const canvas = value?.source || value?.canvas || value
     if (canvas instanceof HTMLCanvasElement) {
-      const ctx = canvas.getContext('2d')
-      if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height)
-      canvas.width = 0
-      canvas.height = 0
+      _returnPoolCanvas(canvas)
     }
   }
 
   clear() {
     // 清理所有 Canvas 资源
-    for (const canvas of this.cache.values()) {
-      if (canvas) {
-        const ctx = canvas.getContext('2d')
-        if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height)
-        canvas.width = 0
-        canvas.height = 0
-      }
+    for (const value of this.cache.values()) {
+      const canvas = value?.source || value?.canvas || value
+      if (canvas instanceof HTMLCanvasElement) _returnPoolCanvas(canvas)
     }
     this.cache.clear()
   }
@@ -134,9 +127,7 @@ class RenderResultCache {
   }
   _cleanup(canvas) {
     if (canvas instanceof HTMLCanvasElement) {
-      const ctx = canvas.getContext('2d')
-      if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height)
-      canvas.width = 0; canvas.height = 0
+      _returnPoolCanvas(canvas)
     }
   }
   get size() { return this.cache.size }
@@ -417,10 +408,14 @@ async function renderPDFPageRaw(pdfData, dpi, fileKey) {
       const width = Math.round(viewport.width * scale)
       const height = Math.round(viewport.height * scale)
 
-      const canvas = document.createElement('canvas')
-      canvas.width = width
-      canvas.height = height
+      // 延迟创建 canvas：在 page.render 前最后一刻再分配，减少无效分配
+      // 先检查版本，确认需要渲染时才创建
+      if (!isLatest()) {
+        console.debug('[renderPDFPageRaw] 版本过期（创建 canvas 前）:', { fileKey, version })
+        return null
+      }
 
+      const canvas = _getPoolCanvas(width, height)
       const ctx = canvas.getContext('2d')
       ctx.fillStyle = '#ffffff'
       ctx.fillRect(0, 0, width, height)
@@ -428,6 +423,7 @@ async function renderPDFPageRaw(pdfData, dpi, fileKey) {
       // page.render 前再次检查版本（此为最耗时操作）
       if (!isLatest()) {
         console.debug('[renderPDFPageRaw] 版本过期（渲染前）:', { fileKey, version })
+        _returnPoolCanvas(canvas)  // 归还到池，保持原尺寸供复用
         return null
       }
 
@@ -636,6 +632,33 @@ let _workerReady = null
 let _msgId = 0
 const _pendingRequests = new Map()
 
+// Canvas 复用池：同一尺寸的 canvas 不重复创建，减少 GC 压力
+const _canvasPool = new Map()  // "wxh" → [canvas, ...]
+
+function _getPoolCanvas(w, h) {
+  const key = `${w}x${h}`
+  const pool = _canvasPool.get(key)
+  if (pool && pool.length > 0) {
+    const c = pool.pop()
+    // 清空内容（尺寸不变，不需要重新设置 width/height）
+    const ctx = c.getContext('2d')
+    ctx.clearRect(0, 0, w, h)
+    return c
+  }
+  const c = document.createElement('canvas')
+  c.width = w
+  c.height = h
+  return c
+}
+
+function _returnPoolCanvas(canvas) {
+  if (!(canvas instanceof HTMLCanvasElement)) return
+  const key = `${canvas.width}x${canvas.height}`
+  if (!_canvasPool.has(key)) _canvasPool.set(key, [])
+  const pool = _canvasPool.get(key)
+  if (pool.length < 10) pool.push(canvas)
+}
+
 function _dispatchWorkerMessage(e) {
   const { type, id, bitmap, cacheKey, error } = e.data
   if (type === 'ready') return
@@ -646,10 +669,8 @@ function _dispatchWorkerMessage(e) {
     handler.reject(new Error(error))
     return
   }
-  // type === 'result': 将 ImageBitmap 转为 HTMLCanvasElement 存入 L2 缓存
-  const canvas = document.createElement('canvas')
-  canvas.width = bitmap.width
-  canvas.height = bitmap.height
+  // type === 'result': 将 ImageBitmap 转存到复用池 canvas
+  const canvas = _getPoolCanvas(bitmap.width, bitmap.height)
   const ctx = canvas.getContext('2d')
   ctx.drawImage(bitmap, 0, 0)
   bitmap.close()
@@ -680,7 +701,8 @@ async function _renderViaWorker(items, paperKey, dpi, isLandscape, rotations, sl
   const _marginKey = layoutOptions.userMargins
     ? `m${layoutOptions.userMargins.left||0}_${layoutOptions.userMargins.right||0}_${layoutOptions.userMargins.top||0}_${layoutOptions.userMargins.bottom||0}`
     : 'm0'
-  const _cacheKey = `multi_${paperKey}_${dpi}_${isLandscape ? 'L' : 'P'}_${slotCount || items.length}_${layoutOptions.strategy || 'vertical'}_${_rotKeys}_${_marginKey}_${items.map(i => i.key || i.id).join(',')}`
+  const _customKey = layoutOptions.customPaper?.widthMM ? `c${layoutOptions.customPaper.widthMM}x${layoutOptions.customPaper.heightMM}` : ''
+  const _cacheKey = `multi_${paperKey}_${dpi}_${isLandscape ? 'L' : 'P'}_${slotCount || items.length}_${layoutOptions.strategy || 'vertical'}_${_rotKeys}_${_marginKey}_${_customKey}_${items.map(i => i.key || i.id).join(',')}`
 
   const cached = renderResultCache.get(_cacheKey)
   if (cached) return cached
@@ -740,10 +762,17 @@ async function _renderViaWorker(items, paperKey, dpi, isLandscape, rotations, sl
     return normalizeLayoutItem(item, dpi)
   })
 
+  // 用户边距 → createLayout margin 参数（缩小内容区域，纸张大小不变）
+  const userMargins = layoutOptions.userMargins
+  const marginMm = userMargins ? {
+    top: userMargins.top || 0, bottom: userMargins.bottom || 0,
+    left: userMargins.left || 0, right: userMargins.right || 0,
+  } : 0
+
   const layout = createLayout(normalizedItems, paperKey, dpi, isLandscape, {
     slotCount,
-    margin: 0,
-    ...layoutOptions
+    ...layoutOptions,
+    margin: marginMm,
   })
 
   // ═══════════════════════════════════════════════════════
@@ -806,7 +835,8 @@ export async function renderMultipleItemsToCanvas(
   const _marginKey = layoutOptions.userMargins
     ? `m${layoutOptions.userMargins.left||0}_${layoutOptions.userMargins.right||0}_${layoutOptions.userMargins.top||0}_${layoutOptions.userMargins.bottom||0}`
     : 'm0'
-  const _cacheKey = `multi_${paperKey}_${dpi}_${isLandscape ? 'L' : 'P'}_${slotCount || items.length}_${layoutOptions.strategy || 'vertical'}_${_rotKeys}_${_marginKey}_${items.map(i => i.key || i.id).join(',')}`
+  const _customKey = layoutOptions.customPaper?.widthMM ? `c${layoutOptions.customPaper.widthMM}x${layoutOptions.customPaper.heightMM}` : ''
+  const _cacheKey = `multi_${paperKey}_${dpi}_${isLandscape ? 'L' : 'P'}_${slotCount || items.length}_${layoutOptions.strategy || 'vertical'}_${_rotKeys}_${_marginKey}_${_customKey}_${items.map(i => i.key || i.id).join(',')}`
 
   const cachedCanvas = renderResultCache.get(_cacheKey)
   if (cachedCanvas) return cachedCanvas
@@ -844,7 +874,8 @@ async function _renderDirect(
   const _marginKey = layoutOptions.userMargins
     ? `m${layoutOptions.userMargins.left||0}_${layoutOptions.userMargins.right||0}_${layoutOptions.userMargins.top||0}_${layoutOptions.userMargins.bottom||0}`
     : 'm0'
-  const _cacheKey = `multi_${paperKey}_${dpi}_${isLandscape ? 'L' : 'P'}_${slotCount || items.length}_${layoutOptions.strategy || 'vertical'}_${_rotKeys}_${_marginKey}_${items.map(i => i.key || i.id).join(',')}`
+  const _customKey = layoutOptions.customPaper?.widthMM ? `c${layoutOptions.customPaper.widthMM}x${layoutOptions.customPaper.heightMM}` : ''
+  const _cacheKey = `multi_${paperKey}_${dpi}_${isLandscape ? 'L' : 'P'}_${slotCount || items.length}_${layoutOptions.strategy || 'vertical'}_${_rotKeys}_${_marginKey}_${_customKey}_${items.map(i => i.key || i.id).join(',')}`
 
   const cachedCanvas = renderResultCache.get(_cacheKey)
   if (cachedCanvas) {
@@ -913,19 +944,24 @@ async function _renderDirect(
   // ═══════════════════════════════════════════════
   // Layout: 基于真实内容尺寸计算 slot
   // ═══════════════════════════════════════════════
+  // 用户边距 → createLayout margin 参数（缩小内容区域，纸张大小不变）
+  const _userMargins = layoutOptions.userMargins
+  const _marginMm = _userMargins ? {
+    top: _userMargins.top || 0, bottom: _userMargins.bottom || 0,
+    left: _userMargins.left || 0, right: _userMargins.right || 0,
+  } : 0
+
   const layout = createLayout(normalizedItems, paperKey, dpi, isLandscape, {
     slotCount,
-    margin: (isPrint && slotCount > 1) ? PRINT_SAFE_MARGIN_MM : 0,
-    ...layoutOptions
+    ...layoutOptions,
+    margin: (isPrint && slotCount > 1) ? PRINT_SAFE_MARGIN_MM : _marginMm,
   })
   const { page, area, slots } = layout
 
   // ═══════════════════════════════════════════════
   // Phase 2: 绘制内容到 slot
   // ═══════════════════════════════════════════════
-  let canvas = document.createElement('canvas')
-  canvas.width = page.width
-  canvas.height = page.height
+  let canvas = _getPoolCanvas(page.width, page.height)
   const ctx = canvas.getContext('2d')
   ctx.fillStyle = '#ffffff'
   ctx.fillRect(0, 0, canvas.width, canvas.height)
@@ -1008,25 +1044,6 @@ async function _renderDirect(
   }
 
   drawSeparators()
-
-  // ── 用户安全边距（预览用，模拟打印输出效果） ──
-  const userMargins = layoutOptions.userMargins
-  if (userMargins) {
-    const mL = Math.round((userMargins.left || 0) * dpi / 25.4)
-    const mR = Math.round((userMargins.right || 0) * dpi / 25.4)
-    const mT = Math.round((userMargins.top || 0) * dpi / 25.4)
-    const mB = Math.round((userMargins.bottom || 0) * dpi / 25.4)
-    if (mL || mR || mT || mB) {
-      const newCanvas = document.createElement('canvas')
-      newCanvas.width = canvas.width + mL + mR
-      newCanvas.height = canvas.height + mT + mB
-      const newCtx = newCanvas.getContext('2d')
-      newCtx.fillStyle = '#ffffff'
-      newCtx.fillRect(0, 0, newCanvas.width, newCanvas.height)
-      newCtx.drawImage(canvas, mL, mT)
-      canvas = newCanvas
-    }
-  }
 
   // ✅ 缓存渲染结果，后续打印可直接命中
   renderResultCache.set(_cacheKey, canvas)

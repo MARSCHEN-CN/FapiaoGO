@@ -108,18 +108,6 @@ function pngToPdf(pngBuffer, pageWMM, pageHMM) {
   }
   const streamLen = finalJpeg.length
 
-  // 🐛 DEBUG: 保存 JPEG 中间结果到桌面
-  try {
-    const path = require('path')
-    const fs = require('fs')
-    const debugDir = 'C:\\Users\\Mars_chen\\Desktop\\test'
-    fs.mkdirSync(debugDir, { recursive: true })
-    fs.writeFileSync(path.join(debugDir, 'debug_rawjpeg.jpg'), img.toJPEG(95))
-    fs.writeFileSync(path.join(debugDir, 'debug_stripped.jpg'), jpegBuffer)
-    console.log('[pdf-generator] [DEBUG] pxW=%d pxH=%d rawJPEG=%d strippedJPEG=%d',
-      pxW, pxH, img.toJPEG(95).length, jpegBuffer.length)
-  } catch (de) { console.warn('[pdf-generator] [DEBUG] JPEG 保存失败:', de.message) }
-
   const enc = 'latin1'
   const scaleX = pageW / pxW
   const scaleY = pageH / pxH

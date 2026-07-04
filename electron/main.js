@@ -568,14 +568,6 @@ ipcMain.handle('print-merged-images', async (_event, { images, settings }) => {
       const actualSize = fs.statSync(filePath).size
       filePaths.push(filePath)
 
-      // 🐛 DEBUG: 复制 PNG 到桌面
-      try {
-        const debugDir = 'C:\\Users\\Mars_chen\\Desktop\\test'
-        fs.mkdirSync(debugDir, { recursive: true })
-        fs.copyFileSync(filePath, path.join(debugDir, `debug_${i + 1}.png`))
-        console.log('[print-merged-images] [DEBUG] 已复制 PNG → %s\\debug_%d.png', debugDir, i + 1)
-      } catch (de) { console.warn('[print-merged-images] [DEBUG] PNG 复制失败:', de.message) }
-
       console.log('[print-merged-images] PNG %d: buf=%d bytes, file=%d bytes, rawType=%s, rawLen=%d, header=%s',
         i + 1, buf.length, actualSize,
         Object.prototype.toString.call(images[i]), images[i]?.length,
@@ -602,14 +594,6 @@ ipcMain.handle('print-merged-images', async (_event, { images, settings }) => {
       if (result && !result.success) {
         console.warn(`[print-merged-images] PNG ${i + 1} 转换警告:`, result.error)
       }
-
-      // 🐛 DEBUG: 复制转换后的 PDF 到桌面
-      try {
-        const debugDir = 'C:\\Users\\Mars_chen\\Desktop\\test'
-        fs.mkdirSync(debugDir, { recursive: true })
-        fs.copyFileSync(pdfPaths[i], path.join(debugDir, `debug_png2pdf_${i + 1}.pdf`))
-        console.log('[print-merged-images] [DEBUG] 已复制 PDF → %s\\debug_png2pdf_%d.pdf', debugDir, i + 1)
-      } catch (de) { console.warn('[print-merged-images] [DEBUG] PDF 复制失败:', de.message) }
 
       const validation = validatePdfStructure(pdfPaths[i])
       if (!validation.valid) {

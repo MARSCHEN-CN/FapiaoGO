@@ -89,24 +89,6 @@ function compositeCanvas(sources, layout, rotations, layoutOptions) {
     ctx.restore()
   }
 
-  // 用户安全边距
-  const userMargins = layoutOptions?.userMargins
-  if (userMargins) {
-    const dpi = layoutOptions._dpi || 300
-    const mL = Math.round((userMargins.left || 0) * dpi / 25.4)
-    const mR = Math.round((userMargins.right || 0) * dpi / 25.4)
-    const mT = Math.round((userMargins.top || 0) * dpi / 25.4)
-    const mB = Math.round((userMargins.bottom || 0) * dpi / 25.4)
-    if (mL || mR || mT || mB) {
-      const newCanvas = new OffscreenCanvas(canvas.width + mL + mR, canvas.height + mT + mB)
-      const newCtx = newCanvas.getContext('2d')
-      newCtx.fillStyle = '#ffffff'
-      newCtx.fillRect(0, 0, newCanvas.width, newCanvas.height)
-      newCtx.drawImage(canvas, mL, mT)
-      return newCanvas
-    }
-  }
-
   return canvas
 }
 
