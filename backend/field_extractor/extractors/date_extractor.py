@@ -73,8 +73,9 @@ class DateExtractor:
 
     @staticmethod
     def _find_first(text: str, patterns: list) -> str | None:
-        for p in patterns:
-            m = re.search(p, text)
+        compiled_patterns = [re.compile(p) for p in patterns]
+        for p in compiled_patterns:
+            m = p.search(text)
             if m:
                 return m.group(1).strip()
         return None
@@ -82,9 +83,10 @@ class DateExtractor:
     @staticmethod
     def _find_first_in_lines(lines: list, patterns: list) -> str | None:
         """逐行搜索，用于 collapsed 合并破坏邻接关系时的回退"""
+        compiled_patterns = [re.compile(p) for p in patterns]
         for line in lines:
-            for p in patterns:
-                m = re.search(p, line)
+            for p in compiled_patterns:
+                m = p.search(line)
                 if m:
                     return m.group(1).strip()
         return None
