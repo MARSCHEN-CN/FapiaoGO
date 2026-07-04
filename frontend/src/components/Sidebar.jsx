@@ -311,7 +311,6 @@ export default React.memo(function Sidebar({
                     </button>
                   )}
                 </div>
-                <span className="count">{isSearching ? filteredFiles.length : files.length}</span>
               </div>
 
               {isSearching && filteredFiles.length === 0 ? (

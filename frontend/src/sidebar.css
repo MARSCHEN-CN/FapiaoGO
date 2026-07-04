@@ -360,16 +360,6 @@
   letter-spacing: 0.06em;
 }
 
-.sb-section-title .count {
-  font-family: 'MiSans', 'NotoSansSymbols', 'NotoSansSymbols2', 'PingFang SC', 'Microsoft YaHei', -apple-system, BlinkMacSystemFont, sans-serif;
-  font-size: var(--fs-xs);
-  font-weight: 500;
-  color: var(--text-3);
-  background: var(--surface);
-  padding: 2px 8px;
-  border-radius: 6px;
-}
-
 .sb-search-bar {
   flex: 1;
   height: 32px;
