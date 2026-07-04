@@ -116,14 +116,14 @@ export function getMergeGroupStart(index, groupSize = 2) {
 }
 
 export function getMergePair(files, clickedKey, groupSize = 2) {
-  const parsedFiles = files.filter(f => f.status === 'parsed')
-  const idx = parsedFiles.findIndex(f => f.key === clickedKey)
+  // 使用全部文件（而非仅 parsed），确保新导入/解析中的文件也参与合并分组
+  const idx = files.findIndex(f => f.key === clickedKey)
   if (idx === -1) return null
   const start = getMergeGroupStart(idx, groupSize)
   const result = []
   for (let i = 0; i < groupSize; i++) {
-    if (parsedFiles[start + i]) {
-      result.push(parsedFiles[start + i])
+    if (files[start + i]) {
+      result.push(files[start + i])
     }
   }
   return result
