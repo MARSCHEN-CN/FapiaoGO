@@ -351,8 +351,13 @@ class InvoiceExtractor:
         
         # [PERF] 一次性获取所有字段置信度，避免重复查找
         conf_map = {}
-        for field in ['fphm', 'kprq', 'gmfmc', 'gmfsh', 'xsfmc', 'xsfsh', 'amountJe', 'amountSe', 'amountHj']:
-            conf_map[field] = field_meta.get(field, {}).get('confidence', 0) if field_meta else 0
+        if field_meta:
+            for field in ['fphm', 'kprq', 'gmfmc', 'gmfsh', 'xsfmc', 'xsfsh', 'amountJe', 'amountSe', 'amountHj']:
+                fm = field_meta.get(field)
+                conf_map[field] = fm.get('confidence', 0) if fm else 0
+        else:
+            for field in ['fphm', 'kprq', 'gmfmc', 'gmfsh', 'xsfmc', 'xsfsh', 'amountJe', 'amountSe', 'amountHj']:
+                conf_map[field] = 0
         
         # fphm: 发票号码
         fphm_conf = conf_map['fphm']
