@@ -36,6 +36,7 @@ except ImportError:
 
 import re
 import logging
+import bisect
 from typing import List, Optional, Dict, Tuple, TYPE_CHECKING
 
 import numpy as np
@@ -1166,18 +1167,41 @@ class DocumentSegmenter:
                 y0, y1 = region_y[rn]
                 region_y[rn] = (min(y0, line.y0), max(y1, line.y1))
 
+        # [PERF] 将区域按 y_min 排序，支持二分查找
+        sorted_regions = sorted(region_y.items(), key=lambda x: x[1][0])
+        y_mins = [r[1][0] for r in sorted_regions]
+
         for token in doc.tokens:
+            cy = token.cy
             best_region = 'header'
             best_dist = float('inf')
 
-            for rn, (y_min, y_max) in region_y.items():
-                if y_min <= token.cy <= y_max:
+            # [PERF] 二分查找定位候选区域
+            idx = bisect.bisect_right(y_mins, cy)
+            candidates = []
+            if idx > 0:
+                candidates.append(sorted_regions[idx - 1])
+            if idx < len(sorted_regions):
+                candidates.append(sorted_regions[idx])
+
+            # 在候选区域中找最佳匹配
+            for rn, (y_min, y_max) in candidates:
+                if y_min <= cy <= y_max:
                     best_region = rn
+                    best_dist = 0
                     break
-                dist = min(abs(token.cy - y_min), abs(token.cy - y_max))
+                dist = min(abs(cy - y_min), abs(cy - y_max))
                 if dist < best_dist:
                     best_dist = dist
                     best_region = rn
+
+            # 如果候选区域都不匹配，检查所有区域（边界情况）
+            if best_dist == float('inf'):
+                for rn, (y_min, y_max) in region_y.items():
+                    dist = min(abs(cy - y_min), abs(cy - y_max))
+                    if dist < best_dist:
+                        best_dist = dist
+                        best_region = rn
 
             segment = result.get_region(best_region)
             segment.tokens.append(token)
