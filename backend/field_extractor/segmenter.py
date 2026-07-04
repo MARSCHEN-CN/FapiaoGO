@@ -286,7 +286,7 @@ class DocumentSegmenter:
         4. 再分配 footer（收款人/复核人/开票人区域）
         5. 其余归入 header
         """
-        region_map: Dict[int, str] = {}
+        region_map: Dict[int, str] = {i: 'header' for i in range(n)}
 
         # ── 1. remark 区域 ──
         if remark_start is not None:
@@ -309,37 +309,25 @@ class DocumentSegmenter:
                 items_end = n
 
             for i in range(items_start, items_end):
-                if i not in region_map:  # 不覆盖已分配的 remark
-                    region_map[i] = 'line_items'
+                region_map[i] = 'line_items'
 
-            # 表头行 → header（向前扫描找到表头起始）
             table_header_start = self._find_table_header_start(lines=lines, header_end=header_idx)
             for i in range(table_header_start, header_idx + 1):
-                if i not in region_map:
-                    region_map[i] = 'header'
+                region_map[i] = 'header'
 
         # ── 3. summary 区域 ──
         if summary_idx is not None:
-            # summary 从合计行开始，到下一个已分配区域之前
             summary_end = n
             for stop in [footer_person, remark_start]:
                 if stop is not None and stop > summary_idx:
                     summary_end = min(summary_end, stop)
-            # 也检查已分配区域的起始
             for i in range(summary_idx, summary_end):
-                if i not in region_map:
-                    region_map[i] = 'summary'
+                region_map[i] = 'summary'
 
         # ── 4. footer 区域（收款人/复核人/开票人）──
         if footer_person is not None:
             for i in range(footer_person, n):
-                if i not in region_map:
-                    region_map[i] = 'footer'
-
-        # ── 5. 剩余行 → header ──
-        for i in range(n):
-            if i not in region_map:
-                region_map[i] = 'header'
+                region_map[i] = 'footer'
 
         return region_map
 
