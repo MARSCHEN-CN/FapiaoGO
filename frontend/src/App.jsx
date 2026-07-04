@@ -291,24 +291,21 @@ function AppContent() {
     dismissWithCleanup,
   } = useAlertQueue()
 
-  // 桥接 hook 内部 alert → 队列
+  // ============================
+  // Alert 桥接：合并三个 hook 的 alert → 队列（去重由 showAlert 内部按 source 处理）
+  // ============================
   useEffect(() => {
-    if (renamePackAlert?.visible) {
-      showAlert(renamePackAlert.message, renamePackAlert.title || '提示', renamePackAlert.type || 'warning', closeRenamePackAlert, 'renamePack');
+    const entries = [
+      { alert: renamePackAlert, source: 'renamePack', onClose: closeRenamePackAlert },
+      { alert: exportAlert,     source: 'export',     onClose: closeExportAlert },
+      { alert: printAlert,      source: 'print',      onClose: closePrintAlert },
+    ]
+    for (const { alert, source, onClose } of entries) {
+      if (alert?.visible) {
+        showAlert(alert.message, alert.title || '提示', alert.type || 'warning', onClose, source)
+      }
     }
-  }, [renamePackAlert?.visible, renamePackAlert?.message, renamePackAlert?.title, renamePackAlert?.type]);
-
-  useEffect(() => {
-    if (exportAlert?.visible) {
-      showAlert(exportAlert.message, exportAlert.title || '提示', exportAlert.type || 'warning', closeExportAlert, 'export');
-    }
-  }, [exportAlert?.visible, exportAlert?.message, exportAlert?.title, exportAlert?.type]);
-
-  useEffect(() => {
-    if (printAlert?.visible) {
-      showAlert(printAlert.message, printAlert.title || '提示', printAlert.type || 'warning', closePrintAlert, 'print');
-    }
-  }, [printAlert?.visible, printAlert?.message, printAlert?.title, printAlert?.type]);
+  }, [renamePackAlert?.visible, exportAlert?.visible, printAlert?.visible])
 
   // ============================
   // 键盘快捷键
