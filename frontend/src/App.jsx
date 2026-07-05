@@ -81,6 +81,7 @@ function AppContent() {
   // ✅ 从正确的分组中解构属性
   const {
     previewFile, mergePair, numPages, previewPage, previewCanvas,
+    previewRenderVersion,
     previewRotation, fileRotations, showLeftArrow, showRightArrow,
     displayInfo,
   } = preview.state
@@ -568,6 +569,7 @@ function AppContent() {
               displayInfo={displayInfo}
               previewCanvas={previewCanvas}
               grayscale={settings.grayscale}
+              previewRenderVersion={previewRenderVersion}
             />
           </div>
 

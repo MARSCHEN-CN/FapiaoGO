@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
-import { PREVIEW_DPI, ZOOM_STEPS, PAPER_SIZE_MAP } from '../config'
+import { PREVIEW_DPI, GLOBAL_PREVIEW_DPI, ZOOM_STEPS, PAPER_SIZE_MAP } from '../config'
 import {
   b64toBlob, getFileFormat, getExtension, isMergeMode, getMergePair,
 } from '../utils'
@@ -25,6 +25,9 @@ export function usePreview({ files, settings, electronAPIRef }) {
   const [numPages, setNumPages] = useState(0)
   const [previewPage, setPreviewPage] = useState(1)
   const [previewCanvas, setPreviewCanvas] = useState(null)
+  // ✅ 全局 Canvas 渲染版本号：每次 switchPreviewFile 后递增，
+  //    用于 PreviewCanvas 的 L1 缓存失效，确保内容更新后重绘
+  const [previewRenderVersion, setPreviewRenderVersion] = useState(0)
   const [containerSize, setContainerSize] = useState({ width: 0, height: 0 })
   // ✅ 移除多余的 previewRotation state，所有旋转都通过 fileRotations 管理
   const [fileRotations, setFileRotations] = useState({})
@@ -244,7 +247,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
     const mergeModeGroupSize = isMergeMode(settings.mergeMode) ? (parseInt(settings.mergeMode?.replace('merge', '')) || 2) : 1
     const mergeLayoutStrategy = mergeModeGroupSize === 4 ? 'grid' : 'vertical'
 
-    const renderToCanvas = async () => {
+    const renderToCanvas = async (signal) => {
       try {
         let canvas
         const isMerge = isMergeMode(settings.mergeMode) && mergePair?.some(Boolean)
@@ -269,24 +272,39 @@ export function usePreview({ files, settings, electronAPIRef }) {
               { strategy: mergeLayoutStrategy, gridCols: 2, gridRows: 2, userMargins, customPaper: settings.customPaper }
             )
           } else {
-            // ✅ 单文件：旋转改为旋转画布（交换横竖），而不是旋转内容
+            // ✅ 单文件：统一使用全局 Canvas（PDF / 图片 / OFD 都走此路径）
+            const { getGlobalPreviewCanvas, switchPreviewFile, switchPreviewImage, getOrLoadPdfDocument } = await getRenderers()
             const effectiveLandscape = (currentRotation % 180 !== 0) ? !isLandscape : isLandscape
-            const effectiveRotation = currentRotation
+            const paperKey = paperSize || 'A4'
 
-            const items = [{ ...previewFile }]
+            // 初始化全局 Canvas（配置不变则复用同一 Canvas）
             const userMargins = {
-              left: settings.marginLeft ?? 3, right: settings.marginRight ?? 3,
-              top: settings.marginTop ?? 3, bottom: settings.marginBottom ?? 3,
+              left: settings.marginLeft ?? 3,
+              right: settings.marginRight ?? 3,
+              top: settings.marginTop ?? 3,
+              bottom: settings.marginBottom ?? 3,
             }
-            canvas = await renderMultipleItemsToCanvas(
-              items,
-              paperSize || 'A4', PREVIEW_DPI, effectiveLandscape,
-              { [previewFile.key]: effectiveRotation },
-              1,
-              false,
-              false,  // showSafeMargin
-              { strategy: 'vertical', userMargins, customPaper: settings.customPaper }
-            )
+            canvas = getGlobalPreviewCanvas(paperKey, GLOBAL_PREVIEW_DPI, effectiveLandscape, userMargins)
+
+            // 按内容类型渲染
+            if (previewFile._pdfData) {
+              // PDF：通过 pdfDocCache 加载 + page.render
+              const pdfDoc = await getOrLoadPdfDocument(previewFile._pdfData)
+              if (pdfDoc) {
+                await switchPreviewFile(pdfDoc, 1, signal)
+              }
+            } else if (previewFile._previewImageUrl) {
+              // 图片/OFD：加载图片后 drawImage 到全局 Canvas
+              const img = await new Promise((resolve) => {
+                const image = new Image()
+                image.onload = () => resolve(image)
+                image.onerror = () => resolve(null)
+                image.src = previewFile._previewImageUrl
+              })
+              if (img) {
+                await switchPreviewImage(img, signal)
+              }
+            }
           }
         }
 
@@ -296,6 +314,8 @@ export function usePreview({ files, settings, electronAPIRef }) {
           // ✅ 不清空旧 canvas：与 renderResultCache 共享同一对象，clearRect 会污染缓存
           unrotatedCanvasRef.current = canvas
           setPreviewCanvas(canvas)
+          // ✅ 递增渲染版本，通知 PreviewCanvas 内容已更新（全局 Canvas 对象引用不变时需要此标记）
+          setPreviewRenderVersion(v => v + 1)
         }
       } catch (e) {
         console.error('Canvas 渲染失败:', e)
@@ -304,8 +324,12 @@ export function usePreview({ files, settings, electronAPIRef }) {
         }
       }
     }
-    renderToCanvas()
-    return () => { renderCancelledRef.current = true }
+    const abortController = new AbortController()
+    renderToCanvas(abortController.signal)
+    return () => {
+      renderCancelledRef.current = true
+      abortController.abort()
+    }
   }, [previewFile, mergePair, settings.paperSize, currentRotation, fileRotations, settings.mergeMode,
       settings.marginLeft, settings.marginRight, settings.marginTop, settings.marginBottom,
       settings.customPaper?.widthMM, settings.customPaper?.heightMM])
@@ -703,7 +727,8 @@ export function usePreview({ files, settings, electronAPIRef }) {
   // ============================
   const preloadHD = useCallback(async (fileObj) => {
     if (!fileObj?.key || !fileObj.name) return
-    // 已缓存，跳过
+    // ✅ 全局 Canvas 统一处理所有格式，切换零开销，无需预渲染
+    return
     if (fullCacheRef.current.has(fileObj.key)) return
     // 取消上一个预加载
     if (currentPreloadRef.current) {
@@ -925,6 +950,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
       numPages,
       previewPage,
       previewCanvas,
+      previewRenderVersion,
       containerSize,
       previewRotation,
       fileRotations,

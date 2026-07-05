@@ -43,6 +43,8 @@ export const SUPPORTED_EXTENSIONS = [
 
 // 预览 DPI（屏幕显示用， 300在高分屏上更清晰）
 export const PREVIEW_DPI = 300
+// 全局 Canvas 预览 DPI（可低于 PREVIEW_DPI 以节省内存）
+export const GLOBAL_PREVIEW_DPI = 150
 // 打印 DPI（保持300保证打印质量）
 export const PRINT_DPI = 300
 

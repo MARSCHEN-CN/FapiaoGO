@@ -93,4 +93,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     close: () => ipcRenderer.send('window-close'),
     isMaximized: () => ipcRenderer.invoke('window-is-maximized'),
   },
+
+  // 进程内存信息（用于调试 Task Manager 内存增长）
+  getProcessMemoryInfo: () => process.getProcessMemoryInfo(),
 })

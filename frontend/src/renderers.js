@@ -18,72 +18,84 @@ const PDFJS_CMAP_URL = '/cmaps/'
 const PDFJS_STANDARD_FONT_URL = '/standard_fonts/'
 const PDFJS_WASM_URL = '/wasm/'
 
+
 // ========== 缓存 ==========
 // PDF 渲染缓存（LRU，最大 20 个）
 class LRUCache {
-  constructor(maxSize = 20, name = 'cache') {
+  constructor(maxSize = 20, name = 'cache', dispose = null) {
     this.maxSize = maxSize
     this.cache = new Map()
     this.name = name
+    this.disposeFn = dispose  // ✅ 支持异步 dispose 回调
   }
 
   get(key) {
     if (!this.cache.has(key)) return null
-    
+
     // 移到末尾（标记为最近使用）
     const cached = this.cache.get(key)
     this.cache.delete(key)
     this.cache.set(key, cached)
-    
+
     return cached
   }
 
-  set(key, value) {
+  async set(key, value) {
     if (this.cache.has(key)) {
-      this.delete(key)  // LRUCache.delete，触发 _returnPoolCanvas
+      console.log(`[LRU] ${this.name}.set() key already exists, deleting old value`)
+      await this.delete(key)  // ✅ await 异步销毁
     } else if (this.cache.size >= this.maxSize) {
       // 超出限制，删除最久未使用的（第一个）
       const oldestKey = this.cache.keys().next().value
-      this.delete(oldestKey)
+      console.log(`[LRU] ${this.name}.set() cache full (${this.cache.size}/${this.maxSize}), deleting oldest key: ${oldestKey?.slice(0, 16)}...`)
+      await this.delete(oldestKey)  // ✅ await 异步销毁
     }
-    
+
     this.cache.set(key, value)
+    console.log(`[LRU] ${this.name}.set() cache size: ${this.cache.size}/${this.maxSize}`)
   }
 
-  delete(key) {
-    if (!this.cache.has(key)) return
+  async   delete(key) {
+    if (!this.cache.has(key)) {
+      console.log(`[LRU] ${this.name}.delete() key not found: ${key}`)
+      return
+    }
 
     const value = this.cache.get(key)
     this.cache.delete(key)
+    console.log(`[LRU] ${this.name}.delete() destroying key: ${key}`)
 
     const canvas = value?.source || value?.canvas || value
     if (canvas instanceof HTMLCanvasElement) {
+      console.log(`[LRU] ${this.name}.delete() returning canvas to pool: ${canvas.width}x${canvas.height}`)
       _returnPoolCanvas(canvas)
     }
 
-    if (value) {
-      // cleanup() 先清空 font/image/document 缓存，再 destroy 结束 Worker
-      // 官方推荐顺序：cleanup → destroy，内存释放更完整
+    // ✅ 调用 dispose 回调（支持异步）
+    if (typeof this.disposeFn === 'function') {
+      try {
+        await this.disposeFn(value, key)
+      } catch (e) {
+        console.warn(`[LRU] ${this.name}.delete() dispose error:`, e)
+      }
+    } else if (value) {
+      // 向后兼容：如果没有 dispose 回调，用旧逻辑
       if (typeof value.cleanup === 'function') {
         try { value.cleanup() } catch (_) { /* ignore */ }
       }
       if (typeof value._destroyFn === 'function') {
-        value._destroyFn().catch(() => {})
+        console.log(`[LRU] ${this.name}.delete() calling _destroyFn()`)
+        try { await value._destroyFn() } catch (_) { /* ignore */ }
       }
     }
   }
 
-  clear() {
-    for (const value of this.cache.values()) {
+  async clear() {
+    for (const [key, value] of this.cache.entries()) {
       const canvas = value?.source || value?.canvas || value
       if (canvas instanceof HTMLCanvasElement) _returnPoolCanvas(canvas)
-      if (value) {
-        if (typeof value.cleanup === 'function') {
-          try { value.cleanup() } catch (_) { /* ignore */ }
-        }
-        if (typeof value._destroyFn === 'function') {
-          value._destroyFn().catch(() => {})
-        }
+      if (typeof this.disposeFn === 'function') {
+        try { await this.disposeFn(value, key) } catch (_) {}
       }
     }
     this.cache.clear()
@@ -99,10 +111,10 @@ class LRUCache {
 }
 
 // ✅ 统一渲染缓存（预览和打印共享，DPI 已统一为 300）
-const pdfRenderCache = new LRUCache(30, 'pdfRender')
+const pdfRenderCache = new LRUCache(5, 'pdfRender')
 
-// ✅ 单项渲染缓存（L1）：合并模式下跨文件组复���单项结果
-const itemRenderCache = new LRUCache(30, 'itemRender')
+// ✅ 单项渲染缓存（L1）：合并模式下跨文件组复用单项结果
+const itemRenderCache = new LRUCache(5, 'itemRender')
 
 // ✅ 渲染结果缓存（L2）：缓存 renderMultipleItemsToCanvas 的 Canvas 输出
 // 预览和打印使用相同参数时直接命中，避免重复渲染
@@ -214,8 +226,9 @@ async function resolveImageSrc(src) {
 
 /**
  * 加载 PDF Document（每次独立加载，避免并发场景下的 destroy 竞争）
+ * ✅ 返回 { pdf, loadingTask, worker } — 显式暴露 loadingTask 和 worker
  * @param {Uint8Array} pdfData - PDF 数据
- * @returns {{ pdf: PDFDocumentProxy, destroy: () => Promise<void> }}
+ * @returns {{ pdf: Promise<PDFDocumentProxy>, loadingTask, worker }}
  */
 function loadPdfDocument(pdfData) {
   // 每文档独立 Worker：销毁时 worker.destroy() 彻底杀死进程，
@@ -230,31 +243,105 @@ function loadPdfDocument(pdfData) {
     standardFontDataUrl: PDFJS_STANDARD_FONT_URL,
     wasmUrl: PDFJS_WASM_URL,
   })
-  return {
-    pdf: loadingTask.promise,
-    destroy: async () => {
-      try {
-        const pdf = await loadingTask.promise
-        if (typeof pdf.cleanup === 'function') {
-          const ok = await pdf.cleanup()
-          if (!ok) console.warn('[cleanup] destroy pdf.cleanup 返回 false')
+  return { pdf: loadingTask.promise, loadingTask, worker }
+}
+
+/**
+ * ✅ pdfDocCache 的异步 dispose 函数
+ * 在 LRU 淘汰时调用，彻底清理 PDF 文档、Worker、页面缓存
+ * @param {Object} cacheEntry - { pdfDoc, loadingTask, worker, pages }
+ * @param {string} key - PDF ID
+ */
+async function disposePdfDoc(cacheEntry, key) {
+  const { pdfDoc, loadingTask, worker, pages } = cacheEntry
+
+  console.log(`[LRU] 🗑️ Disposing PDF doc (start): ${key?.slice(0, 16)}...`)
+
+  try {
+    // 1️⃣ 清理所有缓存的页面
+    if (pages && pages.size > 0) {
+      console.log(`[LRU]   Cleaning ${pages.size} pages...`)
+      for (const [pageNum, pageProxy] of pages) {
+        try {
+          if (typeof pageProxy.cleanup === 'function' && !pageProxy._destroyed) {
+            await pageProxy.cleanup()
+            console.log(`[LRU]     page ${pageNum} cleaned`)
+          }
+        } catch (e) {
+          console.warn(`[LRU]     page ${pageNum} cleanup error: ${e.message}`)
         }
-      } catch (e) { /* ignore */ }
-      loadingTask.destroy?.()
-      // 彻底杀死 Worker 进程，释放 font cache / image cache / operator list cache
-      worker.destroy()
-    },
+      }
+      pages.clear()
+    }
+
+    // 2️⃣ cleanup() PDF document — 清理主线程 commonObjs、字体缓存
+    if (pdfDoc && typeof pdfDoc.cleanup === 'function') {
+      try {
+        console.log(`[LRU]   Calling pdfDoc.cleanup()...`)
+        await pdfDoc.cleanup()
+        console.log(`[LRU]   pdfDoc.cleanup() done`)
+      } catch (e) {
+        console.warn(`[LRU]   pdfDoc.cleanup() error: ${e.message}`)
+      }
+    }
+
+    // 3️⃣ 清理 transport 层缓存（保险措施）
+    if (pdfDoc && pdfDoc._transport) {
+      try {
+        pdfDoc._transport.commonObjs?.clear()
+      } catch (e) {}
+      try {
+        if (pdfDoc._transport.fontLoader && typeof pdfDoc._transport.fontLoader.cleanup === 'function') {
+          pdfDoc._transport.fontLoader.cleanup()
+        }
+      } catch (e) {}
+    }
+
+    // 4️⃣ 销毁 loadingTask → 终止 Worker 线程（释放 Worker 内存）
+    if (loadingTask) {
+      try {
+        console.log(`[LRU]   Calling loadingTask.destroy()...`)
+        loadingTask.destroy()
+      } catch (e) {
+        console.warn(`[LRU]   loadingTask.destroy() error: ${e.message}`)
+      }
+    }
+
+    // 5️⃣ 销毁 PDF document proxy
+    if (pdfDoc && typeof pdfDoc.destroy === 'function') {
+      try {
+        console.log(`[LRU]   Calling pdfDoc.destroy()...`)
+        await pdfDoc.destroy()
+      } catch (e) {
+        console.warn(`[LRU]   pdfDoc.destroy() error: ${e.message}`)
+      }
+    }
+
+    // 6️⃣ 彻底杀死 Worker 进程（保险措施）
+    if (worker) {
+      try {
+        console.log(`[LRU]   Calling worker.destroy()...`)
+        worker.destroy()
+      } catch (e) {
+        console.warn(`[LRU]   worker.destroy() error: ${e.message}`)
+      }
+    }
+
+    console.log(`[LRU] 🗑️ Disposing PDF doc (end): ${key?.slice(0, 16)}...`)
+  } catch (e) {
+    console.warn(`[LRU] Disposing PDF doc error:`, e)
   }
 }
 
-const pdfDocCache = new LRUCache(10, 'pdfDoc')
+const pdfDocCache = new LRUCache(5, 'pdfDoc', disposePdfDoc)
 const _pdfLoadingLocks = new Map()
 
 export async function getOrLoadPdfDocument(pdfData) {
   const pdfId = getPdfId(pdfData)
   
-  const cachedDoc = pdfDocCache.get(pdfId)
-  if (cachedDoc) return cachedDoc
+  // ✅ 从包装对象中取出 pdfDoc
+  let cached = pdfDocCache.get(pdfId)
+  if (cached) return cached.pdfDoc
   
   if (_pdfLoadingLocks.has(pdfId)) {
     return _pdfLoadingLocks.get(pdfId)
@@ -262,11 +349,11 @@ export async function getOrLoadPdfDocument(pdfData) {
   
   const loadPromise = (async () => {
     try {
-      const { pdf: pdfPromise, destroy } = loadPdfDocument(pdfData)
-      const pdf = await pdfPromise
-      pdf._destroyFn = destroy
-      pdfDocCache.set(pdfId, pdf)
-      return pdf
+      const { pdf: pdfPromise, loadingTask, worker } = loadPdfDocument(pdfData)
+      const pdfDoc = await pdfPromise
+      const cacheEntry = { pdfDoc, loadingTask, worker, pages: new Map() }
+      pdfDocCache.set(pdfId, cacheEntry)
+      return pdfDoc
     } finally {
       _pdfLoadingLocks.delete(pdfId)
     }
@@ -292,6 +379,9 @@ export async function renderPDFToCanvas(
   try {
     pdf = await getOrLoadPdfDocument(pdfData)
     page = await pdf.getPage(1)
+    // 缓存 PageProxy，LRU 淘汰时 disposePdfDoc 会清理
+    const _entry = pdfDocCache.get(getPdfId(pdfData))
+    if (_entry) _entry.pages.set(1, page)
 
     const viewport = page.getViewport({ scale: 1 })
     const vpW = viewport.width
@@ -408,7 +498,7 @@ function setVersion(map, key, value, maxSize = 100) {
 // 用于版本过期时 cancel() 终止旧渲染，避免 GPU/Worker 浪费
 const _renderTasks = new Map()
 
-async function renderPDFPageRaw(pdfData, dpi, fileKey) {
+async function renderPDFPageRaw(pdfData, dpi, fileKey, paperKey = null, isLandscape = false) {
   // 按文件隔离队列
   const queueKey = _getRenderQueueKey(pdfData, fileKey)
   let queue = _renderQueues.get(queueKey)
@@ -452,27 +542,41 @@ async function renderPDFPageRaw(pdfData, dpi, fileKey) {
       }
 
       page = await pdf.getPage(1)
+      // 缓存 PageProxy，LRU 淘汰时 disposePdfDoc 会清理
+      const _entry = pdfDocCache.get(getPdfId(pdfData))
+      if (_entry) _entry.pages.set(1, page)
+
       if (!isLatest()) {
         console.debug('[renderPDFPageRaw] 版本过期（获取页后）:', { fileKey, version })
         return null
       }
 
-      const viewport = page.getViewport({ scale: 1 })
-      const scale = dpi / 72
-      const width = Math.round(viewport.width * scale)
-      const height = Math.round(viewport.height * scale)
+      // 计算目标画布尺寸
+      let canvasW, canvasH
+
+      if (paperKey) {
+        // ✅ 有 paperKey：固定纸张尺寸，PDF 内容缩放适配
+        const pixels = getPaperPixels(paperKey, dpi, isLandscape)
+        canvasW = pixels.width
+        canvasH = pixels.height
+      } else {
+        // 向后兼容：无 paperKey 时用 PDF 原始尺寸
+        const viewport = page.getViewport({ scale: 1 })
+        const scale = dpi / 72
+        canvasW = Math.round(viewport.width * scale)
+        canvasH = Math.round(viewport.height * scale)
+      }
 
       // 延迟创建 canvas：在 page.render 前最后一刻再分配，减少无效分配
-      // 先检查版本，确认需要渲染时才创建
       if (!isLatest()) {
         console.debug('[renderPDFPageRaw] 版本过期（创建 canvas 前）:', { fileKey, version })
         return null
       }
 
-      canvas = _getPoolCanvas(width, height)
+      canvas = _getPoolCanvas(canvasW, canvasH)
       const ctx = canvas.getContext('2d')
       ctx.fillStyle = '#ffffff'
-      ctx.fillRect(0, 0, width, height)
+      ctx.fillRect(0, 0, canvasW, canvasH)
 
       // page.render 前再次检查版本（此为最耗时操作）
       if (!isLatest()) {
@@ -481,11 +585,28 @@ async function renderPDFPageRaw(pdfData, dpi, fileKey) {
         return null
       }
 
-      const scaledViewport = page.getViewport({ scale })
-      renderTask = page.render({ canvasContext: ctx, viewport: scaledViewport })
-      _renderTasks.set(queueKey, renderTask)
-      await renderTask.promise
-      // ✅ renderTask 已 settle（成功时走到这里，取消时走到 catch）
+      if (paperKey && canvasW > 0 && canvasH > 0) {
+        // ✅ 按纸张尺寸渲染：缩放 PDF 内容适配并居中
+        const viewport = page.getViewport({ scale: 1 })
+        const scale = Math.min(canvasW / viewport.width, canvasH / viewport.height)
+        const scaledViewport = page.getViewport({ scale })
+        const offsetX = (canvasW - scaledViewport.width) / 2
+        const offsetY = (canvasH - scaledViewport.height) / 2
+        ctx.save()
+        ctx.translate(offsetX, offsetY)
+        renderTask = page.render({ canvasContext: ctx, viewport: scaledViewport })
+        _renderTasks.set(queueKey, renderTask)
+        await renderTask.promise
+        ctx.restore()
+      } else {
+        // 向后兼容：无 paperKey，原始尺寸渲染
+        const viewport = page.getViewport({ scale: 1 })
+        const scale = dpi / 72
+        const scaledViewport = page.getViewport({ scale })
+        renderTask = page.render({ canvasContext: ctx, viewport: scaledViewport })
+        _renderTasks.set(queueKey, renderTask)
+        await renderTask.promise
+      }
 
       // ✅ 渲染完成后检查版本是否仍最新（page.render 耗时几百毫秒，期间可能切换文件）
       if (!isLatest()) {
@@ -493,7 +614,7 @@ async function renderPDFPageRaw(pdfData, dpi, fileKey) {
         return null
       }
 
-      return { canvas, width, height }
+      return { canvas, width: canvasW, height: canvasH }
     } catch (e) {
       if (canvas) _returnPoolCanvas(canvas)
       // RenderingCancelledException 是主动取消导致的正常异常，不视为错误
@@ -506,33 +627,11 @@ async function renderPDFPageRaw(pdfData, dpi, fileKey) {
       return null
     } finally {
       _renderTasks.delete(queueKey)
-      // 调试：检查 renderTask 状态
-      const renderDone = renderTask?.promise
-      if (renderDone && typeof renderDone.then === 'function') {
-        const settled = await Promise.race([
-          renderDone.then(() => 'resolved', () => 'rejected'),
-          new Promise(r => setTimeout(() => r('pending'), 0)),
-        ])
-        if (settled === 'pending') console.warn('[debug] renderTask.promise 尚未 settle')
-      }
-      // page.cleanup()
       if (page) {
-        const ok = await page.cleanup()
-        console.log('[debug] page.cleanup =', ok)
+        try { await page.cleanup() } catch (_) { /* ignore */ }
       }
-      // pdf._transport 内部状态
-      if (pdf) {
-        const transport = pdf._transport
-        if (transport) {
-          const pageCacheSize = transport.pageCache?.size ?? 'N/A'
-          const pagePromisesSize = Object.keys(transport.pagePromises || {}).length
-          const hasCommonObjs = !!transport.commonObjs
-          console.log('[debug] pdf._transport: pageCache.size=%s pagePromises=%d commonObjs=%s',
-            pageCacheSize, pagePromisesSize, hasCommonObjs)
-        }
-        // pdf.cleanup()
-        const ok = await pdf.cleanup()
-        console.log('[debug] pdf.cleanup =', ok)
+      if (pdf && typeof pdf.cleanup === 'function') {
+        try { await pdf.cleanup() } catch (_) { /* ignore */ }
       }
     }
   })
@@ -652,12 +751,9 @@ export async function renderTwoPDFsToCanvas(
   const renderHalf = async (pdfData, yStart, areaHeight) => {
     if (!pdfData) return
     let pdfDoc = null
-    let pdfDestroy = null
     let page = null
     try {
-      const loaded = await loadPdfDocument(pdfData)
-      pdfDoc = loaded.pdf
-      pdfDestroy = loaded.destroy
+      pdfDoc = await getOrLoadPdfDocument(pdfData)
       page = await pdfDoc.getPage(1)
 
       const viewport = page.getViewport({ scale: 1 })
@@ -682,14 +778,9 @@ export async function renderTwoPDFsToCanvas(
           console.warn('[renderTwoPDFsToCanvas] page cleanup 失败:', e)
         }
       }
-      // cleanup() 先清空 font/image/document 内部缓存，再 destroy
+      // cleanup() 先清空 font/image/document 内部缓存
       if (pdfDoc && typeof pdfDoc.cleanup === 'function') {
         try { await pdfDoc.cleanup() } catch (_) { /* ignore */ }
-      }
-      if (pdfDestroy) {
-        try { await pdfDestroy() } catch (e) {
-          console.warn('[renderTwoPDFsToCanvas] pdf destroy 失败:', e)
-        }
       }
     }
   }
@@ -735,27 +826,37 @@ const _pendingRequests = new Map()
 // Canvas 复用池：同一尺寸的 canvas 不重复创建，减少 GC 压力
 const _canvasPool = new Map()  // "wxh" → [canvas, ...]
 
+// 归一化 Canvas 尺寸到 100px 档位，减少池子碎片化
+function _normalizeSize(w, h) {
+  return {
+    w: Math.ceil(w / 100) * 100,
+    h: Math.ceil(h / 100) * 100,
+  }
+}
+
 function _getPoolCanvas(w, h) {
-  const rw = Math.round(w)
-  const rh = Math.round(h)
-  const key = `${rw}x${rh}`
+  const { w: nw, h: nh } = _normalizeSize(Math.round(w), Math.round(h))
+  const key = `${nw}x${nh}`
   const pool = _canvasPool.get(key)
   if (pool && pool.length > 0) {
     const c = pool.pop()
+    console.log(`[Canvas] Got canvas from pool, key=${key}, remaining: ${pool.length}`)
     // 清空内容（尺寸不变，不需要重新设置 width/height）
     const ctx = c.getContext('2d')
     ctx.clearRect(0, 0, c.width, c.height)
     return c
   }
+  console.log(`[Canvas] Pool miss, creating new canvas, key=${key} (requested ${Math.round(w)}x${Math.round(h)})`)
   const c = document.createElement('canvas')
-  c.width = rw
-  c.height = rh
+  c.width = nw
+  c.height = nh
   return c
 }
 
 function _returnPoolCanvas(canvas) {
   if (!(canvas instanceof HTMLCanvasElement)) return
-  const key = `${canvas.width}x${canvas.height}`
+  const { w: nw, h: nh } = _normalizeSize(canvas.width, canvas.height)
+  const key = `${nw}x${nh}`
   if (!_canvasPool.has(key)) _canvasPool.set(key, [])
   const pool = _canvasPool.get(key)
   if (pool.length < 10) {
@@ -764,6 +865,9 @@ function _returnPoolCanvas(canvas) {
     //    下次 getContext('2d') 时创建全新上下文
     canvas.width = canvas.width
     pool.push(canvas)
+    console.log(`[Canvas] Returned canvas to pool, key=${key}, pool size: ${pool.length}`)
+  } else {
+    console.log(`[Canvas] Pool full, dropping canvas, key=${key}, pool size: ${pool.length}`)
   }
 }
 
@@ -849,7 +953,7 @@ async function _renderViaWorker(items, paperKey, dpi, isLandscape, rotations, sl
   await Promise.all(items.map(async (item) => {
     const id = item.id || item.key
     const rotate = (rotations && rotations[id]) || 0
-    const l1Key = `itemRender_${id}_${dpi}_${rotate}`
+    const l1Key = `itemRender_${id}_${dpi}_${rotate}_${paperKey}_${isLandscape ? 'L' : 'P'}`
 
     const l1Hit = itemRenderCache.get(l1Key)
     if (l1Hit) {
@@ -859,7 +963,7 @@ async function _renderViaWorker(items, paperKey, dpi, isLandscape, rotations, sl
 
     try {
       if (item._pdfData) {
-        const result = await renderPDFPageRaw(item._pdfData, dpi, item.key)
+        const result = await renderPDFPageRaw(item._pdfData, dpi, item.key, paperKey, isLandscape)
         if (result) {
           const entry = { source: result.canvas, width: result.width, height: result.height }
           itemRenderCache.set(l1Key, entry)
@@ -1048,7 +1152,7 @@ async function _renderDirect(
   await Promise.all(items.map(async (item) => {
     const id = item.id || item.key
     const rotate = (rotations && rotations[id]) || 0
-    const l1Key = `itemRender_${id}_${dpi}_${rotate}`
+    const l1Key = `itemRender_${id}_${dpi}_${rotate}_${paperKey}_${isLandscape ? 'L' : 'P'}`
 
     // L1 命中：复用单项渲染结果
     const l1Hit = itemRenderCache.get(l1Key)
@@ -1060,7 +1164,7 @@ async function _renderDirect(
     // L1 未命中：渲染并缓存
     try {
       if (item._pdfData) {
-        const result = await renderPDFPageRaw(item._pdfData, dpi, item.key)
+        const result = await renderPDFPageRaw(item._pdfData, dpi, item.key, paperKey, isLandscape)
         if (result) {
           const entry = { source: result.canvas, width: result.width, height: result.height }
           itemRenderCache.set(l1Key, entry)
@@ -1256,4 +1360,177 @@ export function clearRenderCache() {
  */
 export function getPdfCacheSize() {
   return pdfRenderCache.size + renderResultCache.size
+}
+
+// ============================================================
+// 内存监控（每 30 秒报告一次）
+// ============================================================
+if (typeof window !== 'undefined') {
+  setInterval(async () => {
+    const mem = performance.memory
+    const usedMB = mem ? (mem.usedJSHeapSize / 1048576).toFixed(1) : 'N/A'
+    const totalMB = mem ? (mem.totalJSHeapSize / 1048576).toFixed(1) : 'N/A'
+
+    let procMem = ''
+    try {
+      if (window.electronAPI?.getProcessMemoryInfo) {
+        const info = await window.electronAPI.getProcessMemoryInfo()
+        const wsMB = (info.workingSetSize / 1048576).toFixed(0)
+        const pkMB = (info.peakWorkingSetSize / 1048576).toFixed(0)
+        procMem = ` | processWS:${wsMB}MB peak:${pkMB}MB`
+      }
+    } catch (_) {}
+
+    console.log(`[MEM] pdfDoc:${pdfDocCache.size}/5 itemRender:${itemRenderCache.size}/5 renderResult:${renderResultCache.size}/30 | heap:${usedMB}MB/${totalMB}MB${procMem} | globalCanvas:${_globalPreviewCanvas ? 'active' : 'none'}`)
+  }, 30000)
+}
+
+// ============================================================
+// 全局预览 Canvas（应用生命周期内只创建一次）
+// 预览分辨率使用 150dpi，打印使用 300dpi
+// ============================================================
+
+let _globalPreviewCanvas = null
+let _globalPreviewCanvasConfig = null
+let _offscreenPreviewCanvas = null
+let _globalPreviewVersion = 0
+let _globalPreviewLock = Promise.resolve()  // 串行化渲染锁
+
+function _getOffscreenCanvas(width, height) {
+  if (!_offscreenPreviewCanvas) {
+    _offscreenPreviewCanvas = document.createElement('canvas')
+    _offscreenPreviewCanvas.width = width
+    _offscreenPreviewCanvas.height = height
+  }
+  return _offscreenPreviewCanvas
+}
+
+/**
+ * 获取全局预览 Canvas。
+ * 纸张尺寸、DPI 或方向变化时自动重建。
+ */
+export function getGlobalPreviewCanvas(paperKey, dpi, isLandscape = false, margins = null) {
+  const pixels = getPaperPixels(paperKey, dpi, isLandscape)
+  const config = { paperKey, dpi, isLandscape, width: pixels.width, height: pixels.height, margins }
+
+  // 配置没变 → 返回已有 Canvas
+  if (_globalPreviewCanvas &&
+      _globalPreviewCanvasConfig?.paperKey === paperKey &&
+      _globalPreviewCanvasConfig?.dpi === dpi &&
+      _globalPreviewCanvasConfig?.isLandscape === isLandscape &&
+      _globalPreviewCanvasConfig?.margins?.left === margins?.left &&
+      _globalPreviewCanvasConfig?.margins?.right === margins?.right &&
+      _globalPreviewCanvasConfig?.margins?.top === margins?.top &&
+      _globalPreviewCanvasConfig?.margins?.bottom === margins?.bottom) {
+    return _globalPreviewCanvas
+  }
+
+  // 配置变了 → 重建
+  _globalPreviewCanvas = document.createElement('canvas')
+  _globalPreviewCanvas.width = pixels.width
+  _globalPreviewCanvas.height = pixels.height
+  _globalPreviewCanvasConfig = config
+
+  // 离屏 Canvas 也需要重建（尺寸变了）
+  _offscreenPreviewCanvas = null
+
+  console.log(`[GlobalCanvas] Created: ${paperKey}@${dpi}dpi ${isLandscape ? 'L' : 'P'} = ${pixels.width}x${pixels.height}`)
+  return _globalPreviewCanvas
+}
+
+/**
+ * 全局 Canvas 渲染基座：锁 → 清空 → 渲染 → swap → 版本号
+ * @param {function} renderFn - (ctx, contentW, contentH, marginL, marginT) => Promise<void>
+ * @param {AbortSignal} [signal]
+ */
+async function _renderToGlobalCanvas(renderFn, signal) {
+  if (!_globalPreviewCanvas || !_globalPreviewCanvasConfig) {
+    throw new Error('全局 Canvas 未初始化，先调用 getGlobalPreviewCanvas()')
+  }
+
+  await _globalPreviewLock
+  if (signal?.aborted) return
+
+  let unlock
+  _globalPreviewLock = new Promise(r => { unlock = r })
+
+  try {
+    const { width, height, dpi, margins } = _globalPreviewCanvasConfig
+    const offscreen = _getOffscreenCanvas(width, height)
+    const ctx = offscreen.getContext('2d')
+
+    // 清空画布
+    ctx.fillStyle = 'white'
+    ctx.fillRect(0, 0, width, height)
+
+    // 计算安全边距
+    const marginL = (margins?.left ?? 0) * (dpi / 25.4)
+    const marginR = (margins?.right ?? 0) * (dpi / 25.4)
+    const marginT = (margins?.top ?? 0) * (dpi / 25.4)
+    const marginB = (margins?.bottom ?? 0) * (dpi / 25.4)
+    const contentW = width - marginL - marginR
+    const contentH = height - marginT - marginB
+
+    if (signal?.aborted) return
+
+    // 执行具体渲染
+    await renderFn(ctx, contentW, contentH, marginL, marginT)
+
+    // 原子 swap 到显示 Canvas
+    if (signal?.aborted) return
+    const displayCtx = _globalPreviewCanvas.getContext('2d')
+    displayCtx.drawImage(offscreen, 0, 0)
+
+    // 递增版本号
+    _globalPreviewVersion++
+    return _globalPreviewVersion
+  } finally {
+    unlock?.()
+  }
+}
+
+/**
+ * 切换 PDF 文件到全局 Canvas（双缓冲，防闪烁）
+ */
+export async function switchPreviewFile(pdfDoc, pageNum = 1, signal) {
+  return _renderToGlobalCanvas(async (ctx, contentW, contentH, marginL, marginT) => {
+    if (signal?.aborted) return
+    const page = await pdfDoc.getPage(pageNum)
+
+    const viewport = page.getViewport({ scale: 1 })
+    const scale = Math.min(contentW / viewport.width, contentH / viewport.height)
+    const renderViewport = page.getViewport({ scale })
+    const offsetX = marginL + (contentW - renderViewport.width) / 2
+    const offsetY = marginT + (contentH - renderViewport.height) / 2
+
+    ctx.save()
+    ctx.translate(offsetX, offsetY)
+    await page.render({ canvasContext: ctx, viewport: renderViewport }).promise
+    ctx.restore()
+
+    await page.cleanup()
+  }, signal)
+}
+
+/**
+ * 切换图片/OFD 到全局 Canvas（双缓冲，防闪烁）
+ * @param {HTMLImageElement|HTMLCanvasElement} image - 已加载的图片元素
+ */
+export async function switchPreviewImage(image, signal) {
+  return _renderToGlobalCanvas(async (ctx, contentW, contentH, marginL, marginT) => {
+    if (signal?.aborted) return
+
+    const scale = Math.min(contentW / image.width, contentH / image.height)
+    const drawW = image.width * scale
+    const drawH = image.height * scale
+    const offsetX = marginL + (contentW - drawW) / 2
+    const offsetY = marginT + (contentH - drawH) / 2
+
+    ctx.drawImage(image, offsetX, offsetY, drawW, drawH)
+  }, signal)
+}
+
+/** 获取当前全局 Canvas 版本号（用于 React 重绘触发） */
+export function getGlobalPreviewVersion() {
+  return _globalPreviewVersion
 }
