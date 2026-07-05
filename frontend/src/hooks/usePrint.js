@@ -797,16 +797,27 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
     // ── Source 管线：批量打印所有已解析文件 ──
     if (PRINT_PIPELINE.mode === 'source') {
       if (settings.extraSpecial) {
-        // 一普二专：先全部，再专票
+        // 一普二专：合并两轮进度为一个连续序列，避免进度条重置
         const specialFiles = allParsed.filter(f => f.invoiceType?.includes('专票'))
-        console.log('[PRINT] 一普二专: 第1轮 %d 个 → 第2轮 %d 个', allParsed.length, specialFiles.length)
-        const r1 = await printAllSourceFiles(allParsed, printSettings)
-        if (specialFiles.length > 0) {
-          const r2 = await printAllSourceFiles(specialFiles, printSettings)
-          showPrintSummary(r1.completed + r2.completed, r1.failed + r2.failed)
-        } else {
-          showPrintSummary(r1.completed, r1.failed)
+        // 第二轮专票项使用独立 key（+ '_v2'），在进度列表中单独展示
+        const mergedJobs = [
+          ...allParsed.map(f => ({ ...f, _jobKey: f.key, _round: 1 })),
+          ...specialFiles.map(f => ({ ...f, _jobKey: f.key + '_v2', _round: 2 })),
+        ]
+        console.log('[PRINT] 一普二专: 合并 %d 个任务（第1轮%d + 第2轮%d）',
+          mergedJobs.length, allParsed.length, specialFiles.length)
+
+        // printAllSourceFiles 内部用 _jobKey 替代 f.key 追踪进度
+        const originalKey = 'key'
+        for (const job of mergedJobs) {
+          job.key = job._jobKey
         }
+        const r = await printAllSourceFiles(mergedJobs, printSettings)
+        // 恢复原始 key（不影响外部状态）
+        for (const job of mergedJobs) {
+          job.key = job._jobKey.replace('_v2', '')
+        }
+        showPrintSummary(r.completed, r.failed)
       } else {
         console.log('[PRINT] Source → 批量打印 %d 个文件', allParsed.length)
         const r = await printAllSourceFiles(allParsed, printSettings)

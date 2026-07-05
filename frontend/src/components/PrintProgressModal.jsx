@@ -43,9 +43,15 @@ const PrintProgressModal = ({ printing, printFiles, printProgress, onClose }) =>
           <div className="pc-header-left">
             <div className={`pc-status-dot ${stats.allDone ? (stats.hasError ? 'error' : 'done') : 'active'}`} />
             <h3 className="pc-title">
-              {stats.allDone
-                ? (stats.hasError ? '打印完成（含错误）' : '打印完成')
-                : '正在打印'}
+              {(() => {
+                if (stats.allDone) return stats.hasError ? '打印完成（含错误）' : '打印完成'
+                const hasV2 = printFiles.some(f => f.key?.endsWith('_v2'))
+                if (!hasV2) return '正在打印'
+                const v2Printing = progressList.some(f => f.key?.endsWith('_v2') && f.status === 'printing')
+                const v2Done = progressList.filter(f => f.key?.endsWith('_v2')).every(f => f.status === 'done' || f.status === 'error')
+                if (v2Printing || v2Done) return '正在打印（第二轮）'
+                return '正在打印（第一轮）'
+              })()}
             </h3>
           </div>
           {!stats.allDone && <span className="pc-header-sub">{stats.completed}/{stats.total} 已完成</span>}

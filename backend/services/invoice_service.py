@@ -20,7 +20,6 @@ from xml_parser import parse_xml
 from ofd_parser import parse_ofd
 from image_parser import parse_image_ocr
 from field_extractor import extract_fields
-from crosscutting.feature_flags import FeatureFlags
 from cache import get_fields_cache, set_fields_cache
 from file_validator import validate_file
 from timer_utils import (
@@ -154,7 +153,10 @@ def parse_invoice_service(file_bytes, filename, auto_orient=True, force_ocr=Fals
     # 直接使用传入的 bytes；构造 BytesIO 供向下兼容的解析器使用
     raw_bytes = file_bytes
     file = io.BytesIO(raw_bytes)
-    hash_sha256 = hashlib.sha256(raw_bytes).hexdigest()
+    # 文件内容标识：前 1KB + 文件长度的 SHA-256，降低大文件全量哈希开销
+    # 缓存 key 不需要加密级防碰撞，截断哈希足以区分不同文件
+    _head = raw_bytes[:1024]
+    hash_sha256 = hashlib.sha256(_head + str(len(raw_bytes)).encode()).hexdigest()
     bbox_data = []
     from_cache = False
 
@@ -263,10 +265,7 @@ def parse_invoice_service(file_bytes, filename, auto_orient=True, force_ocr=Fals
                     pymupdf_page=None,
                 )
                 parse_method += '（16步）'
-            
-            if FeatureFlags.get_instance().is_enabled("USE_VNEXT_PIPELINE"):
-                parse_method += '（新架构就绪）'
-            
+
             with metrics.timer('cache_write'):
                 try:
                     set_fields_cache(field_cache_key, extra_fields, params=field_cache_params)
@@ -415,8 +414,6 @@ def parse_invoice_service(file_bytes, filename, auto_orient=True, force_ocr=Fals
                     )
                     parse_method += '（16步）'
                 
-                if FeatureFlags.get_instance().is_enabled("USE_VNEXT_PIPELINE"):
-                    parse_method += '（新架构就绪）'
                 with metrics.timer('cache_write'):
                     try:
                         set_fields_cache(field_cache_key, extra_fields, params=field_cache_params)

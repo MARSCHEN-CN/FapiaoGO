@@ -88,26 +88,59 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
       throw new Error(`批量解析失败: HTTP ${res.status}`)
     }
 
-    const data = await res.json()
-    if (!data.success) {
-      throw new Error(data.error || '批量解析失败')
+    // 消费 SSE 事件流，实时更新进度
+    const reader = res.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    let batchResult = null
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop() || ''
+
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          try {
+            const msg = JSON.parse(line.slice(6))
+            // 有 items 字段 → 最终结果
+            if (msg.items) {
+              batchResult = msg
+            } else if (msg.current !== undefined) {
+              // 进度事件
+              completedRef.current = msg.current
+              setParseProgress({ current: msg.current, total: msg.total })
+              setFiles((prev) =>
+                prev.map((f) =>
+                  filesToParse.some((fp) => fp.key === f.key)
+                    ? { ...f, status: f.status === 'parsed' ? 'parsed' : 'uploading' }
+                    : f
+                )
+              )
+            }
+          } catch (_) { /* ignore parse errors */ }
+        }
+      }
+    }
+
+    if (!batchResult || !batchResult.success) {
+      throw new Error(batchResult?.error || '批量解析失败')
     }
 
     // 收集所有更新，单次应用（避免 O(n²) 数组复制）
     const updates = new Map()
     let completedCount = 0
 
-    for (const item of data.items) {
+    for (const item of batchResult.items) {
       const fileObj = filesToParse[item.index]
       if (!fileObj) continue
 
       if (item.success && item.data) {
         const d = item.data
-        if (d.db_record) {
-          db.upsert(d.db_record).catch((err) =>
-            console.error('[useFileOps] 写入 datastore 失败:', err)
-          )
-        }
+        // ✅ 后端 parse_invoice_service 已自动入库，前端无需重复 upsert
 
         updates.set(fileObj.key, {
           status: 'parsed',
@@ -291,11 +324,7 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
             if (resp.ok) {
               const data = await resp.json()
 
-              if (data.db_record) {
-                db.upsert(data.db_record).catch(err =>
-                  console.error('[useFileOps] 写入 datastore 失败:', err)
-                )
-              }
+              // ✅ 后端 parse_invoice_service 已自动入库，前端无需重复 upsert
 
               setFiles((prev) =>
                 prev.map((f) =>

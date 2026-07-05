@@ -11,3 +11,4 @@ pytest-snapshot
 scikit-learn
 pikepdf
 img2pdf
+orjson

@@ -774,10 +774,10 @@ def parse_invoice():
 
 @app.route('/parse_batch', methods=['POST'])
 def parse_batch():
-    """批量解析多个发票文件（并行解析 + 批量 DB 写入）
+    """批量解析多个发票文件（并行解析 + SSE 流式进度 + 批量 DB 写入）
 
     前端通过 multipart/form-data 提交多个文件（字段名 'files'），
-    后端用线程池并行解析，最终调用 batch_upsert_invoices() 一次性入库。
+    后端用线程池并行解析，通过 SSE 流实时推送进度。
     """
     files = request.files.getlist('files')
     if not files:
@@ -800,108 +800,132 @@ def parse_batch():
             'filename': f.filename,
         })
 
-    # 并行解析（限制并发避免 OCR 过载）
-    BATCH_WORKERS = min(4, len(file_inputs))
-    results = [None] * len(file_inputs)
+    progress_queue = queue.Queue()
+    result_queue = queue.Queue()
 
-    def _parse_one(index, fi):
-        if not parse_semaphore.acquire(timeout=30):
-            return index, None, "服务器繁忙，请稍后重试"
-        try:
-            if not allowed_file(fi['filename']):
-                return index, None, f"不支持的文件格式: {fi['filename']}"
-            svc_result = parse_invoice_service(
-                fi['bytes'], fi['filename'],
-                auto_orient=auto_orient,
-                enable_auto_ocr=enable_auto_ocr,
-                skip_db_write=True,
-            )
-            if svc_result is None:
-                return index, None, f"无法识别的文件格式: {fi['filename']}"
-            return index, svc_result, None
-        except Exception as e:
-            logger.error("[parse_batch] 解析失败 [%d] %s: %s", index, fi['filename'], e)
-            return index, None, str(e)
-        finally:
-            parse_semaphore.release()
+    def run_batch():
+        total = len(file_inputs)
+        BATCH_WORKERS = min(4, total)
+        results = [None] * total
 
-    with ThreadPoolExecutor(max_workers=BATCH_WORKERS,
-                            thread_name_prefix='batch-parse') as pool:
-        futures = {pool.submit(_parse_one, i, fi): i
-                   for i, fi in enumerate(file_inputs)}
-        for fut in as_completed(futures):
-            idx, svc_result, error = fut.result()
-            results[idx] = (idx, svc_result, error)
+        def _parse_one(index, fi):
+            if not parse_semaphore.acquire(timeout=30):
+                return index, None, "服务器繁忙，请稍后重试"
+            try:
+                if not allowed_file(fi['filename']):
+                    return index, None, f"不支持的文件格式: {fi['filename']}"
+                svc_result = parse_invoice_service(
+                    fi['bytes'], fi['filename'],
+                    auto_orient=auto_orient,
+                    enable_auto_ocr=enable_auto_ocr,
+                    skip_db_write=True,
+                )
+                if svc_result is None:
+                    return index, None, f"无法识别的文件格式: {fi['filename']}"
+                return index, svc_result, None
+            except Exception as e:
+                logger.error("[parse_batch] 解析失败 [%d] %s: %s", index, fi['filename'], e)
+                return index, None, str(e)
+            finally:
+                parse_semaphore.release()
 
-    # 收集成功的 db_record，批量写入
-    db_records = []
-    record_index_map = {}  # db_records 列表下标 → 文件下标
-    for i, (idx, svc_result, error) in enumerate(results):
-        if svc_result and svc_result.get('db_record'):
-            record_index_map[len(db_records)] = idx
-            db_records.append(svc_result['db_record'])
+        with ThreadPoolExecutor(max_workers=BATCH_WORKERS,
+                                thread_name_prefix='batch-parse') as pool:
+            futures = {pool.submit(_parse_one, i, fi): i
+                       for i, fi in enumerate(file_inputs)}
+            for fut in as_completed(futures):
+                idx, svc_result, error = fut.result()
+                results[idx] = (idx, svc_result, error)
+                progress_queue.put({'current': sum(1 for r in results if r is not None), 'total': total})
 
-    db_results = []
-    if db_records:
-        try:
-            db_results = db_module.batch_upsert_invoices(db_records)
-            logger.info("[parse_batch] 批量入库 %d 条记录", len(db_results))
-        except Exception as e:
-            logger.warning("[parse_batch] 批量入库失败: %s", e)
+        # 批量入库
+        db_records = []
+        record_index_map = {}
+        for i, (idx, svc_result, error) in enumerate(results):
+            if svc_result and svc_result.get('db_record'):
+                record_index_map[len(db_records)] = idx
+                db_records.append(svc_result['db_record'])
 
-    # 构建每个文件的响应项
-    response_items = []
-    for i, (idx, svc_result, error) in enumerate(results):
-        item = {
-            'index': idx,
-            'file_name': file_inputs[idx]['filename'],
-            'success': svc_result is not None,
-        }
-        if svc_result:
-            # 查找对应的 db_result
-            db_res = None
-            for rec_idx, file_idx in record_index_map.items():
-                if file_idx == idx and rec_idx < len(db_results):
-                    db_res = db_results[rec_idx]
-                    break
-            item['db_result'] = db_res
+        db_results = []
+        if db_records:
+            try:
+                db_results = db_module.batch_upsert_invoices(db_records)
+                logger.info("[parse_batch] 批量入库 %d 条记录", len(db_results))
+            except Exception as e:
+                logger.warning("[parse_batch] 批量入库失败: %s", e)
 
-            # 构建精简响应（mode='batch' 不含预览图和原始文本）
-            extra = svc_result.get('extra_fields', {}) or {}
-            # failed_fields 标准化：FieldIssue dict 列表 → ID 字符串列表
-            raw_failed = extra.get('failed_fields', [])
-            failed_ids = [f.get('field', '') for f in raw_failed
-                          if isinstance(f, dict) and f.get('field')] if raw_failed else []
-
-            item['data'] = {
-                'db_record': svc_result.get('db_record'),
-                'invoice_type': svc_result.get('invoice_type', ''),
-                'invoice_number': svc_result.get('invoice_number', ''),
-                'amount': svc_result.get('amount', ''),
-                'invoice_date': svc_result.get('invoice_date', ''),
-                'new_name': svc_result.get('safe_filename', ''),
-                'parse_method': svc_result.get('parse_method', ''),
-                'file_format': svc_result.get('file_format', ''),
-                'failed_fields': failed_ids,
-                # OFD 需要预览图（浏览器无法直接渲染 ZIP 格式），
-                # 其他格式在 batch 模式下跳过预览以节省带宽
-                'preview_image': svc_result.get('preview_image', '') if svc_result.get('file_format') == 'ofd' else '',
-                'invoice_fields': extra,
-                'from_cache': svc_result.get('from_cache', False),
+        # 构建每个文件的响应项
+        response_items = []
+        for i, (idx, svc_result, error) in enumerate(results):
+            item = {
+                'index': idx,
+                'file_name': file_inputs[idx]['filename'],
+                'success': svc_result is not None,
             }
-        else:
-            item['error'] = error or '解析失败'
-        response_items.append(item)
+            if svc_result:
+                db_res = None
+                for rec_idx, file_idx in record_index_map.items():
+                    if file_idx == idx and rec_idx < len(db_results):
+                        db_res = db_results[rec_idx]
+                        break
+                item['db_result'] = db_res
 
-    success_count = sum(1 for it in response_items if it['success'])
-    logger.info("[parse_batch] 完成: %d/%d 成功", success_count, len(file_inputs))
-    return jsonify({
-        'success': True,
-        'total': len(file_inputs),
-        'success_count': success_count,
-        'fail_count': len(file_inputs) - success_count,
-        'items': response_items,
-    })
+                extra = svc_result.get('extra_fields', {}) or {}
+                raw_failed = extra.get('failed_fields', [])
+                failed_ids = [f.get('field', '') for f in raw_failed
+                              if isinstance(f, dict) and f.get('field')] if raw_failed else []
+
+                item['data'] = {
+                    'db_record': svc_result.get('db_record'),
+                    'invoice_type': svc_result.get('invoice_type', ''),
+                    'invoice_number': svc_result.get('invoice_number', ''),
+                    'amount': svc_result.get('amount', ''),
+                    'invoice_date': svc_result.get('invoice_date', ''),
+                    'new_name': svc_result.get('safe_filename', ''),
+                    'parse_method': svc_result.get('parse_method', ''),
+                    'file_format': svc_result.get('file_format', ''),
+                    'failed_fields': failed_ids,
+                    'preview_image': svc_result.get('preview_image', '') if svc_result.get('file_format') == 'ofd' else '',
+                    'invoice_fields': extra,
+                    'from_cache': svc_result.get('from_cache', False),
+                }
+            else:
+                item['error'] = error or '解析失败'
+            response_items.append(item)
+
+        success_count = sum(1 for it in response_items if it['success'])
+        logger.info("[parse_batch] 完成: %d/%d 成功", success_count, total)
+        result_queue.put({
+            'success': True,
+            'total': total,
+            'success_count': success_count,
+            'fail_count': total - success_count,
+            'items': response_items,
+        })
+
+    thread = threading.Thread(target=run_batch, daemon=True)
+    thread.start()
+
+    def generate():
+        yield ": keepalive\n\n"
+        while True:
+            # 先消费 progress_queue
+            while not progress_queue.empty():
+                msg = progress_queue.get_nowait()
+                yield f"data: {_json.dumps(msg, ensure_ascii=False)}\n\n"
+            # 检查 result_queue（有结果说明解析完成）
+            if not result_queue.empty():
+                msg = result_queue.get_nowait()
+                yield f"data: {_json.dumps(msg, ensure_ascii=False)}\n\n"
+                break
+            # 没有数据时短暂休眠，避免 busy loop
+            time.sleep(0.05)
+
+    return Response(
+        stream_with_context(generate()),
+        mimetype='text/event-stream',
+        headers={'Cache-Control': 'no-cache', 'Connection': 'keep-alive', 'X-Accel-Buffering': 'no'},
+    )
 
 
 # ============================

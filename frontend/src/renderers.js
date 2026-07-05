@@ -235,7 +235,10 @@ function loadPdfDocument(pdfData) {
     destroy: async () => {
       try {
         const pdf = await loadingTask.promise
-        if (typeof pdf.cleanup === 'function') pdf.cleanup()
+        if (typeof pdf.cleanup === 'function') {
+          const ok = await pdf.cleanup()
+          if (!ok) console.warn('[cleanup] destroy pdf.cleanup 返回 false')
+        }
       } catch (e) { /* ignore */ }
       loadingTask.destroy?.()
       // 彻底杀死 Worker 进程，释放 font cache / image cache / operator list cache
@@ -356,11 +359,8 @@ export async function renderPDFToCanvas(
     return null
   } finally {
     if (page) {
-      try {
-        page.cleanup()
-      } catch (e) {
-        console.warn('[renderPDFToCanvas] page cleanup 失败:', e)
-      }
+      const ok = await page.cleanup()
+      if (!ok) console.warn('[cleanup] renderPDFToCanvas page.cleanup 返回 false')
     }
   }
 }
@@ -485,6 +485,7 @@ async function renderPDFPageRaw(pdfData, dpi, fileKey) {
       renderTask = page.render({ canvasContext: ctx, viewport: scaledViewport })
       _renderTasks.set(queueKey, renderTask)
       await renderTask.promise
+      // ✅ renderTask 已 settle（成功时走到这里，取消时走到 catch）
 
       // ✅ 渲染完成后检查版本是否仍最新（page.render 耗时几百毫秒，期间可能切换文件）
       if (!isLatest()) {
@@ -505,14 +506,33 @@ async function renderPDFPageRaw(pdfData, dpi, fileKey) {
       return null
     } finally {
       _renderTasks.delete(queueKey)
-      // page.cleanup() 释放页级缓存（字体表、canvas 工厂、图案缓存）
-      if (page) {
-        try { page.cleanup() } catch (_) { /* ignore */ }
+      // 调试：检查 renderTask 状态
+      const renderDone = renderTask?.promise
+      if (renderDone && typeof renderDone.then === 'function') {
+        const settled = await Promise.race([
+          renderDone.then(() => 'resolved', () => 'rejected'),
+          new Promise(r => setTimeout(() => r('pending'), 0)),
+        ])
+        if (settled === 'pending') console.warn('[debug] renderTask.promise 尚未 settle')
       }
-      // pdf.cleanup() 释放文档级缓存（font cache、image cache、commonObjs）
-      // 单页发票预览中每次渲染后清理，避免常驻直至 LRU 淘汰
-      if (pdf && typeof pdf.cleanup === 'function') {
-        try { pdf.cleanup() } catch (_) { /* ignore */ }
+      // page.cleanup()
+      if (page) {
+        const ok = await page.cleanup()
+        console.log('[debug] page.cleanup =', ok)
+      }
+      // pdf._transport 内部状态
+      if (pdf) {
+        const transport = pdf._transport
+        if (transport) {
+          const pageCacheSize = transport.pageCache?.size ?? 'N/A'
+          const pagePromisesSize = Object.keys(transport.pagePromises || {}).length
+          const hasCommonObjs = !!transport.commonObjs
+          console.log('[debug] pdf._transport: pageCache.size=%s pagePromises=%d commonObjs=%s',
+            pageCacheSize, pagePromisesSize, hasCommonObjs)
+        }
+        // pdf.cleanup()
+        const ok = await pdf.cleanup()
+        console.log('[debug] pdf.cleanup =', ok)
       }
     }
   })
