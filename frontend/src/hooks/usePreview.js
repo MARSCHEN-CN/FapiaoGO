@@ -90,8 +90,67 @@ export function usePreview({ files, settings, electronAPIRef }) {
   const previewFileRef = useRef(null)
   // ✅ loadFilePreview 数据缓存：避免每次文件切换都重复 b64toBlob / IPC 读文件
   //    图片缓存 Blob 对象，PDF 缓存 Uint8Array
-  //    LRU 自清理（max 50 条），文件删除后 key 自然失效
+  //    LRU 自清理（max 50 条 + 200MB 内存限制），文件删除后主动清理
   const previewLoadCacheRef = useRef(new Map())
+  // ✅ 缓存总内存估算（字节），避免每次遍历 Map 计算
+  const previewLoadCacheSizeRef = useRef(0)
+
+  const MAX_CACHE_ENTRIES = 50
+  const MAX_CACHE_MEMORY_BYTES = 200 * 1024 * 1024
+
+  const estimateSize = (val) => {
+    if (val instanceof Blob) return val.size
+    if (val instanceof Uint8Array) return val.byteLength
+    if (val instanceof ArrayBuffer) return val.byteLength
+    return 1024
+  }
+
+  const lruSet = (map, key, value) => {
+    const entrySize = estimateSize(value)
+
+    if (map.has(key)) {
+      const oldVal = map.get(key)
+      previewLoadCacheSizeRef.current -= estimateSize(oldVal)
+      map.delete(key)
+    }
+
+    while (map.size >= MAX_CACHE_ENTRIES || previewLoadCacheSizeRef.current + entrySize > MAX_CACHE_MEMORY_BYTES) {
+      const firstKey = map.keys().next().value
+      const oldVal = map.get(firstKey)
+      previewLoadCacheSizeRef.current -= estimateSize(oldVal)
+      if (oldVal?.close) oldVal.close()
+      map.delete(firstKey)
+    }
+
+    map.set(key, value)
+    previewLoadCacheSizeRef.current += entrySize
+  }
+
+  const lruGet = (map, key) => {
+    if (!map.has(key)) return undefined
+    const value = map.get(key)
+    map.delete(key)
+    map.set(key, value)
+    return value
+  }
+
+  const clearFilePreviewCache = useCallback((fileKey) => {
+    const map = previewLoadCacheRef.current
+    ;[`blob_${fileKey}`, `dims_${fileKey}`, `pdf_${fileKey}`, `pdfDims_${fileKey}`]
+      .forEach(k => {
+        if (map.has(k)) {
+          const val = map.get(k)
+          previewLoadCacheSizeRef.current -= estimateSize(val)
+          if (val?.close) val.close()
+          map.delete(k)
+        }
+      })
+  }, [])
+
+  const clearAllPreviewCache = useCallback(() => {
+    previewLoadCacheRef.current.clear()
+    previewLoadCacheSizeRef.current = 0
+  }, [])
   // ✅ App 在删除文件并直接调用 handlePreview 时，设置此标记跳过 useEffect 自动导航
   const skipAutoNavRef = useRef(false)
   const filesRef = useRef(files)
@@ -488,15 +547,11 @@ export function usePreview({ files, settings, electronAPIRef }) {
         // 从 previewImage 加载（带 Blob 缓存，避免重复 b64toBlob）
         else if (fObj.previewImage) {
           const cacheKey = 'blob_' + fObj.key
-          let blob = previewLoadCacheRef.current.get(cacheKey)
+          let blob = lruGet(previewLoadCacheRef.current, cacheKey)
           if (!blob || blob.size === 0) {
             blob = b64toBlob(fObj.previewImage, 'image/png')
             if (blob.size > 0) {
-              if (previewLoadCacheRef.current.size >= 50) {
-                const firstKey = previewLoadCacheRef.current.keys().next().value
-                previewLoadCacheRef.current.delete(firstKey)
-              }
-              previewLoadCacheRef.current.set(cacheKey, blob)
+              lruSet(previewLoadCacheRef.current, cacheKey, blob)
             }
           }
           if (blob.size > 0) {
@@ -523,7 +578,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
         // 提取图片/OFD 尺寸用于方向检测（带缓存）
         if (_previewImageUrl && !fObj._imageWidth && !fObj.previewWidth) {
           const dimsKey = 'dims_' + fObj.key
-          const cachedDims = previewLoadCacheRef.current.get(dimsKey)
+          const cachedDims = lruGet(previewLoadCacheRef.current, dimsKey)
           if (cachedDims) {
             fObj._imageWidth = cachedDims.w
             fObj._imageHeight = cachedDims.h
@@ -538,7 +593,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
               if (dims) {
                 fObj._imageWidth = dims.w
                 fObj._imageHeight = dims.h
-                previewLoadCacheRef.current.set(dimsKey, dims)
+                lruSet(previewLoadCacheRef.current, dimsKey, dims)
               }
             } catch (e) { /* 尺寸提取失败 fallback portrait */ }
           }
@@ -551,7 +606,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
         let buffer = null
         // ✅ 尝试从缓存取 Uint8Array（_pdfData），避免重复 IPC read-file + pdfjs 解析
         const pdfKey = 'pdf_' + fObj.key
-        const cachedPdfData = previewLoadCacheRef.current.get(pdfKey)
+        const cachedPdfData = lruGet(previewLoadCacheRef.current, pdfKey)
         if (cachedPdfData) {
           _pdfData = cachedPdfData
         } else {
@@ -567,17 +622,13 @@ export function usePreview({ files, settings, electronAPIRef }) {
           }
           if (buffer) {
             _pdfData = new Uint8Array(buffer)
-            if (previewLoadCacheRef.current.size >= 50) {
-              const firstKey = previewLoadCacheRef.current.keys().next().value
-              previewLoadCacheRef.current.delete(firstKey)
-            }
-            previewLoadCacheRef.current.set(pdfKey, _pdfData)
+            lruSet(previewLoadCacheRef.current, pdfKey, _pdfData)
           }
         }
         if (_pdfData) {
           // 提取第一页尺寸用于方向检测（带缓存）
           const dimsKey = 'pdfDims_' + fObj.key
-          const cachedDims = previewLoadCacheRef.current.get(dimsKey)
+          const cachedDims = lruGet(previewLoadCacheRef.current, dimsKey)
           if (cachedDims) {
             fObj._pdfPageWidth = cachedDims.w
             fObj._pdfPageHeight = cachedDims.h
@@ -597,7 +648,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
                 fObj._pdfPageHeight = vp.height
                 // ✅ 不调用 pdfDoc.destroy() — pdfDocCache 管理生命周期，
                 //    后续 renderers 中的渲染可直接复用同一份文档
-                previewLoadCacheRef.current.set(dimsKey, { w: vp.width, h: vp.height })
+                lruSet(previewLoadCacheRef.current, dimsKey, { w: vp.width, h: vp.height })
               } finally {
                 // ✅ 释放 PageProxy 资源（getPage 建立了页面级缓存）
                 try { page.cleanup() } catch (_) { /* ignore */ }
@@ -971,6 +1022,8 @@ export function usePreview({ files, settings, electronAPIRef }) {
       handlePrevFile,
       handleNextFile,
       cleanupPreviewUrl,
+      clearFilePreviewCache,
+      clearAllPreviewCache,
     },
 
     /**

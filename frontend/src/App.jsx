@@ -88,6 +88,7 @@ function AppContent() {
   const {
     handlePreview, preloadHD, handleRotate, prevPage, nextPage,
     handlePrevFile, handleNextFile, cleanupPreviewUrl,
+    clearFilePreviewCache, clearAllPreviewCache,
   } = preview.actions
   const {
     percent: zoomPercent, mode: zoomMode, menuOpen: zoomMenuOpen, menuClosing: zoomMenuClosing,
@@ -168,6 +169,9 @@ function AppContent() {
       cleanupPreviewUrl()
     }
 
+    // ✅ 删除文件时清理预览缓存（释放 Blob/Uint8Array 内存）
+    clearFilePreviewCache(key)
+
     // 计算下一个要预览的文件（在 setFiles 之前计算，避免在 updater 中执行副作用）
     let nextPreviewFile = null
     if (isPreviewing) {
@@ -186,14 +190,16 @@ function AppContent() {
       skipAutoNavRef.current = true
       handlePreview(nextPreviewFile)
     }
-  }, [previewFile, files, cleanupPreviewUrl, handlePreview, skipAutoNavRef])
+  }, [previewFile, files, cleanupPreviewUrl, handlePreview, skipAutoNavRef, clearFilePreviewCache])
 
   const clearFiles = useCallback(() => {
     setFiles([])
     cleanupPreviewUrl()
     setPreviewFile(null)
     clearPrintState()
-  }, [cleanupPreviewUrl, clearPrintState])
+    // ✅ 清空所有预览缓存
+    clearAllPreviewCache()
+  }, [cleanupPreviewUrl, clearPrintState, clearAllPreviewCache])
 
   const removeFailedFiles = useCallback(() => {
     setFiles(prev => {
