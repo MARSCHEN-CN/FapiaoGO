@@ -56,9 +56,8 @@ export default defineConfig({
 
   // 依赖预构建优化
   // ✅ 预构建所有常用依赖，确保 CJS 模块正确转换为 ESM
-  // ⚠️ react-pdf 和 pdfjs-dist 也需要预构建，否则 worker 配置会失败
   optimizeDeps: {
-    include: ['react', 'react-dom', 'react-dropzone', 'react-window', 'warning', 'tiny-invariant', 'prop-types', 'react-pdf', 'pdfjs-dist'],
+    include: ['react', 'react-dom', 'react-dropzone', 'react-window', 'warning', 'prop-types', 'pdfjs-dist'],
   },
 
   server: {

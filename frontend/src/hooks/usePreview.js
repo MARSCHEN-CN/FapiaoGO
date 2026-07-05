@@ -566,13 +566,18 @@ export function usePreview({ files, settings, electronAPIRef }) {
               const pdfDoc = await sharedLoadPdf(_pdfData)
               if (signal?.aborted) return fObj
               const page = await pdfDoc.getPage(1)
-              if (signal?.aborted) return fObj
-              const vp = page.getViewport({ scale: 1 })
-              fObj._pdfPageWidth = vp.width
-              fObj._pdfPageHeight = vp.height
-              // ❌ 不调用 pdfDoc.destroy() — pdfDocCache 管理生命周期，
-              //    后续 renderers 中的渲染可直接复用同一份文档
-              previewLoadCacheRef.current.set(dimsKey, { w: vp.width, h: vp.height })
+              try {
+                if (signal?.aborted) return fObj
+                const vp = page.getViewport({ scale: 1 })
+                fObj._pdfPageWidth = vp.width
+                fObj._pdfPageHeight = vp.height
+                // ✅ 不调用 pdfDoc.destroy() — pdfDocCache 管理生命周期，
+                //    后续 renderers 中的渲染可直接复用同一份文档
+                previewLoadCacheRef.current.set(dimsKey, { w: vp.width, h: vp.height })
+              } finally {
+                // ✅ 释放 PageProxy 资源（getPage 建立了页面级缓存）
+                try { page.cleanup() } catch (_) { /* ignore */ }
+              }
             } catch (pdfErr) {
               // PDF 尺寸提取失败不影响预览，仅方向检测 fallback 到 portrait
             }

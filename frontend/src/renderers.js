@@ -61,8 +61,15 @@ class LRUCache {
       _returnPoolCanvas(canvas)
     }
 
-    if (value && typeof value._destroyFn === 'function') {
-      value._destroyFn().catch(() => {})
+    if (value) {
+      // cleanup() 先清空 font/image/document 缓存，再 destroy 结束 Worker
+      // 官方推荐顺序：cleanup → destroy，内存释放更完整
+      if (typeof value.cleanup === 'function') {
+        try { value.cleanup() } catch (_) { /* ignore */ }
+      }
+      if (typeof value._destroyFn === 'function') {
+        value._destroyFn().catch(() => {})
+      }
     }
   }
 
@@ -70,8 +77,13 @@ class LRUCache {
     for (const value of this.cache.values()) {
       const canvas = value?.source || value?.canvas || value
       if (canvas instanceof HTMLCanvasElement) _returnPoolCanvas(canvas)
-      if (value && typeof value._destroyFn === 'function') {
-        value._destroyFn().catch(() => {})
+      if (value) {
+        if (typeof value.cleanup === 'function') {
+          try { value.cleanup() } catch (_) { /* ignore */ }
+        }
+        if (typeof value._destroyFn === 'function') {
+          value._destroyFn().catch(() => {})
+        }
       }
     }
     this.cache.clear()
@@ -206,9 +218,13 @@ async function resolveImageSrc(src) {
  * @returns {{ pdf: PDFDocumentProxy, destroy: () => Promise<void> }}
  */
 function loadPdfDocument(pdfData) {
+  // 每文档独立 Worker：销毁时 worker.destroy() 彻底杀死进程，
+  // 避免全局共享 Worker 内 font/image/operator list cache 持续累积
+  const worker = new pdfjs.PDFWorker({ name: `pdf_${Date.now()}_${Math.random().toString(36).slice(2, 8)}` })
   const loadingTask = pdfjs.getDocument({
     data: new Uint8Array(pdfData),
-    verbosity: 0,  // suppress getHexString 等 pdf 内容警告，仅保留错误
+    worker,
+    verbosity: 0,
     useSystemFonts: false,
     cMapUrl: PDFJS_CMAP_URL,
     standardFontDataUrl: PDFJS_STANDARD_FONT_URL,
@@ -216,7 +232,15 @@ function loadPdfDocument(pdfData) {
   })
   return {
     pdf: loadingTask.promise,
-    destroy: () => loadingTask.destroy(),
+    destroy: async () => {
+      try {
+        const pdf = await loadingTask.promise
+        if (typeof pdf.cleanup === 'function') pdf.cleanup()
+      } catch (e) { /* ignore */ }
+      loadingTask.destroy?.()
+      // 彻底杀死 Worker 进程，释放 font cache / image cache / operator list cache
+      worker.destroy()
+    },
   }
 }
 
@@ -380,6 +404,10 @@ function setVersion(map, key, value, maxSize = 100) {
   }
 }
 
+// 全局渲染任务表：按 queueKey 追踪进行中的 page.render()，
+// 用于版本过期时 cancel() 终止旧渲染，避免 GPU/Worker 浪费
+const _renderTasks = new Map()
+
 async function renderPDFPageRaw(pdfData, dpi, fileKey) {
   // 按文件隔离队列
   const queueKey = _getRenderQueueKey(pdfData, fileKey)
@@ -393,10 +421,11 @@ async function renderPDFPageRaw(pdfData, dpi, fileKey) {
   const version = (_renderVersions.get(queueKey) || 0) + 1
   setVersion(_renderVersions, queueKey, version)
 
-  // 控制版本 Map 大小
-  if (_renderVersions.size > 100) {
-    const firstKey = _renderVersions.keys().next().value
-    _renderVersions.delete(firstKey)
+  // 如果上一轮渲染还在进行中，立即取消（版本已递增，旧结果不会使用）
+  const prevTask = _renderTasks.get(queueKey)
+  if (prevTask) {
+    try { prevTask.cancel() } catch (_) { /* ignore */ }
+    _renderTasks.delete(queueKey)
   }
 
   // 检查当前版本是否仍是最新
@@ -413,6 +442,7 @@ async function renderPDFPageRaw(pdfData, dpi, fileKey) {
     let pdf = null
     let page = null
     let canvas = null  // 提升到 try 外，catch 才能访问
+    let renderTask = null
     try {
       pdf = await getOrLoadPdfDocument(pdfData)
       // 加载 pdf 文档后再次检查版本
@@ -447,12 +477,14 @@ async function renderPDFPageRaw(pdfData, dpi, fileKey) {
       // page.render 前再次检查版本（此为最耗时操作）
       if (!isLatest()) {
         console.debug('[renderPDFPageRaw] 版本过期（渲染前）:', { fileKey, version })
-        _returnPoolCanvas(canvas)  // 归还到池，保持原尺寸供复用
+        _returnPoolCanvas(canvas)
         return null
       }
 
       const scaledViewport = page.getViewport({ scale })
-      await page.render({ canvasContext: ctx, viewport: scaledViewport }).promise
+      renderTask = page.render({ canvasContext: ctx, viewport: scaledViewport })
+      _renderTasks.set(queueKey, renderTask)
+      await renderTask.promise
 
       // ✅ 渲染完成后检查版本是否仍最新（page.render 耗时几百毫秒，期间可能切换文件）
       if (!isLatest()) {
@@ -462,13 +494,26 @@ async function renderPDFPageRaw(pdfData, dpi, fileKey) {
 
       return { canvas, width, height }
     } catch (e) {
-      if (canvas) _returnPoolCanvas(canvas)  // ← 异常时归还到池
-      if (isLatest()) {
+      if (canvas) _returnPoolCanvas(canvas)
+      // RenderingCancelledException 是主动取消导致的正常异常，不视为错误
+      const isCancelled = renderTask && e?.name === 'RenderingCancelledException'
+      if (!isCancelled && isLatest()) {
         console.error('[renderPDFPageRaw] PDF 渲染失败:', { fileKey, dpi, pdfDataLength: pdfData?.length, error: e.message, stack: e.stack })
-      } else {
+      } else if (!isCancelled) {
         console.debug('[renderPDFPageRaw] 版本过期（异常时）:', { fileKey, version, error: e.message })
       }
       return null
+    } finally {
+      _renderTasks.delete(queueKey)
+      // page.cleanup() 释放页级缓存（字体表、canvas 工厂、图案缓存）
+      if (page) {
+        try { page.cleanup() } catch (_) { /* ignore */ }
+      }
+      // pdf.cleanup() 释放文档级缓存（font cache、image cache、commonObjs）
+      // 单页发票预览中每次渲染后清理，避免常驻直至 LRU 淘汰
+      if (pdf && typeof pdf.cleanup === 'function') {
+        try { pdf.cleanup() } catch (_) { /* ignore */ }
+      }
     }
   })
 
@@ -617,6 +662,10 @@ export async function renderTwoPDFsToCanvas(
           console.warn('[renderTwoPDFsToCanvas] page cleanup 失败:', e)
         }
       }
+      // cleanup() 先清空 font/image/document 内部缓存，再 destroy
+      if (pdfDoc && typeof pdfDoc.cleanup === 'function') {
+        try { await pdfDoc.cleanup() } catch (_) { /* ignore */ }
+      }
       if (pdfDestroy) {
         try { await pdfDestroy() } catch (e) {
           console.warn('[renderTwoPDFsToCanvas] pdf destroy 失败:', e)
@@ -689,7 +738,13 @@ function _returnPoolCanvas(canvas) {
   const key = `${canvas.width}x${canvas.height}`
   if (!_canvasPool.has(key)) _canvasPool.set(key, [])
   const pool = _canvasPool.get(key)
-  if (pool.length < 10) pool.push(canvas)
+  if (pool.length < 10) {
+    // ✅ 重置 Canvas 尺寸 = 丢弃旧的 2D 上下文
+    //    Blink 内部释放关联的字体缓存、路径缓存、GPU 纹理
+    //    下次 getContext('2d') 时创建全新上下文
+    canvas.width = canvas.width
+    pool.push(canvas)
+  }
 }
 
 function _dispatchWorkerMessage(e) {
@@ -1162,6 +1217,7 @@ export function clearPdfCache(pdfData, paperKey, dpi, isLandscape) {
  */
 export function clearAllPdfCache() {
   pdfRenderCache.clear()
+  pdfDocCache.clear()
   renderResultCache.clear()
   itemRenderCache.clear()
 }
