@@ -21,7 +21,6 @@ from ofd_parser import parse_ofd
 from image_parser import parse_image_ocr
 from field_extractor import extract_fields
 from crosscutting.feature_flags import FeatureFlags
-from services.document_pipeline import DocumentPipeline
 from cache import get_fields_cache, set_fields_cache
 from file_validator import validate_file
 from timer_utils import (
@@ -253,7 +252,7 @@ def parse_invoice_service(file_bytes, filename, auto_orient=True, force_ocr=Fals
         if cached_fields:
             # ✅ 使用缓存结果，避免重复提取
             extra_fields = cached_fields
-            parse_method += '（旧16步）'
+            parse_method += '（16步）'
         else:
             with metrics.timer('field_extract'):
                 extra_fields = extract_fields(
@@ -263,7 +262,7 @@ def parse_invoice_service(file_bytes, filename, auto_orient=True, force_ocr=Fals
                     auxiliary_blocks=[],
                     pymupdf_page=None,
                 )
-                parse_method += '（旧16步）'
+                parse_method += '（16步）'
             
             if FeatureFlags.get_instance().is_enabled("USE_VNEXT_PIPELINE"):
                 parse_method += '（新架构就绪）'
@@ -405,10 +404,7 @@ def parse_invoice_service(file_bytes, filename, auto_orient=True, force_ocr=Fals
                 
                 bbox_data = parse_result.bbox_data
                 
-                # FF: VNEXT_USE_NEW_FIELD_EXTRACTOR — 新架构入口
-                # 这里始终走旧提取（extract_fields），提供完整的 fallback 数据。
-                # app.py 中 PipelineSwitch.is_vnext_enabled() 为 true 时会额外运行
-                # DocumentPipeline，其提取结果会覆盖到 extra_fields 之上。
+                # 字段提取：走旧提取（extract_fields），提供完整的字段数据。
                 with metrics.timer('field_extract'):
                     extra_fields = extract_fields(
                         raw_text_for_extract, 
@@ -417,7 +413,7 @@ def parse_invoice_service(file_bytes, filename, auto_orient=True, force_ocr=Fals
                         auxiliary_blocks=auxiliary_blocks,
                         pymupdf_page=pymupdf_page,
                     )
-                    parse_method += '（旧16步）'
+                    parse_method += '（16步）'
                 
                 if FeatureFlags.get_instance().is_enabled("USE_VNEXT_PIPELINE"):
                     parse_method += '（新架构就绪）'

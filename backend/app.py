@@ -21,7 +21,6 @@ import db as db_module
 DB_AVAILABLE = True
 
 from response_builder import build_response
-from services.pipeline_switch import PipelineSwitch
 from services.invoice_service import (
     parse_invoice_service, allowed_file, sanitize_filename, detect_file_format
 )
@@ -58,7 +57,7 @@ def _normalize_invoice_for_export(inv: dict) -> dict:
 
     fields = inv.get("invoiceFields") or inv.get("invoice_fields") or inv
 
-    # 新架构字段名 → 导出期望字段名 对齐（vNext 兼容）
+    # 新架构字段名 → 导出期望字段名 对齐
     _VNEXT_TO_EXPORT_MAP = {
         "type": "invoiceType",
         "fphm": "invoiceNumber",
@@ -594,7 +593,6 @@ def get_exception_queue():
 import hashlib as _hashlib
 
 from cache import get_cache_version_info
-from services.document_pipeline import DocumentPipeline
 import fitz as _fitz
 
 
@@ -756,134 +754,6 @@ def parse_invoice():
     include_preview = request.form.get('includePreview', '1') == '1'
     include_raw_text = request.form.get('includeRawText', '1') == '1'
     mode = request.form.get('mode', 'detail')
-
-    # VNEXT_FEATURE_FLAG
-    if PipelineSwitch.is_vnext_enabled():
-        correlation_id = request.headers.get('X-Correlation-ID', '')
-        extra_fields = result.get('extra_fields') or {}
-        meta_field_keys = {'confidence', 'field_meta', 'warning_fields', 'failed_fields', 'warnings', 'corrections'}
-        legacy_fields = {key: value for key, value in extra_fields.items() if key not in meta_field_keys}
-        logger.debug("[VNEXT] legacy_fields 中金额: amountHj=%r amountJe=%r amountHjDx=%r",
-                     legacy_fields.get('amountHj'), legacy_fields.get('amountJe'), legacy_fields.get('amountHjDx'))
-        legacy_meta = extra_fields.get('field_meta', {})
-        legacy_warnings = extra_fields.get('warning_fields', [])
-        
-        # 从旧管道结果中获取 bbox_data、source_type 和预计算的 file_hash
-        legacy_bbox_data = result.get('bbox_data', [])
-        source_type = result.get('source_type', 'pdf_text')
-        precomputed_file_hash = result.get('file_hash')
-        
-        pipeline = PipelineSwitch.get_new_pipeline()
-        _vnext_start = time.time()
-        new_result = pipeline.process_with_legacy_result(
-            file_bytes=file_bytes,
-            file_name=file.filename,
-            legacy_invoice_fields=legacy_fields,
-            legacy_field_meta=legacy_meta,
-            legacy_raw_text=result.get('raw_text_for_extract', ''),
-            legacy_bbox_data=legacy_bbox_data,
-            source_type=source_type,
-            precomputed_legacy_result=extra_fields,  # 直接复用旧管道已提取好的结果
-            precomputed_file_hash=precomputed_file_hash,  # 复用预计算的 SHA-256，避免重复哈希
-            legacy_warning_fields=legacy_warnings,
-            correlation_id=correlation_id,
-        )
-        _vnext_ms = round((time.time() - _vnext_start) * 1000, 2)
-        _total_ms = round((time.time() - _route_start) * 1000, 2)
-        logger.info("[PERF] vNext 管道耗时: %.2fms, 总耗时: %.2fms (其中旧管道: %.2fms)",
-                     _vnext_ms, _total_ms, _legacy_ms)
-        # 补充 vNext 响应中缺失但前端期望的字段（从 parse_invoice_service 结果获取）
-        new_result["db_record"] = result.get("db_record")
-        new_result["invoice_date"] = result.get("invoice_date", new_result.get("invoiceFields", {}).get("kprq", ""))
-        new_result["amount"] = str(new_result.get("amount", "")) if new_result.get("amount") else str(result.get("amount", ""))
-        new_result["new_name"] = result.get("safe_filename", "")
-        new_result["parse_method"] = result.get("parse_method", "")
-        new_result["file_format"] = result.get("file_format", "")
-
-        # 前端期望的 snake_case 键名（兼容旧前端）
-        # 发票类型：优先 vNext，回退到 legacy（vNext 可能未正确提取类型）
-        vnext_type = new_result.get("invoiceType", "")
-        # 当 vNext 返回过长字符串（几何布局异常导致整段 OCR 文本被当作类型），回退 legacy
-        if not vnext_type or vnext_type == "其他" or len(vnext_type) > 20:
-            new_result["invoice_type"] = result.get("invoice_type", vnext_type)
-        else:
-            new_result["invoice_type"] = vnext_type
-        new_result["invoice_number"] = new_result.get("invoiceNumber", "") or result.get("invoice_number", "")
-        new_result["invoice_fields"] = new_result.get("invoiceFields", {})
-
-        # 回写 legacy field_meta（包含区域划分调试信息 _region_debug、候选列表、置信度）
-        # vNext ResponseAdapter 仅输出字段值，不包含 field_meta，需从 legacy 结果补充
-        if extra_fields.get('field_meta'):
-            new_result["invoice_fields"]["field_meta"] = extra_fields['field_meta']
-
-        # 前端需要的详细字段（从 legacy 结果获取）
-        new_result["raw_text"] = result.get("raw_text", "")
-        new_result["preview_image"] = result.get("preview_image") if include_preview else None
-        new_result["bbox_data"] = result.get("bbox_data", [])
-        new_result["from_cache"] = result.get("from_cache", False)
-
-        # failed_fields — 优先使用 legacy 提取器的字段级判定（更成熟可靠），
-        # vNext 管线的几何布局路径可能产生误报（单 Region 导致提取异常）。
-        legacy_failed = extra_fields.get('failed_fields', [])
-        if legacy_failed:
-            # legacy 的 failed_fields 是 FieldIssue dict 列表，转为 ID 字符串列表
-            legacy_failed_ids = [f.get('field', '') for f in legacy_failed if isinstance(f, dict) and f.get('field')]
-            new_result["failed_fields"] = legacy_failed_ids
-            new_result["failed_fields_detail"] = legacy_failed
-        else:
-            # legacy 无失败字段 → 使用空列表（不论 vNext 报告了什么）
-            new_result["failed_fields"] = []
-            new_result["failed_fields_detail"] = []
-
-        # invoice_json — 前端摘要对象
-        new_result["invoice_json"] = {
-            "type": new_result.get("invoice_type", ""),  # 使用已回退的 invoice_type
-            "number": new_result.get("invoice_number", ""),
-            "amount": new_result.get("amount", ""),
-            "date": new_result.get("invoice_date", ""),
-            "source": new_result.get("parse_method", ""),
-            "failed_fields": new_result.get("failed_fields", []),  # 已被上方逻辑覆盖为 legacy 结果
-        }
-
-        # ====== vNext 结果回写数据库 ======
-        # 将 vNext 管线产出的更精确字段写回数据库，确保导出等后续
-        # 操作也能享受到 vNext 的优化结果。
-        invoice_id = result.get('db_result', {}).get('id')
-        if invoice_id:
-            invoice_fields = new_result.get("invoiceFields", {}) or {}
-            updated_data = {}
-            _vnext_to_db_map = {
-                "type": "type",
-                "fphm": "number",
-                "kprq": "date",
-                "amountHj": "amount",
-                "gmfmc": "buyer",
-                "gmfsh": "buyer_tax",
-                "xsfmc": "seller",
-                "xsfsh": "seller_tax",
-                "amountSe": "tax_amount",
-                "note": "note",
-                "kpr": "issuer",
-                "skr": "payee",
-                "fhr": "reviewer",
-                "line_items": "line_items",
-            }
-            for vkey, dbkey in _vnext_to_db_map.items():
-                val = invoice_fields.get(vkey)
-                if val is not None and val != "" and val != 0:
-                    updated_data[dbkey] = val
-            if updated_data:
-                try:
-                    db_module.update_invoice_fields(invoice_id, updated_data)
-                    logger.debug("vNext 结果已回写数据库: id=%s, fields=%s",
-                                 invoice_id, list(updated_data.keys()))
-                except Exception as e:
-                    logger.warning("vNext 结果回写数据库失败: %s", e)
-
-        logger.debug("[VNEXT FINAL] new_result amount=%r, invoice_fields amountHj=%r",
-                     new_result.get("amount"),
-                     new_result.get("invoiceFields", {}).get("amountHj"))
-        return jsonify(new_result)
 
     return build_response(
         file_format=result['file_format'],
