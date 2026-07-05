@@ -1363,29 +1363,6 @@ export function getPdfCacheSize() {
 }
 
 // ============================================================
-// 内存监控（每 30 秒报告一次）
-// ============================================================
-if (typeof window !== 'undefined') {
-  setInterval(async () => {
-    const mem = performance.memory
-    const usedMB = mem ? (mem.usedJSHeapSize / 1048576).toFixed(1) : 'N/A'
-    const totalMB = mem ? (mem.totalJSHeapSize / 1048576).toFixed(1) : 'N/A'
-
-    let procMem = ''
-    try {
-      if (window.electronAPI?.getProcessMemoryInfo) {
-        const info = await window.electronAPI.getProcessMemoryInfo()
-        const wsMB = (info.workingSetSize / 1048576).toFixed(0)
-        const pkMB = (info.peakWorkingSetSize / 1048576).toFixed(0)
-        procMem = ` | processWS:${wsMB}MB peak:${pkMB}MB`
-      }
-    } catch (_) {}
-
-    console.log(`[MEM] pdfDoc:${pdfDocCache.size}/5 itemRender:${itemRenderCache.size}/5 renderResult:${renderResultCache.size}/30 | heap:${usedMB}MB/${totalMB}MB${procMem} | globalCanvas:${_globalPreviewCanvas ? 'active' : 'none'}`)
-  }, 30000)
-}
-
-// ============================================================
 // 全局预览 Canvas（应用生命周期内只创建一次）
 // 预览分辨率使用 150dpi，打印使用 300dpi
 // ============================================================
