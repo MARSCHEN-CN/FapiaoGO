@@ -412,3 +412,6 @@ resources/sumatra/SumatraPDF-settings.txt
 resources/sumatra/SumatraPDF-settings.txt
 frontend/src/poc-test.jsx
 frontend/public/test.pdf
+backend/test_export.py
+backend/test_ocr.py
+backend/test_export_full.py
