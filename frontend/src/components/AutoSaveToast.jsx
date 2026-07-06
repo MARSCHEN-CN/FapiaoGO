@@ -10,6 +10,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 export default function AutoSaveToast({ visible, onHidden }) {
   const [shouldRender, setShouldRender] = useState(false)
   const [isAnimatingOut, setIsAnimatingOut] = useState(false)
+  const isDark = typeof document !== 'undefined' && document.documentElement.getAttribute('data-theme') === 'dark'
 
   useEffect(() => {
     if (visible) {
@@ -47,10 +48,14 @@ export default function AutoSaveToast({ visible, onHidden }) {
         alignItems: 'center',
         gap: '8px',
         padding: '10px 18px',
-        background: 'var(--surface)',
+        background: isDark ? 'rgba(30, 32, 44, 0.85)' : 'rgba(255, 255, 255, 0.85)',
+        backdropFilter: 'blur(12px)',
+        WebkitBackdropFilter: 'blur(12px)',
         borderRadius: 'var(--r-md)',
-        border: '1px solid var(--border-light)',
-        boxShadow: '0 4px 16px rgba(0, 0, 0, 0.12)',
+        border: isDark ? '1px solid rgba(255, 255, 255, 0.08)' : '1px solid rgba(255, 255, 255, 0.5)',
+        boxShadow: isDark
+          ? '0 4px 20px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(255, 255, 255, 0.03)'
+          : '0 4px 20px rgba(0, 0, 0, 0.08), 0 0 0 1px rgba(0, 0, 0, 0.02)',
         fontSize: '13px',
         color: 'var(--text-2)',
         zIndex: 1000,

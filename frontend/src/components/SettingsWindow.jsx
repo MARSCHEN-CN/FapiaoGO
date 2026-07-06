@@ -569,6 +569,7 @@ export default function SettingsWindow({ settings, saveSettings, printers, elect
                       height: '16px',
                       background: 'var(--accent)',
                       borderRadius: '2px',
+                      boxShadow: '0 0 8px rgba(59, 108, 245, 0.20)',
                     }}></div>
                     <span style={{
                       fontSize: 'clamp(0.75rem, 0.7rem + 0.25vw, 0.85rem)',
@@ -588,7 +589,8 @@ export default function SettingsWindow({ settings, saveSettings, printers, elect
                   gap: 'clamp(8px, 0.75vw, 12px)',
                   background: 'var(--surface)',
                   borderRadius: 'var(--r-lg)',
-                  boxShadow: 'var(--shadow-sm)',
+                  border: '1px solid var(--border-light)',
+                  boxShadow: '0 1px 2px rgba(0,0,0,0.04), 0 4px 16px rgba(0,0,0,0.04), inset 0 1px 0 rgba(255,255,255,0.7)',
                   padding: 'clamp(8px, 0.75vw, 12px) clamp(10px, 1vw, 16px)',
                 }}>
                   {/* 打包前先进行发票重命名 */}
@@ -657,11 +659,14 @@ export default function SettingsWindow({ settings, saveSettings, printers, elect
                             fontWeight: 500,
                             borderRadius: 'var(--r-md)',
                             border: '1px solid var(--border-light)',
-                            background: packArchiveFormat === format ? 'var(--accent)' : 'var(--bg)',
+                            background: packArchiveFormat === format ? 'var(--accent)' : 'rgba(255,255,255,0.6)',
                             color: packArchiveFormat === format ? 'white' : 'var(--text-3)',
                             cursor: 'pointer',
                             fontFamily: 'inherit',
                             transition: 'all 0.2s ease',
+                            boxShadow: packArchiveFormat === format
+                              ? '0 1px 4px rgba(59, 108, 245, 0.25)'
+                              : 'inset 0 1px 0 rgba(255,255,255,0.5)',
                           }}
                           onMouseEnter={(e) => {
                             if (packArchiveFormat !== format) {
@@ -710,9 +715,10 @@ export default function SettingsWindow({ settings, saveSettings, printers, elect
                         justifyContent: 'space-between',
                         gap: 'clamp(8px, 0.75vw, 12px)',
                         padding: 'clamp(8px, 0.75vw, 12px)',
-                        background: 'var(--bg)',
+                        background: 'rgba(255,255,255,0.6)',
                         borderRadius: 'var(--r-md)',
-                        border: '1px dashed var(--border-light)',
+                        border: '1px dashed var(--border)',
+                        boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.5)',
                       }}
                       onDragOver={(e) => e.preventDefault()}
                     >
@@ -747,6 +753,7 @@ export default function SettingsWindow({ settings, saveSettings, printers, elect
                               background: 'var(--surface)',
                               borderRadius: 'var(--r-md)',
                               border: '1px solid var(--border-light)',
+                              boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.6)',
                               cursor: 'grab',
                               fontSize: 'clamp(0.75rem, 0.7rem + 0.25vw, 0.85rem)',
                               color: 'var(--text)',
@@ -765,7 +772,8 @@ export default function SettingsWindow({ settings, saveSettings, printers, elect
                                   fontSize: 'clamp(0.75rem, 0.7rem + 0.25vw, 0.85rem)',
                                   borderRadius: 'var(--r-sm)',
                                   border: '1px solid var(--border-light)',
-                                  background: 'var(--bg)',
+                                  background: 'rgba(255,255,255,0.6)',
+                                  boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.5)',
                                   color: 'var(--text)',
                                   outline: 'none',
                                 }}
@@ -781,7 +789,8 @@ export default function SettingsWindow({ settings, saveSettings, printers, elect
                                   fontSize: 'clamp(0.75rem, 0.7rem + 0.25vw, 0.85rem)',
                                   borderRadius: 'var(--r-sm)',
                                   border: '1px solid var(--border-light)',
-                                  background: 'var(--bg)',
+                                  background: 'rgba(255,255,255,0.6)',
+                                  boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.5)',
                                   color: 'var(--text)',
                                   outline: 'none',
                                   cursor: 'pointer',
@@ -837,9 +846,10 @@ export default function SettingsWindow({ settings, saveSettings, printers, elect
                     {/* 压缩包名称预览 */}
                     <div style={{
                       padding: 'clamp(6px, 0.65vw, 10px) clamp(8px, 0.75vw, 12px)',
-                      background: 'var(--bg)',
+                      background: 'rgba(255,255,255,0.6)',
                       borderRadius: 'var(--r-md)',
                       border: '1px solid var(--border-light)',
+                      boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.5)',
                       fontSize: 'clamp(0.75rem, 0.7rem + 0.25vw, 0.85rem)',
                       color: 'var(--accent)',
                       fontFamily: 'monospace',
@@ -930,6 +940,7 @@ export default function SettingsWindow({ settings, saveSettings, printers, elect
                         height: '16px',
                         background: 'var(--accent)',
                         borderRadius: '2px',
+                        boxShadow: '0 0 8px rgba(59, 108, 245, 0.20)',
                       }}></div>
                       <span style={{
                         fontSize: 'clamp(0.75rem, 0.7rem + 0.25vw, 0.85rem)',
@@ -952,7 +963,8 @@ export default function SettingsWindow({ settings, saveSettings, printers, elect
                   <div style={{
                     background: 'var(--surface)',
                     borderRadius: 'var(--r-lg)',
-                    boxShadow: 'var(--shadow-sm)',
+                    border: '1px solid var(--border-light)',
+                    boxShadow: '0 1px 2px rgba(0,0,0,0.04), 0 4px 16px rgba(0,0,0,0.04), inset 0 1px 0 rgba(255,255,255,0.7)',
                     padding: 'clamp(10px, 1vw, 16px)',
                   }}>
                     <div style={{
@@ -974,9 +986,10 @@ export default function SettingsWindow({ settings, saveSettings, printers, elect
                         }}>
                           <div style={{
                             padding: 'clamp(6px, 0.65vw, 10px) clamp(8px, 0.75vw, 12px)',
-                            background: 'var(--bg)',
+                            background: 'rgba(255,255,255,0.6)',
                             borderRadius: 'var(--r-md)',
                             border: '1px solid var(--border-light)',
+                            boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.5)',
                             fontSize: 'clamp(0.7rem, 0.65rem + 0.2vw, 0.78rem)',
                             color: packTargetFolder ? 'var(--text)' : 'var(--text-4)',
                             fontStyle: packTargetFolder ? 'normal' : 'italic',
@@ -1031,6 +1044,7 @@ export default function SettingsWindow({ settings, saveSettings, printers, elect
                             gap: 'clamp(4px, 0.4vw, 6px)',
                             minWidth: 'clamp(100px, 12vw, 160px)',
                             justifyContent: 'center',
+                            boxShadow: '0 1px 4px rgba(59, 108, 245, 0.20)',
                           }}
                           onMouseEnter={(e) => {
                             e.currentTarget.style.background = 'var(--accent-dark)'

@@ -358,6 +358,7 @@ export default function RenameSettings({ renameSettings, onSave, electronAPI, ac
             height: '16px',
             background: 'var(--accent)',
             borderRadius: '2px',
+            boxShadow: '0 0 8px rgba(59, 108, 245, 0.20)',
           }}></div>
           <span style={{
             fontSize: 'clamp(0.75rem, 0.7rem + 0.25vw, 0.85rem)',
@@ -384,7 +385,8 @@ export default function RenameSettings({ renameSettings, onSave, electronAPI, ac
           overflowY: 'auto',
           background: 'var(--surface)',
           borderRadius: 'var(--r-lg)',
-          boxShadow: 'var(--shadow-sm)',
+          border: '1px solid var(--border-light)',
+          boxShadow: '0 1px 2px rgba(0,0,0,0.04), 0 4px 16px rgba(0,0,0,0.04), inset 0 1px 0 rgba(255,255,255,0.7)',
           padding: 'clamp(5px, 0.5vw, 8px) clamp(5px, 0.5vw, 8px)',
           display: 'flex',
           flexDirection: 'column',
@@ -454,8 +456,9 @@ export default function RenameSettings({ renameSettings, onSave, electronAPI, ac
             gap: 'clamp(4px, 0.4vw, 6px)',
             padding: 'clamp(8px, 0.75vw, 12px)',
             borderRadius: 'var(--r-lg)',
-            border: '1px dashed var(--border-light)',
+            border: '1px dashed var(--border)',
             background: 'var(--surface)',
+            boxShadow: '0 1px 2px rgba(0,0,0,0.04), 0 4px 16px rgba(0,0,0,0.04), inset 0 1px 0 rgba(255,255,255,0.7)',
             position: 'relative',
             justifyContent: fields.length > 0 ? 'flex-start' : 'center',
             alignItems: fields.length > 0 ? 'stretch' : 'center',
@@ -496,10 +499,11 @@ export default function RenameSettings({ renameSettings, onSave, electronAPI, ac
                     borderRadius: 'var(--r-sm)',
                     border: isDropTarget
                       ? '2px dashed var(--accent)'
-                      : '1px solid rgba(59, 108, 245, 0.2)',
+                      : '1px solid rgba(59, 108, 245, 0.18)',
                     background: isDropTarget
                       ? 'rgba(59, 108, 245, 0.08)'
                       : 'rgba(59, 108, 245, 0.05)',
+                    boxShadow: isDropTarget ? undefined : 'inset 0 1px 0 rgba(255,255,255,0.4)',
                     opacity: isDragging ? 0.4 : 1,
                     cursor: 'grab',
                     transition: 'all 0.15s ease',
@@ -508,13 +512,13 @@ export default function RenameSettings({ renameSettings, onSave, electronAPI, ac
                   }}
                   onMouseEnter={(e) => {
                     if (!isDropTarget && !isDragging) {
-                      e.currentTarget.style.borderColor = 'rgba(59, 108, 245, 0.4)'
+                      e.currentTarget.style.borderColor = 'rgba(59, 108, 245, 0.35)'
                       e.currentTarget.style.background = 'rgba(59, 108, 245, 0.08)'
                     }
                   }}
                   onMouseLeave={(e) => {
                     if (!isDropTarget && !isDragging) {
-                      e.currentTarget.style.borderColor = 'rgba(59, 108, 245, 0.2)'
+                      e.currentTarget.style.borderColor = 'rgba(59, 108, 245, 0.18)'
                       e.currentTarget.style.background = 'rgba(59, 108, 245, 0.05)'
                     }
                   }}
@@ -677,7 +681,8 @@ export default function RenameSettings({ renameSettings, onSave, electronAPI, ac
               gap: 'clamp(5px, 0.5vw, 8px)',
               background: 'var(--surface)',
               borderRadius: 'var(--r-lg)',
-              boxShadow: 'var(--shadow-sm)',
+              border: '1px solid var(--border-light)',
+              boxShadow: '0 1px 2px rgba(0,0,0,0.04), 0 4px 16px rgba(0,0,0,0.04), inset 0 1px 0 rgba(255,255,255,0.7)',
               padding: 'clamp(8px, 0.75vw, 12px) clamp(10px, 1vw, 16px)',
             }}>
               {/* 预览选项 */}
@@ -772,9 +777,10 @@ export default function RenameSettings({ renameSettings, onSave, electronAPI, ac
               {/* 预览内容 */}
               <div style={{
                 padding: 'clamp(6px, 0.65vw, 10px) clamp(8px, 0.75vw, 12px)',
-                background: 'var(--bg)',
+                background: 'rgba(255,255,255,0.6)',
                 borderRadius: 'var(--r-md)',
                 border: '1px solid var(--border-light)',
+                boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.5)',
                 fontSize: 'clamp(0.75rem, 0.7rem + 0.25vw, 0.85rem)',
                 fontFamily: 'monospace',
                 color: 'var(--accent)',
@@ -828,6 +834,7 @@ export default function RenameSettings({ renameSettings, onSave, electronAPI, ac
               height: '16px',
               background: 'var(--accent)',
               borderRadius: '2px',
+              boxShadow: '0 0 8px rgba(59, 108, 245, 0.20)',
             }}></div>
             <span style={{
               fontSize: 'clamp(0.75rem, 0.7rem + 0.25vw, 0.85rem)',
@@ -850,7 +857,8 @@ export default function RenameSettings({ renameSettings, onSave, electronAPI, ac
         <div style={{
           background: 'var(--surface)',
           borderRadius: 'var(--r-lg)',
-          boxShadow: 'var(--shadow-sm)',
+          border: '1px solid var(--border-light)',
+          boxShadow: '0 1px 2px rgba(0,0,0,0.04), 0 4px 16px rgba(0,0,0,0.04), inset 0 1px 0 rgba(255,255,255,0.7)',
           padding: 'clamp(10px, 1vw, 16px)',
         }}>
           <div style={{
@@ -872,9 +880,10 @@ export default function RenameSettings({ renameSettings, onSave, electronAPI, ac
               }}>
                 <div style={{
                   padding: 'clamp(6px, 0.65vw, 10px) clamp(8px, 0.75vw, 12px)',
-                  background: 'var(--bg)',
+                  background: 'rgba(255,255,255,0.6)',
                   borderRadius: 'var(--r-md)',
                   border: '1px solid var(--border-light)',
+                  boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.5)',
                   fontSize: 'clamp(0.7rem, 0.65rem + 0.2vw, 0.78rem)',
                   color: targetFolder ? 'var(--text)' : 'var(--text-4)',
                   fontStyle: targetFolder ? 'normal' : 'italic',
@@ -929,6 +938,7 @@ export default function RenameSettings({ renameSettings, onSave, electronAPI, ac
                   gap: 'clamp(4px, 0.4vw, 6px)',
                   minWidth: 'clamp(100px, 12vw, 160px)',
                   justifyContent: 'center',
+                  boxShadow: '0 1px 4px rgba(59, 108, 245, 0.20)',
                 }}
                 onMouseEnter={(e) => {
                   e.target.style.background = 'var(--accent-dark)';
