@@ -415,3 +415,6 @@ frontend/public/test.pdf
 backend/test_export.py
 backend/test_ocr.py
 backend/test_export_full.py
+backend/field_extractor/ARCHITECTURE_REFACTOR_REPORT.md
+backend/field_extractor/REFACTOR_REPORT.md
+backend/field_extractor/V5_IMPLEMENTATION_SUMMARY.md
