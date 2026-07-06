@@ -21,6 +21,7 @@ async function getRenderers() {
 export function usePreview({ files, settings, electronAPIRef }) {
   // ── Preview state ──
   const [previewFile, setPreviewFile] = useState(null)
+  const [selectedFileKey, setSelectedFileKey] = useState(null)  // 文件列表高亮用，立即更新，不进 render effect
   const [mergePair, setMergePair] = useState(null)
   const [numPages, setNumPages] = useState(0)
   const [previewPage, setPreviewPage] = useState(1)
@@ -88,6 +89,9 @@ export function usePreview({ files, settings, electronAPIRef }) {
   // ✅ previewFile 的同步 ref：解决 async handlePreview 期间 state 未更新的竞态问题
   //    handleNextFile / handlePrevFile 等依赖索引计算的逻辑通过此 ref 读取最新值
   const previewFileRef = useRef(null)
+  // ✅ 切换防抖：快速连击时只渲染最后一次，跳过中间帧
+  const switchTimeoutRef = useRef(null)
+  const lastSwitchTimeRef = useRef(0)
   // ✅ loadFilePreview 数据缓存：避免每次文件切换都重复 b64toBlob / IPC 读文件
   //    图片缓存 Blob 对象，PDF 缓存 Uint8Array
   //    LRU 自清理（max 50 条 + 200MB 内存限制），文件删除后主动清理
@@ -698,6 +702,31 @@ export function usePreview({ files, settings, electronAPIRef }) {
   // 预览文件
   // ============================
   const handlePreview = useCallback(async (fileObj) => {
+    // ── 防抖层：让 UI 指示器即时响应，渲染逻辑延迟 150ms ──
+    const now = Date.now()
+
+    // 1. 立即更新 UI 指示器（文件列表高亮等），不触发 render effect
+    setSelectedFileKey(fileObj.key || fileObj.id)
+
+    // 2. 清掉上次未执行的定时器
+    if (switchTimeoutRef.current) {
+      clearTimeout(switchTimeoutRef.current)
+      switchTimeoutRef.current = null
+    }
+
+    // 3. 快速连击 → 延迟执行，只保留最后一次
+    if (now - lastSwitchTimeRef.current < 150) {
+      return new Promise(resolve => {
+        switchTimeoutRef.current = setTimeout(() => {
+          lastSwitchTimeRef.current = Date.now()
+          switchTimeoutRef.current = null
+          resolve(handlePreview(fileObj))
+        }, 150)
+      })
+    }
+    lastSwitchTimeRef.current = now
+    // ── 原逻辑 ──
+
     // ✅ 在加载前先递增版本号，确保旧请求被丢弃
     const version = ++previewVersionRef.current
 
@@ -1002,6 +1031,11 @@ export function usePreview({ files, settings, electronAPIRef }) {
         unrotatedCanvasRef.current = null
       }
       setPreviewCanvas(null)
+      // ✅ 清理切换防抖定时器
+      if (switchTimeoutRef.current) {
+        clearTimeout(switchTimeoutRef.current)
+        switchTimeoutRef.current = null
+      }
     }
   }, [cleanupAllBlobUrls])
 
@@ -1014,6 +1048,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
      */
     state: {
       previewFile,
+      selectedFileKey,
       mergePair,
       numPages,
       previewPage,
@@ -1077,6 +1112,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
      */
     internal: {
       setPreviewFile,
+      setSelectedFileKey,
       setMergePair,
       setNumPages,
       setPreviewPage,
