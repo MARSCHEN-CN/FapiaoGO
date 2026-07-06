@@ -388,6 +388,14 @@ export function usePreview({ files, settings, electronAPIRef }) {
     return () => {
       renderCancelledRef.current = true
       abortController.abort()
+
+      // 清理 React DevTools 注入的 PerformanceMeasure，防止开发模式下内存无限累积
+      if (typeof performance.clearMeasures === 'function') {
+        performance.clearMeasures()
+      }
+      if (typeof performance.clearMarks === 'function') {
+        performance.clearMarks()
+      }
     }
   }, [previewFile, mergePair, settings.paperSize, currentRotation, fileRotations, settings.mergeMode,
       settings.marginLeft, settings.marginRight, settings.marginTop, settings.marginBottom,
