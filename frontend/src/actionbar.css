@@ -14,6 +14,7 @@
   flex-shrink: 0;
   z-index: 10;
   gap: 12px;
+  box-shadow: 0 -1px 4px rgba(0, 0, 0, 0.04), var(--highlight-top);
 }
 
 /* ---- 左侧金额卡片 ---- */
@@ -30,6 +31,7 @@
   @apply rounded-lg;
   background: var(--surface);
   border: 1px solid var(--border-light);
+  box-shadow: var(--highlight-top);
 }
 
 .abm-amount-label {
@@ -192,13 +194,14 @@
   background: var(--surface);
   color: var(--text-2);
   border: 1px solid transparent;
+  box-shadow: var(--highlight-top);
 }
 
 .abm-btn-rename:hover:not(:disabled) {
   background: #e8ecf4;
   color: var(--text);
   transform: translateY(-1px);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08), var(--highlight-top);
 }
 
 .abm-btn-rename:active:not(:disabled) {
@@ -226,13 +229,14 @@
   background: var(--surface);
   color: var(--text-2);
   border: 1px solid transparent;
+  box-shadow: var(--highlight-top);
 }
 
 .abm-btn-export:hover:not(:disabled) {
   background: #e8ecf4;
   color: var(--text);
   transform: translateY(-1px);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08), var(--highlight-top);
 }
 
 .abm-btn-export:active:not(:disabled) {
@@ -326,13 +330,14 @@
   background: linear-gradient(135deg, #f0fdf4 0%, #ecfdf5 100%);
   color: #059669;
   border: 1px solid rgba(5, 150, 105, 0.2);
+  box-shadow: var(--highlight-top);
 }
 
 .abm-btn-pack:hover:not(:disabled) {
   background: linear-gradient(135deg, #d1fae5 0%, #ccfbf1 100%);
   color: #047857;
   transform: translateY(-1px);
-  box-shadow: 0 2px 12px rgba(5, 150, 105, 0.15);
+  box-shadow: 0 2px 12px rgba(5, 150, 105, 0.15), var(--highlight-top);
   border-color: rgba(5, 150, 105, 0.35);
 }
 
@@ -360,13 +365,13 @@
 .abm-btn-print {
   background: var(--accent);
   color: #fff;
-  box-shadow: 0 2px 12px rgba(59, 108, 245, 0.3);
+  box-shadow: 0 2px 12px rgba(59, 108, 245, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2);
   padding-right: 16px;
 }
 
 .abm-btn-print:hover:not(:disabled) {
   transform: translateY(-1px);
-  box-shadow: 0 4px 20px rgba(59, 108, 245, 0.4);
+  box-shadow: 0 4px 20px rgba(59, 108, 245, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.25);
   background: var(--accent-hover);
 }
 

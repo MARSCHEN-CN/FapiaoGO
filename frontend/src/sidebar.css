@@ -18,7 +18,7 @@
   user-select: none;
   position: relative;
   z-index: 20;
-  box-shadow: 2px 0 12px rgba(0, 0, 0, 0.02);
+  box-shadow: 2px 0 16px rgba(0, 0, 0, 0.04), var(--highlight-top);
 }
 
 /* -- Sidebar header -- */
@@ -532,7 +532,7 @@
 .file-card:hover {
   background: var(--surface);
   transform: translateY(-2px);
-  box-shadow: var(--shadow-md);
+  box-shadow: var(--shadow-md), var(--highlight-top);
 }
 
 .file-card:hover .file-card-close,
@@ -578,8 +578,8 @@
 
 .file-card.active {
   background: var(--accent-soft);
-  border-color: rgba(59, 108, 245, 0.12);
-  box-shadow: 0 1px 4px rgba(59, 108, 245, 0.06);
+  border-color: rgba(59, 108, 245, 0.18);
+  box-shadow: 0 1px 4px rgba(59, 108, 245, 0.08), var(--highlight-top);
   overflow: hidden;
 }
 

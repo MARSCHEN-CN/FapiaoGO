@@ -149,11 +149,11 @@
   @apply rounded-sm;
   font-size: 13px;
   outline: none;
-  transition: border-color var(--t-fast);
-  background: var(--white);
+  transition: border-color var(--t-fast), box-shadow var(--t-fast);
+  background: var(--surface);
   color: var(--text);
 }
-.id-field-input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(59, 108, 245, 0.1); }
+.id-field-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(59, 108, 245, 0.12); }
 
 .id-empty { color: var(--text-4); }
 
@@ -223,10 +223,10 @@
   @apply rounded-sm;
   font-size: 12px;
   outline: none;
-  background: var(--white);
+  background: var(--surface);
   color: var(--text);
 }
-.id-cell-input:focus { border-color: var(--accent); }
+.id-cell-input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(59, 108, 245, 0.12); }
 
 /* ════════════════════════════════════?
    DARK MODE

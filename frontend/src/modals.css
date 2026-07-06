@@ -200,7 +200,7 @@
 /* 通用?pc-btn.outline 样式 */
 button.pc-btn.outline,
 .pc-btn.outline {
-  background: var(--white);
+  background: var(--surface);
   color: var(--text-2);
   border: 1px solid var(--border);
   @apply rounded-md;
@@ -208,10 +208,11 @@ button.pc-btn.outline,
   font-weight: 400;
   font-size: 13px;
   outline: none;
+  box-shadow: var(--highlight-top);
 }
 
 .pc-btn.outline:hover {
-  background: var(--surface);
+  background: var(--surface-hover);
   color: var(--text);
   border-color: var(--border-hover);
 }
@@ -969,7 +970,7 @@ button.pc-btn.outline,
   font-weight: 500;
   color: var(--text);
   background: var(--surface);
-  border: 1px solid var(--border-light);
+  border: 1px solid var(--border);
   border-radius: 6px;
   padding: 4px 28px 4px 10px;
   cursor: pointer;
@@ -986,7 +987,7 @@ button.pc-btn.outline,
 
 .pcm-select:focus {
   border-color: var(--accent);
-  box-shadow: 0 0 0 2px var(--accent-soft);
+  box-shadow: 0 0 0 3px rgba(59, 108, 245, 0.12);
 }
 
 [data-theme="dark"] .pcm-select {

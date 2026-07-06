@@ -25,8 +25,8 @@
   border-bottom: 1px solid var(--border-light);
   flex-shrink: 0;
   z-index: 50;
-  /* 无框窗口拖拽区域 */
   -webkit-app-region: drag;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.04), var(--highlight-top);
 }
 
 /* 按钮区域不可拖拽 */
@@ -122,6 +122,7 @@
 .tb-btn:hover {
   background: var(--surface);
   color: var(--text);
+  box-shadow: var(--highlight-top);
 }
 
 .tb-btn:disabled {
@@ -261,6 +262,7 @@
 .tb-icon-btn:hover {
   background: var(--surface);
   color: var(--text);
+  box-shadow: var(--highlight-top);
 }
 
 .tb-icon-btn svg {
@@ -282,10 +284,11 @@
   background: var(--white);
   @apply rounded-md;
   @apply shadow-lg;
-  border: 1px solid var(--border-light);
+  border: 1px solid var(--border);
   overflow: visible;
   z-index: 100;
   animation: fadeIn 0.15s ease;
+  box-shadow: var(--shadow-lg), var(--highlight-top-strong);
 }
 
 .tb-dropdown-header {
