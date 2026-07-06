@@ -1469,14 +1469,14 @@ async function _renderToGlobalCanvas(renderFn, signal) {
 /**
  * 切换 PDF 文件到全局 Canvas（双缓冲，防闪烁）
  */
-export async function switchPreviewFile(pdfDoc, pageNum = 1, signal) {
+export async function switchPreviewFile(pdfDoc, pageNum = 1, signal, rotation = 0) {
   return _renderToGlobalCanvas(async (ctx, contentW, contentH, marginL, marginT) => {
     if (signal?.aborted) return
     const page = await pdfDoc.getPage(pageNum)
 
-    const viewport = page.getViewport({ scale: 1 })
-    const scale = Math.min(contentW / viewport.width, contentH / viewport.height)
-    const renderViewport = page.getViewport({ scale })
+    const baseViewport = page.getViewport({ scale: 1 })
+    const scale = Math.min(contentW / baseViewport.width, contentH / baseViewport.height)
+    const renderViewport = page.getViewport({ scale, rotation })
     const offsetX = marginL + (contentW - renderViewport.width) / 2
     const offsetY = marginT + (contentH - renderViewport.height) / 2
 
@@ -1493,17 +1493,37 @@ export async function switchPreviewFile(pdfDoc, pageNum = 1, signal) {
  * 切换图片/OFD 到全局 Canvas（双缓冲，防闪烁）
  * @param {HTMLImageElement|HTMLCanvasElement} image - 已加载的图片元素
  */
-export async function switchPreviewImage(image, signal) {
+export async function switchPreviewImage(image, signal, rotation = 0) {
   return _renderToGlobalCanvas(async (ctx, contentW, contentH, marginL, marginT) => {
     if (signal?.aborted) return
 
-    const scale = Math.min(contentW / image.width, contentH / image.height)
-    const drawW = image.width * scale
-    const drawH = image.height * scale
+    const imgW = image.naturalWidth || image.width
+    const imgH = image.naturalHeight || image.height
+    const scale = Math.min(contentW / imgW, contentH / imgH)
+    let drawW = imgW * scale
+    let drawH = imgH * scale
+
+    if (rotation % 180 !== 0) {
+      ;[drawW, drawH] = [drawH, drawW]
+    }
+
     const offsetX = marginL + (contentW - drawW) / 2
     const offsetY = marginT + (contentH - drawH) / 2
 
-    ctx.drawImage(image, offsetX, offsetY, drawW, drawH)
+    if (rotation === 0) {
+      ctx.drawImage(image, offsetX, offsetY, drawW, drawH)
+    } else {
+      const tempCanvas = document.createElement('canvas')
+      tempCanvas.width = drawW
+      tempCanvas.height = drawH
+      const tempCtx = tempCanvas.getContext('2d')
+
+      tempCtx.translate(drawW / 2, drawH / 2)
+      tempCtx.rotate((rotation * Math.PI) / 180)
+      tempCtx.drawImage(image, -imgW * scale / 2, -imgH * scale / 2, imgW * scale, imgH * scale)
+
+      ctx.drawImage(tempCanvas, offsetX, offsetY)
+    }
   }, signal)
 }
 
