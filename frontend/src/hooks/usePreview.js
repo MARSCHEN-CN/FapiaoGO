@@ -699,33 +699,14 @@ export function usePreview({ files, settings, electronAPIRef }) {
   }, [loadFilePreview])
 
   // ============================
-  // 预览文件
+  // 实际预览加载逻辑（防抖分离）
   // ============================
-  const handlePreview = useCallback(async (fileObj) => {
-    // ── 防抖层：让 UI 指示器即时响应，渲染逻辑延迟 150ms ──
-    const now = Date.now()
-
-    // 1. 立即更新 UI 指示器（文件列表高亮等），不触发 render effect
-    setSelectedFileKey(fileObj.key || fileObj.id)
-
-    // 2. 清掉上次未执行的定时器
+  const doLoadPreview = useCallback(async (fileObj) => {
+    lastSwitchTimeRef.current = Date.now()
     if (switchTimeoutRef.current) {
       clearTimeout(switchTimeoutRef.current)
       switchTimeoutRef.current = null
     }
-
-    // 3. 快速连击 → 延迟执行，只保留最后一次
-    if (now - lastSwitchTimeRef.current < 150) {
-      return new Promise(resolve => {
-        switchTimeoutRef.current = setTimeout(() => {
-          lastSwitchTimeRef.current = Date.now()
-          switchTimeoutRef.current = null
-          resolve(handlePreview(fileObj))
-        }, 150)
-      })
-    }
-    lastSwitchTimeRef.current = now
-    // ── 原逻辑 ──
 
     // ✅ 在加载前先递增版本号，确保旧请求被丢弃
     const version = ++previewVersionRef.current
@@ -817,7 +798,38 @@ export function usePreview({ files, settings, electronAPIRef }) {
         } catch (e) { /* ignore already revoked */ }
       }
     }
-  }, [settings.mergeMode, loadPairItemForPreview, loadFilePreview])
+  }, [settings.mergeMode, loadPairItemForPreview, loadFilePreview, fullCacheRef, skipRenderRef, previewFileRef, previewVersionRef, previewUrlRef, pendingBlobUrlsRef])
+
+  // ============================
+  // 预览文件（带防抖）
+  // ============================
+  const handlePreview = useCallback(async (fileObj) => {
+    // ── 防抖层：让 UI 指示器即时响应，渲染逻辑延迟 150ms ──
+    const now = Date.now()
+
+    // 1. 立即更新 UI 指示器（文件列表高亮等），不触发 render effect
+    setSelectedFileKey(fileObj.key || fileObj.id)
+
+    // 2. 快速连击 → 延迟执行，只保留最后一次
+    if (now - lastSwitchTimeRef.current < 150) {
+      // 清掉上次未执行的定时器
+      if (switchTimeoutRef.current) {
+        clearTimeout(switchTimeoutRef.current)
+      }
+      // 重新设定时器，到期后直接调用加载逻辑（不再递归 handlePreview）
+      return new Promise(resolve => {
+        switchTimeoutRef.current = setTimeout(async () => {
+          switchTimeoutRef.current = null
+          const result = await doLoadPreview(fileObj)
+          resolve(result)
+        }, 150)
+      })
+    }
+    lastSwitchTimeRef.current = now
+
+    // 3. 间隔足够，立即执行
+    return doLoadPreview(fileObj)
+  }, [doLoadPreview])
 
   // ============================
   // Hover 预加载：低优先级，可取消
