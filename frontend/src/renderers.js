@@ -238,7 +238,7 @@ function loadPdfDocument(pdfData) {
     data: new Uint8Array(pdfData),
     worker,
     verbosity: 0,
-    useSystemFonts: false,
+    useSystemFonts: true,
     cMapUrl: PDFJS_CMAP_URL,
     standardFontDataUrl: PDFJS_STANDARD_FONT_URL,
     wasmUrl: PDFJS_WASM_URL,
