@@ -418,9 +418,18 @@ export function usePreview({ files, settings, electronAPIRef }) {
 
   const displayInfo = useMemo(() => {
     if (!previewCanvas || !containerSize.width || !containerSize.height) return null
-    const PAD = 64, LABEL_H = 36, MIN_MARGIN = 28
-    const availW = containerSize.width - PAD - MIN_MARGIN * 2
-    const availH = containerSize.height - PAD - LABEL_H - MIN_MARGIN * 2
+
+    // ── 自适应内边距 ──
+    // 优先使用宽松 padding（正常窗口布局），如果放不下则自动缩减
+    // 避免 DevTools 打开时预览区直接消失
+    let PAD = 64, LABEL_H = 36, MIN_MARGIN = 28
+    let availW = containerSize.width - PAD - MIN_MARGIN * 2
+    let availH = containerSize.height - PAD - LABEL_H - MIN_MARGIN * 2
+    if (availW <= 0 || availH <= 0) {
+      PAD = 20; LABEL_H = 0; MIN_MARGIN = 8
+      availW = containerSize.width - PAD - MIN_MARGIN * 2
+      availH = containerSize.height - PAD - LABEL_H - MIN_MARGIN * 2
+    }
     if (availW <= 0 || availH <= 0) return null
 
     const canvasW = previewCanvas.width

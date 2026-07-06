@@ -1121,12 +1121,13 @@
 }
 
 /* ================================================================
-   DARK MODE — sidebar
+   DARK MODE — sidebar · 质感升级
    ================================================================ */
 [data-theme="dark"] .file-card-close,
 [data-theme="dark"] .file-card-rotate {
   background: var(--surface-hover);
   color: var(--text-3);
+  box-shadow: var(--highlight-top);
 }
 
 [data-theme="dark"] .file-card-close:hover {
@@ -1142,14 +1143,14 @@
 [data-theme="dark"] .file-card:hover {
   background: var(--surface);
   transform: translateY(-2px);
-  box-shadow: var(--shadow-md);
+  box-shadow: var(--shadow-md), var(--highlight-top);
 }
 
 [data-theme="dark"] .file-card:hover::after {
   content: '';
   position: absolute;
   inset: 0;
-  background: rgba(255, 255, 255, 0.03);
+  background: rgba(255, 255, 255, 0.05);
   border-radius: inherit;
   pointer-events: none;
 }
@@ -1157,7 +1158,7 @@
 [data-theme="dark"] .file-card.active {
   background: var(--accent-soft);
   border-color: var(--accent-medium);
-  box-shadow: 0 1px 4px rgba(91, 141, 239, 0.08);
+  box-shadow: 0 1px 4px rgba(91, 141, 239, 0.08), var(--highlight-top);
   overflow: hidden;
 }
 
@@ -1168,6 +1169,7 @@
   width: 3px;
   background: var(--accent);
   border-radius: 0 3px 3px 0;
+  box-shadow: 0 0 8px rgba(108, 138, 255, 0.35);
 }
 
 [data-theme="dark"] .sb-search-clear {
@@ -1203,7 +1205,7 @@
 }
 
 [data-theme="dark"] .import-modal-box {
-  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.55);
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.45), var(--highlight-top-strong);
 }
 
 [data-theme="dark"] .import-modal-fill {
@@ -1231,9 +1233,9 @@
 [data-theme="dark"] .sb-dropdown {
   background: var(--sidebar-bg);
   border-color: var(--border);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35), var(--highlight-top-strong);
 }
 
 [data-theme="dark"] .sb-dropdown-item:hover {
-  background: var(--surface-hover);
+  background: rgba(255, 255, 255, 0.05);
 }

@@ -552,6 +552,27 @@ function AppContent() {
 
             // 加载中：有预览文件但渲染尚未就绪
             if (!displayInfo || !previewCanvas) {
+              // 区分：预览 canvas 已就绪但容器太小 → 显示友好提示
+              if (previewCanvas && !displayInfo) {
+                return (
+                  <div className="canvas-center-overlay canvas-loading" style={{ gap: '10px' }}>
+                    <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" style={{ opacity: 0.5 }}>
+                      <rect x="2" y="3" width="20" height="14" rx="2" />
+                      <line x1="8" y1="21" x2="16" y2="21" />
+                      <line x1="12" y1="17" x2="12" y2="21" />
+                      <line x1="2" y1="9" x2="22" y2="9" />
+                      <line x1="3" y1="13" x2="5" y2="13" />
+                      <line x1="19" y1="13" x2="21" y2="13" />
+                    </svg>
+                    <span style={{ fontSize: '14px', fontWeight: 500, color: 'var(--text-2)' }}>
+                      预览区域过小
+                    </span>
+                    <span style={{ fontSize: '12px', color: 'var(--text-3)' }}>
+                      请收起 DevTools（F12）或放大窗口
+                    </span>
+                  </div>
+                )
+              }
               return (
                 <div className="canvas-center-overlay canvas-loading">
                   <svg className="canvas-loading-spinner" viewBox="0 0 36 36" fill="none">

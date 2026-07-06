@@ -258,29 +258,32 @@
 }
 
 /* ══════════════════════════════════════
-   深色模式
+   深色模式 · 质感升级
    ══════════════════════════════════════ */
 [data-theme="dark"] .printer-select,
 [data-theme="dark"] .printer-input,
 [data-theme="dark"] .printer-merge-select {
-  background: var(--surface-hover);
+  background: rgba(255, 255, 255, 0.03);
   border-color: var(--border);
+  box-shadow: var(--highlight-top);
 }
 
 [data-theme="dark"] .printer-select:hover,
 [data-theme="dark"] .printer-input:hover,
 [data-theme="dark"] .printer-merge-select:hover {
-  border-color: var(--accent);
+  border-color: var(--border-hover);
 }
 
 [data-theme="dark"] .printer-orientation-btn {
-  background: var(--surface-hover);
+  background: rgba(255, 255, 255, 0.03);
   border-color: var(--border);
+  box-shadow: var(--highlight-top);
 }
 
 [data-theme="dark"] .printer-orientation-btn.active {
   background: var(--accent-soft);
-  border-color: rgba(91, 141, 239, 0.3);
+  border-color: rgba(108, 138, 255, 0.25);
+  box-shadow: var(--highlight-top), 0 0 10px rgba(108, 138, 255, 0.06);
 }
 
 /* ══════════════════════════════════════
@@ -363,12 +366,13 @@
 
 /* 深色模式 */
 [data-theme="dark"] .printer-margin-input {
-  background: var(--surface-hover);
+  background: rgba(255, 255, 255, 0.03);
   border-color: var(--border);
+  box-shadow: var(--highlight-top);
 }
 
 [data-theme="dark"] .printer-margin-input:hover {
-  border-color: var(--accent);
+  border-color: var(--border-hover);
 }
 
 /* ================================================================
@@ -524,7 +528,7 @@
   padding: clamp(10px, 1vw, 16px);
 }
 
-/* 深色模式适配 */
+/* 深色模式适配 · 质感升级 */
 [data-theme="dark"] .settings-sidebar {
   background: var(--surface-hover);
   border-right-color: var(--border);
@@ -532,4 +536,5 @@
 
 [data-theme="dark"] .settings-sidebar-item.active {
   background: var(--accent-soft);
+  box-shadow: var(--highlight-top);
 }

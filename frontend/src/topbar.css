@@ -632,28 +632,29 @@
 }
 
 /* ================================================================
-   DARK MODE — topbar
+   DARK MODE — topbar · 质感升级
    ================================================================ */
 [data-theme="dark"] .tb-btn:hover {
-  background: var(--surface-hover);
+  background: rgba(255, 255, 255, 0.05);
 }
 
 [data-theme="dark"] .tb-btn.active {
   background: var(--accent-soft);
+  box-shadow: var(--highlight-top);
 }
 
 [data-theme="dark"] .tb-dropdown {
   background: var(--white);
   border-color: var(--border);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35), var(--highlight-top-strong);
 }
 
 [data-theme="dark"] .tb-dropdown-item:hover {
-  background: var(--surface-hover);
+  background: rgba(255, 255, 255, 0.05);
 }
 
 [data-theme="dark"] .tb-dropdown-separator {
-  border-color: var(--border);
+  border-color: var(--border-light);
 }
 
 [data-theme="dark"] .tb-dropdown-header {
@@ -663,6 +664,7 @@
 [data-theme="dark"] .tb-tag {
   background: var(--surface);
   color: var(--text-2);
+  box-shadow: var(--highlight-top);
 }
 
 [data-theme="dark"] .tb-about-overlay {
@@ -670,15 +672,15 @@
 }
 
 [data-theme="dark"] .tb-about-close:hover {
-  background: var(--surface-hover);
+  background: rgba(255, 255, 255, 0.05);
 }
 
 [data-theme="dark"] .menu-dropdown {
   background: var(--white);
   border-color: var(--border);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35), var(--highlight-top-strong);
 }
 
 [data-theme="dark"] .tb-shortcut-item:nth-child(even) {
-  background: rgba(255, 255, 255, 0.04);
+  background: rgba(255, 255, 255, 0.03);
 }

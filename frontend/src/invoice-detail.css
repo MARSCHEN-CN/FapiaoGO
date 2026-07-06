@@ -232,17 +232,18 @@
    DARK MODE
    ════════════════════════════════════?*/
 [data-theme="dark"] .invoice-detail-overlay {
-  background: rgba(0, 0, 0, 0.6);
+  background: rgba(0, 0, 0, 0.65);
 }
 
 [data-theme="dark"] .id-field-input:focus {
-  box-shadow: 0 0 0 2px rgba(91, 141, 239, 0.15);
+  box-shadow: 0 0 0 2px rgba(108, 138, 255, 0.12), 0 0 12px rgba(108, 138, 255, 0.05);
 }
 
 [data-theme="dark"] .id-table-header {
   background: var(--surface);
   color: var(--text-2);
   border-bottom-color: var(--border);
+  box-shadow: var(--highlight-top);
 }
 
 [data-theme="dark"] .id-table-th {
@@ -254,7 +255,7 @@
 }
 
 [data-theme="dark"] .id-table-row:nth-child(even) {
-  background: rgba(255, 255, 255, 0.03);
+  background: rgba(255, 255, 255, 0.02);
 }
 
 [data-theme="dark"] .id-table-td {

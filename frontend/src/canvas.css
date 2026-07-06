@@ -16,6 +16,7 @@
 /* 滚动层：专门负责内容滚动，控件不在这里面 */
 .canvas-scroll {
   flex: 1;
+  min-height: 100px;  /* 防止 DevTools 打开时容器完全坍塌 */
   overflow: auto;
   display: flex;
   padding: clamp(20px, 1.5vw, 40px);
@@ -65,14 +66,14 @@
 [data-theme="dark"] .canvas-arrow {
   background: var(--canvas-float-bg);
   color: var(--text-2);
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.4), var(--highlight-top-strong);
   border: 1px solid var(--canvas-float-border);
 }
 
 [data-theme="dark"] .canvas-arrow:hover {
   background: rgba(38, 42, 56, 0.96);
   color: var(--accent);
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.6);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5), var(--highlight-top-strong);
 }
 
 .canvas-arrow:active {
@@ -238,7 +239,7 @@
 }
 
 [data-theme="dark"] .canvas-zoom-control {
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4), var(--highlight-top-strong);
 }
 
 /* ======================== Status Indicator ======================== */
@@ -264,7 +265,7 @@
 }
 
 [data-theme="dark"] .status-indicator {
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4), var(--highlight-top);
   color: var(--text-2);
 }
 
@@ -309,23 +310,23 @@
 }
 
 /* ================================================================
-   DARK MODE ?canvas extras
+   DARK MODE — canvas extras · 质感升级
    ================================================================ */
 [data-theme="dark"] .paper {
   background: var(--paper-bg);
   box-shadow:
-    0 1px 3px rgba(0, 0, 0, 0.30),
-    0 8px 24px rgba(0, 0, 0, 0.40),
-    0 24px 60px rgba(0, 0, 0, 0.25),
-    0 0 0 1px rgba(91, 141, 239, 0.06);
+    0 0 0 1px rgba(0, 0, 0, 0.12),
+    0 2px 4px rgba(0, 0, 0, 0.20),
+    0 12px 40px rgba(0, 0, 0, 0.35),
+    0 0 60px rgba(108, 138, 255, 0.03);
 }
 
 [data-theme="dark"] .paper:hover {
   box-shadow:
-    0 1px 3px rgba(0, 0, 0, 0.35),
-    0 12px 32px rgba(0, 0, 0, 0.50),
-    0 28px 70px rgba(0, 0, 0, 0.35),
-    0 0 0 1px rgba(91, 141, 239, 0.10);
+    0 0 0 1px rgba(0, 0, 0, 0.15),
+    0 4px 8px rgba(0, 0, 0, 0.25),
+    0 16px 48px rgba(0, 0, 0, 0.40),
+    0 0 80px rgba(108, 138, 255, 0.05);
 }
 
 [data-theme="dark"] .canvas-empty .canvas-empty-title {

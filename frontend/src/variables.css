@@ -92,9 +92,10 @@
 }
 
 /* ═════════════════════════════════════
-   DARK MODE — Deep Slate · 高清可读
-   设计参考：Linear / GitHub / Stripe 暗色模式
+   DARK MODE — Deep Slate · 高清可读 · 质感升级
+   设计参考：Linear / GitHub / Stripe / Vercel 暗色模式
    核心策略：深色 UI 作画框沉入背景，白色发票预览自然突出
+   质感升级：半透明边框 + 顶部高光 + 强调色发光 + 环境光渐变
    ═════════════════════════════════════ */
 [data-theme="dark"] {
   /* ── 背景层次（深石板色，四级递进） ── */
@@ -104,21 +105,31 @@
   --surface: #1e2130;             /* 卡片/区块 — 浮于容器之上 */
   --surface-hover: #262a38;       /* 悬停 — 微提亮 */
   --paper-bg: #ffffff;            /* 发票纸张 — 纯白，与深色 UI 形成自然对比 */
-  --border: #2d3040;              /* 边框 — 清晰可见 */
-  --border-light: #222536;        /* 细边框 — 分隔但不过分强调 */
-  --border-hover: #3d4058;        /* 交互边框 — 聚焦反馈 */
-  --hover-bg: #262a38;            /* 通用悬停底 */
+
+  /* ── 边框 · 半透明化（随背景自然融合，取代固定色值） ── */
+  --border: rgba(255, 255, 255, 0.07);
+  --border-light: rgba(255, 255, 255, 0.04);
+  --border-hover: rgba(255, 255, 255, 0.12);
+
+  /* ── 悬停 · 半透明叠加（取代纯色填充） ── */
+  --hover-bg: rgba(255, 255, 255, 0.04);
+
+  /* ── 质感升级 · 高光与发光（新增 token） ── */
+  --highlight-top: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  --highlight-top-strong: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  --glow-accent: 0 0 20px rgba(108, 138, 255, 0.10);
+  --glow-accent-hover: 0 0 28px rgba(108, 138, 255, 0.16);
 
   --canvas-float-bg: rgba(20, 23, 31, 0.96);
   --canvas-float-border: rgba(255, 255, 255, 0.07);
 
-  /* ── 强调色 · 冷静蓝（区别于亮色模式的 warm blue） ── */
+  /* ── 强调色 · 冷静蓝 + 发光感 ── */
   --accent: #6c8aff;
   --brand: #6c8aff;
   --accent-hover: #8aa3ff;
   --accent-dark: #5670e0;
-  --accent-soft: rgba(108, 138, 255, 0.12);
-  --accent-medium: rgba(108, 138, 255, 0.18);
+  --accent-soft: rgba(108, 138, 255, 0.10);
+  --accent-medium: rgba(108, 138, 255, 0.16);
 
   /* ── 文字层级（WCAG AA 可读性优先） ── */
   --text: #e3e5ed;                /* 正文 — 约 15:1 对比度    */
@@ -145,12 +156,12 @@
   --danger: #f87171;
   --danger-bg: rgba(248, 113, 113, 0.10);
 
-  /* ── 阴影 · 层次分明（暗色下阴影需更深、范围更广） ── */
-  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.35), 0 1px 2px rgba(0, 0, 0, 0.25);
-  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.4);
-  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.5);
-  --shadow-xl: 0 16px 48px rgba(0, 0, 0, 0.55);
-  --shadow-2xl: 0 25px 50px -12px rgba(0, 0, 0, 0.65);
+  /* ── 阴影 · 层次分明（暗色下减少纯黑阴影依赖，改用高光边定义层次） ── */
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.25), 0 1px 2px rgba(0, 0, 0, 0.18);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.30);
+  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.35);
+  --shadow-xl: 0 16px 48px rgba(0, 0, 0, 0.40);
+  --shadow-2xl: 0 25px 50px -12px rgba(0, 0, 0, 0.50);
 }
 
 

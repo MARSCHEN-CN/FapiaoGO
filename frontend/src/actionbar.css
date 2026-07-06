@@ -403,20 +403,26 @@
 }
 
 /* ================================================================
-   DARK MODE ?actionbar
+   DARK MODE — actionbar · 质感升级
    ================================================================ */
 [data-theme="dark"] .abm-btn-print {
   background: var(--accent);
-  box-shadow: 0 2px 12px rgba(91, 141, 239, 0.3);
+  box-shadow:
+    0 2px 8px rgba(108, 138, 255, 0.25),
+    var(--glow-accent),
+    var(--highlight-top-strong);
 }
 
 [data-theme="dark"] .abm-btn-print:hover:not(:disabled) {
-  box-shadow: 0 4px 20px rgba(91, 141, 239, 0.4);
+  box-shadow:
+    0 4px 16px rgba(108, 138, 255, 0.35),
+    var(--glow-accent-hover),
+    var(--highlight-top-strong);
   background: var(--accent-hover);
 }
 
 [data-theme="dark"] .abm-btn-print:active:not(:disabled) {
-  box-shadow: 0 1px 6px rgba(91, 141, 239, 0.2);
+  box-shadow: 0 1px 6px rgba(108, 138, 255, 0.2);
 }
 
 [data-theme="dark"] .abm-btn-print.executing {
@@ -425,100 +431,105 @@
 }
 
 [data-theme="dark"] .abm-btn-rename {
-  background: var(--surface);
+  background: rgba(255, 255, 255, 0.03);
   color: var(--text-2);
+  box-shadow: var(--highlight-top);
 }
 
 [data-theme="dark"] .abm-btn-rename:hover:not(:disabled) {
-  background: #e8ecf4;
+  background: rgba(255, 255, 255, 0.07);
   color: var(--text);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  box-shadow: var(--highlight-top);
 }
 
 [data-theme="dark"] .abm-btn-rename.executing {
-  background: rgba(91, 141, 239, 0.12);
+  background: rgba(108, 138, 255, 0.10);
   color: var(--accent);
-  border-color: rgba(91, 141, 239, 0.25);
+  border-color: rgba(108, 138, 255, 0.20);
 }
 
 [data-theme="dark"] .abm-btn-export {
-  background: var(--surface);
+  background: rgba(255, 255, 255, 0.03);
   color: var(--text-2);
+  box-shadow: var(--highlight-top);
 }
 
 [data-theme="dark"] .abm-btn-export:hover:not(:disabled) {
-  background: #e8ecf4;
+  background: rgba(255, 255, 255, 0.07);
   color: var(--text);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  box-shadow: var(--highlight-top);
 }
 
 [data-theme="dark"] .abm-btn-export.executing {
-  background: rgba(91, 141, 239, 0.12);
+  background: rgba(108, 138, 255, 0.10);
   color: var(--accent);
-  border-color: rgba(91, 141, 239, 0.25);
+  border-color: rgba(108, 138, 255, 0.20);
 }
 
 [data-theme="dark"] .abm-btn-export.open,
 [data-theme="dark"] .abm-btn-export:focus-within {
-  background: #e0e6f2;
+  background: rgba(255, 255, 255, 0.06);
   color: var(--text);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  box-shadow: var(--highlight-top);
 }
 
 [data-theme="dark"] .abm-btn-pack {
-  background: rgba(76, 175, 80, 0.1);
-  color: #4CAF50;
-  border-color: rgba(76, 175, 80, 0.18);
+  background: rgba(74, 222, 128, 0.07);
+  color: #4ade80;
+  border-color: rgba(74, 222, 128, 0.12);
+  box-shadow: var(--highlight-top);
 }
 
 [data-theme="dark"] .abm-btn-pack:hover:not(:disabled) {
-  background: rgba(76, 175, 80, 0.16);
-  color: #66BB6A;
-  box-shadow: 0 2px 12px rgba(76, 175, 80, 0.18);
-  border-color: rgba(76, 175, 80, 0.3);
+  background: rgba(74, 222, 128, 0.12);
+  color: #6ee7a0;
+  box-shadow: 0 0 12px rgba(74, 222, 128, 0.08), var(--highlight-top);
+  border-color: rgba(74, 222, 128, 0.22);
 }
 
 [data-theme="dark"] .abm-btn-pack.executing {
-  background: rgba(76, 175, 80, 0.1);
-  color: #4CAF50;
-  border-color: rgba(76, 175, 80, 0.22);
+  background: rgba(74, 222, 128, 0.07);
+  color: #4ade80;
+  border-color: rgba(74, 222, 128, 0.15);
 }
 
 [data-theme="dark"] .abm-btn-pack-main {
-  background: var(--surface);
+  background: rgba(255, 255, 255, 0.03);
   color: var(--text-2);
   border-color: transparent;
+  box-shadow: var(--highlight-top);
 }
 
 [data-theme="dark"] .abm-btn-pack-main:hover:not(:disabled) {
-  background: #e8ecf4;
+  background: rgba(255, 255, 255, 0.07);
   color: var(--text);
   border-color: transparent;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  box-shadow: var(--highlight-top);
 }
 
 [data-theme="dark"] .abm-btn-pack-main.executing {
-  background: rgba(91, 141, 239, 0.12);
+  background: rgba(108, 138, 255, 0.10);
   color: var(--accent);
-  border-color: rgba(91, 141, 239, 0.25);
+  border-color: rgba(108, 138, 255, 0.20);
 }
 
 [data-theme="dark"] .abm-btn-pack-split {
-  background: var(--surface);
+  background: rgba(255, 255, 255, 0.03);
   color: var(--text-2);
   border-color: transparent;
+  box-shadow: var(--highlight-top);
 }
 
 [data-theme="dark"] .abm-btn-pack-split:hover:not(:disabled) {
-  background: #e8ecf4;
+  background: rgba(255, 255, 255, 0.07);
   color: var(--text);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  box-shadow: var(--highlight-top);
 }
 
 [data-theme="dark"] .abm-btn-pack-split.executing {
-  background: rgba(91, 141, 239, 0.12);
+  background: rgba(108, 138, 255, 0.10);
   color: var(--accent);
-  border-color: rgba(91, 141, 239, 0.25);
+  border-color: rgba(108, 138, 255, 0.20);
 }
 
 [data-theme="dark"] .abm-btn-pack-split::before {
@@ -534,20 +545,20 @@
 }
 
 [data-theme="dark"] .abm-btn-pack-main .abm-progress-bar {
-  background: rgba(91, 141, 239, 0.12);
+  background: rgba(108, 138, 255, 0.10);
 }
 
 [data-theme="dark"] .abm-btn-rename .abm-progress-bar {
-  background: rgba(91, 141, 239, 0.12);
+  background: rgba(108, 138, 255, 0.10);
 }
 
 [data-theme="dark"] .abm-dropdown {
   background: var(--sidebar-bg);
   border-color: var(--border);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35), var(--highlight-top-strong);
 }
 
 [data-theme="dark"] .abm-dropdown-item:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.05);
   color: var(--text);
 }

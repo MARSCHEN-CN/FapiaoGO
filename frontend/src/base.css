@@ -28,11 +28,11 @@ html {
 ::-webkit-scrollbar-thumb:hover { background: var(--text-4); }
 
 [data-theme="dark"] ::-webkit-scrollbar-thumb {
-  background: var(--border);
+  background: rgba(255, 255, 255, 0.10);
 }
 
 [data-theme="dark"] ::-webkit-scrollbar-thumb:hover {
-  background: var(--text-4);
+  background: rgba(255, 255, 255, 0.16);
 }
 
 * {

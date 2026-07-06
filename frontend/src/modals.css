@@ -822,20 +822,22 @@ button.pc-btn.outline,
 }
 
 /* ================================================================
-   DARK MODE ?all modals
+   DARK MODE — all modals · 质感升级
    ================================================================ */
 [data-theme="dark"] .pcm-item {
   background: var(--white);
+  box-shadow: var(--highlight-top);
 }
 [data-theme="dark"] .pcm-badge-normal {
   background: var(--surface);
 }
 [data-theme="dark"] .pcm-btn-cancel {
-  background: var(--surface);
+  background: rgba(255, 255, 255, 0.03);
   color: var(--text-2);
+  box-shadow: var(--highlight-top);
 }
 [data-theme="dark"] .pcm-btn-cancel:hover {
-  background: var(--surface-hover);
+  background: rgba(255, 255, 255, 0.06);
 }
 
 [data-theme="dark"] .pc-btn.solid:hover {
@@ -843,13 +845,14 @@ button.pc-btn.outline,
 }
 
 [data-theme="dark"] .pc-btn.outline {
-  background: var(--surface);
+  background: rgba(255, 255, 255, 0.03);
   color: var(--text-2);
   border-color: var(--border);
+  box-shadow: var(--highlight-top);
 }
 
 [data-theme="dark"] .pc-btn.outline:hover {
-  background: var(--surface-hover);
+  background: rgba(255, 255, 255, 0.06);
   color: var(--text);
   border-color: var(--border-hover);
 }
@@ -890,57 +893,63 @@ button.pc-btn.outline,
 
 [data-theme="dark"] .pc-stat {
   background: var(--surface);
+  box-shadow: var(--highlight-top);
 }
 
 [data-theme="dark"] .pc-file-item:hover {
-  background: var(--surface-hover);
+  background: rgba(255, 255, 255, 0.04);
 }
 
 [data-theme="dark"] .modal-overlay {
-  background: rgba(0, 0, 0, 0.6);
+  background: rgba(0, 0, 0, 0.65);
 }
 
 [data-theme="dark"] .print-modal-close {
-  background: var(--surface);
+  background: rgba(255, 255, 255, 0.03);
   border-color: var(--border);
   color: var(--text-2);
+  box-shadow: var(--highlight-top);
 }
 
 [data-theme="dark"] .print-modal-close:hover {
-  background: var(--surface-hover);
+  background: rgba(255, 255, 255, 0.06);
   color: var(--text);
 }
 
 [data-theme="dark"] .rp-search {
-  background: var(--surface);
+  background: rgba(255, 255, 255, 0.02);
   border-color: var(--border);
+  box-shadow: var(--highlight-top);
 }
 
 [data-theme="dark"] .rp-view-btn {
-  background: var(--surface);
+  background: rgba(255, 255, 255, 0.03);
+  box-shadow: var(--highlight-top);
 }
 
 [data-theme="dark"] .rp-view-btn:hover:not(.active) {
-  background: var(--surface-hover);
+  background: rgba(255, 255, 255, 0.06);
 }
 
 [data-theme="dark"] .rp-item:hover {
-  background: var(--surface-hover);
+  background: rgba(255, 255, 255, 0.04);
 }
 
 [data-theme="dark"] .ex-format-card {
-  background: var(--surface);
+  background: rgba(255, 255, 255, 0.02);
   border-color: var(--border);
+  box-shadow: var(--highlight-top);
 }
 
 [data-theme="dark"] .ex-format-card:hover {
   border-color: var(--accent);
-  background: var(--surface-hover);
+  background: rgba(255, 255, 255, 0.04);
 }
 
 [data-theme="dark"] .ex-format-card.active {
   background: var(--accent-soft);
   border-color: var(--accent);
+  box-shadow: var(--highlight-top), 0 0 12px rgba(108, 138, 255, 0.08);
 }
 
 /* ======================== Glassmorphism Fallback ======================== */
