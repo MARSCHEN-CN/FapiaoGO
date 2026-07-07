@@ -32,6 +32,7 @@ class Document:
     content_indexed: bool = False # whether ContentIndex has been built
     created_at: float = field(default_factory=time.time)
     last_access: float = field(default_factory=time.time)
+    ref_count: int = 1            # how many consumers hold this doc — only close fitz at 0
 
 
 class DocumentRegistry:
@@ -64,15 +65,20 @@ class DocumentRegistry:
             existing = self._docs.get(doc_id)
             if existing is not None and existing.content_hash == content_hash:
                 existing.last_access = time.time()
+                existing.ref_count += 1
+                logger.debug("doc %s ref_count now %d", doc_id[:12], existing.ref_count)
                 return existing
 
             # Remove stale entry if hash changed (file overwritten)
             if existing is not None:
                 self._release_doc(existing)
 
-            # Enforce upper bound
+            # Enforce upper bound (clean idle first)
             if len(self._docs) >= self.MAX_DOCUMENTS:
-                self._evict_oldest()
+                self.release_idle()
+                # If still full after idle cleanup, fall back to LRU eviction
+                if len(self._docs) >= self.MAX_DOCUMENTS:
+                    self._evict_oldest()
 
             doc = self._create_document(doc_id, file_bytes, filename, content_hash)
             self._docs[doc_id] = doc
@@ -86,12 +92,49 @@ class DocumentRegistry:
                 doc.last_access = time.time()
             return doc
 
-    def release(self, doc_id: str):
-        """Release document handle and remove from registry."""
+    def acquire(self, doc_id: str) -> Optional[Document]:
+        """Explicitly increment ref_count (caller promises to release() later)."""
         with self._lock:
-            doc = self._docs.pop(doc_id, None)
+            doc = self._docs.get(doc_id)
             if doc is not None:
+                doc.ref_count += 1
+                doc.last_access = time.time()
+                logger.debug("doc %s ref_count now %d (acquire)", doc_id[:12], doc.ref_count)
+            return doc
+
+    def release(self, doc_id: str):
+        """Decrement ref_count. Only close fitz handle and remove from registry at 0."""
+        with self._lock:
+            doc = self._docs.get(doc_id)
+            if doc is None:
+                return
+            doc.ref_count = max(0, doc.ref_count - 1)
+            logger.debug("doc %s ref_count now %d (release)", doc_id[:12], doc.ref_count)
+            if doc.ref_count == 0:
                 self._release_doc(doc)
+                del self._docs[doc_id]
+
+    def release_idle(self):
+        """
+        Force-release documents that have been idle beyond IDLE_TTL.
+        For ref_count>0: assume the consumer is gone (stale session), decrement
+        and close if it reaches 0.
+        """
+        cutoff = time.time() - self.IDLE_TTL
+        with self._lock:
+            to_release = []
+            for did, d in self._docs.items():
+                if d.last_access < cutoff:
+                    to_release.append(did)
+            for did in to_release:
+                doc = self._docs.get(did)
+                if doc is None:
+                    continue
+                doc.ref_count = 0
+                self._release_doc(doc)
+                del self._docs[did]
+                logger.info("release_idle: doc %s evicted (idle %.0fs)",
+                            did[:12], time.time() - doc.last_access)
 
     def touch(self, doc_id: str):
         """Update last_access without opening fitz."""
@@ -134,12 +177,14 @@ class DocumentRegistry:
             doc.pdf = None
 
     def _evict_oldest(self):
-        """Evict the least recently accessed document."""
+        """Evict the least recently accessed document with ref_count == 0."""
         if not self._docs:
             return
         to_remove = None
         oldest = float("inf")
         for did, d in self._docs.items():
+            if d.ref_count > 0:          # held by an active consumer
+                continue
             if d.last_access < oldest:
                 oldest = d.last_access
                 to_remove = did

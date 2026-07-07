@@ -56,6 +56,94 @@ def negotiate_format(accept_header: str, preset_fmt: str) -> str:
     return "webp"
 
 
+# ── DocumentPage ────────────────────────────────────────────────
+
+class DocumentPage:
+    """
+    Unified page-level API for a single page of a registered document.
+
+    Converges render / extract / text / bbox / highlight onto one object
+    so Engine doesn't accumulate methods.  Usage:
+
+        page = engine.page(doc_id, 5)
+        data, fmt, etag = page.render("preview", view_state=vs)
+        pdf_bytes = page.extract_pdf()
+    """
+
+    def __init__(self, engine: "RenderEngine", doc_id: str, page_no: int):
+        self._engine = engine
+        self._doc_id = doc_id
+        self._page_no = page_no
+        doc = engine._registry.get(doc_id)
+        if doc is None:
+            raise ValueError(f"Document not found: {doc_id[:12]}...")
+        if page_no < 1 or page_no > doc.page_count:
+            raise ValueError(f"Page {page_no} out of range (1–{doc.page_count})")
+        self._doc = doc
+
+    @property
+    def doc_id(self) -> str:
+        return self._doc_id
+
+    @property
+    def page_no(self) -> int:
+        return self._page_no
+
+    @property
+    def page_count(self) -> int:
+        return self._doc.page_count
+
+    # ── rendering ─────────────────────────────────────────────
+
+    def render(self, preset_name: str = "preview",
+               view_state: dict = None, highlights: list = None,
+               hl_token: str = None, accept_header: str = "",
+               override_params: dict = None) -> Tuple[bytes, str, str]:
+        """Render this page. Delegates to Engine.render()."""
+        return self._engine.render(
+            doc_id=self._doc_id,
+            preset_name=preset_name,
+            view_state=view_state,
+            page=self._page_no,
+            highlights=highlights,
+            hl_token=hl_token,
+            accept_header=accept_header,
+            override_params=override_params,
+        )
+
+    def extract_pdf(self) -> bytes:
+        """Extract this page as standalone PDF bytes."""
+        return self._engine.extract_page_pdf(self._doc_id, self._page_no)
+
+    # ── content (Phase 2 stubs) ───────────────────────────────
+
+    def text(self) -> str:
+        """Get text content of this page. Phase 2 — uses Content Index."""
+        return ""
+
+    def bbox(self) -> list:
+        """Get text bounding boxes of this page. Phase 2 — uses Content Index."""
+        return []
+
+    def highlight(self, rects: list, style: str = "yellow",
+                  preset_name: str = "preview",
+                  view_state: dict = None,
+                  accept_header: str = "") -> Tuple[bytes, str, str]:
+        """
+        Render this page with highlight rectangles baked in.
+        Phase 2 — pass rects to engine.render(highlights=rects).
+        """
+        return self._engine.render(
+            doc_id=self._doc_id,
+            preset_name=preset_name,
+            view_state=view_state,
+            page=self._page_no,
+            highlights=rects,
+            hl_token=_make_hl_token(rects),
+            accept_header=accept_header,
+        )
+
+
 # ── Engine ──────────────────────────────────────────────────────
 
 class RenderEngine:
@@ -122,6 +210,10 @@ class RenderEngine:
         return data, fmt, etag
 
     # ── page extraction ────────────────────────────────────────
+
+    def page(self, doc_id: str, page_no: int = 1) -> DocumentPage:
+        """Return a DocumentPage wrapping a single page for unified operations."""
+        return DocumentPage(self, doc_id, page_no)
 
     def extract_page_pdf(self, doc_id: str, page: int = 1) -> bytes:
         """Extract a single page as standalone PDF bytes."""
@@ -326,3 +418,12 @@ def _hash_override(override: dict) -> str:
     items = sorted(override.items())
     raw = "|".join(f"{k}={v}" for k, v in items)
     return hashlib.md5(raw.encode()).hexdigest()[:8]
+
+
+def _make_hl_token(rects: list) -> str:
+    """Generate a short token from highlight rects for cache-key identity."""
+    if not rects:
+        return ""
+    import hashlib
+    raw = "|".join(f"{r.get('x0',0):.0f},{r.get('y0',0):.0f},{r.get('x1',0):.0f},{r.get('y1',0):.0f}" for r in rects)
+    return hashlib.md5(raw.encode()).hexdigest()[:12]

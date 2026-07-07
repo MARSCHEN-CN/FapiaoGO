@@ -91,6 +91,33 @@ def render_page(doc_id: str):
     return _render_and_respond(doc_id, preset_name, page, vs, hl_token)
 
 
+# ── GET /print/{doc_id} ────────────────────────────────────────
+
+@render_bp.route("/print/<doc_id>", methods=["GET"])
+def print_page(doc_id: str):
+    """Render a page with the 'print' preset (200dpi, high quality).
+    This validates RenderPreset under the most demanding scenario.
+    Electron main process calls this to get print-ready images."""
+    page = _int_param("page", 1)
+    vs = _parse_view_state(request.args)
+    # Allow overriding dpi/quality via query params for print flexibility
+    overrides = {}
+    if request.args.get("dpi"):
+        try:
+            overrides["dpi"] = int(request.args["dpi"])
+        except ValueError:
+            pass
+    if request.args.get("quality"):
+        try:
+            overrides["quality"] = int(request.args["quality"])
+        except ValueError:
+            pass
+    if request.args.get("fmt"):
+        overrides["fmt"] = request.args["fmt"]
+    override = overrides if overrides else None
+    return _render_and_respond(doc_id, "print", page, vs, override_params=override)
+
+
 # ── GET /metadata/{doc_id} ─────────────────────────────────────
 
 @render_bp.route("/metadata/<doc_id>", methods=["GET"])
@@ -130,7 +157,8 @@ def search():
 
 def _render_and_respond(doc_id: str, preset_name: str,
                         page: int = 1, vs: dict = None,
-                        hl_token: str = None):
+                        hl_token: str = None,
+                        override_params: dict = None):
     """Shared rendering path: build, render, cache, respond."""
     vs = vs or {}
 
@@ -145,6 +173,7 @@ def _render_and_respond(doc_id: str, preset_name: str,
             page=page,
             hl_token=hl_token,
             accept_header=request.headers.get("Accept", ""),
+            override_params=override_params,
         )
     except ValueError as e:
         return jsonify({"success": False, "error": str(e)}), 404

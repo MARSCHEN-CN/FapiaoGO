@@ -692,32 +692,54 @@ def split_pdf():
         return jsonify({"success": False, "error": str(e)}), 500
 
 
-@app.route('/download_page/<page_id>', methods=['GET'])
-def download_page(page_id):
-    """下载单页 PDF（二进制流，无 base64 膨胀）"""
-    with _page_cache_lock:
-        cache_entry = _page_cache.get(page_id)
-    
-    if not cache_entry:
-        # 检查是否已过期
-        return jsonify({"success": False, "error": "页面不存在或已过期，请重新拆分"}), 404
-    
-    # 检查是否过期
-    if time.time() - cache_entry["created_at"] > _page_cache_ttl:
-        with _page_cache_lock:
-            del _page_cache[page_id]
-        return jsonify({"success": False, "error": "页面已过期，请重新拆分"}), 410
-    
-    # 直接返回二进制流
-    page_bytes = cache_entry["bytes"]
+def _respond_pdf(page_bytes: bytes, page_id: str):
+    """构造 PDF 二进制响应（download_page 复用）"""
     return Response(
         page_bytes,
         mimetype='application/pdf',
         headers={
             'Content-Disposition': f'attachment; filename="page_{page_id}.pdf"',
-            'Content-Length': len(page_bytes),
+            'Content-Length': str(len(page_bytes)),
         }
     )
+
+
+@app.route('/download_page/<page_id>', methods=['GET'])
+def download_page(page_id):
+    """下载单页 PDF（优先 Document Pipeline，回退旧缓存）"""
+
+    # ── ① 新管道：Registry + Engine ──
+    with _page_registry_lock:
+        reg_entry = _page_registry.get(page_id)
+
+    if reg_entry:
+        try:
+            # 按需从 Registry 持有的 fitz 句柄拆出单页 PDF
+            page_bytes = engine.extract_page_pdf(
+                reg_entry["doc_id"], reg_entry["page"]
+            )
+            # 写入 _page_cache（后续请求直接命中旧缓存路径）
+            now = time.time()
+            with _page_cache_lock:
+                _page_cache[page_id] = {"bytes": page_bytes, "created_at": now}
+            return _respond_pdf(page_bytes, page_id)
+        except Exception as e:
+            logger.debug("download_page pipeline fallback for %s: %s", page_id, e)
+            # 引擎失败 → 回退到旧 _page_cache
+
+    # ── ② 回退：旧 _page_cache ──
+    with _page_cache_lock:
+        cache_entry = _page_cache.get(page_id)
+
+    if not cache_entry:
+        return jsonify({"success": False, "error": "页面不存在或已过期，请重新拆分"}), 404
+
+    if time.time() - cache_entry["created_at"] > _page_cache_ttl:
+        with _page_cache_lock:
+            _page_cache.pop(page_id, None)
+        return jsonify({"success": False, "error": "页面已过期，请重新拆分"}), 410
+
+    return _respond_pdf(cache_entry["bytes"], page_id)
 
 
 # 并发解析限流
