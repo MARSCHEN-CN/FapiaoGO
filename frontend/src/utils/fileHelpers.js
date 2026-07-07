@@ -13,7 +13,7 @@ export function generateFileKey(name) {
 }
 
 // 构建文件对象
-export function buildFileObj(file, name, path, previewImage = null) {
+export function buildFileObj(file, name, path, previewImage = null, docId = null) {
   return {
     key: generateFileKey(name),
     name,
@@ -29,6 +29,7 @@ export function buildFileObj(file, name, path, previewImage = null) {
     fileFormat: getFileFormat(name),
     previewImage: previewImage ? `data:image/jpeg;base64,${previewImage}` : null,
     printPath: path,
+    docId: docId || null,
     // 预计算 searchText，确保所有文件（含未解析或解析失败的）都能快速搜索
     searchText: buildSearchText({ name }),
   }
@@ -74,7 +75,7 @@ export async function processPdfFile(file, getPathFn) {
             const pageName = file.name.replace('.pdf', `_p${page.page_index}.pdf`)
             const pageFile = new File([blob], pageName, { type: 'application/pdf' })
 
-            const fileObj = buildFileObj(pageFile, pageName, getPathFn(file), page.preview_image)
+            const fileObj = buildFileObj(pageFile, pageName, getPathFn(file), page.preview_image, splitData.doc_id)
             toAdd.push(fileObj)
             toParse.push(fileObj)
           }

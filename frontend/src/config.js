@@ -23,6 +23,18 @@ export const PRINT_SETTINGS_DEFAULTS = {
 
 export const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000'
 
+// ─── Render Engine Preview（Phase 1 Feature Flag）─────────────────
+// true  = usePreview 走 /preview/{doc_id} HTTP 渲染
+// false = 回退 pdf.js + Canvas 旧链路
+export const USE_RENDER_ENGINE_PREVIEW = true
+
+/** 构建 Render Engine 预览 URL */
+export const buildPreviewUrl = (docId, page = 1, vsHash = '') => {
+  let url = `${BACKEND_URL}/preview/${docId}?page=${page}`
+  if (vsHash) url += `&vs=${vsHash}`
+  return url
+}
+
 // ─── 安全边距预设 ─────────────────────────────────────────────────
 export const MARGIN_PRESETS = {
   default:    { label: '普通安全边距', left: 3, right: 3, top: 3, bottom: 3 },

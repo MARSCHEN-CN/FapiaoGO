@@ -683,6 +683,7 @@ def split_pdf():
 
         return jsonify({
             "success": True,
+            "doc_id": doc.doc_id,
             "total_pages": len(pages),
             "pages": pages,
             "expires_in": _page_cache_ttl,

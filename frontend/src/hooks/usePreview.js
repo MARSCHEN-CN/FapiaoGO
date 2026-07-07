@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
-import { PREVIEW_DPI, GLOBAL_PREVIEW_DPI, ZOOM_STEPS, PAPER_SIZE_MAP } from '../config'
+import { PREVIEW_DPI, GLOBAL_PREVIEW_DPI, ZOOM_STEPS, PAPER_SIZE_MAP, USE_RENDER_ENGINE_PREVIEW, buildPreviewUrl } from '../config'
 import {
   b64toBlob, getFileFormat, getExtension, isMergeMode, getMergePair,
 } from '../utils'
@@ -570,6 +570,12 @@ export function usePreview({ files, settings, electronAPIRef }) {
 
     try {
       if (fmt === 'image' || fmt === 'ofd') {
+        // ✅ Render Engine Preview：优先走后端渲染 URL
+        if (USE_RENDER_ENGINE_PREVIEW && fObj.docId) {
+          _previewImageUrl = buildPreviewUrl(fObj.docId, 1)
+          return { ...fObj, _previewImageUrl, _fileFormat: fmt }
+        }
+
         // 复用已加载的 blob URL
         if (fObj.key === currentKey && currentUrl) {
           _previewImageUrl = currentUrl
@@ -633,6 +639,12 @@ export function usePreview({ files, settings, electronAPIRef }) {
       }
 
       if (fmt === 'pdf') {
+        // ✅ Render Engine Preview：优先走后端渲染 URL，绕过 pdfjs + Canvas
+        if (USE_RENDER_ENGINE_PREVIEW && fObj.docId) {
+          _previewImageUrl = buildPreviewUrl(fObj.docId, 1)
+          return { ...fObj, _previewImageUrl, _fileFormat: 'pdf' }
+        }
+
         let buffer = null
         // ✅ 尝试从缓存取 Uint8Array（_pdfData），避免重复 IPC read-file + pdfjs 解析
         const pdfKey = 'pdf_' + fObj.key
