@@ -1474,8 +1474,9 @@ export async function switchPreviewFile(pdfDoc, pageNum = 1, signal, rotation = 
     if (signal?.aborted) return
     const page = await pdfDoc.getPage(pageNum)
 
-    const baseViewport = page.getViewport({ scale: 1 })
-    const scale = Math.min(contentW / baseViewport.width, contentH / baseViewport.height)
+    // ✅ 先算出旋转后的 viewport 尺寸，再用它算 scale，确保填满可打印区域
+    const rotatedViewport = page.getViewport({ scale: 1, rotation })
+    const scale = Math.min(contentW / rotatedViewport.width, contentH / rotatedViewport.height)
     const renderViewport = page.getViewport({ scale, rotation })
     const offsetX = marginL + (contentW - renderViewport.width) / 2
     const offsetY = marginT + (contentH - renderViewport.height) / 2
@@ -1499,13 +1500,15 @@ export async function switchPreviewImage(image, signal, rotation = 0) {
 
     const imgW = image.naturalWidth || image.width
     const imgH = image.naturalHeight || image.height
-    const scale = Math.min(contentW / imgW, contentH / imgH)
-    let drawW = imgW * scale
-    let drawH = imgH * scale
-
-    if (rotation % 180 !== 0) {
-      ;[drawW, drawH] = [drawH, drawW]
-    }
+    // ✅ 先根据旋转交换尺寸，再算 scale，确保 fill 模式填满可打印区域
+    let fitW = imgW, fitH = imgH
+    if (rotation % 180 !== 0) { [fitW, fitH] = [fitH, fitW] }
+    const scale = Math.min(contentW / fitW, contentH / fitH)
+    const renderW = imgW * scale
+    const renderH = imgH * scale
+    // 旋转后实际的 canvas 尺寸（宽高交换）
+    let drawW = renderW, drawH = renderH
+    if (rotation % 180 !== 0) { [drawW, drawH] = [drawH, drawW] }
 
     const offsetX = marginL + (contentW - drawW) / 2
     const offsetY = marginT + (contentH - drawH) / 2

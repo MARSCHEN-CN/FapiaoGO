@@ -374,6 +374,15 @@ export function usePreview({ files, settings, electronAPIRef }) {
         if (renderCancelledRef.current) return
         if (currentRenderId !== renderVersionRef.current) return
         if (canvas) {
+          // ✅ 渲染完成 → 缓存快照到 fullCache，后续切换秒开
+          const rotation = (fileRotations[previewFile.key] || 0)
+          const cacheKey = `${previewFile.key}_r${rotation}`
+          const snapshot = document.createElement('canvas')
+          snapshot.width = canvas.width
+          snapshot.height = canvas.height
+          snapshot.getContext('2d').drawImage(canvas, 0, 0)
+          setFullCache(cacheKey, snapshot)
+
           // ✅ 不清空旧 canvas：与 renderResultCache 共享同一对象，clearRect 会污染缓存
           unrotatedCanvasRef.current = canvas
           setPreviewCanvas(canvas)
@@ -740,7 +749,9 @@ export function usePreview({ files, settings, electronAPIRef }) {
 
     // ── 单文件预览 ──
     // ✅ L2 缓存命中：fullCache 已有预渲染画布，直接瞬时显示
-    const cachedCanvas = fullCacheRef.current.get(fileObj.key)
+    const rotation = (fileRotations[fileObj.key] || 0)
+    const cacheKey = `${fileObj.key}_r${rotation}`
+    const cachedCanvas = fullCacheRef.current.get(cacheKey)
     if (cachedCanvas) {
       // 仍需加载文件数据以使 render effect 通过守卫条件
       const loadedFile = await loadFilePreview(fileObj)
@@ -798,7 +809,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
         } catch (e) { /* ignore already revoked */ }
       }
     }
-  }, [settings.mergeMode, loadPairItemForPreview, loadFilePreview, fullCacheRef, skipRenderRef, previewFileRef, previewVersionRef, previewUrlRef, pendingBlobUrlsRef])
+  }, [settings.mergeMode, loadPairItemForPreview, loadFilePreview, fullCacheRef, skipRenderRef, previewFileRef, previewVersionRef, previewUrlRef, pendingBlobUrlsRef, fileRotations])
 
   // ============================
   // 预览文件（带防抖）

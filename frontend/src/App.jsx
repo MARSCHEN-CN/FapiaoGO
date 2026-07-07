@@ -12,7 +12,6 @@ const AlertModal = lazy(() => import('./components/AlertModal'))
 const PrintConfirmModal = lazy(() => import('./components/PrintConfirmModal'))
 const ImportProgressModal = lazy(() => import('./components/ImportProgressModal'))
 const ExportProgressModal = lazy(() => import('./components/ExportProgressModal'))
-import PocTest from './poc-test.jsx'
 
 import { PREVIEW_DPI, SUPPORTED_EXTENSIONS, ZOOM_STEPS } from './config'
 import {
@@ -785,8 +784,6 @@ function AppContent() {
           onClose={() => setDetailFile(null)}
         />
       )}
-
-      {window.location.search.includes('poc=1') && <PocTest />}
 
     </div>
   )
