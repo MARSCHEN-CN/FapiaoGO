@@ -26,6 +26,8 @@ from services.invoice_service import (
 )
 from parse_job_manager import job_manager
 from services.decision_router import DecisionRouter
+from render_engine import registry, engine
+from render_engine.api import render_bp
 
 # 全局实例（惰性初始化）
 _decision_router = None
@@ -36,6 +38,10 @@ _page_cache: dict = {}  # {page_id: {"bytes": bytes, "created_at": timestamp}}
 _page_cache_lock = threading.Lock()
 _page_cache_ttl = 3600  # 缓存有效期（秒），默认 1 小时
 _page_cache_max = 500   # 惰性清理阈值，超限时才扫描过期条目
+
+# Document Pipeline 映射：page_id → {doc_id, page}（轻量，替代 _page_cache 直接引用）
+_page_registry: dict = {}  # {page_id: {"doc_id": "...", "page": int}}
+_page_registry_lock = threading.Lock()
 
 def get_decision_router():
     global _decision_router
@@ -212,6 +218,7 @@ app = Flask(__name__)
 
 # CORS
 CORS(app, origins=["http://localhost:5173", "http://localhost:3000", "http://127.0.0.1:5173"])
+app.register_blueprint(render_bp)
 
 # 流式导出专用 json.dumps
 _json = json
@@ -590,15 +597,12 @@ def get_exception_queue():
 # 原有的 parse_invoice 等路由
 # ============================
 
-import hashlib as _hashlib
 
-from cache import get_cache_version_info
-import fitz as _fitz
 
 
 @app.route('/get_pdf_pages', methods=['POST'])
 def get_pdf_pages():
-    """检测 PDF 页数"""
+    """检测 PDF 页数（通过 render_engine Registry）"""
     if 'file' not in request.files:
         return jsonify({"success": False, "error": "没有上传文件"}), 400
     file = request.files['file']
@@ -606,10 +610,8 @@ def get_pdf_pages():
     if not file_bytes:
         return jsonify({"success": False, "error": "空文件"}), 400
     try:
-        doc = _fitz.open(stream=file_bytes, filetype="pdf")
-        total_pages = len(doc)
-        doc.close()
-        return jsonify({"success": True, "total_pages": total_pages})
+        doc = registry.open(file_bytes, filename=file.filename or "")
+        return jsonify({"success": True, "total_pages": doc.page_count})
     except Exception as e:
         logger.exception("读取 PDF 页数失败")
         return jsonify({"success": False, "error": str(e)}), 500
@@ -617,7 +619,7 @@ def get_pdf_pages():
 
 @app.route('/split_pdf', methods=['POST'])
 def split_pdf():
-    """拆分 PDF 为单页文件（只返回预览图，PDF 二进制通过下载接口获取）"""
+    """拆分 PDF 为单页文件（走 render_engine 管道，响应格式不变）"""
     if 'file' not in request.files:
         return jsonify({"success": False, "error": "没有上传文件"}), 400
     file = request.files['file']
@@ -625,14 +627,16 @@ def split_pdf():
     if not file_bytes:
         return jsonify({"success": False, "error": "空文件"}), 400
     try:
-        # 生成文件哈希作为 page_id 基础
+        # 生成文件哈希作为 page_id 基础（保持向后兼容）
         file_hash = hashlib.sha256(file_bytes).hexdigest()[:16]
-        
-        doc = _fitz.open(stream=file_bytes, filetype="pdf")
+
+        # 注册文档到 render_engine（fitz 句柄由 Registry 持有）
+        doc = registry.open(file_bytes, filename=file.filename or "")
+
         pages = []
         now = time.time()
-        
-        # 清理过期缓存（惰性：仅当缓存超限时扫描，避免每次请求 O(n) 遍历）
+
+        # 清理过期缓存（惰性清理逻辑不变）
         with _page_cache_lock:
             if len(_page_cache) > _page_cache_max:
                 cutoff = now - _page_cache_ttl
@@ -641,26 +645,30 @@ def split_pdf():
                     del _page_cache[k]
                 if expired:
                     logger.debug("[page_cache] 惰性清理 %d 个过期条目", len(expired))
-        
-        for i in range(len(doc)):
-            page = doc[i]
-            # 生成单页 PDF 字节
-            page_doc = _fitz.open()
-            page_doc.insert_pdf(doc, from_page=i, to_page=i)
-            page_bytes = page_doc.tobytes()
-            page_doc.close()
 
-            # 生成预览图（base64 JPEG）
-            zoom = 200 / 72.0
-            mat = _fitz.Matrix(zoom, zoom)
-            pix = page.get_pixmap(matrix=mat, alpha=False)
-            preview_bytes = pix.tobytes("jpeg")
-            preview_b64 = base64.b64encode(preview_bytes).decode('ascii')
+        for i in range(doc.page_count):
+            page_num = i + 1
 
-            # 生成唯一 page_id
+            # 拆出单页 PDF（走引擎）
+            page_bytes = engine.extract_page_pdf(doc.doc_id, page_num)
+
+            # 渲染预览图（走引擎，200dpi JPEG 向后兼容）
+            preview_data, preview_fmt, _ = engine.render(
+                doc_id=doc.doc_id,
+                preset_name="preview",
+                page=page_num,
+                override_params={"dpi": 200, "fmt": "jpeg"},
+            )
+            preview_b64 = base64.b64encode(preview_data).decode('ascii')
+
+            # 生成唯一 page_id（格式不变，向后兼容 download_page）
             page_id = f"{file_hash}_{i}"
-            
-            # 缓存单页 PDF（供下载接口使用）
+
+            # 注册 Document Pipeline 映射（新 download_page 走引擎）
+            with _page_registry_lock:
+                _page_registry[page_id] = {"doc_id": doc.doc_id, "page": page_num}
+
+            # 缓存单页 PDF（供 download_page 使用 / 旧管线回退）
             with _page_cache_lock:
                 _page_cache[page_id] = {
                     "bytes": page_bytes,
@@ -672,13 +680,12 @@ def split_pdf():
                 "page_id": page_id,
                 "preview_image": preview_b64,
             })
-        doc.close()
-        
+
         return jsonify({
             "success": True,
             "total_pages": len(pages),
             "pages": pages,
-            "expires_in": _page_cache_ttl,  # 告知前端缓存有效期
+            "expires_in": _page_cache_ttl,
         })
     except Exception as e:
         logger.exception("拆分 PDF 失败")
