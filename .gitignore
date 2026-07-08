@@ -428,3 +428,4 @@ preview-img-verify.md
 backend/test_text.py
 backend/test_text_all.py
 backend/test_text_standalone.py
+backend/test_render_engine.py
