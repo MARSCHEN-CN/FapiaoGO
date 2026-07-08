@@ -137,7 +137,7 @@ JS Domain (untrusted)          OS Domain (trusted)
 
 - Python 3.11+
 - Node.js 20+
-- Windows 10/11（SumatraPDF 依赖）
+- Windows 10/11
 
 ### 安装
 
