@@ -49,8 +49,8 @@ export async function processPdfFile(file, getPathFn) {
     const resp = await fetch(`${BACKEND_URL}/get_pdf_pages`, { method: 'POST', body: formData })
     const data = await resp.json()
 
-    if (data.success && data.total_pages > 1) {
-      console.log(`[App] 检测到多页 PDF: ${file.name}, ${data.total_pages} 页`)
+    if (data.success && data.total_pages > 0) {
+      console.log(`[App] 检测到 PDF: ${file.name}, ${data.total_pages} 页`)
 
       const splitFormData = new FormData()
       splitFormData.append('file', file.file || file)
@@ -89,10 +89,10 @@ export async function processPdfFile(file, getPathFn) {
       }
     }
   } catch (err) {
-    console.error('[App] 多页 PDF 检测/拆分失败:', err)
+    console.error('[App] PDF 检测/拆分失败:', err)
   }
 
-  // 单页或失败
+  // 拆分失败或非 PDF
   const fileObj = buildFileObj(file.file || file, file.name, getPathFn(file))
   toAdd.push(fileObj)
   toParse.push(fileObj)

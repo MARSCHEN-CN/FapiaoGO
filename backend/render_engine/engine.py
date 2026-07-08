@@ -6,10 +6,11 @@ render(doc, preset, view_state, page, highlights) → (bytes, format, etag)
 
 import io
 import logging
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 
 from .preset import RenderPreset, PRESETS
 from .cache import RenderCache, generate_etag, make_cache_key
+from .types import BBox, TextSpan
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +69,12 @@ class DocumentPage:
         page = engine.page(doc_id, 5)
         data, fmt, etag = page.render("preview", view_state=vs)
         pdf_bytes = page.extract_pdf()
+        spans     = page.text()         # List[TextSpan]
+        boxes     = page.bbox()         # List[BBox]
+        rect      = page.rect()         # BBox (page bounding rect)
+        w, h      = page.size()         # tuple (width, height)
+        rot       = page.rotation()     # int (0/90/180/270)
+        has_txt   = page.has_text()     # bool
     """
 
     def __init__(self, engine: "RenderEngine", doc_id: str, page_no: int):
@@ -93,6 +100,18 @@ class DocumentPage:
     def page_count(self) -> int:
         return self._doc.page_count
 
+    # ── fitz page helper ──────────────────────────────────────
+
+    @property
+    def _fitz_page(self):
+        """Get the underlying fitz Page (None if image/non-PDF)."""
+        if self._doc.pdf is None:
+            return None
+        page_idx = max(0, self._page_no - 1)
+        if page_idx >= len(self._doc.pdf):
+            return None
+        return self._doc.pdf[page_idx]
+
     # ── rendering ─────────────────────────────────────────────
 
     def render(self, preset_name: str = "preview",
@@ -115,15 +134,105 @@ class DocumentPage:
         """Extract this page as standalone PDF bytes."""
         return self._engine.extract_page_pdf(self._doc_id, self._page_no)
 
-    # ── content (Phase 2 stubs) ───────────────────────────────
+    # ── content ────────────────────────────────────────────────
 
-    def text(self) -> str:
-        """Get text content of this page. Phase 2 — uses Content Index."""
-        return ""
+    def text(self) -> List[TextSpan]:
+        """
+        Extract text content with bounding boxes from this page.
 
-    def bbox(self) -> list:
-        """Get text bounding boxes of this page. Phase 2 — uses Content Index."""
-        return []
+        Results are lazily cached in ``Document.text_cache`` on first call —
+        subsequent calls (and calls to other pages of the same document)
+        return instantly without re-parsing the PDF.
+
+        Uses PyMuPDF's built-in text layer (``page.get_text("words")``)
+        for PDF documents with embedded text.  Returns word-level spans.
+
+        Returns:
+            List[TextSpan]: text spans (empty for images / scanned PDFs).
+
+        ``TextSpan`` is the foundational type that all downstream consumers
+        (ContentIndex / Search / Highlight / OCR / Selection / Copy Text)
+        build upon.  See :class:`types.TextSpan`.
+        """
+        cache = self._doc.text_cache
+        if cache is not None and self._page_no in cache:
+            return cache[self._page_no]
+        spans = self._extract_text_spans()
+        if cache is None:
+            self._doc.text_cache = {self._page_no: spans}
+        else:
+            self._doc.text_cache[self._page_no] = spans
+        return spans
+
+    def _extract_text_spans(self) -> List[TextSpan]:
+        """Call PyMuPDF to extract word-level text spans (uncached)."""
+        if self._doc.pdf is None:
+            return []
+        page_idx = max(0, self._page_no - 1)
+        if page_idx >= len(self._doc.pdf):
+            return []
+        fitz_page = self._doc.pdf[page_idx]
+        words = fitz_page.get_text("words")
+        return [
+            TextSpan(
+                text=w[4],
+                bbox=BBox(x0=w[0], y0=w[1], x1=w[2], y1=w[3], page=self._page_no),
+            )
+            for w in words
+        ]
+
+    def bbox(self) -> List[BBox]:
+        """Get bounding boxes of all text on this page (convenience wrapper)."""
+        return [span.bbox for span in self.text()]
+
+    # ── metadata ───────────────────────────────────────────────
+
+    def rect(self) -> BBox:
+        """
+        Get the page's bounding rectangle in PDF user space (points).
+
+        Returns:
+            BBox: (x0, y0, x1, y1) — full page area, not media box.
+            For images / non-PDF, returns a default A4 rect.
+        """
+        fp = self._fitz_page
+        if fp is None:
+            return BBox(x0=0, y0=0, x1=595, y1=842, page=self._page_no)  # A4
+        r = fp.rect
+        return BBox(x0=r.x0, y0=r.y0, x1=r.x1, y1=r.y1, page=self._page_no)
+
+    def size(self) -> tuple:
+        """
+        Get the page dimensions in PDF user space points (1/72 inch).
+
+        Returns:
+            (width, height) tuple.  For images / non-PDF, returns A4.
+        """
+        r = self.rect()
+        return (r.x1 - r.x0, r.y1 - r.y0)
+
+    def rotation(self) -> int:
+        """
+        Get the page rotation in degrees.
+
+        Returns:
+            0 / 90 / 180 / 270.  0 for images / non-PDF.
+        """
+        fp = self._fitz_page
+        if fp is None:
+            return 0
+        return fp.rotation or 0
+
+    def has_text(self) -> bool:
+        """
+        Check whether this page has extractable text content.
+
+        Returns:
+            True if text() returns at least one non-empty span.
+            False for blank pages, scanned PDFs, and image documents.
+        """
+        spans = self.text()
+        return len(spans) > 0 and any(s.text.strip() for s in spans)
 
     def highlight(self, rects: list, style: str = "yellow",
                   preset_name: str = "preview",
@@ -197,7 +306,7 @@ class RenderEngine:
             raise ValueError(f"Document not registered: {doc_id[:12]}...")
 
         fmt = negotiate_format(accept_header, preset.fmt)
-        data = self._render_page(doc, preset, vs, page, fmt, highlights)
+        data, actual_fmt = self._render_page(doc, preset, vs, page, fmt, highlights)
 
         # --- cache write ---
         etag = generate_etag(
@@ -206,8 +315,8 @@ class RenderEngine:
             view_state_hash=vs_hash,
             hl_token=hl_token or "",
         )
-        self._cache.put(cache_key, data, fmt, etag)
-        return data, fmt, etag
+        self._cache.put(cache_key, data, actual_fmt, etag)
+        return data, actual_fmt, etag
 
     # ── page extraction ────────────────────────────────────────
 
@@ -357,9 +466,9 @@ def _apply_margins(pix, preset: RenderPreset, vs: dict,
     paper_w = int(A4_W_MM * preset.dpi / MM_PER_INCH)
     paper_h = int(A4_H_MM * preset.dpi / MM_PER_INCH)
 
-    # Create white canvas
+    # Create white canvas (PyMuPDF >= 1.24 requires IRect, not (cs, w, h))
     canvas = fitz.Pixmap(fitz.csRGB if pix.n >= 3 else fitz.csGRAY,
-                         paper_w, paper_h)
+                         fitz.IRect(0, 0, paper_w, paper_h))
     canvas.clear_with(255)
 
     # Calculate position (center content)
@@ -386,20 +495,28 @@ def _apply_margins(pix, preset: RenderPreset, vs: dict,
     return canvas
 
 
-def _encode_pixmap(pix, fmt: str, quality: int, chroma: str) -> bytes:
-    """Encode fitz Pixmap to image bytes."""
-    if fmt == "jpeg":
-        return pix.tobytes("jpeg", jpg_quality=quality)
-    elif fmt == "webp":
+def _encode_pixmap(pix, fmt: str, quality: int, chroma: str):
+    """Encode fitz Pixmap to image bytes.
+
+    Returns a tuple (bytes, actual_fmt) so the caller can set the correct
+    Content-Type even when the requested format is unavailable.
+    Some PyMuPDF builds (e.g. 1.27.x wheels on certain platforms) are
+    compiled WITHOUT webp support, so we transparently fall back to jpeg.
+    """
+    if fmt in ("jpeg", "jpg"):
+        return pix.tobytes("jpeg", jpg_quality=quality), "jpeg"
+    if fmt == "png":
+        return pix.tobytes("png"), "png"
+    if fmt == "webp":
         try:
-            return pix.tobytes("webp", lossless=False, quality=quality)
-        except TypeError:
-            # Fallback for PyMuPDF versions without webp quality param
-            return pix.tobytes("webp")
-    elif fmt == "png":
-        return pix.tobytes("png")
-    else:
-        return pix.tobytes("webp")
+            return pix.tobytes("webp", lossless=False, quality=quality), "webp"
+        except Exception:
+            # PyMuPDF built without webp — fall back to jpeg transparently.
+            logger.warning("webp encoding unavailable in this PyMuPDF build; "
+                           "falling back to jpeg")
+            return pix.tobytes("jpeg", jpg_quality=quality), "jpeg"
+    # unknown format → png
+    return pix.tobytes("png"), "png"
 
 
 def _merge_override(preset: RenderPreset, override: dict) -> RenderPreset:

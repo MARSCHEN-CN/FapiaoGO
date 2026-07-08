@@ -123,7 +123,15 @@ class RenderQueue:
 
 
 def _make_task_id(fn: Callable, args: tuple) -> str:
-    """Generate a short task id for logging."""
-    import hashlib
-    raw = f"{fn.__name__ if hasattr(fn,'__name__') else str(fn)}:{hash(args)}"
+    """Generate a short task id for logging.
+
+    Args may contain unhashable types (e.g. dict view-state), so we serialize
+    with json (falling back to repr) instead of calling hash() directly.
+    """
+    import hashlib, json
+    try:
+        key = json.dumps(args, default=str, sort_keys=True)
+    except (TypeError, ValueError):
+        key = repr(args)
+    raw = f"{fn.__name__ if hasattr(fn, '__name__') else str(fn)}:{key}"
     return hashlib.md5(raw.encode()).hexdigest()[:16]

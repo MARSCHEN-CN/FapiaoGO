@@ -28,7 +28,22 @@ export const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost
 // false = 回退 pdf.js + Canvas 旧链路
 export const USE_RENDER_ENGINE_PREVIEW = true
 
-/** 构建 Render Engine 预览 URL */
+/**
+ * 构建 Render Engine 预览 URL。
+ *
+ * @param {string} docId   内容寻址的文档 ID（sha256(file_bytes+filename)[:24]）
+ * @param {number} page    页码（已进入 URL，是资源身份的一部分）
+ * @param {string} vsHash  视图状态哈希（预留，Highlight 阶段启用，当前未使用）
+ *
+ * 设计约束（immutable 缓存正确性）：URL 必须唯一确定最终输出字节。
+ * 凡是影响渲染字节的参数，必须在 URL 中体现——直接 ?page= 或用 ?vs=<hash>
+ * 折叠进视图状态哈希。否则 immutable 会让浏览器对同一 URL 永远返回陈旧字节，
+ * 且不会发起 304 协商来纠正。
+ *
+ * vsHash 的设计价值：rotation / highlight / crop / invert / 未来批注 全部折叠进
+ * 一个视图状态哈希，URL API 永不膨胀。真正实现 Highlight 时，再让 vsHash 进入
+ * URL 并让 /preview 路由解析 ?vs=，此刻保持预留、不启用。
+ */
 export const buildPreviewUrl = (docId, page = 1, vsHash = '') => {
   let url = `${BACKEND_URL}/preview/${docId}?page=${page}`
   if (vsHash) url += `&vs=${vsHash}`

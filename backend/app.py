@@ -679,6 +679,7 @@ def split_pdf():
                 "page_index": i + 1,
                 "page_id": page_id,
                 "preview_image": preview_b64,
+                "page_bytes": base64.b64encode(page_bytes).decode('ascii'),
             })
 
         return jsonify({

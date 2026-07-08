@@ -664,8 +664,8 @@
 .sb-stats {
   flex-shrink: 0;
   margin: auto clamp(16px, 1.2vw, 24px) clamp(14px, 1vw, 22px);
-  background: var(--surface);
-  border-radius: var(--r-xl);
+  background: transparent;
+  border-radius: 0;
   display: flex;
   justify-content: space-around;
   align-items: center;
@@ -681,7 +681,7 @@
 }
 
 .sb-stat + .sb-stat {
-  border-left: 1px solid var(--border-light);
+  border-left: none;
 }
 
 .sb-stat-icon {
@@ -1217,7 +1217,7 @@
 }
 
 [data-theme="dark"] .sb-stat + .sb-stat {
-  border-left-color: var(--border);
+  border-left: none;
 }
 
 /* -- dark: 分裂按钮 -- */

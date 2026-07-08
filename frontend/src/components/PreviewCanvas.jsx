@@ -1,6 +1,6 @@
 import { useRef, useCallback, memo } from 'react'
 
-export default memo(function PreviewCanvas({ previewFile, displayInfo, previewCanvas, grayscale, previewRenderVersion }) {
+export default memo(function PreviewCanvas({ previewFile, displayInfo, previewCanvas, previewUrl, grayscale, previewRenderVersion }) {
   const canvasRef = useRef(null)
 
   // ✅ L1 缓存：跟踪 DOM canvas 上次绘制的内容
@@ -28,6 +28,43 @@ export default memo(function PreviewCanvas({ previewFile, displayInfo, previewCa
     ctx.filter = grayscale ? 'grayscale(100%)' : 'none'
     ctx.drawImage(previewCanvas, 0, 0)
   }, [previewCanvas, grayscale, previewRenderVersion])
+
+  // ── Render Engine <img> 路径 ──
+  if (previewUrl && displayInfo) {
+    // ✅ 旋转走 CSS transform：容器尺寸已在 displayInfo 按旋转交换宽高，
+    //    <img> 以自然显示尺寸绝对居中后 rotate，正好贴合包围盒（90/270 不裁切）
+    const angle = displayInfo.angle || 0
+    const swapped = displayInfo.swapped
+    const imgW = swapped ? displayInfo.displayHeight : displayInfo.displayWidth
+    const imgH = swapped ? displayInfo.displayWidth : displayInfo.displayHeight
+    return (
+      <div className="paper" style={{
+        width: displayInfo.displayWidth,
+        height: displayInfo.displayHeight,
+        transition: 'width 0.2s ease, height 0.2s ease',
+      }}>
+        <img
+          src={previewUrl}
+          alt=""
+          draggable={false}
+          loading="eager"
+          decoding="async"
+          style={{
+            position: 'absolute',
+            top: '50%',
+            left: '50%',
+            width: `${imgW}px`,
+            height: `${imgH}px`,
+            transform: `translate(-50%, -50%) rotate(${angle}deg)`,
+            transformOrigin: 'center center',
+            objectFit: 'contain',
+            transition: 'transform 0.2s ease',
+            filter: grayscale ? 'grayscale(100%)' : 'none',
+          }}
+        />
+      </div>
+    )
+  }
 
   // ── 骨架屏：高清未就绪时显示纸张轮廓+加载态 ──
   //    不显示旧内容（无模糊/中间态），符合"始终高清"约束

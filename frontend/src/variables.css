@@ -55,10 +55,11 @@
   --shadow-xl: 0 16px 40px rgba(0, 0, 0, 0.12);
   --shadow-2xl: 0 25px 50px -12px rgba(0, 0, 0, 0.16);
 
-  --shadow-inset-sm: inset 0 -1px 0 rgba(0, 0, 0, 0.04), inset 0 1px 0 rgba(255, 255, 255, 0.6);
-  --shadow-inset-md: inset 0 -1px 0 rgba(0, 0, 0, 0.06), inset 0 1px 0 rgba(255, 255, 255, 0.8);
-  --highlight-top: inset 0 -1px 0 rgba(0, 0, 0, 0.03), inset 0 1px 0 rgba(255, 255, 255, 0.6);
-  --highlight-top-strong: inset 0 -1px 0 rgba(0, 0, 0, 0.05), inset 0 1px 0 rgba(255, 255, 255, 0.8);
+  --shadow-inset-sm: inset 0 -1px 0 rgba(0, 0, 0, 0.04);
+  --shadow-inset-md: inset 0 -1px 0 rgba(0, 0, 0, 0.06);
+  /* 亮色模式下去掉全局 inset 伪高光（白底上白线不可见，底部暗线过重） */
+  --highlight-top: 0 0 0 rgba(0, 0, 0, 0);
+  --highlight-top-strong: 0 0 0 rgba(0, 0, 0, 0);
   --glow-accent: 0 0 16px rgba(59, 108, 245, 0.06);
   --glow-accent-hover: 0 0 24px rgba(59, 108, 245, 0.12);
 

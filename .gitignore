@@ -422,3 +422,9 @@ overview.md
 .trae-html-share-packages/preview-optimization-plan.html.zip
 preview-optimization-plan.html
 预览渲染改造-后端渲染可行方案.md
+ui-comparison-demo.html
+.trae-html-share-packages/ui-comparison-demo.html.zip
+preview-img-verify.md
+backend/test_text.py
+backend/test_text_all.py
+backend/test_text_standalone.py

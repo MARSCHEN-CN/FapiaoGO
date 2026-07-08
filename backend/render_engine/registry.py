@@ -9,7 +9,9 @@ import logging
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Optional, Dict
+from typing import Dict, List, Optional
+
+from .types import TextSpan
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +32,7 @@ class Document:
     size: int = 0
     content_hash: str = ""        # sha256 of file bytes (content-addressable)
     content_indexed: bool = False # whether ContentIndex has been built
+    text_cache: Optional[Dict[int, List[TextSpan]]] = None  # lazy, page→TextSpan[]
     created_at: float = field(default_factory=time.time)
     last_access: float = field(default_factory=time.time)
     ref_count: int = 1            # how many consumers hold this doc — only close fitz at 0
@@ -142,6 +145,33 @@ class DocumentRegistry:
             doc = self._docs.get(doc_id)
             if doc is not None:
                 doc.last_access = time.time()
+
+    def stats(self) -> dict:
+        """Return aggregate statistics about the registry state."""
+        with self._lock:
+            total_docs = len(self._docs)
+            total_refs = sum(d.ref_count for d in self._docs.values())
+            total_pages = sum(d.page_count for d in self._docs.values())
+            cached_pages = sum(
+                len(d.text_cache) for d in self._docs.values()
+                if d.text_cache is not None
+            )
+            open_fitz = sum(1 for d in self._docs.values() if d.pdf is not None)
+        return {
+            "documents": total_docs,
+            "ref_count": total_refs,
+            "page_count": total_pages,
+            "text_cache_pages": cached_pages,
+            "open_handles": open_fitz,
+        }
+
+    def close_all(self):
+        """Force-close all documents (for shutdown / reset)."""
+        with self._lock:
+            for doc in list(self._docs.values()):
+                self._release_doc(doc)
+            self._docs.clear()
+            logger.info("close_all: all documents released")
 
     # ── internal ────────────────────────────────────────────────
 

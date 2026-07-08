@@ -115,9 +115,38 @@ def make_cache_headers(etag: str, immutable: bool = True,
     }
 
 
+# ── CACHE CORRECTNESS INVARIANT (immutable HTTP caching) ──────────
+#
+# The request URL MUST uniquely determine the rendered output bytes.
+# Any parameter that changes the output bytes (page, view_state,
+# highlight, crop, invert, ...) MUST be represented in the URL — either
+# directly (?page=1) or via an opaque hash (?vs=<hash> of view_state).
+#
+# WHY: image endpoints return `Cache-Control: immutable`. A browser that
+# sees the same URL serves the cached bytes forever and will NOT
+# revalidate. If the URL stays identical but RenderEngine produces
+# different bytes, the user sees stale content with no recovery path
+# (immutable skips the 304/If-None-Match negotiation entirely).
+#
+# IMPORTANT DISTINCTION — output identity ≠ cache-key composition:
+#   Internal invalidation tags (engine_version, cache_schema, encoder=v2)
+#   belong in the cache key but MUST NEVER appear in the URL — they are
+#   implementation details, not resource identity.
+#   e.g. the preview preset fixes dpi=150/jpeg/quality=85, so `?dpi=150`
+#   is unnecessary: /preview/ already implies those values by its
+#   semantic meaning. The URL already "contains" them.
+#
+# Design pattern for variable output (Highlight phase):
+#   vs = {rotation, highlights, crop, ...}  →  vs = hash(view_state)
+#   URL: /preview/{doc_id}?page=1&vs=<hash>
+#   cache key: doc_id | preset | page | vs
+#   Future variants (invert, annotations) fold into `vs` WITHOUT changing
+#   the URL API. See buildPreviewUrl(docId, page, vsHash='') on frontend.
+# ────────────────────────────────────────────────────────────────────
+
 def make_cache_key(doc_id: str, preset_name: str, page: int,
                    view_state_hash: str = "", hl_token: str = "") -> str:
-    """Composite cache key for lookups. Keeps highlight identity in key."""
+    """Composite cache key for lookups. Keeps highlight/view-state identity in key."""
     parts = [doc_id, preset_name, str(page)]
     if view_state_hash:
         parts.append(view_state_hash)

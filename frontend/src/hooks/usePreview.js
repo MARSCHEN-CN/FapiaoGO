@@ -26,6 +26,9 @@ export function usePreview({ files, settings, electronAPIRef }) {
   const [numPages, setNumPages] = useState(0)
   const [previewPage, setPreviewPage] = useState(1)
   const [previewCanvas, setPreviewCanvas] = useState(null)
+  const [previewUrl, setPreviewUrl] = useState(null)  // Render Engine <img> URL
+  // ✅ <img> 模式下图片的自然像素尺寸（naturalWidth/Height），用于 displayInfo 计算缩放/旋转容器
+  const [previewImgDims, setPreviewImgDims] = useState(null)
   // ✅ 全局 Canvas 渲染版本号：每次 switchPreviewFile 后递增，
   //    用于 PreviewCanvas 的 L1 缓存失效，确保内容更新后重绘
   const [previewRenderVersion, setPreviewRenderVersion] = useState(0)
@@ -43,7 +46,8 @@ export function usePreview({ files, settings, electronAPIRef }) {
 
   // ── Refs ──
   const previewCanvasRef = useRef(null)
-  const previewUrlRef = useRef(null)
+  const previewUrlRef = useRef(null)           // blob URL (revoke on cleanup)
+  const renderEngineUrlRef = useRef(null)      // Render Engine HTTP URL (no revoke needed)
   const previewVersionRef = useRef(0)
   const renderVersionRef = useRef(0)  // 专供 render effect 使用，与 handlePreview 隔离
   const previewContainerRef = useRef(null)
@@ -56,6 +60,9 @@ export function usePreview({ files, settings, electronAPIRef }) {
   const pendingBlobUrlsRef = useRef([])
   const lastFilesKeyRef = useRef('')
   const renderCancelledRef = useRef(false)
+  // ✅ <img> 尺寸探测：避免重复探测同一 URL（旋转/缩放不改变尺寸），并防止过期回调覆盖
+  const imgLoadTokenRef = useRef(0)
+  const previewImgUrlRef = useRef(null)
   // ✅ 保存 zoom menu 关闭动画的 timeout ID，用于清理
   const zoomMenuCloseTimeoutRef = useRef(null)
   // ✅ 保存 handlePreview 最新引用，避免 useEffect 闭包陷阱
@@ -239,8 +246,8 @@ export function usePreview({ files, settings, electronAPIRef }) {
     setZoomMode('manual')
     setZoomPercent(prev => {
       if (zoomModeRef.current === 'adaptive') {
-        const fitPct = Math.round(fitScaleRef.current * 100)
-        return ZOOM_STEPS.find(s => s > fitPct) || ZOOM_STEPS[ZOOM_STEPS.length - 1]
+        // 新语义：100% = fit（与 adaptive 一致），故 adaptive→manual 锚点固定为 100，而非 fitScale*100
+        return ZOOM_STEPS.find(s => s > 100) || ZOOM_STEPS[ZOOM_STEPS.length - 1]
       }
       return ZOOM_STEPS.find(s => s > prev) || ZOOM_STEPS[ZOOM_STEPS.length - 1]
     })
@@ -250,8 +257,8 @@ export function usePreview({ files, settings, electronAPIRef }) {
     setZoomMode('manual')
     setZoomPercent(prev => {
       if (zoomModeRef.current === 'adaptive') {
-        const fitPct = Math.round(fitScaleRef.current * 100)
-        return [...ZOOM_STEPS].reverse().find(s => s < fitPct) || ZOOM_STEPS[0]
+        // 同上：锚点为 100（fit），先取第一个小于 100 的步进（如 75%）
+        return [...ZOOM_STEPS].reverse().find(s => s < 100) || ZOOM_STEPS[0]
       }
       return [...ZOOM_STEPS].reverse().find(s => s < prev) || ZOOM_STEPS[0]
     })
@@ -281,11 +288,14 @@ export function usePreview({ files, settings, electronAPIRef }) {
     const isImageOrOfd =
       previewFile._fileFormat === 'image' || previewFile._fileFormat === 'ofd'
 
-    if (!isImageOrOfd && !previewFile._pdfData && !mergePair) {
-      setPreviewCanvas(null); return
+    // ✅ Render Engine 路径：有 HTTP URL 时允许进入渲染（不在此截断）
+    const hasRenderEngineUrl = USE_RENDER_ENGINE_PREVIEW &&
+      previewFile._previewImageUrl && previewFile._previewImageUrl.startsWith('http')
+    if (!isImageOrOfd && !previewFile._pdfData && !mergePair && !hasRenderEngineUrl) {
+      setPreviewCanvas(null); setPreviewImgDims(null); return
     }
-    if (isImageOrOfd && !previewFile._previewImageUrl) {
-      setPreviewCanvas(null); return
+    if (isImageOrOfd && !previewFile._previewImageUrl && !hasRenderEngineUrl) {
+      setPreviewCanvas(null); setPreviewImgDims(null); return
     }
 
     const { paperSize } = settings
@@ -309,6 +319,33 @@ export function usePreview({ files, settings, electronAPIRef }) {
     // ✅ 在 useEffect 同步部分预先计算布局参数，确保闭包捕获正确的 mergeMode
     const mergeModeGroupSize = isMergeMode(settings.mergeMode) ? (parseInt(settings.mergeMode?.replace('merge', '')) || 2) : 1
     const mergeLayoutStrategy = mergeModeGroupSize === 4 ? 'grid' : 'vertical'
+
+    // ✅ Render Engine 路径：跳过 Canvas 管道，直接设置 <img> URL
+    if (hasRenderEngineUrl) {
+      const url = previewFile._previewImageUrl
+      renderEngineUrlRef.current = url
+      setPreviewUrl(url)
+      setPreviewCanvas(null)
+      // 仅当 URL 变化时才探测自然尺寸（旋转/缩放不改变尺寸，避免重复探测与盒子错位）
+      if (previewImgUrlRef.current !== url) {
+        previewImgUrlRef.current = url
+        setPreviewImgDims(null)
+        const token = ++imgLoadTokenRef.current
+        const probe = new Image()
+        probe.onload = () => {
+          if (token !== imgLoadTokenRef.current) return  // 仅采用最新一次探测
+          setPreviewImgDims({ w: probe.naturalWidth, h: probe.naturalHeight })
+        }
+        probe.onerror = () => {
+          if (token !== imgLoadTokenRef.current) return
+          setPreviewImgDims(null)
+        }
+        probe.src = url
+      }
+      return
+    }
+    // 非 <img> 路径：清理可能残留的 img 尺寸
+    setPreviewImgDims(null)
 
     const renderToCanvas = async (signal) => {
       try {
@@ -437,8 +474,15 @@ export function usePreview({ files, settings, electronAPIRef }) {
   // ✅ 直接使用 previewCanvas 显示，无需转换为 img
   // 移除了 Canvas → PNG → IMG 的转换步骤，减少内存开销和渲染延迟
 
+  // ✅ previewRotation 必须在 displayInfo memo 之前声明（useMemo 首次渲染立即执行，不能闭包捕获尚未初始化的 const）
+  const previewRotation = fileRotations[previewFile?.key] || 0
+
   const displayInfo = useMemo(() => {
-    if (!previewCanvas || !containerSize.width || !containerSize.height) return null
+    // ✅ 尺寸来源：canvas 路径用 previewCanvas；<img> 路径用 previewImgDims（自然像素）
+    const isImg = !previewCanvas && !!previewImgDims
+    const srcW = previewCanvas ? previewCanvas.width : (previewImgDims ? previewImgDims.w : 0)
+    const srcH = previewCanvas ? previewCanvas.height : (previewImgDims ? previewImgDims.h : 0)
+    if (!srcW || !srcH || !containerSize.width || !containerSize.height) return null
 
     // ── 自适应内边距 ──
     // 优先使用宽松 padding（正常窗口布局），如果放不下则自动缩减
@@ -453,18 +497,29 @@ export function usePreview({ files, settings, electronAPIRef }) {
     }
     if (availW <= 0 || availH <= 0) return null
 
-    const canvasW = previewCanvas.width
-    const canvasH = previewCanvas.height
+    // 缩放参考系（职责分离，避免状态迁移时参考系混淆）
+    //   fitScale     —— 永远负责「适配窗口」（窗口变化只更新它）
+    //   zoomPercent  —— 永远负责「用户放大倍率」（100 = fit）
+    //   displayScale —— = fitScale × zoomPercent/100，最终显示倍率（不要直接写裸 scale）
+    const fitScale = Math.min(availW / srcW, availH / srcH)
+    const displayScale = zoomMode === 'adaptive' ? fitScale : fitScale * (zoomPercent / 100)
 
-    const fitScale = Math.min(availW / canvasW, availH / canvasH)
-    const scale = zoomMode === 'adaptive' ? fitScale : zoomPercent / 100
+    // ✅ <img> 模式：旋转走 CSS transform，容器尺寸需按旋转交换宽高（90/270）
+    //    canvas 路径旋转已 bake 进位图，无需交换
+    const angle = isImg ? (previewRotation % 360) : 0
+    const swapped = (angle % 180 !== 0)
+    const displayWidth = (swapped ? srcH : srcW) * displayScale
+    const displayHeight = (swapped ? srcW : srcH) * displayScale
     return {
-      displayWidth: Math.round(canvasW * scale),
-      displayHeight: Math.round(canvasH * scale),
-      scale,
+      displayWidth: Math.round(displayWidth),
+      displayHeight: Math.round(displayHeight),
+      displayScale,
       fitScale,
+      isImg,
+      angle,
+      swapped,
     }
-  }, [previewCanvas, containerSize, zoomMode, zoomPercent])
+  }, [previewCanvas, previewImgDims, previewRotation, containerSize, zoomMode, zoomPercent])
 
   useEffect(() => { if (displayInfo) fitScaleRef.current = displayInfo.fitScale }, [displayInfo])
 
@@ -1074,9 +1129,6 @@ export function usePreview({ files, settings, electronAPIRef }) {
     }
   }, [cleanupAllBlobUrls])
 
-  // 当前预览文件的旋转值（供外部使用）
-  const previewRotation = fileRotations[previewFile?.key] || 0
-
   return {
     /**
      * 预览状态
@@ -1088,8 +1140,10 @@ export function usePreview({ files, settings, electronAPIRef }) {
       numPages,
       previewPage,
       previewCanvas,
+      previewUrl,
       previewRenderVersion,
       containerSize,
+      previewImgDims,
       previewRotation,
       fileRotations,
       showLeftArrow,
