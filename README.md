@@ -144,7 +144,7 @@ JS Domain (untrusted)          OS Domain (trusted)
 ```bash
 # 克隆仓库
 git clone <repo-url>
-cd print703
+cd FapiaoGO
 
 # 安装前端依赖
 cd frontend
