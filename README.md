@@ -12,7 +12,7 @@ FapiaoGO 是一个基于 Electron 的桌面应用，支持 PDF/OFD/图片格式�
 
 | 维度     | 技术栈                               |
 | ------ | --------------------------------- |
-| 桌面框架   | Electron43.0.0 + Node.js                |
+| 桌面框架   | Electron43.1.0 + Node.js                |
 | 前端     | React 19.2 + Vite8.1 + CSS（无 UI 框架）  |
 | 后端 API | Flask (Python 3.11+)              |
 | OCR 引擎 | RapidOCR + ONNX Runtime（PP-OCRv6） |
