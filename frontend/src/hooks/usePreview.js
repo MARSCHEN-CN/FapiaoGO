@@ -5,6 +5,7 @@ import {
 } from '../utils'
 import { detectDocumentOrientation } from '../utils/detectOrientation'
 import { getForcedLandscape } from '../utils/mergeMode'
+import { buildPreviewCacheKey } from '../utils/previewCacheKey'
 
 // ✅ 懒加载 PDF 渲染模块，避免首屏加载 1.4 MB 的 pdfjs-dist + react-pdf
 let _renderers = null
@@ -99,6 +100,10 @@ export function usePreview({ files, settings, electronAPIRef }) {
   // ✅ 切换防抖：快速连击时只渲染最后一次，跳过中间帧
   const switchTimeoutRef = useRef(null)
   const lastSwitchTimeRef = useRef(0)
+  // ✅ settings 的同步引用：doLoadPreview 的 useCallback 闭包未把 paperSize/margins 列入 deps，
+  //    直接用闭包 settings 会拿到陈旧值，导致读写缓存 key 不一致。统一走 settingsRef.current 取最新布局。
+  const settingsRef = useRef(settings)
+  settingsRef.current = settings
   // ✅ loadFilePreview 数据缓存：避免每次文件切换都重复 b64toBlob / IPC 读文件
   //    图片缓存 Blob 对象，PDF 缓存 Uint8Array
   //    LRU 自清理（max 50 条 + 200MB 内存限制），文件删除后主动清理
@@ -413,7 +418,19 @@ export function usePreview({ files, settings, electronAPIRef }) {
         if (canvas) {
           // ✅ 渲染完成 → 缓存快照到 fullCache，后续切换秒开
           const rotation = (fileRotations[previewFile.key] || 0)
-          const cacheKey = `${previewFile.key}_r${rotation}`
+          const cacheKey = buildPreviewCacheKey(
+            { fileKey: previewFile.key, rotation },
+            {
+              paperSize: settings.paperSize,
+              isLandscape,
+              mergeMode: settings.mergeMode,
+              customPaper: settings.customPaper,
+              margins: {
+                left: settings.marginLeft, right: settings.marginRight,
+                top: settings.marginTop, bottom: settings.marginBottom,
+              },
+            }
+          )
           const snapshot = document.createElement('canvas')
           snapshot.width = canvas.width
           snapshot.height = canvas.height
@@ -817,21 +834,40 @@ export function usePreview({ files, settings, electronAPIRef }) {
     }
 
     // ── 单文件预览 ──
-    // ✅ L2 缓存命中：fullCache 已有预渲染画布，直接瞬时显示
-    const rotation = (fileRotations[fileObj.key] || 0)
-    const cacheKey = `${fileObj.key}_r${rotation}`
+    // 先加载文件数据（含方向检测所需的页面尺寸），再用"当前"布局参数生成缓存 key。
+    // key 必须包含所有影响 Canvas 的布局参数，且读写两侧用同一份 settings（settingsRef.current），
+    // 否则命中陈旧缓存 + skipRenderRef 跳过纠正渲染 → 显示错误预览（正确性 Bug）。
+    const loadedFile = await loadFilePreview(fileObj)
+    if (version !== previewVersionRef.current) return
+
+    const rotation = (fileRotations[loadedFile.key] || 0)
+    // 与 render effect（L306-309）保持一致的 isLandscape 计算，确保读写 key 同源
+    const contentOrient = detectDocumentOrientation(loadedFile)
+    const paperDims = PAPER_SIZE_MAP[settingsRef.current.paperSize || 'A4']
+    const paperOrient = paperDims && paperDims.widthMM > paperDims.heightMM ? 'landscape' : 'portrait'
+    const isLandscape = contentOrient !== paperOrient
+    const cacheKey = buildPreviewCacheKey(
+      { fileKey: loadedFile.key, rotation },
+      {
+        paperSize: settingsRef.current.paperSize,
+        isLandscape,
+        mergeMode: settingsRef.current.mergeMode,
+        customPaper: settingsRef.current.customPaper,
+        margins: {
+          left: settingsRef.current.marginLeft, right: settingsRef.current.marginRight,
+          top: settingsRef.current.marginTop, bottom: settingsRef.current.marginBottom,
+        },
+      }
+    )
     const cachedCanvas = fullCacheRef.current.get(cacheKey)
     if (cachedCanvas) {
-      // 仍需加载文件数据以使 render effect 通过守卫条件
-      const loadedFile = await loadFilePreview(fileObj)
-      if (version !== previewVersionRef.current) return
+      // 直接设置缓存画布，跳过整个异步渲染管线
       skipRenderRef.current = true
       previewFileRef.current = loadedFile
       setMergePair(null)
       setPreviewFile(loadedFile)
       setPreviewPage(1)
       setNumPages(loadedFile._fileFormat === 'pdf' ? 0 : 1)
-      // 直接设置缓存画布，跳过整个异步渲染管线
       setPreviewCanvas(cachedCanvas)
       if (loadedFile._previewImageUrl) {
         previewUrlRef.current = loadedFile._previewImageUrl
@@ -848,8 +884,6 @@ export function usePreview({ files, settings, electronAPIRef }) {
     }
 
     // ── 正常预览加载（全缓存未命中） ──
-    const loadedFile = await loadFilePreview(fileObj)
-    // ✅ 检查版本号，确保只处理最新请求
     if (version === previewVersionRef.current) {
       previewFileRef.current = loadedFile
       setMergePair(null)
