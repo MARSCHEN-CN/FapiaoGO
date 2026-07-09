@@ -66,8 +66,14 @@ def open_document():
 
 @render_bp.route("/preview/<doc_id>", methods=["GET"])
 def preview(doc_id: str):
-    """Render page 1 with the 'preview' preset."""
-    return _render_and_respond(doc_id, "preview")
+    """Render a specific page with the 'preview' preset.
+
+    Honors the `?page=` query param so multi-page PDFs can preview pages
+    other than page 1. The page is part of the cache key (cache.py) and the
+    URL (buildPreviewUrl), so immutable browser caching stays correct.
+    """
+    page = _int_param("page", 1)
+    return _render_and_respond(doc_id, "preview", page)
 
 
 # ── GET /thumbnail/{doc_id} ────────────────────────────────────

@@ -627,7 +627,8 @@ export function usePreview({ files, settings, electronAPIRef }) {
       if (fmt === 'image' || fmt === 'ofd') {
         // ✅ Render Engine Preview：优先走后端渲染 URL
         if (USE_RENDER_ENGINE_PREVIEW && fObj.docId) {
-          _previewImageUrl = buildPreviewUrl(fObj.docId, 1)
+          // 多页 PDF 拆页后每个分页项携带真实页码 pageNum；非拆页文件为 null → 回退 1
+          _previewImageUrl = buildPreviewUrl(fObj.docId, fObj.pageNum || 1)
           return { ...fObj, _previewImageUrl, _fileFormat: fmt }
         }
 
@@ -696,7 +697,8 @@ export function usePreview({ files, settings, electronAPIRef }) {
       if (fmt === 'pdf') {
         // ✅ Render Engine Preview：优先走后端渲染 URL，绕过 pdfjs + Canvas
         if (USE_RENDER_ENGINE_PREVIEW && fObj.docId) {
-          _previewImageUrl = buildPreviewUrl(fObj.docId, 1)
+          // 多页 PDF 拆页后每个分页项携带真实页码 pageNum；非拆页文件为 null → 回退 1
+          _previewImageUrl = buildPreviewUrl(fObj.docId, fObj.pageNum || 1)
           return { ...fObj, _previewImageUrl, _fileFormat: 'pdf' }
         }
 

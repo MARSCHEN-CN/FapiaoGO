@@ -394,7 +394,13 @@ class RenderEngine:
             pix = _apply_grayscale(pix)
 
         # --- margins ---
-        pix = _apply_margins(pix, preset, vs, page.rect.width, page.rect.height, zoom)
+        # 页面方向依据 page.rect（MediaBox），但需考虑 /Rotate：若 rotation 为 90/270，
+        # 则 visual 方向与 rect 方向相反（get_pixmap 自动应用了 /Rotate）。
+        pw, ph = page.rect.width, page.rect.height
+        if getattr(page, "rotation", 0) % 180 != 0:
+            pw, ph = ph, pw
+        orient = "landscape" if pw > ph else "portrait"
+        pix = _apply_margins(pix, preset, vs, orient)
 
         # --- encode ---
         return _encode_pixmap(pix, fmt, preset.quality, preset.chroma)
@@ -428,11 +434,8 @@ class RenderEngine:
             pix = _apply_grayscale(pix)
 
         # --- margins ---
-        margin_px = int(preset.margin_mm * preset.dpi / MM_PER_INCH)
-        pix = _apply_margins(pix, preset, vs,
-                             pix.width / (preset.dpi / PDF_DPI),
-                             pix.height / (preset.dpi / PDF_DPI),
-                             preset.dpi / PDF_DPI)
+        orient = "landscape" if pix.width > pix.height else "portrait"
+        pix = _apply_margins(pix, preset, vs, orient)
 
         # --- encode ---
         return _encode_pixmap(pix, fmt, preset.quality, preset.chroma)
@@ -456,8 +459,21 @@ def _apply_grayscale(pix) -> "fitz.Pixmap":
 
 
 def _apply_margins(pix, preset: RenderPreset, vs: dict,
-                   page_w: float, page_h: float, zoom: float) -> "fitz.Pixmap":
-    """Add white margins around the rendered content."""
+                   orientation: str) -> "fitz.Pixmap":
+    """Add white margins around the rendered content.
+
+    Args:
+        pix:          rendered content pixmap (any page orientation)
+        preset:       render preset (dpi, margin_mm, …)
+        vs:           view state dict (may override margin_mm)
+        orientation:  'portrait' or 'landscape' — determines whether the
+                      margin canvas is A4 portrait (210×297mm) or A4 landscape
+                      (297×210mm). Must be set by caller based on source page
+                      orientation (PDF: page.rect, image: pix dimensions),
+                      NOT detected by this function from pix, so that the
+                      paper orientation decision stays at the caller level
+                      and can later integrate with a unified PaperSpec.
+    """
     margin_mm = vs.get("margin_mm", preset.margin_mm)
     if margin_mm <= 0:
         return pix
@@ -465,6 +481,8 @@ def _apply_margins(pix, preset: RenderPreset, vs: dict,
     margin_px = int(margin_mm * preset.dpi / MM_PER_INCH)
     paper_w = int(A4_W_MM * preset.dpi / MM_PER_INCH)
     paper_h = int(A4_H_MM * preset.dpi / MM_PER_INCH)
+    if orientation == "landscape":
+        paper_w, paper_h = paper_h, paper_w
 
     # Create white canvas (PyMuPDF >= 1.24 requires IRect, not (cs, w, h))
     canvas = fitz.Pixmap(fitz.csRGB if pix.n >= 3 else fitz.csGRAY,
