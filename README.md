@@ -1,4 +1,5 @@
-<img width="1672" height="941" alt="ChatGPT Image 2026年7月8日 22_58_19" src="https://github.com/user-attachments/assets/ce3d3d98-7981-4b6a-9d6c-22a62c67461c" />
+<img width="1672" height="941" alt="image" src="https://github.com/user-attachments/assets/2d58957b-0af3-477c-a1fd-c341fde02a26" />
+
 
 
 # FapiaoGO
