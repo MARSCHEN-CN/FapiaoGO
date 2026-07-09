@@ -52,6 +52,7 @@
   font-size: clamp(18px, 1vw + 0.3rem, 26px);
   font-weight: 600;
   color: var(--text);
+  font-variant-numeric: tabular-nums;
   letter-spacing: -0.02em;
 }
 
@@ -156,7 +157,8 @@
   font-size: var(--fs-xs);
   font-weight: 600;
   opacity: 0.7;
-  font-family: 'JetBrains Mono', 'SF Mono', 'Consolas', monospace;
+  font-family: 'MiSans', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  font-variant-numeric: tabular-nums;
 }
 
 /* ---- 进度?---- */
@@ -399,12 +401,13 @@
   justify-content: center;
   background: #ef4444;
   color: #fff;
-  border-radius: 10px;
+  border-radius: var(--r-md);
   font-size: 10px;
-  font-weight: 700;
-  font-family: 'JetBrains Mono', 'SF Mono', 'Consolas', monospace;
+  font-weight: 600;
+  font-family: 'MiSans', 'PingFang SC', 'Microsoft YaHei', sans-serif;
   border: 2px solid var(--white);
   line-height: 1;
+  font-variant-numeric: tabular-nums;
 }
 
 /* ================================================================

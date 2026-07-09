@@ -54,7 +54,7 @@ class DocumentRegistry:
 
     def __init__(self):
         self._docs: Dict[str, Document] = {}
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
 
     # ── public API ──────────────────────────────────────────────
 

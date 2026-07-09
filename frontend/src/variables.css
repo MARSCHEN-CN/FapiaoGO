@@ -19,12 +19,13 @@
   --canvas-float-bg: rgba(255, 255, 255, 0.96);
   --canvas-float-border: rgba(0, 0, 0, 0.08);
 
-  --accent: #3b6cf5;
-  --brand: #476df9;
-  --accent-hover: #2d5be0;
-  --accent-dark: #254fd6;
-  --accent-soft: rgba(59, 108, 245, 0.12);
-  --accent-medium: rgba(59, 108, 245, 0.18);
+  --accent: #4f7cff;
+  --brand: #4f7cff;
+  --accent-hover: #3d6af5;
+  --accent-dark: #3a58d6;
+  --accent-soft: rgba(79, 124, 255, 0.10);
+  --accent-medium: rgba(79, 124, 255, 0.16);
+  --accent-gradient: linear-gradient(135deg, #4f7cff 0%, #6366f1 100%);
 
   --text: oklch(0.18 0.015 240);
   --text-2: oklch(0.38 0.012 240);
@@ -42,8 +43,8 @@
 
   --success: #16a34a;
   --success-bg: rgba(22, 163, 74, 0.10);
-  --info: #3b6cf5;
-  --info-bg: rgba(59, 108, 245, 0.08);
+  --info: #4f7cff;
+  --info-bg: rgba(79, 124, 255, 0.08);
   --warning: #d97706;
   --warning-bg: rgba(217, 119, 6, 0.10);
   --danger: #dc2626;
@@ -60,14 +61,14 @@
   /* 亮色模式下去掉全局 inset 伪高光（白底上白线不可见，底部暗线过重） */
   --highlight-top: 0 0 0 rgba(0, 0, 0, 0);
   --highlight-top-strong: 0 0 0 rgba(0, 0, 0, 0);
-  --glow-accent: 0 0 16px rgba(59, 108, 245, 0.06);
-  --glow-accent-hover: 0 0 24px rgba(59, 108, 245, 0.12);
+  --glow-accent: 0 0 16px rgba(79, 124, 255, 0.06);
+  --glow-accent-hover: 0 0 24px rgba(79, 124, 255, 0.12);
 
-  --r-sm: 6px;
-  --r-md: 8px;
-  --r-lg: 10px;
-  --r-xl: 12px;
-  --r-2xl: 16px;
+  --r-sm: 7px;
+  --r-md: 9px;
+  --r-lg: 12px;
+  --r-xl: 16px;
+  --r-2xl: 20px;
 
   --ease: cubic-bezier(0.4, 0, 0.2, 1);
   --ease-spring: cubic-bezier(0.34, 1.0, 0.64, 1);
@@ -138,6 +139,7 @@
   --accent-dark: #5670e0;
   --accent-soft: rgba(108, 138, 255, 0.10);
   --accent-medium: rgba(108, 138, 255, 0.16);
+  --accent-gradient: linear-gradient(135deg, #6c8aff 0%, #8b7cf6 100%);
 
   /* ── 文字层级（WCAG AA 可读性优先） ── */
   --text: #e3e5ed;                /* 正文 — 约 15:1 对比度    */

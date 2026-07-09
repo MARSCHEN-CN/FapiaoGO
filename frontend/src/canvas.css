@@ -11,8 +11,8 @@
   flex-direction: column;
   overflow: hidden;
   background-image: 
-    radial-gradient(circle at 0 0, rgba(59, 108, 245, 0.03) 0%, transparent 50%),
-    radial-gradient(circle at 100% 100%, rgba(59, 108, 245, 0.02) 0%, transparent 50%);
+    radial-gradient(circle at 0 0, rgba(79, 124, 255, 0.03) 0%, transparent 50%),
+    radial-gradient(circle at 100% 100%, rgba(99, 102, 241, 0.02) 0%, transparent 50%);
 }
 
 /* 滚动层：专门负责内容滚动，控件不在这里面 */
@@ -41,69 +41,76 @@
   position: absolute;
   top: 50%;
   transform: translateY(-50%);
-  width: 44px;
+  width: 36px;
   height: 44px;
-  border: none;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.92);
+  border: 0.5px solid var(--canvas-float-border);
+  border-radius: var(--r-sm);
+  background: var(--canvas-float-bg);
   color: var(--text-2);
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 10;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08), 0 0 0 0.5px rgba(0,0,0,0.04);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
   transition: all 0.2s var(--ease);
-  opacity: 0;
-  animation: arrowFadeIn 0.2s var(--ease) forwards;
+  opacity: 0.35;
 }
 
 .canvas-arrow:hover {
   background: var(--white);
   color: var(--accent);
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
-  transform: translateY(-50%) scale(1.08);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.1), 0 0 0 0.5px rgba(0,0,0,0.06);
+  transform: translateY(-50%) scale(1.05);
+  opacity: 1;
 }
 
 [data-theme="dark"] .canvas-arrow {
   background: var(--canvas-float-bg);
   color: var(--text-2);
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.4), var(--highlight-top-strong);
-  border: 1px solid var(--canvas-float-border);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  border: 0.5px solid var(--canvas-float-border);
 }
 
 [data-theme="dark"] .canvas-arrow:hover {
   background: rgba(38, 42, 56, 0.96);
   color: var(--accent);
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5), var(--highlight-top-strong);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
 }
 
 .canvas-arrow:active {
-  transform: translateY(-50%) scale(0.95);
+  transform: translateY(-50%) scale(0.97);
 }
 
 .canvas-arrow:disabled {
-  opacity: 0.3;
+  opacity: 0.15;
   cursor: not-allowed;
   pointer-events: none;
 }
 
 .canvas-arrow svg {
-  width: 22px;
-  height: 22px;
+  width: 20px;
+  height: 20px;
 }
 
 .canvas-arrow-left {
-  left: 20px;
+  left: 16px;
 }
 
 .canvas-arrow-right {
-  right: 20px;
+  right: 16px;
+}
+
+/* 鼠标移入预览区时箭头显示 */
+.canvas:hover .canvas-arrow {
+  opacity: 0.7;
 }
 
 @keyframes arrowFadeIn {
-  from { opacity: 0; transform: translateY(-50%) scale(0.85); }
-  to   { opacity: 1; transform: translateY(-50%) scale(1); }
+  from { opacity: 0; transform: translateY(-50%) scale(0.9); }
+  to   { opacity: 0.35; transform: translateY(-50%) scale(1); }
 }
 
 /* Loading Spinner */
@@ -173,17 +180,16 @@
 
 .paper {
   background: var(--paper-bg);
-  @apply rounded-lg;
+  border-radius: var(--r-md);
   box-shadow:
-    0 1px 2px rgba(0, 0, 0, 0.08),
-    0 4px 12px rgba(0, 0, 0, 0.06),
-    0 12px 32px rgba(0, 0, 0, 0.08),
-    0 0 0 1px rgba(0, 0, 0, 0.03);
+    0 1px 2px rgba(0, 0, 0, 0.04),
+    0 4px 10px rgba(0, 0, 0, 0.05),
+    0 0 0 0.5px rgba(0, 0, 0, 0.06);
   overflow: hidden;
   flex-shrink: 0;
   position: relative;
   z-index: 1;
-  animation: paperIn 0.5s var(--ease) forwards;
+  animation: paperIn 0.35s var(--ease) forwards;
   transform-origin: top center;
   transition: box-shadow var(--t-normal) var(--ease);
   margin: auto;
@@ -191,10 +197,9 @@
 
 .paper:hover {
   box-shadow:
-    0 1px 2px rgba(0, 0, 0, 0.10),
-    0 6px 16px rgba(0, 0, 0, 0.08),
-    0 16px 40px rgba(0, 0, 0, 0.10),
-    0 0 0 1px rgba(0, 0, 0, 0.05);
+    0 1px 2px rgba(0, 0, 0, 0.06),
+    0 6px 14px rgba(0, 0, 0, 0.07),
+    0 0 0 0.5px rgba(0, 0, 0, 0.08);
 }
 
 .paper img {
@@ -228,12 +233,12 @@
   gap: 2px;
   padding: 4px 8px;
   background: var(--canvas-float-bg);
-  @apply rounded-lg;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+  border-radius: var(--r-sm);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08), 0 0 0 0.5px rgba(0,0,0,0.04);
   z-index: 10;
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
-  border: 1px solid var(--canvas-float-border);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 0.5px solid var(--canvas-float-border);
   /* 入场：初始隐藏，300ms 后淡入上移 */
   opacity: 0;
   transform: translateX(-50%) translateY(-4px);
@@ -241,7 +246,8 @@
 }
 
 [data-theme="dark"] .canvas-zoom-control {
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4), var(--highlight-top-strong);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  border: 0.5px solid var(--canvas-float-border);
 }
 
 /* ======================== Status Indicator ======================== */
@@ -256,19 +262,20 @@
   gap: 10px;
   padding: 6px 12px;
   background: var(--canvas-float-bg);
-  @apply rounded-lg;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+  border-radius: var(--r-sm);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08), 0 0 0 0.5px rgba(0,0,0,0.04);
   font-size: 12px;
   color: var(--text-2, #4a5568);
   z-index: 10;
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
-  border: 1px solid var(--canvas-float-border);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 0.5px solid var(--canvas-float-border);
 }
 
 [data-theme="dark"] .status-indicator {
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4), var(--highlight-top);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
   color: var(--text-2);
+  border: 0.5px solid var(--canvas-float-border);
 }
 
 .status-indicator-item {
@@ -317,18 +324,18 @@
 [data-theme="dark"] .paper {
   background: var(--paper-bg);
   box-shadow:
-    0 0 0 1px rgba(0, 0, 0, 0.12),
-    0 2px 4px rgba(0, 0, 0, 0.20),
-    0 12px 40px rgba(0, 0, 0, 0.35),
-    0 0 60px rgba(108, 138, 255, 0.03);
+    0 0 0 0.5px rgba(0, 0, 0, 0.2),
+    0 2px 6px rgba(0, 0, 0, 0.20),
+    0 8px 28px rgba(0, 0, 0, 0.25),
+    0 0 40px rgba(108, 138, 255, 0.02);
 }
 
 [data-theme="dark"] .paper:hover {
   box-shadow:
-    0 0 0 1px rgba(0, 0, 0, 0.15),
-    0 4px 8px rgba(0, 0, 0, 0.25),
-    0 16px 48px rgba(0, 0, 0, 0.40),
-    0 0 80px rgba(108, 138, 255, 0.05);
+    0 0 0 0.5px rgba(0, 0, 0, 0.25),
+    0 4px 10px rgba(0, 0, 0, 0.25),
+    0 12px 36px rgba(0, 0, 0, 0.30),
+    0 0 50px rgba(108, 138, 255, 0.04);
 }
 
 [data-theme="dark"] .canvas-empty .canvas-empty-title {

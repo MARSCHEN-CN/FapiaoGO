@@ -43,12 +43,12 @@
 .sb-brand-logo {
   width: 38px;
   height: 38px;
-  background: linear-gradient(135deg, var(--accent) 0%, #2563eb 100%);
-  border-radius: 10px;
+  background: var(--accent-gradient);
+  border-radius: var(--r-md);
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 3px 10px rgba(59, 108, 245, 0.3);
+  box-shadow: 0 2px 8px rgba(79, 124, 255, 0.3);
   flex-shrink: 0;
 }
 
@@ -64,9 +64,9 @@
 
 .sb-brand-text {
   font-size: var(--fs-lg);
-  font-weight: 700;
+  font-weight: 600;
   color: var(--text);
-  letter-spacing: -0.03em;
+  letter-spacing: -0.01em;
   line-height: 1.2;
 }
 
@@ -79,13 +79,13 @@
 
 .sb-brand-badge {
   font-size: 10px;
-  font-weight: 700;
+  font-weight: 600;
   color: #fff;
-  background: linear-gradient(135deg, var(--accent) 0%, var(--purple) 100%);
+  background: var(--accent-gradient);
   padding: 3px 9px;
-  border-radius: 6px;
+  border-radius: var(--r-sm);
   letter-spacing: 0.08em;
-  box-shadow: 0 2px 6px rgba(59, 108, 245, 0.25);
+  box-shadow: 0 2px 6px rgba(79, 124, 255, 0.25);
 }
 
 /* -- Sidebar action buttons -- */
@@ -126,14 +126,14 @@
 
 .sb-btn-primary {
   flex: 1;
-  background: var(--accent);
+  background: var(--accent-gradient);
   color: #fff;
-  box-shadow: 0 2px 10px rgba(59, 108, 245, 0.25);
+  box-shadow: 0 2px 8px rgba(79, 124, 255, 0.25);
 }
 
 .sb-btn-primary:hover {
   background: var(--accent-hover);
-  box-shadow: 0 4px 16px rgba(59, 108, 245, 0.35);
+  box-shadow: 0 4px 14px rgba(79, 124, 255, 0.35);
   transform: translateY(-1px);
 }
 
@@ -521,7 +521,7 @@
   border-radius: var(--r-lg);
   cursor: pointer;
   transition: all var(--t-fast) var(--ease);
-  border: 1.5px solid transparent;
+  border: 1px solid transparent;
   position: relative;
   box-shadow: var(--shadow-sm);
   /* 固定行高配合 react-window 虚拟滚动，防止 layout shift */
@@ -530,9 +530,8 @@
 }
 
 .file-card:hover {
-  background: var(--surface);
-  transform: translateY(-2px);
-  box-shadow: var(--shadow-md), var(--highlight-top);
+  background: var(--surface-hover);
+  box-shadow: var(--shadow-sm);
 }
 
 .file-card:hover .file-card-close,
@@ -556,7 +555,7 @@
 }
 
 .file-card-rotate svg { width: 14px; height: 14px; }
-.file-card-rotate:hover { background: rgba(59, 108, 245, 0.15); color: var(--primary); }
+.file-card-rotate:hover { background: rgba(79, 124, 255, 0.12); color: var(--accent); }
 
 .file-card-close {
   position: absolute;
@@ -577,18 +576,18 @@
 .file-card-close:hover { background: rgba(229, 62, 62, 0.15); color: var(--danger); }
 
 .file-card.active {
-  background: var(--accent-soft);
-  border-color: rgba(59, 108, 245, 0.18);
-  box-shadow: 0 1px 4px rgba(59, 108, 245, 0.08), var(--highlight-top);
+  background: var(--white);
+  border-color: rgba(79, 124, 255, 0.25);
+  box-shadow: 0 1px 3px rgba(79, 124, 255, 0.08), 0 0 0 3px rgba(79, 124, 255, 0.06);
   overflow: hidden;
 }
 
 .file-card.active::before {
   content: '';
   position: absolute;
-  left: 0; top: 0; bottom: 0;
+  left: 0; top: 10px; bottom: 10px;
   width: 3px;
-  background: var(--accent);
+  background: linear-gradient(180deg, var(--accent), var(--purple));
   border-radius: 0 3px 3px 0;
 }
 
@@ -603,17 +602,17 @@
 
 .fc-type {
   font-size: 10px;
-  font-weight: 700;
+  font-weight: 600;
   padding: 2px 7px;
-  border-radius: 5px;
+  border-radius: var(--r-sm);
   white-space: nowrap;
   letter-spacing: 0.02em;
   flex-shrink: 0;
 }
 
-.fc-type.zp { background: var(--red-soft); color: var(--red); }
+.fc-type.zp { background: var(--orange-soft); color: var(--orange); }
 .fc-type.pp { background: var(--accent-soft); color: var(--accent); }
-.fc-type.elec { background: var(--green-soft); color: var(--green); }
+.fc-type.elec { background: var(--bg); color: var(--text-3); }
 
 .fc-name {
   font-size: var(--fs-base);
@@ -649,13 +648,15 @@
   font-size: 10.5px;
   color: var(--text-3);
   letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
 }
 
 .fc-amount {
   font-family: 'MiSans', 'NotoSansSymbols', 'NotoSansSymbols2', 'PingFang SC', 'Microsoft YaHei', -apple-system, BlinkMacSystemFont, sans-serif;
   font-size: var(--fs-base);
-  font-weight: 500;
+  font-weight: 600;
   color: var(--text);
+  font-variant-numeric: tabular-nums;
 }
 
 .fc-failed { color: #ef4444 !important; font-size: 11px; opacity: 0.85; }

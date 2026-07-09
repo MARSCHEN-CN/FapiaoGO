@@ -5,7 +5,7 @@ import {
   getElectronAPI, getFilePath, getFileFormat, getExtension, getExtensionWithDot,
   getMimeType, concurrentBatch, applySort, buildSearchText,
 } from '../utils'
-import { buildFileObj, processPdfFile } from '../utils/fileHelpers'
+import { buildFileObj, generateFileKey, processPdfFile, stripIdentity } from '../utils/fileHelpers'
 import { db } from '../db'
 
 export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sortOrderRef }) {
@@ -415,60 +415,273 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
 
     // ✅ 立即显示导入弹窗
     setImporting(true)
+    const ipc = electronAPIRef.current?.ipcRenderer
+    const autoOrient = settingsRef.current.autoOrient ?? false
 
-    try {
-      const newFilesToAdd = []
-      const newFilesToParse = []
-      const ipc = electronAPIRef.current?.ipcRenderer
+    // ── Step 1: 为每个文件生成占位项，立即显示 ──────────────
+    const placeholders = []
+    for (const f of files) {
+      let fileData = f.file
 
-      for (const f of files) {
-        let fileData = f.file
-
-        // 如果没有 File 对象，通过 IPC 读取
-        if (!fileData && f.path && ipc) {
-          const result = await ipc.invoke('read-file', f.path)
-          if (result.success) {
-            const ext = getExtension(f.name)
-            const mimeType = getMimeType(ext)
-
-            const blob = new Blob([new Uint8Array(result.data)], { type: mimeType })
-            fileData = new File([blob], f.name, { type: mimeType })
-          }
-        }
-
-        if (f.name.toLowerCase().endsWith('.pdf')) {
-          const { toAdd, toParse } = await processPdfFile(
-            { file: fileData, name: f.name },
-            () => f.path
-          )
-          newFilesToAdd.push(...toAdd)
-          newFilesToParse.push(...toParse)
-        } else {
-          const fileObj = buildFileObj(fileData, f.name, f.path)
-          newFilesToAdd.push(fileObj)
-          newFilesToParse.push(fileObj)
+      if (!fileData && f.path && ipc) {
+        const result = await ipc.invoke('read-file', f.path)
+        if (result.success) {
+          const ext = getExtension(f.name)
+          const mimeType = getMimeType(ext)
+          const blob = new Blob([new Uint8Array(result.data)], { type: mimeType })
+          fileData = new File([blob], f.name, { type: mimeType })
         }
       }
 
-      if (newFilesToAdd.length > 0) {
-        setFiles((prev) => {
-          const existingKeys = new Set(prev.map((f) => {
-            if (f.printPath) return f.printPath
-            if (f.path) return f.path
-            return `${f.name}_${f.size}_${f.lastModified}`
-          }))
-          return [...prev, ...newFilesToAdd.filter((f) => {
-            const key = f.printPath || f.path || `${f.name}_${(f.file?.size || 0)}_${(f.file?.lastModified || 0)}`
-            return !existingKeys.has(key)
-          })]
-        })
-        // 启动解析，解析完成后由 parseFiles 的 finally 清除 importing
-        await parseFiles(newFilesToParse)
-      }
-    } finally {
-      setImporting(false)
+      const key = generateFileKey(f.name)
+      placeholders.push({
+        key,
+        name: f.name,
+        path: f.path,
+        file: fileData,
+        status: 'uploading',
+        fileFormat: getFileFormat(f.name),
+        searchText: buildSearchText({ name: f.name }),
+      })
     }
-  }, [parseFiles, setFiles, electronAPIRef])
+
+    // 所有占位一步添加到列表
+    setFiles((prev) => {
+      const existingKeys = new Set(
+        prev.map((f) => f.printPath || f.path || `${f.name}_${f.size}_${f.lastModified}`)
+      )
+      return [...prev, ...placeholders.filter((f) => !existingKeys.has(f.path || f.name))]
+    })
+
+    // ── 安全更新 helper（仅允许正向状态迁移，阻止回退） ────────────────
+    // 放宽到真实存在的流转路径：
+    //  - PDF：uploading→splitting→ready→parsing→parsed
+    //  - 非 PDF：uploading→ready→parsing→parsed（buildFileObj 默认 parsing）
+    //  - 任意：→error；error→parsing（允许重试）
+    const VALID_TRANSITION = {
+      uploading: ['splitting', 'ready', 'parsing'],
+      splitting: ['ready', 'error'],
+      ready: ['parsing', 'error'],
+      parsing: ['parsed', 'error'],
+      parsed: [],
+      error: ['parsing'],
+    }
+    const safeUpdate = (key, newStatus, extra = {}) => {
+      setFiles((prev) =>
+        prev.map((f) => {
+          if (f.key !== key) return f
+          const allowed = VALID_TRANSITION[f.status]
+          if (allowed && !allowed.includes(newStatus)) {
+            // 不允许降级，静默忽略
+            return f
+          }
+          return { ...f, ...extra, status: newStatus }
+        })
+      )
+    }
+    const replaceWithItems = (key, newItems) => {
+      setFiles((prev) => {
+        const idx = prev.findIndex((f) => f.key === key)
+        if (idx === -1) return prev
+        // 只允许从 splitting 状态替换
+        if (prev[idx].status !== 'splitting' && prev[idx].status !== 'uploading') return prev
+        const copy = [...prev]
+        copy.splice(idx, 1, ...newItems)
+        return copy
+      })
+    }
+
+    // ── Step 2: 并发 split_pdf + parse 流水线 ────────────
+    const SPLIT_CONCURRENCY = 4
+    const splitQueue = placeholders.map((p, i) => ({ p, file: files[i] }))
+    const parseQueue = []
+    let parsePipelineDone = false
+
+    // 解析进度计数（用对象 ref 规避闭包陷阱，parseWorker 并发累加）
+    const totalParseJobsRef = { current: 0 }
+    const doneParseJobsRef = { current: 0 }
+
+    // Parse 流水线（从 parseQueue 消费，并发 2）
+    const PARSE_CONCURRENCY = 2
+
+    async function parseWorker() {
+      while (true) {
+        if (parseQueue.length === 0 && parsePipelineDone) break
+        if (parseQueue.length === 0) {
+          await new Promise((r) => setTimeout(r, 50))
+          continue
+        }
+        const job = parseQueue.shift()
+        if (!job) continue
+
+        const { fileObj } = job
+        // only parse if still ready (might have been removed)
+        safeUpdate(fileObj.key, 'parsing')
+
+        try {
+          const f = fileObj
+          let resp
+
+          if (f.file) {
+            const fd = new FormData()
+            fd.append('file', f.file)
+            fd.append('autoOrient', autoOrient ? '1' : '0')
+            fd.append('mode', 'batch')
+
+            resp = await fetch(`${BACKEND_URL}/parse_invoice`, {
+              method: 'POST', body: fd,
+            })
+          } else if (f.printPath && ipc) {
+            const fileData = await ipc.invoke('read-file', f.printPath)
+            if (fileData.success) {
+              const ext = getExtension(f.name)
+              const mimeType = getMimeType(ext)
+              const blob = new Blob([new Uint8Array(fileData.data)], { type: mimeType })
+              const file = new File([blob], f.name, { type: mimeType })
+              const fd = new FormData()
+              fd.append('file', file)
+              fd.append('autoOrient', autoOrient ? '1' : '0')
+              fd.append('mode', 'batch')
+              resp = await fetch(`${BACKEND_URL}/parse_invoice`, {
+                method: 'POST', body: fd,
+              })
+            } else {
+              throw new Error(fileData.error)
+            }
+          }
+
+          if (!resp) throw new Error('无法读取文件')
+
+          if (resp.ok) {
+            const data = await resp.json()
+            const fields = data.invoice_fields || data.invoiceFields || {}
+            safeUpdate(f.key, 'parsed', {
+              invoiceType: data.invoice_type || data.invoiceType || '',
+              invoiceNumber: data.invoice_number || data.invoiceNumber || '',
+              amount: data.amount != null ? String(data.amount) : '',
+              invoiceDate: data.invoice_date || data.invoiceDate || '',
+              newName: data.new_name || data.newName || f.name,
+              parseMethod: data.parse_method || data.parseMethod || '',
+              fileFormat: data.file_format || data.fileFormat || getFileFormat(f.name),
+              previewImage: data.preview_image || data.previewImage || null,
+              failedFields: data.failed_fields || data.failedFields || [],
+              invoiceFields: fields,
+              // 与旧版 parseFiles 单文件分支保持一致的完整字段
+              issuer: fields?.kpr || '',
+              amountWithoutTax: fields?.amountJe != null ? String(fields.amountJe) : '',
+              taxAmount: fields?.amountSe != null ? String(fields.amountSe) : '',
+              lineItems: fields?.line_items || [],
+              rawText: data.raw_text || '',
+              searchText: buildSearchText({
+                name: f.name,
+                invoiceNumber: data.invoice_number || data.invoiceNumber || '',
+                invoiceType: data.invoice_type || data.invoiceType || '',
+                amount: data.amount != null ? String(data.amount) : '',
+                invoiceDate: data.invoice_date || data.invoiceDate || '',
+                invoice_fields: fields,
+                rawText: data.raw_text || '',
+              }),
+            })
+          } else {
+            throw new Error(`parse_invoice returned ${resp.status}`)
+          }
+        } catch (err) {
+          console.error(`[App] 解析失败: ${fileObj.name}`, err)
+          safeUpdate(fileObj.key, 'error')
+        } finally {
+          // 无论成功/失败都推进进度，保证进度条能走到 100%
+          doneParseJobsRef.current += 1
+          setParseProgress({
+            current: doneParseJobsRef.current,
+            total: totalParseJobsRef.current,
+          })
+        }
+      }
+    }
+
+    // Split worker
+    async function splitWorker() {
+      while (splitQueue.length > 0) {
+        const job = splitQueue.shift()
+        const { p, file: f } = job
+        safeUpdate(p.key, 'splitting')
+
+        try {
+          if (f.name.toLowerCase().endsWith('.pdf')) {
+            const { toAdd, toParse: newToParse } = await processPdfFile(
+              { file: p.file, name: f.name },
+              () => f.path
+            )
+
+            if (toAdd.length === 1) {
+              // 单页 PDF — 原地更新占位项为 ready
+              // ✅ 防御性：剥离 toAdd[0] 自带的身份字段（key 等），
+              //    用 p.key 作为唯一身份，避免身份被覆盖导致 parse 结果丢失（Blocker 2）
+              const toAddRest = stripIdentity(toAdd[0])
+              safeUpdate(p.key, 'ready', toAddRest)
+              totalParseJobsRef.current += 1
+
+              // 立即加入 parse 队列（key 由 ...p 提供 = p.key，身份不被 toAdd 覆盖）
+              const readyFile = { ...p, ...toAddRest }
+              parseQueue.push({ fileObj: readyFile })
+            } else if (toAdd.length > 1) {
+              // 多页 PDF — 用拆出的页项替换占位（pageItems 自带独立 key，与 parse 队列一致）
+              const pageItems = toAdd.map((pageObj) => ({
+                ...pageObj,
+                status: 'ready',
+              }))
+              replaceWithItems(p.key, pageItems)
+
+              // 全部加入 parse 队列
+              totalParseJobsRef.current += pageItems.length
+              for (const pageObj of pageItems) {
+                parseQueue.push({ fileObj: pageObj })
+              }
+            } else {
+              // split 产出为空 — 兜底：直接把原始占位项送去解析
+              safeUpdate(p.key, 'ready', { key: p.key })
+              totalParseJobsRef.current += 1
+              parseQueue.push({ fileObj: { ...p, key: p.key } })
+            }
+          } else {
+            // 非 PDF — 直接 ready（同样保留占位 key，避免被 fileObj 自带 key 覆盖）
+            const fileObj = buildFileObj(p.file, f.name, f.path)
+            // ✅ 防御性：剥离 fileObj 自带身份字段，用 p.key 作为唯一身份
+            const fileObjRest = stripIdentity(fileObj)
+            safeUpdate(p.key, 'ready', fileObjRest)
+            totalParseJobsRef.current += 1
+
+            const readyFile = { ...p, ...fileObjRest }
+            parseQueue.push({ fileObj: readyFile })
+          }
+        } catch (err) {
+          console.error(`[App] 文件处理失败: ${f.name}`, err)
+          safeUpdate(p.key, 'error')
+        }
+      }
+    }
+
+    // 启动 split workers + parse workers
+    const splitWorkers = []
+    for (let i = 0; i < Math.min(SPLIT_CONCURRENCY, placeholders.length); i++) {
+      splitWorkers.push(splitWorker())
+    }
+    const parseWorkers = []
+    for (let i = 0; i < PARSE_CONCURRENCY; i++) {
+      parseWorkers.push(parseWorker())
+    }
+
+    setParsing(true)
+    await Promise.all(splitWorkers)
+    parsePipelineDone = true
+    await Promise.all(parseWorkers)
+
+    // 解析完成后：重排序（与旧 parseFiles 行为一致）+ 收尾状态
+    setFiles((prev) => applySort(prev, sortByRef.current, sortOrderRef.current))
+    setParsing(false)
+    setParseProgress({ current: 0, total: 0 })
+    setImporting(false)
+  }, [setFiles, electronAPIRef, settingsRef])
 
   // ============================
   // Native Drop（支持文件和文件夹）
