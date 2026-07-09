@@ -3,6 +3,7 @@
  */
 import { BACKEND_URL } from '../config'
 import { getFileFormat, buildSearchText } from '../utils'
+import { stripIdentity } from './identity'
 
 /**
  * 生成唯一的文件 key
@@ -35,16 +36,8 @@ export function buildFileObj(file, name, path, previewImage = null, docId = null
   }
 }
 
-// 身份字段集合：合并 buildFileObj() 产出到列表项时，这些字段必须由占位项决定，
-// 不能被新对象的身份字段覆盖（否则后续 parse 更新会因找不到 key 而静默丢失，见 Blocker 2）。
-// 若将来身份字段增多（id / uuid / internalId），只改这里一处即可。
-const IDENTITY_FIELDS = ['key']
-export function stripIdentity(fileObj) {
-  if (!fileObj) return fileObj
-  const rest = { ...fileObj }
-  for (const f of IDENTITY_FIELDS) delete rest[f]
-  return rest
-}
+// stripIdentity 定义见 ./identity（零依赖，可独立单测）
+export { stripIdentity }
 
 // 每批处理的页数上限，防止大 PDF 导致内存溢出
 const PDF_PAGES_BATCH_SIZE = 10

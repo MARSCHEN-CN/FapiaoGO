@@ -1,4 +1,4 @@
-import { createContext, useContext, useReducer, useCallback, useState, useMemo, useEffect, useDeferredValue } from 'react'
+import { createContext, useContext, useReducer, useCallback, useState, useMemo, useEffect } from 'react'
 import { filterFiles, isFailedFile, isMergeMode } from '../utils'
 import { BACKEND_URL } from '../config'
 
@@ -28,7 +28,6 @@ export function FileProvider({ children }) {
   const [state, dispatch] = useReducer(fileReducer, INITIAL_STATE)
   const [searchQuery, setSearchQuery] = useState('')
   const [mergeMode, setMergeMode] = useState(null)
-  const deferredQuery = useDeferredValue(searchQuery)
 
   // 兼容现有所有 setFiles 调用（直接值 + updater 函数）
   const setFiles = useCallback((arg) => {
@@ -37,12 +36,13 @@ export function FileProvider({ children }) {
 
   const files = state.files
 
-  // 搜索过滤（使用 useDeferredValue 延迟计算，避免阻塞输入）
+  // 搜索过滤。filterFiles 是纯 O(n) 遍历，对预期数据量（几千条以内）开销可忽略，
+  // 因此查询直接同步，不使用 useDeferredValue——后者在本场景无可证收益却引入时序复杂度。
+  // 若未来列表膨胀到 5000+ 且输入掉帧，再考虑 useDeferredValue / useTransition / Web Worker。
   const filteredFiles = useMemo(() => {
-    const query = deferredQuery.trim()
-    if (!query) return files
-    return filterFiles(files, query)
-  }, [files, deferredQuery])
+    if (!searchQuery.trim()) return files
+    return filterFiles(files, searchQuery)
+  }, [files, searchQuery])
 
   const isSearching = searchQuery.trim() !== ''
 

@@ -6,8 +6,8 @@ const ROW_HEIGHT = 64
 const OVERSCAN = 5
 
 // ─── FileCard 行组件 ─────────────────────────────────────────────
-const FileCardRow = memo(({ index, style, filesRef, previewFileKey, mergeActive, mergeCount, duplicateInfo, fileRotations, onPreview, onRemove, onRotate, onHoverFile }) => {
-  const fileObj = filesRef.current?.[index]
+const FileCardRow = memo(({ index, style, files, previewFileKey, mergeActive, mergeCount, duplicateInfo, fileRotations, onPreview, onRemove, onRotate, onHoverFile }) => {
+  const fileObj = files?.[index]
   if (!fileObj) return null
 
   const mergeGroupStart = mergeActive ? getMergeGroupStart(index, mergeCount) : -1
@@ -101,7 +101,7 @@ const FileCardRow = memo(({ index, style, filesRef, previewFileKey, mergeActive,
 }, (prev, next) => {
   if (prev.index !== next.index) return false
   if (prev.style?.top !== next.style?.top || prev.style?.height !== next.style?.height) return false
-  if (prev.filesRef?.current?.[prev.index] !== next.filesRef?.current?.[next.index]) return false
+  if (prev.files?.[prev.index] !== next.files?.[next.index]) return false
   if (prev.onPreview !== next.onPreview) return false
   if (prev.onRemove !== next.onRemove) return false
   if (prev.onRotate !== next.onRotate) return false
@@ -129,13 +129,15 @@ export default memo(function FileList({
   const mergeCount = mergeActive ? parseInt(paperSize.replace('merge', ''), 10) : 2
   const previewFileKey = previewFile?.key || null
   const listRef = useRef(null)
-  // filesRef: 用 ref 持有最新 files 引用，避免 rowProps 因数组引用变化而重建
-  const filesRef = useRef(files)
-  filesRef.current = files
 
-  // react-window v2 用 rowProps 传递额外数据（files 通过 ref 传递，避免整列重渲染）
+  // ⚠ 警告：不要删除下面 rowProps 中的 `files` 键，即使 FileCardRow 未直接使用它。
+  // react-window v2 内部用 Object.values(rowProps) 做 useMemo deps（react-window.js:456），
+  // keys 数量必须恒定，且其中至少要有一个「值」随行数据变化而变。`files` 数组引用在
+  // 搜索过滤/排序重排时变化 → Object.values() 检测到 → 内部 memo 失效 → 屏幕刷新。
+  // 若改用 ref 间接访问（旧 filesRef 方案），即使 .current 变了，Object.values() 看到的
+  // 仍是同一 ref 对象 → 永不变 → react-window 不重渲染 → "需要点击才更新"的 Bug。
   const rowProps = useMemo(() => ({
-    filesRef,
+    files,           // Do NOT remove: react-window v2 memoizes Object.values(rowProps)
     previewFileKey,
     mergeActive,
     mergeCount,
@@ -145,7 +147,7 @@ export default memo(function FileList({
     onRemove,
     onRotate,
     onHoverFile,
-  }), [previewFileKey, mergeActive, mergeCount, duplicateInfo, fileRotations, onPreview, onRemove, onRotate, onHoverFile])
+  }), [files, previewFileKey, mergeActive, mergeCount, duplicateInfo, fileRotations, onPreview, onRemove, onRotate, onHoverFile])
 
   // 选中文件自动滚动（react-window v2 API：scrollToRow({ index, align })）
   useEffect(() => {
