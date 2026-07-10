@@ -551,7 +551,10 @@ function AppContent() {
             }
 
             // 加载中：有预览文件但渲染尚未就绪
-            if (!displayInfo || !previewCanvas) {
+            // hasPreview 统一覆盖两种预览来源：旧 Canvas 预览（previewCanvas）与 Render Engine 的 <img> 预览（previewUrl）。
+            // 迁移到 RE 后 previewCanvas 恒为 null，不能再单独以它为"就绪"判据。
+            const hasPreview = !!previewCanvas || !!previewUrl;
+            if (!displayInfo || !hasPreview) {
               // 区分：预览 canvas 已就绪但容器太小 → 显示友好提示
               if (previewCanvas && !displayInfo) {
                 return (
