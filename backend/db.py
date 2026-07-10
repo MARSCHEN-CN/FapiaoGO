@@ -246,6 +246,94 @@ def _validate_invoice_ids() -> None:
             inv['id'] = str(inv_id)
 
 
+def _to_hex_id(raw: object) -> Optional[str]:
+    """将遗留 id（int 或十进制字符串）转换为 uuid hex；已是合法 uuid 则返回 None（无需迁移）。
+
+    幂等：传入已为 hex 的 id 时返回 None，调用方据此判断是否需要落盘。
+    """
+    if raw is None:
+        return None
+    if isinstance(raw, int):
+        try:
+            return uuid.UUID(int=raw).hex
+        except (ValueError, OverflowError):
+            return None
+    if isinstance(raw, str):
+        # 已是合法 uuid（hex 形式）则跳过迁移
+        try:
+            uuid.UUID(raw)
+            return None
+        except (ValueError, AttributeError):
+            pass
+        # 否则尝试按十进制整数解释，再转 hex
+        try:
+            return uuid.UUID(int=int(raw)).hex
+        except (ValueError, OverflowError):
+            return None
+    return None
+
+
+def _migrate_legacy_ids() -> None:
+    """将历史 int / 十进制字符串 id 物理升级为 uuid hex。
+
+    在 _load_invoices 中、索引重建前调用：先把内存中的 id 统一为 hex，
+    再同步重写 oplog 文件中的 id（含 data.id），最后仅在确有变更时重写快照文件。
+    幂等：纯 hex 数据库不会触发任何落盘。
+    """
+    changed = False
+
+    # 1) 内存归一：int / 十进制字符串 -> hex
+    for inv in _invoices:
+        if not isinstance(inv, dict):
+            continue
+        old = inv.get("id")
+        new = _to_hex_id(old)
+        if new is not None and new != old:
+            inv["id"] = new
+            changed = True
+
+    # 2) oplog 文件中的 id 同步升级（含 data.id）
+    if os.path.exists(OPLOG_PATH):
+        try:
+            with open(OPLOG_PATH, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+            out_lines = []
+            oplog_changed = False
+            for line in lines:
+                s = line.strip()
+                if not s:
+                    continue
+                try:
+                    entry = json.loads(s)
+                except (json.JSONDecodeError, ValueError):
+                    out_lines.append(s)
+                    continue
+                eid = entry.get("id")
+                h = _to_hex_id(eid)
+                if h is not None and h != eid:
+                    entry["id"] = h
+                    data = entry.get("data")
+                    if isinstance(data, dict) and data.get("id") is not None:
+                        hd = _to_hex_id(data["id"])
+                        if hd is not None and hd != data["id"]:
+                            data["id"] = hd
+                    oplog_changed = True
+                out_lines.append(json.dumps(entry, ensure_ascii=False, separators=(",", ":")))
+            if oplog_changed:
+                with open(OPLOG_PATH, "w", encoding="utf-8") as f:
+                    f.write("\n".join(out_lines) + "\n")
+                changed = True
+        except IOError as e:
+            logger.warning("迁移 oplog id 失败: %s", e)
+
+    # 3) 仅当内存确有变更时重写快照文件
+    if changed:
+        try:
+            _atomic_write(INVOICES_PATH, _invoices)
+        except IOError as e:
+            logger.warning("重写快照 id 失败: %s", e)
+
+
 def _replay_oplog() -> None:
     """回放 oplog 到内存中的 _invoices（启动时调用，调用方须持有 _lock）
 
@@ -477,6 +565,7 @@ def _load_invoices() -> None:
     _handle_compact_markers()
     _load_snapshot()
     _replay_oplog()
+    _migrate_legacy_ids()   # 历史 int/十进制 id -> uuid hex（幂等）
     _rebuild_indexes()
     _validate_invoice_ids()
 
