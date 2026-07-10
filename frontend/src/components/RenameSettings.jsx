@@ -742,7 +742,12 @@ export default function RenameSettings({ renameSettings, onSave, electronAPI, ac
             fontSize: '13px', flexShrink: 0,
             boxShadow: '0 2px 6px rgba(79,124,255,0.2)',
             color: '#fff',
-          }}>📁</div>
+          }}>
+            <svg viewBox="0 0 1024 1024" style={{ width: 16, height: 16, fill: 'currentColor' }}>
+              <path d="M919.68 949.12H103.68a96 96 0 0 1-96-96V167.04a96 96 0 0 1 96-96H384a95.36 95.36 0 0 1 72.96 33.92l56.32 64a33.28 33.28 0 0 0 24.32 10.88h378.88a96 96 0 0 1 96.64 96v576a96 96 0 0 1-93.44 97.28zM103.68 135.04a32 32 0 0 0-32 32v686.08a32 32 0 0 0 32 32h816a32.64 32.64 0 0 0 32-32v-576a32 32 0 0 0-32-32H540.8a99.2 99.2 0 0 1-74.24-33.28l-56.32-64a33.92 33.92 0 0 0-26.24-12.8z"/>
+              <path d="M945.28 374.4H78.08a32 32 0 1 1 0-64h867.2a32 32 0 0 1 0 64z"/>
+            </svg>
+          </div>
           <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text)' }}>目标文件夹</span>
         </div>
 

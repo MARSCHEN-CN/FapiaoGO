@@ -439,8 +439,8 @@
 }
 
 .tb-win-btn.tb-win-close:hover {
-  background: var(--red);
-  color: #fff; /* 始终白色，不受暗色模式 var(--white)=#262940 影响 */
+  background: rgba(220, 38, 38, 0.08);
+  color: var(--red);
 }
 
 .tb-win-btn svg {

@@ -6,8 +6,29 @@ import pdfjsWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import { PREVIEW_DPI } from './config'
 import { rotateContentOnPaper } from './utils/canvasUtils'
 import { createLayout, normalizeLayoutItem, normalizeLayoutItems, getPaperPixels, PRINT_SAFE_MARGIN_MM, PRINTER_PROFILES, getPrintableArea } from './layout'
+import { isDocumentEngineEnabled } from './documentEngine.js'  // P2C 统一入口门面（v12 契约 JS 实现；路线见 v14 §6/§13）
 // ✅ renderModel.js 为死代码，renderMultipleItemsToCanvas 直接做 transform，不经过 RenderModel
 // import { createRenderModels, applyTransformToContext, restoreContext } from './renderModel'
+
+// ═══════════════════════════════════════════════════════════════════════════
+// P2C · Adapter 层入口（v14：路线 P2A✅→P2B✅→P2C→P3→P4→P5→P6）
+// ───────────────────────────────────────────────────────────────────────────
+// 本文件正从「核心实现」逐步变为「兼容层（Adapter）」。统一入口已落到
+// documentEngine.js（DocumentEngine.getImage / compose）。迁移纪律（见
+// merge-mode-pdfjs-migration-plan.md §13）：renderers.js 不再维护缓存状态 /
+// 不再决定是否渲染 / 不再拼 cache key / 不再持有生命周期；每个导出函数最终
+// 只做「参数适配 → 调用 DocumentEngine → 返回」。达到时 P6 删除本文件即零风险。
+//
+// ⚠️ 最后防线（原则18）：业务代码（usePreview / usePrint / printRenderer / UI）不得
+//    import 本文件实现；统一入口只有 documentEngine.getImage / compose。仅本文件
+//    自身（兼容层）或其内部 Renderer Adapter 可调旧实现。
+//
+// 灰度开关 USE_DOCUMENT_ENGINE（setUseDocumentEngine）生命周期仅限 P2C：
+// 开启统一入口；异常可瞬时回退到下方旧 canvas 路径（原则⑧ 灰度可回滚）。
+// ⚠️ P2C 完成、P3 启动时必须删除此开关，禁止长期遗留。
+// 当前热路径（renderMultipleItemsToCanvas 的合并/打印合成）仍走旧实现，
+// 待 dev/Electron build 验证后开启 USE_DOCUMENT_ENGINE（P2C 阶段内）。
+// ═══════════════════════════════════════════════════════════════════════════
 
 // PDF.js worker 配置 — 使用 Vite 打包的本地 worker
 pdfjs.GlobalWorkerOptions.workerSrc = pdfjsWorkerUrl
@@ -368,6 +389,8 @@ export async function getOrLoadPdfDocument(pdfData) {
  * ✅ 方案二：不缓存 Canvas DOM 节点，而是缓存 PDF 文档对象
  * ✅ 每次调用都生成新的 Canvas，确保画布数据不会丢失
  */
+// @deprecated(deleted at P6) 死导出：无任何调用方。Legacy 单页渲染，P6 随 renderers.js 删除；
+// 等价能力由 documentEngine.getImage({kind:'docId'}) 提供。
 export async function renderPDFToCanvas(
   pdfData, paperKey, dpi = PREVIEW_DPI, isLandscape = false, fitMode = 'contain',
 ) {
@@ -654,6 +677,8 @@ async function renderPDFPageRaw(pdfData, dpi, fileKey, paperKey = null, isLandsc
 // @param {number} dpi - DPI
 // @param {boolean} isLandscape - 是否横向
 // @returns {Promise<{canvas: HTMLCanvasElement, blobExpired: boolean}>}
+// @deprecated(deleted at P6) 死导出：无任何调用方。Legacy 图片渲染，P6 随 renderers.js 删除；
+// 等价能力由 documentEngine.getImage({kind:'clipboard'|'remote'|'memory'}) 提供。
 export async function renderImageToCanvas(
   imageSrc, paperKey, dpi = PREVIEW_DPI, isLandscape = false, fitMode = 'contain',
 ) {
@@ -722,6 +747,8 @@ export async function renderImageToCanvas(
 }
 
 // 渲染两个 PDF 到一张 Canvas（上下各半）
+// @deprecated(deleted at P6) 死导出：无任何调用方。Legacy 双页渲染，P6 随 renderers.js 删除；
+// 等价能力由 documentEngine.getImage ×2 + Compose 提供。
 export async function renderTwoPDFsToCanvas(
   pdfData1, pdfData2, paperKey, dpi = PREVIEW_DPI, isLandscape = false,
 ) {
@@ -1080,6 +1107,13 @@ export async function renderMultipleItemsToCanvas(
   showSafeMargin = false,
   layoutOptions = {}
 ) {
+  // P2C 统一入口槽位（USE_DOCUMENT_ENGINE 默认 false，生命周期仅限 P2C）：开启后应委派
+  // documentEngine 的 getImage×N + compose，而非在此自建 L2 缓存与合成。当前 compose 路径
+  // 尚未接后端，故保持旧实现；待 dev/Electron build 验证后在此替换为 engine 调用（见 plan §13）。
+  if (isDocumentEngineEnabled()) {
+    console.warn('[P2C] USE_DOCUMENT_ENGINE 已开启，但 renderers.js 合并/打印合成尚未接 documentEngine；回退旧实现。P2C 完成、P3 启动前必须删除此开关。')
+  }
+
   // L2 缓存命中检查
   const _rotKeys = Object.keys(rotations || {}).sort().map(k => `${k}:${rotations[k]}`).join(',')
   const _marginKey = layoutOptions.userMargins

@@ -438,3 +438,5 @@ P0_rc_review.md
 preview-deep-review.md
 preview-code-review.md
 merge-mode-pdfjs-migration-plan.md
+frontend/src/utils/previewTarget.test.mjs
+frontend/src/documentEngine.test.mjs
