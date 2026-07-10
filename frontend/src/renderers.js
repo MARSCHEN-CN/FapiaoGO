@@ -1225,7 +1225,7 @@ async function _renderToGlobalCanvas(renderFn, signal) {
   }
 
   await _globalPreviewLock
-  if (signal?.aborted) return
+  if (signal?.aborted) { console.log('[DIAG] ABORT before render'); return }
 
   let unlock
   _globalPreviewLock = new Promise(r => { unlock = r })
@@ -1253,7 +1253,7 @@ async function _renderToGlobalCanvas(renderFn, signal) {
     await renderFn(ctx, contentW, contentH, marginL, marginT)
 
     // 原子 swap 到显示 Canvas
-    if (signal?.aborted) return
+    if (signal?.aborted) { console.log('[DIAG] ABORT before swap'); return }
     const displayCtx = _globalPreviewCanvas.getContext('2d')
     displayCtx.drawImage(offscreen, 0, 0)
 

@@ -289,14 +289,34 @@ function createSettingsWindow() {
     return
   }
 
+  const { width: screenWidth, height: screenHeight } = screen.getPrimaryDisplay().workAreaSize
+  
+  let width
+  if (screenWidth >= 3840) {
+    width = 1100
+  } else if (screenWidth >= 2560) {
+    width = 850
+  } else {
+    width = Math.min(850, Math.max(750, Math.round(screenWidth * 0.45)))
+  }
+  
+  let height
+  if (screenHeight >= 2160) {
+    height = 1000
+  } else if (screenHeight >= 1440) {
+    height = 850
+  } else {
+    height = Math.min(850, Math.max(700, Math.round(screenHeight * 0.65)))
+  }
+
   settingsWindow = new BrowserWindow({
-    width: 400,
-    height: 450,
+    width,
+    height,
     modal: false,
     resizable: true,
     minimizable: true,
-    minWidth: 360,
-    minHeight: 480,
+    minWidth: 850,
+    minHeight: 850,
     show: false,
     frame: false,
     webPreferences: {
@@ -710,11 +730,8 @@ ipcMain.handle('resize-settings-window', async (event, { width, height }) => {
       const newWidth = width || currentWidth
       const newHeight = height || currentHeight
 
-      // 确保不小于最小尺寸
-      const minWidth = 360
-      const minHeight = 480
-      const finalWidth = Math.max(newWidth, minWidth)
-      const finalHeight = Math.max(newHeight, minHeight)
+      const finalWidth = Math.max(newWidth, 850)
+      const finalHeight = Math.max(newHeight, 850)
 
       settingsWindow.setSize(finalWidth, finalHeight)
       return { success: true }

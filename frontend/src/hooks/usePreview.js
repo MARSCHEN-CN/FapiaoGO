@@ -319,7 +319,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
     // ✅ renderKey 必须包含合并模式、合并组所有文件的旋转值，以确保模式切换和多文件旋转都能触发重渲染
     const mergeRotations = mergePair?.map(m => `${m?.key}:${fileRotations[m?.key] || 0}`).join(',') || ''
     const renderKey = `${previewFile.key}-${paperSize}-${isLandscape}-${currentRotation}-${settings.mergeMode || ''}-${mergePair?.map(m => m?.key).join(',') || ''}-${mergeRotations}-m${settings.marginLeft}_${settings.marginRight}_${settings.marginTop}_${settings.marginBottom}-c${settings.customPaper?.widthMM}x${settings.customPaper?.heightMM}`
-    if (lastRenderKeyRef.current === renderKey) return
+    if (lastRenderKeyRef.current === renderKey) { return }
     lastRenderKeyRef.current = renderKey
 
     renderCancelledRef.current = false
@@ -443,6 +443,8 @@ export function usePreview({ files, settings, electronAPIRef }) {
           snapshot.width = canvas.width
           snapshot.height = canvas.height
           snapshot.getContext('2d').drawImage(canvas, 0, 0)
+          snapshot.__fileKey = previewFile.key
+          snapshot.__cacheKey = cacheKey
           setFullCache(cacheKey, snapshot)
 
           // ✅ 不清空旧 canvas：与 renderResultCache 共享同一对象，clearRect 会污染缓存
@@ -869,6 +871,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
     )
     const cachedCanvas = fullCacheRef.current.get(cacheKey)
     if (cachedCanvas) {
+      console.log('[DIAG] L2 HIT expected=', loadedFile.key, 'cacheKey=', cacheKey, 'hitKey=', cachedCanvas.__fileKey, 'hitSize=', cachedCanvas.width + 'x' + cachedCanvas.height)
       // 直接设置缓存画布，跳过整个异步渲染管线
       skipRenderRef.current = true
       previewFileRef.current = loadedFile
