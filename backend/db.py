@@ -152,7 +152,7 @@ def _save_invoices() -> None:
     _atomic_write(INVOICES_PATH, _invoices)
 
 
-def _append_oplog(op_type: str, invoice_id: int, data: dict = None) -> None:
+def _append_oplog(op_type: str, invoice_id: str, data: dict = None) -> None:
     """追加一条操作日志到缓冲区（调用方须持有 _lock，且数据已加载）
 
     缓冲策略：累积到 _oplog_buffer，延迟 0.5s 或达 20 条时批量写入磁盘。
@@ -230,13 +230,35 @@ def _rebuild_indexes() -> None:
             _invoice_index_by_number.setdefault(num, []).append(i)
 
 
+def _validate_invoice_ids() -> None:
+    """启动时一致性检查：确保内存中所有 invoice id 均为 str。
+
+    若发现非 str（如某处又写了 int），仅告警并就地归一化，避免在运行期
+    才暴露 int/str 混用导致的 _invoice_index_by_id 查找失败。
+    """
+    for inv in _invoices:
+        if not isinstance(inv, dict):
+            continue
+        inv_id = inv.get('id')
+        if inv_id is not None and not isinstance(inv_id, str):
+            logger.warning("启动时发现非 str 类型的发票 id，已归一化: %r (type=%s)",
+                           inv_id, type(inv_id).__name__)
+            inv['id'] = str(inv_id)
+
+
 def _replay_oplog() -> None:
     """回放 oplog 到内存中的 _invoices（启动时调用，调用方须持有 _lock）
 
     容错机制：单行损坏不影响后续回放，损坏行跳过并记录警告，
     避免因一次磁盘故障导致整个恢复流程中止。
+
+    注意：回放前先以当前 _invoices（快照）重建索引，保证回放过程中的
+    upsert/update/soft_delete/restore 查找基于的是「本次加载的快照」而非
+    历史残留索引——否则在进程内二次加载（如 _load_data）时，旧索引的 idx
+    会越界到已被 _load_snapshot 重置的 _invoices 上，触发 IndexError。
     """
     global _oplog_count
+    _rebuild_indexes()  # 基于本次快照重建索引，避免残留索引导致越界
     if not os.path.exists(OPLOG_PATH):
         return
     corrupted_lines = 0
@@ -257,7 +279,7 @@ def _replay_oplog() -> None:
                     continue
 
                 op = entry.get("op")
-                entry_id = entry.get("id")
+                entry_id = str(entry.get("id"))  # 归一化：历史 oplog 中 id 为 int
                 data = entry.get("data") or {}
 
                 if op == "upsert":
@@ -269,7 +291,20 @@ def _replay_oplog() -> None:
                             if k not in ("id", "created_at", "deleted_at")
                         })
                     else:
+                        # 归一化：历史 oplog 中 data["id"] 为 int
+                        if not isinstance(data.get("id"), str):
+                            data["id"] = str(data.get("id"))
                         _invoices.append(data)
+                        # 维护索引，使同批后续 oplog 操作能定位刚追加的记录
+                        _idx = len(_invoices) - 1
+                        if data.get("id"):
+                            _invoice_index_by_id[data["id"]] = _idx
+                        if data.get("hash_sha256"):
+                            _invoice_index_by_hash[data["hash_sha256"]] = _idx
+                        if data.get("file_name"):
+                            _invoice_index_by_filename[str(data["file_name"]).strip().lower()] = _idx
+                        if data.get("number"):
+                            _invoice_index_by_number.setdefault(str(data["number"]), []).append(_idx)
 
                 elif op == "update":
                     if entry_id in _invoice_index_by_id:
@@ -428,11 +463,48 @@ def _save_config() -> None:
 def _load_invoices() -> None:
     """从 invoices.json + oplog 恢复发票数据到内存
 
-    崩溃恢复流程：
-    1. 加载 invoices.json 快照
-    2. 检查压缩标记文件，判断是否需要跳过 oplog 回放
-    3. 回放 oplog 恢复增量操作
+    流程固定为三段，无论是否存在快照 / oplog / compact 标记，
+    最后一步 _rebuild_indexes() 永远执行一次 —— 避免某个提前 return
+    绕过后索引为空，导致全量查找 miss（历史 COMPACT_READY 分支即有此缺口）。
+
+    崩溃恢复：
+    1. _handle_compact_markers: 清理 compact 标记文件（必要时清空 oplog）
+    2. _load_snapshot:          加载 invoices.json 快照（并归一化 id 为 str）
+    3. _replay_oplog:           回放 oplog 恢复增量（并归一化 id 为 str）
+    4. _rebuild_indexes:        重建内存索引（无条件）
+    5. _validate_invoice_ids:   启动时一致性检查
     """
+    _handle_compact_markers()
+    _load_snapshot()
+    _replay_oplog()
+    _rebuild_indexes()
+    _validate_invoice_ids()
+
+
+def _handle_compact_markers() -> None:
+    """处理 compact 两阶段提交标记，清理残余状态。
+
+    - COMPACT_READY 存在：快照已包含 oplog 操作，清空 oplog 文件并移除标记。
+    - COMPACT_MARKER 存在：上次压缩异常中断，快照可能不完整，移除标记后
+      交由 _replay_oplog() 正常回放补偿。
+    两种情况都不影响后续「_replay_oplog + _rebuild_indexes 永远执行」的流程。
+    """
+    if os.path.exists(COMPACT_READY):
+        logger.info("检测到 compact_done 标记，oplog 操作已包含在快照中，清空 oplog")
+        try:
+            open(OPLOG_PATH, 'w').close()
+        except IOError:
+            pass
+        _remove_marker(COMPACT_READY)
+        _remove_marker(COMPACT_MARKER)
+    elif os.path.exists(COMPACT_MARKER):
+        logger.warning("检测到 compact_writing 标记（上次压缩异常中断），"
+                       "快照可能不完整，回退到正常 oplog 回放")
+        _remove_marker(COMPACT_MARKER)
+
+
+def _load_snapshot() -> None:
+    """加载 invoices.json 快照到内存，并将 id 归一化为 str（防 int/str 混用）"""
     global _invoices
     if os.path.exists(INVOICES_PATH):
         try:
@@ -447,28 +519,11 @@ def _load_invoices() -> None:
             _invoices = []
     else:
         _invoices = []
-
-    # ⚡ 检查压缩标记文件（两阶段提交恢复）
-    #   .compact_done 存在 → 快照已提交，oplog 中的操作已包含在快照中
-    #   仅 .compact_writing 存在 → 快照可能未写完，需要正常回放 oplog
-    if os.path.exists(COMPACT_READY):
-        logger.info("检测到 compact_done 标记，oplog 中的操作已包含在快照中，跳过回放")
-        # 清理残余：oplog 和标记文件
-        try:
-            open(OPLOG_PATH, 'w').close()
-        except IOError:
-            pass
-        _remove_marker(COMPACT_READY)
-        _remove_marker(COMPACT_MARKER)
-    elif os.path.exists(COMPACT_MARKER):
-        logger.warning("检测到 compact_writing 标记（上次压缩异常中断），"
-                       "快照可能不完整，回退到正常 oplog 回放")
-        _remove_marker(COMPACT_MARKER)
-        # 正常回放 oplog
-        _replay_oplog()
-    else:
-        # ✅ 正常回放 oplog，恢复快照之后的增量操作
-        _replay_oplog()
+    # 归一化：历史数据 id 为 int（uuid4().int），统一转为 str，
+    # 避免运行期 int/str 混用导致 _invoice_index_by_id 查找失败（123456 != "123456"）。
+    for inv in _invoices:
+        if isinstance(inv, dict) and 'id' in inv and not isinstance(inv['id'], str):
+            inv['id'] = str(inv['id'])
 
 
 def _load_config() -> None:
@@ -584,7 +639,7 @@ def upsert_invoice(row: Dict) -> Dict:
                 return {'id': inv['id'], 'is_new': False}
 
         # 新建记录
-        new_id = uuid.uuid4().int
+        new_id = uuid.uuid4().hex
         new_invoice = {
             **row,
             'id': new_id,
@@ -649,7 +704,7 @@ def batch_upsert_invoices(rows: List[Dict]) -> List[Dict]:
                     results.append({'id': inv['id'], 'is_new': False})
                     continue
 
-            new_id = uuid.uuid4().int
+            new_id = uuid.uuid4().hex
             new_invoice = {
                 **row,
                 'id': new_id,
@@ -683,7 +738,7 @@ def batch_upsert_invoices(rows: List[Dict]) -> List[Dict]:
     return results
 
 
-def get_invoice(invoice_id: int) -> Optional[Dict]:
+def get_invoice(invoice_id: str) -> Optional[Dict]:
     """按 ID 查询单条发票记录"""
     _ensure_loaded()
     idx = _invoice_index_by_id.get(invoice_id)
@@ -692,7 +747,7 @@ def get_invoice(invoice_id: int) -> Optional[Dict]:
     return _invoices[idx].copy()
 
 
-def soft_delete_invoice(invoice_id: int) -> Optional[Dict]:
+def soft_delete_invoice(invoice_id: str) -> Optional[Dict]:
     """软删除发票"""
     _ensure_loaded()
     now_str = now().isoformat()
@@ -708,7 +763,7 @@ def soft_delete_invoice(invoice_id: int) -> Optional[Dict]:
     return None
 
 
-def hard_delete_invoice(invoice_id: int) -> Optional[Dict]:
+def hard_delete_invoice(invoice_id: str) -> Optional[Dict]:
     """硬删除发票（从数组中移除）"""
     _ensure_loaded()
     with _lock:
@@ -733,7 +788,7 @@ def hard_delete_invoice(invoice_id: int) -> Optional[Dict]:
     return None
 
 
-def restore_invoice(invoice_id: int) -> Optional[Dict]:
+def restore_invoice(invoice_id: str) -> Optional[Dict]:
     """恢复软删除的发票"""
     _ensure_loaded()
     now_str = now().isoformat()
@@ -748,7 +803,7 @@ def restore_invoice(invoice_id: int) -> Optional[Dict]:
     return None
 
 
-def update_invoice_fields(invoice_id: int, fields: Dict) -> Optional[Dict]:
+def update_invoice_fields(invoice_id: str, fields: Dict) -> Optional[Dict]:
     """更新发票的指定字段"""
     _ensure_loaded()
     now_str = now().isoformat()
