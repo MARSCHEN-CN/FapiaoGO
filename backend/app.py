@@ -374,10 +374,7 @@ def api_db_search():
 
 @app.route('/api/db/invoice/<invoice_id>', methods=['GET', 'PUT', 'DELETE'])
 def api_db_invoice(invoice_id):
-    try:
-        invoice_id = int(invoice_id)
-    except (ValueError, TypeError):
-        return jsonify({"success": False, "error": "无效的 ID"}), 400
+    # invoice_id 直接使用 URL 中的字符串（迁移后 id 为 uuid hex）
     if request.method == 'GET':
         inv = db_module.get_invoice(invoice_id)
         if not inv:
@@ -398,10 +395,6 @@ def api_db_invoice(invoice_id):
 
 @app.route('/api/db/invoice/<invoice_id>/restore', methods=['POST'])
 def api_db_restore(invoice_id):
-    try:
-        invoice_id = int(invoice_id)
-    except (ValueError, TypeError):
-        return jsonify({"success": False, "error": "无效的 ID"}), 400
     result = db_module.restore_invoice(invoice_id)
     if not result:
         return jsonify({"success": False, "error": "未找到"}), 404
