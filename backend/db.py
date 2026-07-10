@@ -340,13 +340,14 @@ def _replay_oplog() -> None:
     容错机制：单行损坏不影响后续回放，损坏行跳过并记录警告，
     避免因一次磁盘故障导致整个恢复流程中止。
 
-    注意：回放前先以当前 _invoices（快照）重建索引，保证回放过程中的
-    upsert/update/soft_delete/restore 查找基于的是「本次加载的快照」而非
-    历史残留索引——否则在进程内二次加载（如 _load_data）时，旧索引的 idx
-    会越界到已被 _load_snapshot 重置的 _invoices 上，触发 IndexError。
+    前置条件：调用方（_load_invoices）须在 _load_snapshot 之后、本函数之前
+    已调用 _rebuild_indexes()，使回放过程中的 upsert/update/soft_delete/
+    restore 查找基于「本次加载的快照」而非历史残留索引——否则在进程内二次
+    加载（如 _load_data）时，旧索引的 idx 会越界到已被 _load_snapshot 重置的
+    _invoices 上，触发 IndexError。本函数不再隐式重建索引，生命周期由
+    _load_invoices 显式管理（Option A）。
     """
     global _oplog_count
-    _rebuild_indexes()  # 基于本次快照重建索引，避免残留索引导致越界
     if not os.path.exists(OPLOG_PATH):
         return
     corrupted_lines = 0
@@ -414,7 +415,6 @@ def _replay_oplog() -> None:
                 replayed_count += 1
 
         _oplog_count = replayed_count
-        _rebuild_indexes()
         if corrupted_lines:
             logger.warning("oplog 回放完成: %d 条成功, %d 条损坏已跳过", replayed_count, corrupted_lines)
         else:
@@ -558,15 +558,18 @@ def _load_invoices() -> None:
     崩溃恢复：
     1. _handle_compact_markers: 清理 compact 标记文件（必要时清空 oplog）
     2. _load_snapshot:          加载 invoices.json 快照（并归一化 id 为 str）
-    3. _replay_oplog:           回放 oplog 恢复增量（并归一化 id 为 str）
-    4. _rebuild_indexes:        重建内存索引（无条件）
-    5. _validate_invoice_ids:   启动时一致性检查
+    3. _rebuild_indexes:        基于快照建索引，供 _replay_oplog 查找（显式，Option A）
+    4. _replay_oplog:           回放 oplog 恢复增量（并归一化 id 为 str）
+    5. _migrate_legacy_ids:     历史 int/十进制 id -> uuid hex（幂等，会改变 id 字符串）
+    6. _rebuild_indexes:        以规范后的 hex id 重建索引（无条件）
+    7. _validate_invoice_ids:   启动时一致性检查
     """
     _handle_compact_markers()
     _load_snapshot()
-    _replay_oplog()
-    _migrate_legacy_ids()   # 历史 int/十进制 id -> uuid hex（幂等）
-    _rebuild_indexes()
+    _rebuild_indexes()      # 基于刚加载的快照建索引，供 _replay_oplog 查找（Option A：显式生命周期）
+    _replay_oplog()         # 内部不再隐式 rebuild，依赖上方索引
+    _migrate_legacy_ids()   # 历史 int/十进制 id -> uuid hex（幂等，会改变 id 字符串）
+    _rebuild_indexes()      # 最终以规范后的 hex id 重建索引
     _validate_invoice_ids()
 
 
