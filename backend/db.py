@@ -384,6 +384,12 @@ def _migrate_legacy_ids() -> None:
                 _atomic_write_text(OPLOG_PATH, "\n".join(oplog_lines) + "\n")
             except IOError as e:
                 logger.warning("重写 oplog id 失败: %s", e)
+        # 迁移摘要日志：便于排查「首次启动打不开」是否由迁移引起
+        oplog_n = len(oplog_lines) if oplog_lines is not None else 0
+        logger.info(
+            "发票数据库迁移完成: 升级至 schemaVersion=%s, 快照 %d 条, oplog %d 条, 备份=%s",
+            SCHEMA_VERSION, len(_invoices), oplog_n, INVOICES_PATH + '.bak',
+        )
 
 
 def _replay_oplog() -> None:
@@ -655,9 +661,19 @@ def _load_snapshot() -> None:
             with open(INVOICES_PATH, 'r', encoding='utf-8') as f:
                 data = json.load(f)
                 if isinstance(data, list):
+                    # 旧格式（无 schemaVersion 信封）：视为 legacy 文件，兼容加载
                     _invoices = data
-                else:
+                elif isinstance(data, dict):
+                    sv = data.get("schemaVersion")
+                    if sv is not None and sv > SCHEMA_VERSION:
+                        raise RuntimeError(
+                            f"发票数据库 schemaVersion={sv} 高于本程序支持的版本 "
+                            f"{SCHEMA_VERSION}；请用更新版本的程序打开，或先迁移该数据库"
+                            f"（文件: {INVOICES_PATH}）"
+                        )
                     _invoices = data.get('invoices', [])
+                else:
+                    _invoices = []
         except (json.JSONDecodeError, IOError) as e:
             logger.warning("加载发票数据失败 (%s): %s", INVOICES_PATH, e)
             _invoices = []
