@@ -181,9 +181,18 @@ def _backup_before_migration() -> None:
                 logger.warning("迁移备份 %s 失败: %s", p, e)
 
 
+def _write_snapshot(invoices: List[Dict]) -> None:
+    """原子写入发票快照，统一带 schemaVersion 信封（SCHEMA_VERSION）。
+
+    所有写发票快照的路径（_save_invoices / _compact_oplog / _migrate_legacy_ids）
+    都必须经过此函数，未来递增 SCHEMA_VERSION 时只需改一处，避免漏写信封。
+    """
+    _atomic_write(INVOICES_PATH, {"schemaVersion": SCHEMA_VERSION, "invoices": invoices})
+
+
 def _save_invoices() -> None:
     """持久化发票数据到磁盘（调用方须持有 _lock）；写入带 schemaVersion 信封"""
-    _atomic_write(INVOICES_PATH, {"schemaVersion": SCHEMA_VERSION, "invoices": _invoices})
+    _write_snapshot(_invoices)
 
 
 def _append_oplog(op_type: str, invoice_id: str, data: dict = None) -> None:
@@ -367,7 +376,7 @@ def _migrate_legacy_ids() -> None:
         _backup_before_migration()
         if snapshot_changed:
             try:
-                _atomic_write(INVOICES_PATH, {"schemaVersion": SCHEMA_VERSION, "invoices": _invoices})
+                _write_snapshot(_invoices)
             except IOError as e:
                 logger.warning("重写快照 id 失败: %s", e)
         if oplog_changed and oplog_lines is not None:
@@ -490,7 +499,7 @@ def _compact_oplog() -> None:
     _touch_marker(COMPACT_MARKER)
 
     # 写入全量快照（原子操作：写临时文件 → rename，带 schemaVersion 信封）
-    _atomic_write(INVOICES_PATH, {"schemaVersion": SCHEMA_VERSION, "invoices": _invoices})
+    _write_snapshot(_invoices)
 
     # 阶段2：标记快照已提交（原子 rename，确保阶段1→阶段2的切换是原子的）
     try:
