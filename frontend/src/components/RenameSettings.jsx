@@ -95,20 +95,35 @@ export default function RenameSettings({ renameSettings, onSave, electronAPI, ac
   
   const contentRef = useRef(null)
   
-  // 调整父窗口大小
+  const getWindowWidth = useCallback(() => {
+    const screenWidth = window.screen.width
+    if (screenWidth >= 3840) return 1100
+    if (screenWidth >= 2560) return 850
+    return Math.min(850, Math.max(750, Math.round(screenWidth * 0.45)))
+  }, [])
+
+  const getWindowHeight = useCallback(() => {
+    const screenHeight = window.screen.height
+    if (screenHeight >= 2160) return 1000
+    if (screenHeight >= 1440) return 850
+    return Math.min(850, Math.max(700, Math.round(screenHeight * 0.65)))
+  }, [])
+
   const resizeParentWindow = useCallback(() => {
     if (!electronAPI || !active) return
     
-    // 延迟时间比 SettingsWindow 稍长，确保不会被覆盖
+    const width = getWindowWidth()
+    const height = getWindowHeight()
+    
     setTimeout(() => {
       electronAPI.ipcRenderer.invoke('resize-settings-window', {
-        width: 750,
-        height: 1000
+        width,
+        height
       }).catch(err => {
         console.warn('[RenameSettings] 调整窗口大小失败:', err)
       })
     }, 100)
-  }, [electronAPI, active])
+  }, [electronAPI, active, getWindowWidth, getWindowHeight])
   
   // 当内容变化或激活状态变化时调整窗口大小
   useEffect(() => {

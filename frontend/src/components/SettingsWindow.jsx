@@ -96,27 +96,42 @@ export default function SettingsWindow({ settings, saveSettings, printers, elect
   const handlePackArchiveNameSeparatorChange = (val) => { setPackArchiveNameSeparator(val); updatePackSettings('packArchiveNameSeparator', val) }
   const handlePackNameFieldOrderChange = (newOrder) => { setPackNameFieldOrder(newOrder); updatePackSettings('packNameFieldOrder', newOrder) }
 
-  // 根据内容调整窗口大小
+  const getWindowWidth = useCallback(() => {
+    const screenWidth = window.screen.width
+    if (screenWidth >= 3840) return 1100
+    if (screenWidth >= 2560) return 850
+    return Math.min(850, Math.max(750, Math.round(screenWidth * 0.45)))
+  }, [])
+
+  const getWindowHeight = useCallback(() => {
+    const screenHeight = window.screen.height
+    if (screenHeight >= 2160) return 1000
+    if (screenHeight >= 1440) return 850
+    return Math.min(850, Math.max(700, Math.round(screenHeight * 0.65)))
+  }, [])
+
   const resizeWindow = useCallback(() => {
     if (!contentRef.current || !electronAPI) return
 
-    // 打印机标签使用固定尺寸，打包标签使用750px宽度，重命名标签由 RenameSettings 组件自行处理
+    const width = getWindowWidth()
+    const height = getWindowHeight()
+    
     if (activeTab === 'printer') {
       electronAPI.ipcRenderer.invoke('resize-settings-window', {
-        width: 750,
-        height: 750
+        width,
+        height
       }).catch(err => {
         console.warn('[SettingsWindow] 调整窗口大小失败:', err)
       })
     } else if (activeTab === 'pack') {
       electronAPI.ipcRenderer.invoke('resize-settings-window', {
-        width: 750,
-        height: 650
+        width,
+        height
       }).catch(err => {
         console.warn('[SettingsWindow] 调整窗口大小失败:', err)
       })
     }
-  }, [electronAPI, activeTab])
+  }, [electronAPI, activeTab, getWindowWidth, getWindowHeight])
 
   // 当标签切换时调整窗口大小
   useEffect(() => {
@@ -164,7 +179,7 @@ export default function SettingsWindow({ settings, saveSettings, printers, elect
   ]
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: 'var(--bg)', color: 'var(--text)' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--bg)', color: 'var(--text)' }}>
       <SettingsTitlebar />
       <div className="settings-layout">
         {/* 左侧边栏导航 */}
@@ -185,7 +200,7 @@ export default function SettingsWindow({ settings, saveSettings, printers, elect
         <div className="settings-content" ref={contentRef}>
           <div style={{
             position: 'relative',
-            minHeight: '300px',
+            minHeight: 'fit-content',
           }}>
             {/* 打印机标签内容 */}
             <div className="printer-settings" style={{
