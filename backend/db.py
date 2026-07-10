@@ -30,6 +30,7 @@ import json
 import os
 import threading
 import uuid
+import shutil
 from threading import Timer as _Timer
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
@@ -131,6 +132,9 @@ _loaded = False
 # ============================
 
 
+SCHEMA_VERSION = 2  # 发票快照结构版本；未来再次迁移时递增，便于识别旧格式
+
+
 def _atomic_write(file_path: str, data: Any) -> None:
     """原子写入 JSON 文件（先写临时文件再 rename，防止数据损坏）"""
     temp_path = file_path + '.tmp'
@@ -147,9 +151,39 @@ def _atomic_write(file_path: str, data: Any) -> None:
         raise
 
 
+def _atomic_write_text(file_path: str, text: str) -> None:
+    """原子写入文本文件（先写临时文件再 os.replace），用于 oplog 等行格式文件。"""
+    temp_path = file_path + '.tmp'
+    try:
+        with open(temp_path, 'w', encoding='utf-8') as f:
+            f.write(text)
+        os.replace(temp_path, file_path)
+    except Exception:
+        if os.path.exists(temp_path):
+            try:
+                os.unlink(temp_path)
+            except OSError:
+                pass
+        raise
+
+
+def _backup_before_migration() -> None:
+    """迁移前备份 invoices.json / oplog 原文件（仅首迁时创建 .bak，幂等）。
+
+    便于老数据库升级异常时手动回滚到迁移前状态。
+    """
+    for p in (INVOICES_PATH, OPLOG_PATH):
+        bak = p + '.bak'
+        if os.path.exists(p) and not os.path.exists(bak):
+            try:
+                shutil.copy2(p, bak)
+            except IOError as e:
+                logger.warning("迁移备份 %s 失败: %s", p, e)
+
+
 def _save_invoices() -> None:
-    """持久化发票数据到磁盘（调用方须持有 _lock）"""
-    _atomic_write(INVOICES_PATH, _invoices)
+    """持久化发票数据到磁盘（调用方须持有 _lock）；写入带 schemaVersion 信封"""
+    _atomic_write(INVOICES_PATH, {"schemaVersion": SCHEMA_VERSION, "invoices": _invoices})
 
 
 def _append_oplog(op_type: str, invoice_id: str, data: dict = None) -> None:
@@ -241,9 +275,12 @@ def _validate_invoice_ids() -> None:
             continue
         inv_id = inv.get('id')
         if inv_id is not None and not isinstance(inv_id, str):
-            logger.warning("启动时发现非 str 类型的发票 id，已归一化: %r (type=%s)",
-                           inv_id, type(inv_id).__name__)
-            inv['id'] = str(inv_id)
+            fname = inv.get('file_name') or '<unknown>'
+            logger.error(
+                "启动一致性检查失败: 发票 id 应为 str，实为 %s（invoice=%r, id=%r）",
+                type(inv_id).__name__, fname, inv_id,
+            )
+            inv['id'] = str(inv_id)   # 安全网：就地归一化，避免运行期 _invoice_index_by_id 查找失败
 
 
 def _to_hex_id(raw: object) -> Optional[str]:
@@ -277,10 +314,11 @@ def _migrate_legacy_ids() -> None:
     """将历史 int / 十进制字符串 id 物理升级为 uuid hex。
 
     在 _load_invoices 中、索引重建前调用：先把内存中的 id 统一为 hex，
-    再同步重写 oplog 文件中的 id（含 data.id），最后仅在确有变更时重写快照文件。
-    幂等：纯 hex 数据库不会触发任何落盘。
+    再同步重写 oplog 文件中的 id（含 data.id），最后仅在确有变更时备份原文件
+    并以原子方式重写快照/oplog。幂等：纯 hex 数据库不会触发任何落盘。
     """
-    changed = False
+    snapshot_changed = False
+    oplog_changed = False
 
     # 1) 内存归一：int / 十进制字符串 -> hex
     for inv in _invoices:
@@ -290,18 +328,19 @@ def _migrate_legacy_ids() -> None:
         new = _to_hex_id(old)
         if new is not None and new != old:
             inv["id"] = new
-            changed = True
+            snapshot_changed = True
 
-    # 2) oplog 文件中的 id 同步升级（含 data.id）
+    # 2) oplog 文件中的 id 同步升级（含 data.id），先构建新内容再原子写回
+    oplog_lines = None
     if os.path.exists(OPLOG_PATH):
         try:
             with open(OPLOG_PATH, "r", encoding="utf-8") as f:
                 lines = f.readlines()
             out_lines = []
-            oplog_changed = False
             for line in lines:
                 s = line.strip()
                 if not s:
+                    out_lines.append(s)
                     continue
                 try:
                     entry = json.loads(s)
@@ -319,19 +358,23 @@ def _migrate_legacy_ids() -> None:
                             data["id"] = hd
                     oplog_changed = True
                 out_lines.append(json.dumps(entry, ensure_ascii=False, separators=(",", ":")))
-            if oplog_changed:
-                with open(OPLOG_PATH, "w", encoding="utf-8") as f:
-                    f.write("\n".join(out_lines) + "\n")
-                changed = True
+            oplog_lines = out_lines
         except IOError as e:
-            logger.warning("迁移 oplog id 失败: %s", e)
+            logger.warning("读取 oplog 失败: %s", e)
 
-    # 3) 仅当内存确有变更时重写快照文件
-    if changed:
-        try:
-            _atomic_write(INVOICES_PATH, _invoices)
-        except IOError as e:
-            logger.warning("重写快照 id 失败: %s", e)
+    # 3) 仅在确有变更时备份原文件 + 原子重写（快照带 schemaVersion 信封）
+    if snapshot_changed or oplog_changed:
+        _backup_before_migration()
+        if snapshot_changed:
+            try:
+                _atomic_write(INVOICES_PATH, {"schemaVersion": SCHEMA_VERSION, "invoices": _invoices})
+            except IOError as e:
+                logger.warning("重写快照 id 失败: %s", e)
+        if oplog_changed and oplog_lines is not None:
+            try:
+                _atomic_write_text(OPLOG_PATH, "\n".join(oplog_lines) + "\n")
+            except IOError as e:
+                logger.warning("重写 oplog id 失败: %s", e)
 
 
 def _replay_oplog() -> None:
@@ -446,8 +489,8 @@ def _compact_oplog() -> None:
     # 阶段1：标记压缩开始
     _touch_marker(COMPACT_MARKER)
 
-    # 写入全量快照（原子操作：写临时文件 → rename）
-    _atomic_write(INVOICES_PATH, _invoices)
+    # 写入全量快照（原子操作：写临时文件 → rename，带 schemaVersion 信封）
+    _atomic_write(INVOICES_PATH, {"schemaVersion": SCHEMA_VERSION, "invoices": _invoices})
 
     # 阶段2：标记快照已提交（原子 rename，确保阶段1→阶段2的切换是原子的）
     try:
