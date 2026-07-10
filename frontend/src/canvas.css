@@ -204,9 +204,6 @@
 
 .paper img {
   display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
 }
 
 /* ======================== Canvas Zoom Control ======================== */

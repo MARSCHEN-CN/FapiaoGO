@@ -1,4 +1,5 @@
 import { useState, useMemo, useCallback, useRef, useEffect } from 'react'
+import Toggle from './Toggle'
 
 // ============================
 // 可用的重命名字段定义
@@ -343,38 +344,13 @@ export default function RenameSettings({ renameSettings, onSave, electronAPI, ac
     <div ref={contentRef} style={{
       display: 'flex',
       flexDirection: 'column',
-      gap: 'clamp(12px, 1.25vw, 20px)',
-      padding: 'clamp(2px, 0.25vw, 4px) 2px clamp(10px, 1vw, 16px) 2px',
+      gap: '10px',
+      padding: '2px 2px 16px 2px',
     }}>
-      {/* ========== 重命名规则标题 ========== */}
-      <div style={{
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 'clamp(5px, 0.5vw, 8px)' }}>
-          <div style={{
-            width: '4px',
-            height: '16px',
-            background: 'var(--accent)',
-            borderRadius: '2px',
-            boxShadow: '0 0 8px rgba(59, 108, 245, 0.20)',
-          }}></div>
-          <span style={{
-            fontSize: 'clamp(0.75rem, 0.7rem + 0.25vw, 0.85rem)',
-            fontWeight: 600,
-            color: 'var(--text)',
-            letterSpacing: '0.02em',
-          }}>
-            重命名规则
-          </span>
-        </div>
-      </div>
-
       {/* ========== 主内容区：两栏布局 ========== */}
       <div style={{
         display: 'flex',
-        gap: 'clamp(10px, 1vw, 16px)',
+        gap: '10px',
         alignItems: 'flex-start',
       }}>
         {/* ========== 左栏：复选框字段列表 ========== */}
@@ -383,14 +359,13 @@ export default function RenameSettings({ renameSettings, onSave, electronAPI, ac
           width: 'clamp(120px, 15vw, 200px)',
           maxHeight: '550px',
           overflowY: 'auto',
-          background: 'var(--surface)',
+          background: 'var(--white)',
           borderRadius: 'var(--r-lg)',
-          border: '1px solid var(--border-light)',
-          boxShadow: '0 1px 2px rgba(0,0,0,0.04), 0 4px 16px rgba(0,0,0,0.04), inset 0 1px 0 rgba(255,255,255,0.7)',
-          padding: 'clamp(5px, 0.5vw, 8px) clamp(5px, 0.5vw, 8px)',
+          boxShadow: '0 1px 2px rgba(0,0,0,0.02), 0 1px 3px rgba(0,0,0,0.04)',
+          padding: '8px',
           display: 'flex',
           flexDirection: 'column',
-          gap: 'clamp(0px, 0.05vw, 1px)',
+          gap: '2px',
         }}>
           {FIELD_DEFS.map((def, idx) => {
             const checked = selectedKeys.has(def.key)
@@ -401,21 +376,21 @@ export default function RenameSettings({ renameSettings, onSave, electronAPI, ac
                 style={{
                   display: 'flex',
                   alignItems: 'center',
-                  gap: 'clamp(4px, 0.4vw, 6px)',
-                  padding: 'clamp(3px, 0.3vw, 5px) clamp(5px, 0.5vw, 8px)',
+                  gap: '8px',
+                  padding: isCus ? '10px 8px 5px' : '5px 8px',
+                  marginTop: isCus ? '8px' : '0',
+                  borderTop: isCus ? '1px solid var(--border-light)' : 'none',
                   borderRadius: 'var(--r-sm)',
                   cursor: 'pointer',
-                  fontSize: 'clamp(0.75rem, 0.7rem + 0.25vw, 0.85rem)',
+                  fontSize: '12px',
                   color: checked ? 'var(--accent)' : 'var(--text-2)',
                   fontWeight: checked ? 500 : 400,
                   background: checked ? 'var(--accent-soft)' : 'transparent',
-                  paddingTop: isCus ? '16px' : '5px',
-                  marginTop: isCus ? '8px' : '0',
                   transition: 'all 0.15s ease',
                   userSelect: 'none',
                 }}
                 onMouseEnter={(e) => {
-                  if (!checked) e.currentTarget.style.background = 'rgba(59, 108, 245, 0.04)'
+                  if (!checked) e.currentTarget.style.background = 'rgba(79, 124, 255, 0.05)'
                 }}
                 onMouseLeave={(e) => {
                   if (!checked) e.currentTarget.style.background = 'transparent'
@@ -453,23 +428,24 @@ export default function RenameSettings({ renameSettings, onSave, electronAPI, ac
             minHeight: fields.length > 0 ? 'auto' : '180px',
             display: 'flex',
             flexDirection: 'column',
-            gap: 'clamp(4px, 0.4vw, 6px)',
-            padding: 'clamp(8px, 0.75vw, 12px)',
+            gap: '6px',
+            padding: '14px',
             borderRadius: 'var(--r-lg)',
-            border: '1px dashed var(--border)',
-            background: 'var(--surface)',
-            boxShadow: '0 1px 2px rgba(0,0,0,0.04), 0 4px 16px rgba(0,0,0,0.04), inset 0 1px 0 rgba(255,255,255,0.7)',
+            border: '1.5px dashed #d2d2d7',
+            background: 'var(--white)',
+            boxShadow: '0 1px 2px rgba(0,0,0,0.02), 0 1px 3px rgba(0,0,0,0.04)',
             position: 'relative',
             justifyContent: fields.length > 0 ? 'flex-start' : 'center',
             alignItems: fields.length > 0 ? 'stretch' : 'center',
           }}>
             {fields.length === 0 && (
               <div style={{
-                fontSize: 'clamp(0.8rem, 0.75rem + 0.3vw, 0.9rem)',
+                fontSize: '13px',
                 color: 'var(--text-4)',
-                background: 'var(--bg)',
-                padding: 'clamp(8px, 0.75vw, 12px) clamp(16px, 1.5vw, 24px)',
+                background: 'var(--surface)',
+                padding: '10px 20px',
                 borderRadius: 'var(--r-md)',
+                fontWeight: 500,
               }}>
                 勾选左侧重命名项目
               </div>
@@ -494,39 +470,30 @@ export default function RenameSettings({ renameSettings, onSave, electronAPI, ac
                   style={{
                     display: 'flex',
                     alignItems: 'center',
-                    gap: 'clamp(4px, 0.4vw, 6px)',
-                    padding: 'clamp(5px, 0.4vw, 7px) clamp(8px, 0.75vw, 12px)',
-                    borderRadius: 'var(--r-sm)',
+                    gap: '5px',
+                    padding: '5px 10px',
+                    borderRadius: '6px',
                     border: isDropTarget
                       ? '2px dashed var(--accent)'
-                      : '1px solid rgba(59, 108, 245, 0.18)',
+                      : 'none',
                     background: isDropTarget
-                      ? 'rgba(59, 108, 245, 0.08)'
-                      : 'rgba(59, 108, 245, 0.05)',
-                    boxShadow: isDropTarget ? undefined : 'inset 0 1px 0 rgba(255,255,255,0.4)',
+                      ? 'rgba(79, 124, 255, 0.08)'
+                      : 'var(--accent-gradient)',
+                    color: isDropTarget ? 'var(--accent)' : '#fff',
+                    boxShadow: isDropTarget ? 'none' : '0 2px 6px rgba(79,124,255,0.2)',
                     opacity: isDragging ? 0.4 : 1,
                     cursor: 'grab',
                     transition: 'all 0.15s ease',
                     userSelect: 'none',
                     position: 'relative',
-                  }}
-                  onMouseEnter={(e) => {
-                    if (!isDropTarget && !isDragging) {
-                      e.currentTarget.style.borderColor = 'rgba(59, 108, 245, 0.35)'
-                      e.currentTarget.style.background = 'rgba(59, 108, 245, 0.08)'
-                    }
-                  }}
-                  onMouseLeave={(e) => {
-                    if (!isDropTarget && !isDragging) {
-                      e.currentTarget.style.borderColor = 'rgba(59, 108, 245, 0.18)'
-                      e.currentTarget.style.background = 'rgba(59, 108, 245, 0.05)'
-                    }
+                    fontSize: '11px',
+                    fontWeight: 500,
                   }}
                 >
                   {/* 拖拽手柄 */}
                   <span style={{
-                    fontSize: 'clamp(0.8rem, 0.75rem + 0.3vw, 0.9rem)',
-                    color: 'var(--text-4)',
+                    fontSize: '12px',
+                    color: 'rgba(255,255,255,0.7)',
                     lineHeight: 1,
                     cursor: 'grab',
                   }}>
@@ -535,9 +502,9 @@ export default function RenameSettings({ renameSettings, onSave, electronAPI, ac
 
                   {/* 字段标签 */}
                   <span style={{
-                    fontSize: 'clamp(0.75rem, 0.7rem + 0.25vw, 0.85rem)',
+                    fontSize: '11px',
                     fontWeight: 500,
-                    color: 'var(--accent)',
+                    color: isDropTarget ? 'var(--accent)' : '#fff',
                   }}>
                     {def?.label || field.key}
                   </span>
@@ -546,9 +513,9 @@ export default function RenameSettings({ renameSettings, onSave, electronAPI, ac
                   {isKprq && (
                     <>
                       <span style={{
-                        fontSize: 'clamp(0.7rem, 0.65rem + 0.2vw, 0.78rem)',
-                        color: 'var(--text-4)',
-                        marginLeft: 'clamp(2px, 0.25vw, 4px)',
+                        fontSize: '10px',
+                        color: 'rgba(255,255,255,0.7)',
+                        marginLeft: '2px',
                       }}>
                         {(() => {
                           const m = {
@@ -566,33 +533,25 @@ export default function RenameSettings({ renameSettings, onSave, electronAPI, ac
                           return m[kprqDateFormat] || ''
                         })()}
                       </span>
-                      <span style={{
-                        fontSize: 'clamp(0.7rem, 0.65rem + 0.2vw, 0.78rem)',
-                        color: 'var(--text-3)',
-                        marginLeft: 'clamp(4px, 0.4vw, 6px)',
-                      }}>
-                        日期格式:
-                      </span>
                       <select
                         value={kprqDateFormat}
                         onChange={(e) => handleDateFmtChange(e.target.value)}
                         onClick={(e) => e.stopPropagation()}
                         onPointerDown={(e) => e.stopPropagation()}
                         style={{
-                          padding: 'clamp(2px, 0.2vw, 3px) clamp(2px, 0.25vw, 4px)',
-                          fontSize: 'clamp(0.7rem, 0.65rem + 0.2vw, 0.78rem)',
-                          borderRadius: 'var(--r-sm)',
-                          border: '1px solid var(--border)',
-                          background: 'var(--bg)',
-                          color: 'var(--text-2)',
+                          padding: '2px 4px',
+                          fontSize: '10px',
+                          borderRadius: '4px',
+                          border: 'none',
+                          background: 'rgba(255,255,255,0.25)',
+                          color: '#fff',
                           outline: 'none',
                           cursor: 'pointer',
+                          fontWeight: 500,
                         }}
-                        onFocus={(e) => e.target.style.borderColor = 'var(--accent)'}
-                        onBlur={(e) => e.target.style.borderColor = 'var(--border)'}
                       >
                         {DATE_FORMAT_OPTIONS.map(opt => (
-                          <option key={opt.value} value={opt.value}>{opt.label}</option>
+                          <option key={opt.value} value={opt.value} style={{ color: '#1d1d1f' }}>{opt.label}</option>
                         ))}
                       </select>
                     </>
@@ -603,29 +562,21 @@ export default function RenameSettings({ renameSettings, onSave, electronAPI, ac
                     <input
                       type="text"
                       value={field.customText || ''}
-                      placeholder="请输入自定义内容"
+                      placeholder="自定义"
                       onChange={(e) => handleCustomInput(e.target.value)}
                       onClick={(e) => e.stopPropagation()}
                       onPointerDown={(e) => e.stopPropagation()}
                       style={{
                         flex: 1,
-                        minWidth: 'clamp(100px, 12vw, 160px)',
-                        padding: 'clamp(2px, 0.2vw, 3px) clamp(5px, 0.5vw, 8px)',
-                        fontSize: 'clamp(0.75rem, 0.7rem + 0.25vw, 0.85rem)',
-                        borderRadius: 'var(--r-sm)',
-                        border: '1px solid rgba(59, 108, 245, 0.3)',
-                        background: 'var(--bg)',
-                        color: 'var(--accent)',
+                        minWidth: '80px',
+                        padding: '2px 6px',
+                        fontSize: '10px',
+                        borderRadius: '4px',
+                        border: 'none',
+                        background: 'rgba(255,255,255,0.25)',
+                        color: '#fff',
                         outline: 'none',
-                        transition: 'border-color 0.15s ease',
-                      }}
-                      onFocus={(e) => {
-                        e.target.style.borderColor = 'var(--accent)'
-                        e.target.style.boxShadow = '0 0 0 2px rgba(59, 108, 245, 0.1)'
-                      }}
-                      onBlur={(e) => {
-                        e.target.style.borderColor = 'rgba(59, 108, 245, 0.3)'
-                        e.target.style.boxShadow = 'none'
+                        fontWeight: 500,
                       }}
                     />
                   )}
@@ -640,15 +591,15 @@ export default function RenameSettings({ renameSettings, onSave, electronAPI, ac
                     title="移除"
                     style={{
                       cursor: 'pointer',
-                      fontSize: 'clamp(0.9rem, 0.85rem + 0.35vw, 1rem)',
+                      fontSize: '12px',
                       fontWeight: 'bold',
-                      color: 'var(--text-4)',
+                      color: 'rgba(255,255,255,0.7)',
                       marginLeft: 'auto',
                       lineHeight: 1,
                       transition: 'color 0.15s ease',
                     }}
-                    onMouseEnter={(e) => e.target.style.color = 'var(--danger)'}
-                    onMouseLeave={(e) => e.target.style.color = 'var(--text-4)'}
+                    onMouseEnter={(e) => e.target.style.color = '#fff'}
+                    onMouseLeave={(e) => e.target.style.color = 'rgba(255,255,255,0.7)'}
                   >
                     &times;
                   </span>
@@ -678,115 +629,70 @@ export default function RenameSettings({ renameSettings, onSave, electronAPI, ac
             <div style={{
               display: 'flex',
               flexDirection: 'column',
-              gap: 'clamp(5px, 0.5vw, 8px)',
-              background: 'var(--surface)',
+              gap: '10px',
+              background: 'var(--white)',
               borderRadius: 'var(--r-lg)',
-              border: '1px solid var(--border-light)',
-              boxShadow: '0 1px 2px rgba(0,0,0,0.04), 0 4px 16px rgba(0,0,0,0.04), inset 0 1px 0 rgba(255,255,255,0.7)',
-              padding: 'clamp(8px, 0.75vw, 12px) clamp(10px, 1vw, 16px)',
+              boxShadow: '0 1px 2px rgba(0,0,0,0.02), 0 1px 3px rgba(0,0,0,0.04)',
+              padding: '16px',
             }}>
               {/* 预览选项 */}
               <div style={{
                 display: 'flex',
                 alignItems: 'center',
-                justifyContent: 'space-between',
-                gap: 'clamp(10px, 1vw, 16px)',
+                gap: '16px',
                 flexWrap: 'wrap',
               }}>
-                <span style={{
-                  fontSize: 'clamp(0.75rem, 0.7rem + 0.25vw, 0.85rem)',
-                  fontWeight: 500,
-                  color: 'var(--text)',
-                }}>
-                  文件名称预览：
-                </span>
-                <div style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 'clamp(8px, 0.75vw, 12px)',
-                  flexWrap: 'wrap',
-                }}>
-                  <label style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 'clamp(2px, 0.25vw, 4px)',
-                    fontSize: 'clamp(0.7rem, 0.65rem + 0.2vw, 0.78rem)',
-                    color: 'var(--text-3)',
-                    cursor: 'pointer',
-                  }}>
-                    <input
-                      type="checkbox"
-                      checked={showIndex}
-                      onChange={(e) => handleShowIndexChange(e.target.checked)}
-                      style={{
-                        width: '14px',
-                        height: '14px',
-                        accentColor: 'var(--accent)',
-                      }}
-                    />
-                    显示序号
-                  </label>
-                  <label style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 'clamp(2px, 0.25vw, 4px)',
-                    fontSize: 'clamp(0.7rem, 0.65rem + 0.2vw, 0.78rem)',
-                    color: 'var(--text-3)',
-                    cursor: 'pointer',
-                  }}>
-                    <input
-                      type="checkbox"
-                      checked={showPrefix}
-                      onChange={(e) => handleShowPrefixChange(e.target.checked)}
-                      style={{
-                        width: '14px',
-                        height: '14px',
-                        accentColor: 'var(--accent)',
-                      }}
-                    />
-                    显示项目前缀
-                  </label>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 'clamp(2px, 0.25vw, 4px)' }}>
-                    <span style={{ fontSize: 'clamp(0.7rem, 0.65rem + 0.2vw, 0.78rem)', color: 'var(--text-3)' }}>分隔符号:</span>
-                    <select
-                      value={separator}
-                      onChange={(e) => handleSeparatorChange(e.target.value)}
-                      style={{
-                        padding: 'clamp(2px, 0.2vw, 3px) clamp(4px, 0.4vw, 6px)',
-                        fontSize: 'clamp(0.7rem, 0.65rem + 0.2vw, 0.78rem)',
-                        borderRadius: 'var(--r-sm)',
-                        border: '1px solid var(--border-light)',
-                        background: 'var(--bg)',
-                        color: 'var(--text-2)',
-                        outline: 'none',
-                        cursor: 'pointer',
-                      }}
-                      onFocus={(e) => e.target.style.borderColor = 'var(--accent)'}
-                      onBlur={(e) => e.target.style.borderColor = 'var(--border-light)'}
-                    >
-                      {SEPARATOR_OPTIONS.map(ch => (
-                        <option key={ch} value={ch}>
-                          {ch === ' ' ? '空格' : ch === '' ? '无' : ch}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <Toggle
+                    checked={showIndex}
+                    onChange={handleShowIndexChange}
+                  />
+                  <span style={{ fontSize: '12px', color: 'var(--text)', fontWeight: 500 }}>显示序号</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <Toggle
+                    checked={showPrefix}
+                    onChange={handleShowPrefixChange}
+                  />
+                  <span style={{ fontSize: '12px', color: 'var(--text)', fontWeight: 500 }}>显示前缀</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginLeft: 'auto' }}>
+                  <span style={{ fontSize: '11px', color: 'var(--text-3)', fontWeight: 500 }}>分隔符:</span>
+                  <select
+                    value={separator}
+                    onChange={(e) => handleSeparatorChange(e.target.value)}
+                    style={{
+                      padding: '4px 8px',
+                      fontSize: '11px',
+                      borderRadius: 'var(--r-sm)',
+                      border: 'none',
+                      background: 'var(--surface)',
+                      color: 'var(--text-3)',
+                      outline: 'none',
+                      cursor: 'pointer',
+                      fontWeight: 500,
+                    }}
+                  >
+                    {SEPARATOR_OPTIONS.map(ch => (
+                      <option key={ch} value={ch}>
+                        {ch === ' ' ? '空格' : ch === '' ? '无' : ch}
+                      </option>
+                    ))}
+                  </select>
                 </div>
               </div>
 
               {/* 预览内容 */}
               <div style={{
-                padding: 'clamp(6px, 0.65vw, 10px) clamp(8px, 0.75vw, 12px)',
-                background: 'rgba(255,255,255,0.6)',
+                padding: '10px 12px',
+                background: 'var(--surface)',
                 borderRadius: 'var(--r-md)',
-                border: '1px solid var(--border-light)',
-                boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.5)',
-                fontSize: 'clamp(0.75rem, 0.7rem + 0.25vw, 0.85rem)',
-                fontFamily: 'monospace',
+                fontSize: '11px',
                 color: 'var(--accent)',
                 wordBreak: 'break-all',
                 minHeight: '36px',
                 lineHeight: 1.6,
+                fontWeight: 500,
               }}>
                 {previewFileName}
               </div>
@@ -794,7 +700,7 @@ export default function RenameSettings({ renameSettings, onSave, electronAPI, ac
               {/* 长度警告 */}
               {fields.length > 8 && (
                 <div style={{
-                  fontSize: 'clamp(0.7rem, 0.65rem + 0.2vw, 0.78rem)',
+                  fontSize: '11px',
                   color: 'var(--danger)',
                 }}>
                   提示：中文文件名长度不能超过127个字，超出部分可能会被截断！
@@ -819,206 +725,110 @@ export default function RenameSettings({ renameSettings, onSave, electronAPI, ac
 
       {/* ========== 目标文件夹 ========== */}
       <div style={{
+        background: 'var(--white)',
+        borderRadius: 'var(--r-lg)',
+        boxShadow: '0 1px 2px rgba(0,0,0,0.02), 0 1px 3px rgba(0,0,0,0.04)',
+        padding: '16px',
         display: 'flex',
         flexDirection: 'column',
-        gap: 'clamp(8px, 0.75vw, 12px)',
+        gap: '12px',
       }}>
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 'clamp(5px, 0.5vw, 8px)' }}>
-            <div style={{
-              width: '4px',
-              height: '16px',
-              background: 'var(--accent)',
-              borderRadius: '2px',
-              boxShadow: '0 0 8px rgba(59, 108, 245, 0.20)',
-            }}></div>
-            <span style={{
-              fontSize: 'clamp(0.75rem, 0.7rem + 0.25vw, 0.85rem)',
-              fontWeight: 600,
-              color: 'var(--text)',
-              letterSpacing: '0.02em',
-            }}>
-              目标文件夹
-            </span>
-          </div>
-          <span style={{
-            fontSize: 'clamp(0.625rem, 0.6rem + 0.15vw, 0.7rem)',
-            color: 'var(--text-4)',
-            fontStyle: 'italic',
-          }}>
-            可选设置
-          </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <div style={{
+            width: '28px', height: '28px',
+            borderRadius: 'var(--r-sm)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            background: 'var(--accent-gradient)',
+            fontSize: '13px', flexShrink: 0,
+            boxShadow: '0 2px 6px rgba(79,124,255,0.2)',
+            color: '#fff',
+          }}>📁</div>
+          <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text)' }}>目标文件夹</span>
         </div>
 
-        <div style={{
-          background: 'var(--surface)',
-          borderRadius: 'var(--r-lg)',
-          border: '1px solid var(--border-light)',
-          boxShadow: '0 1px 2px rgba(0,0,0,0.04), 0 4px 16px rgba(0,0,0,0.04), inset 0 1px 0 rgba(255,255,255,0.7)',
-          padding: 'clamp(10px, 1vw, 16px)',
-        }}>
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
           <div style={{
+            flex: 1,
+            padding: '8px 12px',
+            background: 'var(--surface)',
+            borderRadius: 'var(--r-sm)',
+            fontSize: '11px',
+            color: targetFolder ? 'var(--text)' : 'var(--text-4)',
+            fontStyle: targetFolder ? 'normal' : 'italic',
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            minHeight: '32px',
             display: 'flex',
-            flexDirection: 'column',
-            gap: 'clamp(8px, 0.75vw, 12px)',
+            alignItems: 'center',
+            fontWeight: 500,
           }}>
-            <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 'clamp(8px, 0.75vw, 12px)',
-            }}>
-              <div style={{
-                flex: 1,
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 'clamp(2px, 0.25vw, 4px)',
-                minWidth: 0,
-              }}>
-                <div style={{
-                  padding: 'clamp(6px, 0.65vw, 10px) clamp(8px, 0.75vw, 12px)',
-                  background: 'rgba(255,255,255,0.6)',
-                  borderRadius: 'var(--r-md)',
-                  border: '1px solid var(--border-light)',
-                  boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.5)',
-                  fontSize: 'clamp(0.7rem, 0.65rem + 0.2vw, 0.78rem)',
-                  color: targetFolder ? 'var(--text)' : 'var(--text-4)',
-                  fontStyle: targetFolder ? 'normal' : 'italic',
-                  whiteSpace: 'nowrap',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  minHeight: '40px',
-                  display: 'flex',
-                  alignItems: 'center',
-                }}>
-                  {targetFolder || '未设置 — 重命名时覆盖原始文件名'}
-                </div>
-                {targetFolder && (
-                  <button
-                    onClick={clearFolder}
-                    style={{
-                      alignSelf: 'flex-start',
-                      fontSize: 'clamp(0.625rem, 0.6rem + 0.15vw, 0.7rem)',
-                      color: 'var(--text-4)',
-                      background: 'none',
-                      border: 'none',
-                      cursor: 'pointer',
-                      padding: 'clamp(1px, 0.1vw, 2px) 0',
-                      textDecoration: 'underline',
-                      textUnderlineOffset: '2px',
-                      transition: 'color 0.2s ease',
-                    }}
-                    onMouseEnter={(e) => e.target.style.color = 'var(--text-3)'}
-                    onMouseLeave={(e) => e.target.style.color = 'var(--text-4)'}
-                  >
-                    清除设置，恢复弹框选择
-                  </button>
-                )}
-              </div>
-
-              <button
-                onClick={selectFolder}
-                style={{
-                  padding: 'clamp(6px, 0.65vw, 10px) clamp(12px, 1.25vw, 20px)',
-                  fontSize: 'clamp(0.7rem, 0.65rem + 0.2vw, 0.78rem)',
-                  fontWeight: 500,
-                  borderRadius: 'var(--r-md)',
-                  border: '1px solid var(--accent)',
-                  background: 'var(--accent)',
-                  color: 'white',
-                  cursor: 'pointer',
-                  fontFamily: 'inherit',
-                  whiteSpace: 'nowrap',
-                  transition: 'all 0.2s ease',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 'clamp(4px, 0.4vw, 6px)',
-                  minWidth: 'clamp(100px, 12vw, 160px)',
-                  justifyContent: 'center',
-                  boxShadow: '0 1px 4px rgba(59, 108, 245, 0.20)',
-                }}
-                onMouseEnter={(e) => {
-                  e.target.style.background = 'var(--accent-dark)';
-                  e.target.style.transform = 'translateY(-1px)';
-                  e.target.style.boxShadow = '0 2px 8px rgba(59, 108, 245, 0.3)';
-                }}
-                onMouseLeave={(e) => {
-                  e.target.style.background = 'var(--accent)';
-                  e.target.style.transform = 'translateY(0)';
-                  e.target.style.boxShadow = 'none';
-                }}
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M3 15v4c0 1.1.9 2 2 2h14a2 2 0 0 0 2-2v-4"></path>
-                  <polyline points="8 10 12 14 16 10"></polyline>
-                  <line x1="12" y1="14" x2="12" y2="2"></line>
-                </svg>
-                选择文件夹
-              </button>
-            </div>
-
-            <div style={{
-              fontSize: 'clamp(0.625rem, 0.6rem + 0.15vw, 0.7rem)',
-              color: 'var(--text-4)',
-              lineHeight: 1.5,
-              paddingTop: '16px',
-            }}>
-              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 'clamp(4px, 0.4vw, 6px)' }}>
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <circle cx="12" cy="12" r="10"></circle>
-                  <line x1="12" y1="16" x2="12" y2="12"></line>
-                  <line x1="12" y1="8" x2="12.01" y2="8"></line>
-                </svg>
-                <span>
-                  设置后重命名将直接输出到此文件夹；不设置则在重命名时覆盖原始文件名。
-                </span>
-              </div>
-            </div>
-
-            {/* 保留原件 */}
-            <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              paddingTop: '16px',
-            }}>
-              <label style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 'clamp(5px, 0.5vw, 8px)',
-                cursor: targetFolder ? 'pointer' : 'not-allowed',
-                opacity: targetFolder ? 1 : 0.5,
-              }}>
-                <input
-                  type="checkbox"
-                  checked={keepOriginal}
-                  disabled={!targetFolder}
-                  onChange={(e) => handleKeepOriginalChange(e.target.checked)}
-                  style={{
-                    width: '14px',
-                    height: '14px',
-                    accentColor: 'var(--accent)',
-                    cursor: targetFolder ? 'pointer' : 'not-allowed',
-                  }}
-                />
-                <span style={{
-                  fontSize: 'clamp(0.75rem, 0.7rem + 0.25vw, 0.85rem)',
-                  color: targetFolder ? 'var(--text)' : 'var(--text-4)',
-                }}>
-                  保留原件
-                </span>
-              </label>
-              <span style={{
-                fontSize: 'clamp(0.625rem, 0.6rem + 0.15vw, 0.7rem)',
-                color: 'var(--text-4)',
-              }}>
-                勾选则复制原件到目标文件夹；不勾选则剪切原件到目标文件夹
-              </span>
-            </div>
+            {targetFolder || '未设置 — 重命名时覆盖原始文件名'}
           </div>
+          <button
+            onClick={selectFolder}
+            style={{
+              padding: '7px 16px',
+              fontSize: '12px',
+              fontWeight: 500,
+              borderRadius: 'var(--r-sm)',
+              border: 'none',
+              background: 'var(--accent-gradient)',
+              color: '#fff',
+              cursor: 'pointer',
+              fontFamily: 'inherit',
+              whiteSpace: 'nowrap',
+              transition: 'all 0.15s ease',
+              boxShadow: '0 2px 6px rgba(79,124,255,0.25)',
+              minHeight: '32px',
+            }}
+            onMouseEnter={(e) => {
+              e.target.style.transform = 'translateY(-0.5px)'
+              e.target.style.boxShadow = '0 3px 8px rgba(79,124,255,0.3)'
+            }}
+            onMouseLeave={(e) => {
+              e.target.style.transform = 'translateY(0)'
+              e.target.style.boxShadow = '0 2px 6px rgba(79,124,255,0.25)'
+            }}
+          >
+            选择文件夹
+          </button>
+        </div>
+
+        {targetFolder && (
+          <button
+            onClick={clearFolder}
+            style={{
+              alignSelf: 'flex-start',
+              fontSize: '11px',
+              color: 'var(--text-4)',
+              background: 'none',
+              border: 'none',
+              cursor: 'pointer',
+              padding: '2px 0',
+              textDecoration: 'underline',
+              textUnderlineOffset: '2px',
+              fontFamily: 'inherit',
+              transition: 'color 0.15s ease',
+            }}
+            onMouseEnter={(e) => e.target.style.color = 'var(--text-2)'}
+            onMouseLeave={(e) => e.target.style.color = 'var(--text-4)'}
+          >
+            清除设置，恢复弹框选择
+          </button>
+        )}
+
+        <div className="printer-hint">设置后重命名将直接输出到此文件夹；不设置则在重命名时覆盖原始文件名。</div>
+
+        {/* 保留原件 */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', paddingTop: '4px', borderTop: '1px solid var(--border-light)' }}>
+          <Toggle
+            checked={keepOriginal}
+            disabled={!targetFolder}
+            onChange={handleKeepOriginalChange}
+          />
+          <span style={{ fontSize: '12px', color: targetFolder ? 'var(--text)' : 'var(--text-4)', fontWeight: 500, opacity: targetFolder ? 1 : 0.5 }}>保留原件</span>
+          <span style={{ fontSize: '11px', color: 'var(--text-4)', marginLeft: '4px' }}>不勾选则剪切原文件到目标文件夹</span>
         </div>
       </div>
     </div>

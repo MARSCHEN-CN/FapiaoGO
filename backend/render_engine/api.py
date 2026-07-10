@@ -70,10 +70,17 @@ def preview(doc_id: str):
 
     Honors the `?page=` query param so multi-page PDFs can preview pages
     other than page 1. The page is part of the cache key (cache.py) and the
-    URL (buildPreviewUrl), so immutable browser caching stays correct.
+    URL (buildPreviewUrl).
+
+    NOTE: /preview does NOT use `immutable` because the current URL does not
+    include all byte-changing parameters (e.g., isLandscape derived from
+    page.rect + rotation). Browser caching therefore uses must-revalidate
+    so that If-None-Match negotiation can correct stale orientation responses.
     """
     page = _int_param("page", 1)
-    return _render_and_respond(doc_id, "preview", page)
+    resp = _render_and_respond(doc_id, "preview", page)
+    resp.headers["Cache-Control"] = "public, max-age=0, must-revalidate"
+    return resp
 
 
 # ── GET /thumbnail/{doc_id} ────────────────────────────────────

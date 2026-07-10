@@ -1,131 +1,139 @@
 @reference "tailwindcss";
 
 /* ================================================================
-   settings-printer.css ?打印机设置标签页样式
+   settings-printer.css — 打印机设置标签页样式
    ================================================================ */
 
 /* ══════════════════════════════════════
-   打印机设置容?
+   打印机设置容器
    ══════════════════════════════════════ */
 .printer-settings {
   display: flex;
   flex-direction: column;
-  gap: clamp(8px, 0.75vw, 12px);
+  gap: 10px;
 }
 
-/* -- 设置卡片 -- */
+/* -- 设置卡片：纯白无描边 + 轻阴影 -- */
 .printer-card {
-  background: var(--surface);
-  @apply rounded-lg;
-  border: 1px solid var(--border-light);
-  padding: clamp(8px, 0.75vw, 12px) clamp(10px, 1vw, 16px);
+  background: var(--white);
+  border-radius: var(--r-lg);
+  border: none;
+  padding: 16px;
   display: flex;
   flex-direction: column;
-  gap: clamp(8px, 0.75vw, 12px);
-  box-shadow:
-    0 1px 2px rgba(0, 0, 0, 0.04),
-    0 4px 16px rgba(0, 0, 0, 0.04),
-    inset 0 1px 0 rgba(255, 255, 255, 0.7);
+  gap: 12px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02), 0 1px 3px rgba(0, 0, 0, 0.04);
 }
 
 .printer-card-header {
   display: flex;
   align-items: center;
-  gap: clamp(5px, 0.5vw, 8px);
-  margin-bottom: clamp(2px, 0.25vw, 4px);
+  gap: 8px;
+  margin-bottom: 0;
 }
 
 .printer-card-header-icon {
-  width: 4px;
-  height: clamp(10px, 1vw, 16px);
-  background: var(--accent);
-  border-radius: 2px;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--r-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent-gradient);
+  color: #fff;
+  font-size: 13px;
   flex-shrink: 0;
-  box-shadow: 0 0 8px rgba(59, 108, 245, 0.20);
+  box-shadow: 0 2px 6px rgba(79, 124, 255, 0.2);
 }
 
 .printer-card-header-title {
-  font-size: clamp(0.75rem, 0.7rem + 0.25vw, 0.85rem);
+  font-size: 13px;
   font-weight: 600;
   color: var(--text);
-  letter-spacing: 0.02em;
+  letter-spacing: 0;
 }
 
-/* -- 表单?-- */
+/* -- 表单行 -- */
 .printer-form-row {
   display: flex;
   align-items: center;
-  gap: clamp(8px, 0.75vw, 12px);
+  gap: 12px;
 }
 
 .printer-form-label {
-  font-size: clamp(0.625rem, 0.6rem + 0.15vw, 0.7rem);
+  font-size: 12px;
   color: var(--text-3);
-  min-width: 60px;
+  min-width: 64px;
   flex-shrink: 0;
+  font-weight: 400;
 }
 
 .printer-form-control {
   flex: 1;
 }
 
-/* -- 下拉选择 -- */
+/* -- 下拉选择：填充式 -- */
 .printer-select {
   width: 100%;
-  @apply rounded-md;
-  padding: clamp(5px, 0.5vw, 8px) clamp(8px, 0.75vw, 12px);
-  font-size: clamp(0.75rem, 0.7rem + 0.25vw, 0.85rem);
-  background: rgba(255, 255, 255, 0.6);
-  border: 1px solid var(--border-light);
+  border-radius: var(--r-sm);
+  padding: 7px 32px 7px 12px;
+  font-size: 12px;
+  background: var(--surface);
+  border: 1px solid transparent;
   color: var(--text);
   font-family: inherit;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  transition: all 0.15s ease;
   outline: none;
   cursor: pointer;
   appearance: none;
   -webkit-appearance: none;
   text-align: left;
   line-height: 1.4;
-  min-height: clamp(28px, 3vw, 36px);
+  min-height: 32px;
   display: flex;
   align-items: center;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5);
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23999' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  font-weight: 500;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%2386868b' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
-  background-position: right clamp(8px, 0.75vw, 12px) center;
-  padding-right: clamp(28px, 3vw, 36px);
+  background-position: right 12px center;
+  padding-right: 32px;
 }
 
 .printer-select:hover {
-  border-color: var(--accent);
+  background: var(--surface-hover);
+  border-color: transparent;
 }
 
 .printer-select:focus {
-  border-color: var(--accent);
+  background: var(--white);
+  border-color: rgba(79, 124, 255, 0.3);
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
-/* -- 输入框 -- */
+/* -- 输入框：填充式 -- */
 .printer-input {
   width: 100%;
-  @apply rounded-md;
-  padding: clamp(5px, 0.5vw, 8px) clamp(8px, 0.75vw, 12px);
-  font-size: clamp(0.75rem, 0.7rem + 0.25vw, 0.85rem);
-  background: rgba(255, 255, 255, 0.6);
-  border: 1px solid var(--border-light);
+  border-radius: var(--r-sm);
+  padding: 7px 12px;
+  font-size: 12px;
+  background: var(--surface);
+  border: 1px solid transparent;
   color: var(--text);
   font-family: inherit;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  transition: all 0.15s ease;
   outline: none;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5);
+  min-height: 32px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
 }
 
 .printer-input:hover {
-  border-color: var(--accent);
+  background: var(--surface-hover);
 }
 
 .printer-input:focus {
-  border-color: var(--accent);
+  background: var(--white);
+  border-color: rgba(79, 124, 255, 0.3);
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
@@ -134,33 +142,35 @@
   opacity: 1;
 }
 
-/* -- 复选框 -- */
+/* -- 复选框行 -- */
 .printer-checkbox-row {
   display: flex;
   align-items: center;
-  gap: clamp(5px, 0.5vw, 8px);
+  gap: 10px;
 }
 
+/* 原生 checkbox 保留用于兼容，Toggle 开关另用组件 */
 .printer-checkbox {
-  width: clamp(10px, 1vw, 16px);
-  height: clamp(10px, 1vw, 16px);
+  width: 15px;
+  height: 15px;
   accent-color: var(--accent);
   cursor: pointer;
   flex-shrink: 0;
 }
 
 .printer-checkbox-label {
-  font-size: clamp(0.75rem, 0.7rem + 0.25vw, 0.85rem);
+  font-size: 12px;
   color: var(--text);
   cursor: pointer;
   user-select: none;
+  font-weight: 500;
 }
 
 .printer-checkbox-label:hover {
   color: var(--accent);
 }
 
-/* -- 禁用状?-- */
+/* -- 禁用状态 -- */
 .printer-checkbox:disabled {
   opacity: 0.4;
   cursor: not-allowed;
@@ -171,11 +181,51 @@
   cursor: not-allowed;
 }
 
+/* -- Toggle 开关（替代checkbox） -- */
+.toggle-switch {
+  position: relative;
+  display: inline-block;
+  width: 36px;
+  height: 20px;
+  flex-shrink: 0;
+}
+.toggle-switch input { display: none; }
+.toggle-track {
+  position: absolute;
+  inset: 0;
+  border-radius: 10px;
+  background: #d2d2d7;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+.toggle-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+  transition: transform 0.2s ease;
+  pointer-events: none;
+}
+.toggle-switch input:checked + .toggle-track {
+  background: var(--accent-gradient);
+}
+.toggle-switch input:checked ~ .toggle-thumb {
+  transform: translateX(16px);
+}
+/* 暗色模式 */
+[data-theme="dark"] .toggle-track {
+  background: rgba(255,255,255,0.15);
+}
+
 /* -- 帮助图标 -- */
 .printer-help-icon {
   cursor: help;
   color: var(--text-3);
-  font-size: clamp(0.7rem, 0.65rem + 0.2vw, 0.78rem);
+  font-size: 12px;
   transition: color 0.15s ease;
 }
 
@@ -183,115 +233,131 @@
   color: var(--accent);
 }
 
-/* -- 方向选择按钮?-- */
+/* -- 方向选择按钮组 -- */
 .printer-orientation-group {
   display: flex;
-  gap: clamp(5px, 0.5vw, 8px);
+  gap: 6px;
 }
 
 .printer-orientation-btn {
   flex: 1;
-  padding: clamp(5px, 0.5vw, 8px);
-  @apply rounded-md;
-  font-size: clamp(0.75rem, 0.7rem + 0.25vw, 0.85rem);
+  padding: 7px 10px;
+  border-radius: var(--r-sm);
+  font-size: 12px;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: clamp(4px, 0.4vw, 6px);
+  gap: 6px;
   cursor: pointer;
   font-family: inherit;
   transition: all 0.15s ease;
   background: var(--surface);
-  border: 1px solid var(--border-light);
+  border: 1px solid transparent;
   color: var(--text-3);
+  font-weight: 500;
 }
 
 .printer-orientation-btn:hover {
-  border-color: var(--accent);
-  color: var(--accent);
+  background: var(--surface-hover);
+  color: var(--text);
 }
 
 .printer-orientation-btn.active {
-  background: var(--accent-soft);
-  border-color: rgba(59, 108, 245, 0.2);
-  color: var(--accent);
+  background: var(--accent-gradient);
+  border-color: transparent;
+  color: #fff;
+  font-weight: 500;
+  box-shadow: 0 2px 6px rgba(79, 124, 255, 0.25);
 }
 
 .printer-orientation-btn svg {
-  width: clamp(10px, 1vw, 16px);
-  height: clamp(10px, 1vw, 16px);
+  width: 14px;
+  height: 14px;
 }
 
 /* -- 合并发票下拉 -- */
 .printer-merge-select {
   width: 100%;
-  @apply rounded-md;
-  padding: clamp(5px, 0.5vw, 8px) clamp(8px, 0.75vw, 12px);
-  font-size: clamp(0.75rem, 0.7rem + 0.25vw, 0.85rem);
-  background: rgba(255, 255, 255, 0.6);
-  border: 1px solid var(--border-light);
+  border-radius: var(--r-sm);
+  padding: 7px 32px 7px 12px;
+  font-size: 12px;
+  background: var(--surface);
+  border: 1px solid transparent;
   color: var(--text);
   font-family: inherit;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  transition: all 0.15s ease;
   outline: none;
   cursor: pointer;
   appearance: none;
   -webkit-appearance: none;
   text-align: left;
   line-height: 1.4;
-  min-height: clamp(28px, 3vw, 36px);
+  min-height: 32px;
   display: flex;
   align-items: center;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5);
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23999' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  font-weight: 500;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%2386868b' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
-  background-position: right clamp(8px, 0.75vw, 12px) center;
-  padding-right: clamp(28px, 3vw, 36px);
+  background-position: right 12px center;
+  padding-right: 32px;
 }
 
 .printer-merge-select:hover {
-  border-color: var(--accent);
+  background: var(--surface-hover);
 }
 
 .printer-merge-select:focus {
-  border-color: var(--accent);
+  background: var(--white);
+  border-color: rgba(79, 124, 255, 0.3);
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 /* -- 提示文字 -- */
 .printer-hint {
-  font-size: clamp(0.625rem, 0.6rem + 0.15vw, 0.7rem);
+  font-size: 11px;
   color: var(--text-4);
-  margin-top: clamp(2px, 0.25vw, 4px);
+  margin-top: 4px;
 }
 
 /* ══════════════════════════════════════
-   深色模式 · 质感升级
+   深色模式
    ══════════════════════════════════════ */
 [data-theme="dark"] .printer-select,
 [data-theme="dark"] .printer-input,
 [data-theme="dark"] .printer-merge-select {
-  background: rgba(255, 255, 255, 0.03);
-  border-color: var(--border);
-  box-shadow: var(--highlight-top);
+  background: rgba(255, 255, 255, 0.04);
+  border-color: transparent;
+  color: var(--text);
 }
 
 [data-theme="dark"] .printer-select:hover,
 [data-theme="dark"] .printer-input:hover,
 [data-theme="dark"] .printer-merge-select:hover {
-  border-color: var(--border-hover);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+[data-theme="dark"] .printer-select:focus,
+[data-theme="dark"] .printer-input:focus,
+[data-theme="dark"] .printer-merge-select:focus {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(108, 138, 255, 0.3);
+  box-shadow: 0 0 0 3px rgba(108, 138, 255, 0.12);
 }
 
 [data-theme="dark"] .printer-orientation-btn {
-  background: rgba(255, 255, 255, 0.03);
-  border-color: var(--border);
-  box-shadow: var(--highlight-top);
+  background: rgba(255, 255, 255, 0.04);
+  border-color: transparent;
+  color: var(--text-3);
+}
+
+[data-theme="dark"] .printer-orientation-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
 }
 
 [data-theme="dark"] .printer-orientation-btn.active {
-  background: var(--accent-soft);
-  border-color: rgba(108, 138, 255, 0.25);
-  box-shadow: var(--highlight-top), 0 0 10px rgba(108, 138, 255, 0.06);
+  background: var(--accent-gradient);
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(108, 138, 255, 0.3);
 }
 
 /* ══════════════════════════════════════
@@ -300,88 +366,97 @@
 .printer-margin-section {
   display: flex;
   flex-direction: column;
-  gap: clamp(4px, 0.4vw, 6px);
-  padding: clamp(5px, 0.5vw, 8px) 0;
-  border-top: 1px solid var(--border);
-  margin-top: clamp(6px, 0.6vw, 10px) !important;
+  gap: 8px;
+  padding-top: 12px;
+  margin-top: 4px;
+  border-top: 1px solid var(--border-light);
 }
 
 .printer-margin-header {
   display: flex;
   align-items: center;
-  gap: clamp(4px, 0.4vw, 6px);
-  margin-bottom: clamp(2px, 0.2vw, 4px);
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-3);
+  font-weight: 500;
 }
 
 .printer-margin-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: clamp(4px, 0.4vw, 6px);
+  gap: 8px;
 }
 
 .printer-margin-input-group {
   display: flex;
   align-items: center;
-  gap: clamp(3px, 0.3vw, 5px);
+  gap: 6px;
 }
 
 .printer-margin-input-label {
-  font-size: clamp(0.625rem, 0.6rem + 0.15vw, 0.7rem);
+  font-size: 11px;
   color: var(--text-3);
   min-width: 14px;
   text-align: center;
   flex-shrink: 0;
+  font-weight: 500;
 }
 
 .printer-margin-input {
   width: 100%;
-  @apply rounded-md;
-  padding: clamp(3px, 0.3vw, 5px) clamp(5px, 0.5vw, 8px);
-  font-size: clamp(0.75rem, 0.7rem + 0.25vw, 0.85rem);
-  background: rgba(255, 255, 255, 0.6);
-  border: 1px solid var(--border-light);
+  border-radius: var(--r-sm);
+  padding: 5px 8px;
+  font-size: 12px;
+  background: var(--surface);
+  border: 1px solid transparent;
   color: var(--text);
   font-family: inherit;
   text-align: center;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  transition: all 0.15s ease;
   outline: none;
-  min-height: clamp(24px, 2.5vw, 30px);
+  min-height: 28px;
   max-width: 70px;
   -moz-appearance: textfield;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
 }
 
 .printer-margin-input::-webkit-inner-spin-button,
 .printer-margin-input::-webkit-outer-spin-button {
   opacity: 1;
-  height: clamp(16px, 1.5vw, 22px);
+  height: 20px;
 }
 
 .printer-margin-input:hover {
-  border-color: var(--accent);
+  background: var(--surface-hover);
 }
 
 .printer-margin-input:focus {
-  border-color: var(--accent);
+  background: var(--white);
+  border-color: rgba(79, 124, 255, 0.3);
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 .printer-margin-unit {
-  font-size: clamp(0.625rem, 0.6rem + 0.15vw, 0.7rem);
+  font-size: 11px;
   color: var(--text-4);
   flex-shrink: 0;
-  min-width: 20px;
 }
 
 /* 深色模式 */
 [data-theme="dark"] .printer-margin-input {
-  background: rgba(255, 255, 255, 0.03);
-  border-color: var(--border);
-  box-shadow: var(--highlight-top);
+  background: rgba(255, 255, 255, 0.04);
+  border-color: transparent;
 }
 
 [data-theme="dark"] .printer-margin-input:hover {
-  border-color: var(--border-hover);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+[data-theme="dark"] .printer-margin-input:focus {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(108, 138, 255, 0.3);
+  box-shadow: 0 0 0 3px rgba(108, 138, 255, 0.12);
 }
 
 /* ================================================================
@@ -412,7 +487,7 @@
 
 .settings-titlebar-name {
   font-size: 13px;
-  font-weight: 500;
+  font-weight: 600;
   color: var(--text);
   line-height: 1;
 }
@@ -425,14 +500,17 @@
 }
 
 .settings-titlebar-btn {
-  width: 32px;
-  height: 28px;
+  width: 30px;
+  height: 26px;
   display: flex;
   align-items: center;
   justify-content: center;
   border-radius: 6px;
   transition: background 0.15s ease;
   color: var(--text-2);
+  border: none;
+  background: transparent;
+  cursor: pointer;
 }
 
 .settings-titlebar-btn:hover {
@@ -446,7 +524,7 @@
 }
 
 .settings-titlebar-close:hover {
-  background: rgba(220, 38, 38, 0.10);
+  background: rgba(220, 38, 38, 0.08);
   color: var(--red);
 }
 
@@ -460,57 +538,58 @@
 }
 
 .settings-sidebar {
-  width: 180px;
+  width: 160px;
   flex-shrink: 0;
-  background: var(--surface);
-  border-right: 1px solid var(--border);
-  box-shadow: inset 1px 0 0 rgba(255, 255, 255, 0.8);
-  padding: 8px 0;
+  background: var(--sidebar-bg);
+  border-right: 1px solid var(--border-light);
+  padding: 8px 6px;
   display: flex;
   flex-direction: column;
+  gap: 2px;
 }
 
 .settings-sidebar-item {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 10px 16px;
+  padding: 9px 12px;
+  margin: 0 6px;
   font-size: 13px;
   color: var(--text-3);
   cursor: pointer;
   border: none;
   background: none;
-  width: 100%;
+  width: calc(100% - 12px);
   text-align: left;
   font-family: inherit;
   position: relative;
-  transition: background 0.15s ease, color 0.15s ease;
+  transition: all 0.15s ease;
   user-select: none;
+  border-radius: var(--r-sm);
 }
 
 .settings-sidebar-item:hover {
-  background: var(--hover-bg);
-  color: var(--text-2);
+  background: var(--surface-hover);
+  color: var(--text);
 }
 
 .settings-sidebar-item.active {
   color: var(--accent);
-  background: var(--accent-soft);
+  background: var(--white);
   font-weight: 500;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5), 0 0 0 1px rgba(59, 108, 245, 0.06);
+  box-shadow: 0 1px 3px rgba(79, 124, 255, 0.08), 0 0 0 1px rgba(79, 124, 255, 0.1);
 }
 
 .settings-sidebar-item.active::before {
   content: '';
   position: absolute;
-  left: 0;
+  left: -6px;
   top: 50%;
   transform: translateY(-50%);
   width: 3px;
-  height: 20px;
-  background: var(--accent);
-  border-radius: 0 2px 2px 0;
-  box-shadow: 0 0 8px rgba(59, 108, 245, 0.25);
+  height: 18px;
+  background: var(--accent-gradient);
+  border-radius: 0 3px 3px 0;
 }
 
 .settings-sidebar-icon {
@@ -537,35 +616,31 @@
 .settings-content {
   flex: 1;
   overflow-y: auto;
-  padding: clamp(10px, 1vw, 16px);
+  padding: 14px;
 }
 
-/* 深色模式适配 · 质感升级 */
+/* 深色模式适配 */
 [data-theme="dark"] .settings-sidebar {
-  background: var(--surface-hover);
+  background: var(--sidebar-bg);
   border-right-color: var(--border);
-  box-shadow: none;
 }
 
 [data-theme="dark"] .settings-sidebar-item.active {
-  background: var(--accent-soft);
-  box-shadow: var(--highlight-top), 0 0 0 1px rgba(108, 138, 255, 0.08);
+  background: var(--surface);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2), 0 0 0 1px rgba(108, 138, 255, 0.12);
 }
 
 [data-theme="dark"] .settings-sidebar-item.active::before {
-  box-shadow: 0 0 10px rgba(108, 138, 255, 0.30);
+  background: var(--accent-gradient);
 }
 
 /* 深色模式 · 卡片质感 */
 [data-theme="dark"] .printer-card {
   background: var(--surface);
-  border-color: var(--border);
-  box-shadow:
-    var(--highlight-top),
-    0 1px 3px rgba(0, 0, 0, 0.12),
-    0 4px 16px rgba(0, 0, 0, 0.08);
+  border: none;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12), 0 1px 3px rgba(0, 0, 0, 0.08);
 }
 
 [data-theme="dark"] .printer-card-header-icon {
-  box-shadow: 0 0 10px rgba(108, 138, 255, 0.25);
+  box-shadow: 0 2px 8px rgba(108, 138, 255, 0.3);
 }

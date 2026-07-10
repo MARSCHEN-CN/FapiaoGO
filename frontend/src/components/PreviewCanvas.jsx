@@ -1,7 +1,26 @@
-import { useRef, useCallback, memo } from 'react'
+import { useRef, useCallback, memo, useEffect } from 'react'
 
 export default memo(function PreviewCanvas({ previewFile, displayInfo, previewCanvas, previewUrl, grayscale, previewRenderVersion }) {
   const canvasRef = useRef(null)
+  const imgRef = useRef(null)
+
+  // ⚠️ DIAGNOSTIC — 调试完删除。测量实际渲染尺寸，排查 data 正确但视觉异常的问题。
+  useEffect(() => {
+    if (window.__PREVIEW_DIAG__ && imgRef.current && displayInfo) {
+      const img = imgRef.current
+      const rect = img.getBoundingClientRect()
+      console.log('[diag:canvas] img rendered', {
+        src_tail: img.src.slice(-56),
+        naturalWidth: img.naturalWidth,
+        naturalHeight: img.naturalHeight,
+        clientWidth: img.clientWidth,
+        clientHeight: img.clientHeight,
+        boundingRect: `${Math.round(rect.width)}x${Math.round(rect.height)}`,
+        parentRect: `${Math.round(img.parentElement?.getBoundingClientRect().width)}x${Math.round(img.parentElement?.getBoundingClientRect().height)}`,
+        inlineStyle: img.style.cssText,
+      })
+    }
+  }, [previewUrl, displayInfo])
 
   // ✅ L1 缓存：跟踪 DOM canvas 上次绘制的内容
   //    仅当同一 DOM canvas + 同 source canvas + 同滤镜 + 同版本时跳过重绘
@@ -44,6 +63,7 @@ export default memo(function PreviewCanvas({ previewFile, displayInfo, previewCa
         transition: 'width 0.2s ease, height 0.2s ease',
       }}>
         <img
+          ref={imgRef}
           src={previewUrl}
           alt=""
           draggable={false}

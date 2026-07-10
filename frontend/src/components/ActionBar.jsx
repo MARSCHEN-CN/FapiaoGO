@@ -128,9 +128,8 @@ export default React.memo(function ActionBar({
                     <circle cx="12" cy="12" r="10" fill="none" strokeWidth="2" stroke="currentColor" strokeDasharray="31.4 31.4" />
                   </svg>
                 ) : (
-                  <svg viewBox="0 0 24 24">
-                    <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
-                    <path d="M15 5l4 4" />
+                  <svg viewBox="0 0 1024 1024" width="16" height="16">
+                    <path d="M163.84 619.52l-57.6 219.52a38.4 38.4 0 0 0 8.96 35.84 37.76 37.76 0 0 0 25.6 10.24h14.72L355.84 832h6.4l551.68-576a92.8 92.8 0 0 0 24.32-74.24 112.64 112.64 0 0 0-32-78.08l-52.48-50.56a106.24 106.24 0 0 0-74.88-32.64 88.96 88.96 0 0 0-64 26.24l-550.4 571.52z m694.4-424.32l-54.4 56.32-88.96-93.44 53.12-56.96a25.6 25.6 0 0 1 34.56 0l53.12 53.76a30.72 30.72 0 0 1 8.32 20.48 22.4 22.4 0 0 1-5.76 16zM261.76 628.48l394.88-411.52 89.6 94.08-394.88 410.88z m-73.6 167.68l28.8-109.44L293.76 768z m693.12-376.32M938.88 1001.6h-832a35.2 35.2 0 0 1-35.2-35.2 34.56 34.56 0 0 1 35.2-35.2h832a35.2 35.2 0 0 1 35.2 35.2 35.2 35.2 0 0 1-35.2 35.2z" fill="currentColor"/>
                   </svg>
                 )}
               </div>
@@ -167,10 +166,10 @@ export default React.memo(function ActionBar({
                   <circle cx="12" cy="12" r="10" fill="none" strokeWidth="2" stroke="currentColor" strokeDasharray="31.4 31.4" />
                 </svg>
               ) : (
-                <svg width="16" height="16" viewBox="0 0 48 48" fill="none">
-                  <path d="M37 32H11V44H37V32Z" fill="none" stroke="currentColor" strokeWidth="4" strokeLinejoin="round"/>
-                  <path fillRule="evenodd" clipRule="evenodd" d="M4 20H44V38H37.0173V32H10.9805V38H4V20Z" stroke="currentColor" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round"/>
-                  <path d="M38 4H10V20H38V4Z" fill="none" stroke="currentColor" strokeWidth="4" strokeLinejoin="round"/>
+                <svg viewBox="0 0 1025 1024" width="16" height="16" fill="currentColor">
+                  <path d="M736.1 82v521h-446V82h446m20-80h-486c-33.1 0-60 26.9-60 60v561c0 33.1 26.9 60 60 60h486c33.1 0 60-26.9 60-60V62c0-33.1-26.8-60-60-60z"/>
+                  <path d="M825.1 551c17.8 0 35 2.9 51 8.6 14.8 5.3 27.8 12.7 38.9 22 11.3 9.5 30.2 29.7 30.2 58.2V943h-864V639.8c0-28.5 18.9-48.7 30.2-58.2 11-9.3 24.1-16.7 38.9-22 16-5.7 33.1-8.6 51-8.6h9.5v51.5c0 44.2 35.8 80 80 80h446c44.2 0 80-35.8 80-80V551h8.3m0-80h-88.5v131.5h-446V471h-89.5c-110.5 0-200 75.6-200 168.8v332.6c0 28 26.9 50.6 60 50.6h904c33.1 0 60-22.7 60-50.6V639.8c0-93.2-89.5-168.8-200-168.8z"/>
+                  <path d="M668.1 534h-310c-22.1 0-40-17.9-40-40s17.9-40 40-40h310c22.1 0 40 17.9 40 40s-17.9 40-40 40z m0-145h-310c-22.1 0-40-17.9-40-40s17.9-40 40-40h310c22.1 0 40 17.9 40 40s-17.9 40-40 40z m0-149h-310c-22.1 0-40-17.9-40-40s17.9-40 40-40h310c22.1 0 40 17.9 40 40s-17.9 40-40 40zM595.1 924h-164c-22.1 0-40-17.9-40-40s17.9-40 40-40h164c22.1 0 40 17.9 40 40s-17.9 40-40 40z"/>
                 </svg>
               )}
             </div>

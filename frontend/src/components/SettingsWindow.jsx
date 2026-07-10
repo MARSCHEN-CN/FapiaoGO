@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import RenameSettings from './RenameSettings'
 import AutoSaveToast, { useAutoSaveToast } from './AutoSaveToast'
 import SettingsTitlebar from './SettingsTitlebar'
+import Toggle from './Toggle'
 import '../settings-printer.css'
 import { PAPER_REGISTRY, MARGIN_PRESETS } from '../config'
 
@@ -197,7 +198,7 @@ export default function SettingsWindow({ settings, saveSettings, printers, elect
               {/* 打印机选择卡片 */}
               <div className="printer-card">
                 <div className="printer-card-header">
-                  <div className="printer-card-header-icon"></div>
+                  <div className="printer-card-header-icon">🖨</div>
                   <span className="printer-card-header-title">打印机设置</span>
                 </div>
 
@@ -214,21 +215,18 @@ export default function SettingsWindow({ settings, saveSettings, printers, elect
                 </div>
 
                 <div className="printer-checkbox-row">
-                  <input
-                    type="checkbox"
-                    id="grayscale"
-                    className="printer-checkbox"
+                  <Toggle
                     checked={settings.grayscale}
-                    onChange={(e) => saveSettingsWithToast({ ...settings, grayscale: e.target.checked })}
+                    onChange={(val) => saveSettingsWithToast({ ...settings, grayscale: val })}
                   />
-                  <label htmlFor="grayscale" className="printer-checkbox-label">灰度打印</label>
+                  <label className="printer-checkbox-label">灰度打印</label>
                 </div>
               </div>
 
               {/* 打印份数卡片 */}
               <div className="printer-card">
                 <div className="printer-card-header">
-                  <div className="printer-card-header-icon"></div>
+                  <div className="printer-card-header-icon">📄</div>
                   <span className="printer-card-header-title">打印份数</span>
                 </div>
 
@@ -244,39 +242,25 @@ export default function SettingsWindow({ settings, saveSettings, printers, elect
                   />
                 </div>
 
-                <div style={{ display: 'flex', gap: 'clamp(16px, 1.5vw, 24px)' }}>
+                <div style={{ display: 'flex', gap: '24px', flexWrap: 'wrap' }}>
                   <div className="printer-checkbox-row">
-                    <input
-                      type="checkbox"
-                      id="collate"
-                      className="printer-checkbox"
+                    <Toggle
                       checked={settings.copies >= 2 ? settings.collate : true}
                       disabled={settings.copies < 2}
-                      onChange={(e) => saveSettingsWithToast({ ...settings, collate: e.target.checked })}
+                      onChange={(val) => saveSettingsWithToast({ ...settings, collate: val })}
                     />
                     <label
-                      htmlFor="collate"
                       className={`printer-checkbox-label ${settings.copies < 2 ? 'disabled' : ''}`}
                     >逐份打印</label>
                   </div>
 
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flex: 1 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 'clamp(5px, 0.5vw, 8px)' }}>
-                      <input
-                        type="checkbox"
-                        id="extraSpecial"
-                        className="printer-checkbox"
-                        checked={settings.extraSpecial}
-                        onChange={(e) => saveSettingsWithToast({ ...settings, extraSpecial: e.target.checked })}
-                      />
-                      <label htmlFor="extraSpecial" className="printer-checkbox-label">一普二专</label>
-                    </div>
-                    <span style={{
-                      fontSize: 'clamp(0.625rem, 0.6rem + 0.15vw, 0.7rem)',
-                      color: 'var(--text-4)',
-                    }}>
-                      勾选则列表中普通发票打一份，专用发票打两份
-                    </span>
+                  <div className="printer-checkbox-row">
+                    <Toggle
+                      checked={settings.extraSpecial}
+                      onChange={(val) => saveSettingsWithToast({ ...settings, extraSpecial: val })}
+                    />
+                    <label className="printer-checkbox-label">一普二专</label>
+                    <span style={{ fontSize: '11px', color: 'var(--text-4)', marginLeft: '4px' }}>专票打印两份</span>
                   </div>
                 </div>
               </div>
@@ -284,7 +268,7 @@ export default function SettingsWindow({ settings, saveSettings, printers, elect
               {/* 纸张设置卡片 */}
               <div className="printer-card">
                 <div className="printer-card-header">
-                  <div className="printer-card-header-icon"></div>
+                  <div className="printer-card-header-icon">📐</div>
                   <span className="printer-card-header-title">纸张设置</span>
                 </div>
 
@@ -503,24 +487,14 @@ export default function SettingsWindow({ settings, saveSettings, printers, elect
                   </div>
                 </div>
 
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 'clamp(5px, 0.5vw, 8px)' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 'clamp(5px, 0.5vw, 8px)' }}>
-                    <input
-                      type="checkbox"
-                      id="autoOrient"
-                      className="printer-checkbox"
-                      checked={settings.autoOrient ?? false}
-                      onChange={(e) => saveSettingsWithToast({ ...settings, autoOrient: e.target.checked })}
-                    />
-                    <label htmlFor="autoOrient" className="printer-checkbox-label">
-                      自动回正
-                    </label>
-                  </div>
-                  <span style={{
-                    fontSize: 'clamp(0.625rem, 0.6rem + 0.15vw, 0.7rem)',
-                    color: 'var(--text-4)',
-                  }}>
-                    自动检测文字方向并旋转至正确方向（不稳定，解析慢）
+                <div className="printer-checkbox-row" style={{ marginTop: '4px' }}>
+                  <Toggle
+                    checked={settings.autoOrient ?? false}
+                    onChange={(val) => saveSettingsWithToast({ ...settings, autoOrient: val })}
+                  />
+                  <label className="printer-checkbox-label">自动回正</label>
+                  <span style={{ fontSize: '11px', color: 'var(--text-4)', marginLeft: '4px' }}>
+                    自动检测文字方向并旋转（不稳定，解析慢）
                   </span>
                 </div>
               </div>
@@ -552,133 +526,50 @@ export default function SettingsWindow({ settings, saveSettings, printers, elect
               pointerEvents: activeTab === 'pack' ? 'auto' : 'none',
               width: '100%',
             }}>
-              <div style={{
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 'clamp(8px, 0.75vw, 12px)',
-              }}>
-                {/* 打包规则标题 */}
-                <div style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 'clamp(5px, 0.5vw, 8px)' }}>
-                    <div style={{
-                      width: '4px',
-                      height: '16px',
-                      background: 'var(--accent)',
-                      borderRadius: '2px',
-                      boxShadow: '0 0 8px rgba(59, 108, 245, 0.20)',
-                    }}></div>
-                    <span style={{
-                      fontSize: 'clamp(0.75rem, 0.7rem + 0.25vw, 0.85rem)',
-                      fontWeight: 600,
-                      color: 'var(--text)',
-                      letterSpacing: '0.02em',
-                    }}>
-                      打包规则
-                    </span>
-                  </div>
-                </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
 
                 {/* 打包规则卡片 */}
-                <div style={{
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: 'clamp(8px, 0.75vw, 12px)',
-                  background: 'var(--surface)',
-                  borderRadius: 'var(--r-lg)',
-                  border: '1px solid var(--border-light)',
-                  boxShadow: '0 1px 2px rgba(0,0,0,0.04), 0 4px 16px rgba(0,0,0,0.04), inset 0 1px 0 rgba(255,255,255,0.7)',
-                  padding: 'clamp(8px, 0.75vw, 12px) clamp(10px, 1vw, 16px)',
-                }}>
-                  {/* 打包前先进行发票重命名 */}
-                  <div style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                  }}>
-                    <label style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 'clamp(5px, 0.5vw, 8px)',
-                      cursor: 'pointer',
-                    }}>
-                      <input
-                        type="checkbox"
-                        checked={packRenameBeforeArchive}
-                        onChange={(e) => handlePackRenameBeforeArchiveChange(e.target.checked)}
-                        style={{
-                          width: '14px',
-                          height: '14px',
-                          accentColor: 'var(--accent)',
-                          cursor: 'pointer',
-                        }}
-                      />
-                      <span style={{
-                        fontSize: 'clamp(0.75rem, 0.7rem + 0.25vw, 0.85rem)',
-                        color: 'var(--text)',
-                      }}>
-                        打包前先进行发票重命名
-                      </span>
-                    </label>
-                    <span style={{
-                      fontSize: 'clamp(0.625rem, 0.6rem + 0.15vw, 0.7rem)',
-                      color: 'var(--text-4)',
-                    }}>
-                      勾选则按重命名规则对发票进行重命名再打包
-                    </span>
+                <div className="printer-card" style={{ padding: '16px' }}>
+                  <div className="printer-card-header">
+                    <div className="printer-card-header-icon">📦</div>
+                    <span className="printer-card-header-title">打包规则</span>
                   </div>
 
-                  {/* 压缩包格式选择 */}
-                  <div style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    paddingTop: '16px',
-                  }}>
-                    <span style={{
-                      fontSize: 'clamp(0.75rem, 0.7rem + 0.25vw, 0.85rem)',
-                      color: 'var(--text)',
-                    }}>
-                      压缩包格式
-                    </span>
-                    <div style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 'clamp(5px, 0.5vw, 8px)',
-                    }}>
+                  <div className="printer-checkbox-row">
+                    <Toggle
+                      checked={packRenameBeforeArchive}
+                      onChange={handlePackRenameBeforeArchiveChange}
+                    />
+                    <label className="printer-checkbox-label">打包前先进行发票重命名</label>
+                    <span style={{ fontSize: '11px', color: 'var(--text-4)', marginLeft: '4px' }}>按重命名规则重命名后再打包</span>
+                  </div>
+
+                  <div className="printer-form-row" style={{ marginTop: '4px' }}>
+                    <label className="printer-form-label">压缩格式</label>
+                    <div className="printer-form-control" style={{ display: 'flex', gap: '6px' }}>
                       {['ZIP', 'RAR', '7Z'].map((format) => (
                         <button
                           key={format}
                           onClick={() => handlePackArchiveFormatChange(format)}
                           style={{
-                            padding: 'clamp(4px, 0.4vw, 6px) clamp(10px, 1vw, 16px)',
-                            fontSize: 'clamp(0.7rem, 0.65rem + 0.2vw, 0.78rem)',
+                            flex: 1,
+                            padding: '8px 10px',
+                            fontSize: '12px',
                             fontWeight: 500,
-                            borderRadius: 'var(--r-md)',
-                            border: '1px solid var(--border-light)',
-                            background: packArchiveFormat === format ? 'var(--accent)' : 'rgba(255,255,255,0.6)',
-                            color: packArchiveFormat === format ? 'white' : 'var(--text-3)',
+                            borderRadius: 'var(--r-sm)',
+                            border: 'none',
+                            background: packArchiveFormat === format ? 'var(--accent-gradient)' : 'var(--surface)',
+                            color: packArchiveFormat === format ? '#fff' : 'var(--text-3)',
                             cursor: 'pointer',
                             fontFamily: 'inherit',
-                            transition: 'all 0.2s ease',
-                            boxShadow: packArchiveFormat === format
-                              ? '0 1px 4px rgba(59, 108, 245, 0.25)'
-                              : 'inset 0 1px 0 rgba(255,255,255,0.5)',
+                            transition: 'all 0.15s ease',
+                            boxShadow: packArchiveFormat === format ? '0 2px 6px rgba(79,124,255,0.25)' : 'none',
                           }}
                           onMouseEnter={(e) => {
-                            if (packArchiveFormat !== format) {
-                              e.currentTarget.style.borderColor = 'var(--accent)'
-                              e.currentTarget.style.color = 'var(--accent)'
-                            }
+                            if (packArchiveFormat !== format) e.currentTarget.style.background = 'var(--surface-hover)'
                           }}
                           onMouseLeave={(e) => {
-                            if (packArchiveFormat !== format) {
-                              e.currentTarget.style.borderColor = 'var(--border-light)'
-                              e.currentTarget.style.color = 'var(--text-3)'
-                            }
+                            if (packArchiveFormat !== format) e.currentTarget.style.background = 'var(--surface)'
                           }}
                         >
                           {format}
@@ -687,45 +578,24 @@ export default function SettingsWindow({ settings, saveSettings, printers, elect
                     </div>
                   </div>
 
-                  {/* 压缩包重命名规则 */}
-                  <div style={{
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: 'clamp(6px, 0.65vw, 10px)',
-                    paddingTop: '16px',
-                  }}>
-                    <div style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                    }}>
-                      <span style={{
-                        fontSize: 'clamp(0.75rem, 0.7rem + 0.25vw, 0.85rem)',
-                        color: 'var(--text)',
-                        fontWeight: 500,
-                      }}>
-                        压缩包命名规则
-                      </span>
-                    </div>
-                    {/* 可拖拽的字段区域 */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', paddingTop: '8px', borderTop: '1px solid var(--border-light)' }}>
+                    <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>命名规则</div>
                     <div
                       style={{
                         display: 'flex',
                         alignItems: 'center',
-                        justifyContent: 'space-between',
-                        gap: 'clamp(8px, 0.75vw, 12px)',
-                        padding: 'clamp(8px, 0.75vw, 12px)',
-                        background: 'rgba(255,255,255,0.6)',
+                        flexWrap: 'wrap',
+                        gap: '6px',
+                        padding: '10px 12px',
+                        background: 'var(--surface)',
                         borderRadius: 'var(--r-md)',
-                        border: '1px dashed var(--border)',
-                        boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.5)',
+                        border: '1.5px dashed #d2d2d7',
+                        minHeight: '50px',
                       }}
                       onDragOver={(e) => e.preventDefault()}
                     >
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 'clamp(5px, 0.5vw, 8px)' }}>
                       {packNameFieldOrder.map((fieldType, index) => (
-                        <div key={fieldType} style={{ display: 'flex', alignItems: 'center', gap: 'clamp(5px, 0.5vw, 8px)' }}>
-                          {/* 字段 */}
+                        <div key={fieldType} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                           <div
                             draggable
                             onDragStart={(e) => {
@@ -746,36 +616,36 @@ export default function SettingsWindow({ settings, saveSettings, printers, elect
                             }}
                             onDragOver={(e) => e.preventDefault()}
                             style={{
-                              display: 'flex',
+                              display: 'inline-flex',
                               alignItems: 'center',
-                              gap: 'clamp(4px, 0.4vw, 6px)',
-                              padding: 'clamp(4px, 0.4vw, 6px) clamp(8px, 0.75vw, 12px)',
-                              background: 'var(--surface)',
-                              borderRadius: 'var(--r-md)',
-                              border: '1px solid var(--border-light)',
-                              boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.6)',
+                              gap: '5px',
+                              padding: '4px 10px',
+                              background: 'var(--accent-gradient)',
+                              borderRadius: '6px',
+                              color: '#fff',
+                              fontSize: '11px',
+                              fontWeight: 500,
                               cursor: 'grab',
-                              fontSize: 'clamp(0.75rem, 0.7rem + 0.25vw, 0.85rem)',
-                              color: 'var(--text)',
+                              boxShadow: '0 2px 6px rgba(79,124,255,0.2)',
                             }}
                           >
-                            <span style={{ color: 'var(--text-4)', fontSize: 'clamp(0.7rem, 0.65rem + 0.2vw, 0.78rem)' }}>&#9776;</span>
+                            <span style={{ opacity: 0.7, fontSize: '12px' }}>&#9776;</span>
                             {fieldType === 'prefix' ? (
                               <input
                                 type="text"
                                 value={packArchiveNamePrefix}
                                 onChange={(e) => handlePackArchiveNamePrefixChange(e.target.value)}
-                                placeholder="自定义内容"
+                                placeholder="前缀"
                                 style={{
-                                  width: 'clamp(100px, 12vw, 160px)',
-                                  padding: 'clamp(2px, 0.25vw, 4px) clamp(5px, 0.5vw, 8px)',
-                                  fontSize: 'clamp(0.75rem, 0.7rem + 0.25vw, 0.85rem)',
-                                  borderRadius: 'var(--r-sm)',
-                                  border: '1px solid var(--border-light)',
-                                  background: 'rgba(255,255,255,0.6)',
-                                  boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.5)',
-                                  color: 'var(--text)',
+                                  width: '80px',
+                                  padding: '2px 6px',
+                                  fontSize: '11px',
+                                  borderRadius: '4px',
+                                  border: 'none',
+                                  background: 'rgba(255,255,255,0.25)',
+                                  color: '#fff',
                                   outline: 'none',
+                                  fontWeight: 500,
                                 }}
                                 onClick={(e) => e.stopPropagation()}
                               />
@@ -784,45 +654,42 @@ export default function SettingsWindow({ settings, saveSettings, printers, elect
                                 value={packArchiveNameDateFormat}
                                 onChange={(e) => handlePackArchiveNameDateFormatChange(e.target.value)}
                                 style={{
-                                  width: 'clamp(100px, 12vw, 160px)',
-                                  padding: 'clamp(2px, 0.25vw, 4px) clamp(5px, 0.5vw, 8px)',
-                                  fontSize: 'clamp(0.75rem, 0.7rem + 0.25vw, 0.85rem)',
-                                  borderRadius: 'var(--r-sm)',
-                                  border: '1px solid var(--border-light)',
-                                  background: 'rgba(255,255,255,0.6)',
-                                  boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.5)',
-                                  color: 'var(--text)',
+                                  padding: '2px 4px',
+                                  fontSize: '11px',
+                                  borderRadius: '4px',
+                                  border: 'none',
+                                  background: 'rgba(255,255,255,0.25)',
+                                  color: '#fff',
                                   outline: 'none',
                                   cursor: 'pointer',
+                                  fontWeight: 500,
                                 }}
                                 onClick={(e) => e.stopPropagation()}
                               >
                                 {DATE_FORMAT_OPTIONS.map(opt => (
-                                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                                  <option key={opt.value} value={opt.value} style={{ color: '#1d1d1f' }}>{opt.label}</option>
                                 ))}
                               </select>
                             )}
                           </div>
-                          {/* 分隔符（在两个字段之间显示，且两个字段都有值时才显示） */}
                           {index < packNameFieldOrder.length - 1 && (() => {
-                            // 检查是否两个字段都有值
                             const hasPrefix = packArchiveNamePrefix && packArchiveNamePrefix.trim() !== ''
                             const hasDate = packArchiveNameDateFormat !== 'none'
-                            const hasBothFields = hasPrefix && hasDate
-                            return hasBothFields
+                            return hasPrefix && hasDate
                           })() && (
                             <select
                               value={packArchiveNameSeparator}
                               onChange={(e) => handlePackArchiveNameSeparatorChange(e.target.value)}
                               style={{
-                                padding: 'clamp(2px, 0.25vw, 4px) clamp(5px, 0.5vw, 8px)',
-                                fontSize: 'clamp(0.7rem, 0.65rem + 0.2vw, 0.78rem)',
+                                padding: '3px 6px',
+                                fontSize: '11px',
                                 borderRadius: 'var(--r-sm)',
-                                border: '1px solid var(--border-light)',
+                                border: 'none',
                                 background: 'var(--surface)',
-                                color: 'var(--text-2)',
+                                color: 'var(--text-3)',
                                 outline: 'none',
                                 cursor: 'pointer',
+                                fontWeight: 500,
                               }}
                             >
                               {ARCHIVE_SEPARATOR_OPTIONS.map(ch => (
@@ -834,25 +701,16 @@ export default function SettingsWindow({ settings, saveSettings, printers, elect
                           )}
                         </div>
                       ))}
-                      </div>
-                      <span style={{
-                        fontSize: 'clamp(0.625rem, 0.6rem + 0.15vw, 0.7rem)',
-                        color: 'var(--text-4)',
-                        whiteSpace: 'nowrap',
-                      }}>
-                        可拖动拖拽手柄 <span style={{ fontFamily: 'monospace' }}>&#9776;</span> 调整字段排序
-                      </span>
                     </div>
-                    {/* 压缩包名称预览 */}
+
                     <div style={{
-                      padding: 'clamp(6px, 0.65vw, 10px) clamp(8px, 0.75vw, 12px)',
-                      background: 'rgba(255,255,255,0.6)',
+                      padding: '10px 12px',
+                      background: 'var(--surface)',
                       borderRadius: 'var(--r-md)',
-                      border: '1px solid var(--border-light)',
-                      boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.5)',
-                      fontSize: 'clamp(0.75rem, 0.7rem + 0.25vw, 0.85rem)',
+                      fontSize: '11px',
                       color: 'var(--accent)',
-                      fontFamily: 'monospace',
+                      fontFamily: 'inherit',
+                      fontWeight: 500,
                     }}>
                       {(() => {
                         const dateMap = {
@@ -869,225 +727,107 @@ export default function SettingsWindow({ settings, saveSettings, printers, elect
                         }
                         const dateStr = packArchiveNameDateFormat === 'none' ? '' : (dateMap[packArchiveNameDateFormat] || '')
                         const prefix = packArchiveNamePrefix || ''
-                        // 根据字段顺序生成预览，过滤掉空值
                         const parts = packNameFieldOrder.map(type =>
                           type === 'prefix' ? prefix : dateStr
                         ).filter(Boolean)
-                        // 只有一个字段时不使用分隔符
                         const sep = parts.length > 1 ? packArchiveNameSeparator : ''
                         return `${parts.join(sep)}.${packArchiveFormat.toLowerCase()}`
                       })()}
                     </div>
+                  </div>
 
-                    {/* 保留原件 */}
-                    <div style={{
-                      paddingTop: '16px',
-                    }}>
-                      <div style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                      }}>
-                        <label style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: 'clamp(5px, 0.5vw, 8px)',
-                          cursor: 'pointer',
-                        }}>
-                          <input
-                            type="checkbox"
-                            checked={packKeepOriginal}
-                            onChange={(e) => handlePackKeepOriginalChange(e.target.checked)}
-                            style={{
-                              width: '14px',
-                              height: '14px',
-                              accentColor: 'var(--accent)',
-                              cursor: 'pointer',
-                            }}
-                          />
-                          <span style={{
-                            fontSize: 'clamp(0.75rem, 0.7rem + 0.25vw, 0.85rem)',
-                            color: 'var(--text)',
-                          }}>
-                            保留原件
-                          </span>
-                        </label>
-                        <span style={{
-                          fontSize: 'clamp(0.625rem, 0.6rem + 0.15vw, 0.7rem)',
-                          color: 'var(--text-4)',
-                        }}>
-                          勾选则复制原文件到压缩包；不勾选则剪切原文件到压缩包
-                        </span>
-                      </div>
-                    </div>
+                  <div className="printer-checkbox-row">
+                    <Toggle
+                      checked={packKeepOriginal}
+                      onChange={handlePackKeepOriginalChange}
+                    />
+                    <label className="printer-checkbox-label">保留原件</label>
+                    <span style={{ fontSize: '11px', color: 'var(--text-4)', marginLeft: '4px' }}>不勾选则剪切原文件到压缩包</span>
                   </div>
                 </div>
 
-                {/* 目标文件夹 */}
-                <div style={{
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: 'clamp(8px, 0.75vw, 12px)',
-                }}>
-                  <div style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                  }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 'clamp(5px, 0.5vw, 8px)' }}>
-                      <div style={{
-                        width: '4px',
-                        height: '16px',
-                        background: 'var(--accent)',
-                        borderRadius: '2px',
-                        boxShadow: '0 0 8px rgba(59, 108, 245, 0.20)',
-                      }}></div>
-                      <span style={{
-                        fontSize: 'clamp(0.75rem, 0.7rem + 0.25vw, 0.85rem)',
-                        fontWeight: 600,
-                        color: 'var(--text)',
-                        letterSpacing: '0.02em',
-                      }}>
-                        目标文件夹
-                      </span>
-                    </div>
-                    <span style={{
-                      fontSize: 'clamp(0.625rem, 0.6rem + 0.15vw, 0.7rem)',
-                      color: 'var(--text-4)',
-                      fontStyle: 'italic',
-                    }}>
-                      可选设置
-                    </span>
+                {/* 目标文件夹卡片 */}
+                <div className="printer-card" style={{ padding: '16px' }}>
+                  <div className="printer-card-header">
+                    <div className="printer-card-header-icon">📁</div>
+                    <span className="printer-card-header-title">目标文件夹</span>
                   </div>
 
-                  <div style={{
-                    background: 'var(--surface)',
-                    borderRadius: 'var(--r-lg)',
-                    border: '1px solid var(--border-light)',
-                    boxShadow: '0 1px 2px rgba(0,0,0,0.04), 0 4px 16px rgba(0,0,0,0.04), inset 0 1px 0 rgba(255,255,255,0.7)',
-                    padding: 'clamp(10px, 1vw, 16px)',
-                  }}>
+                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                     <div style={{
+                      flex: 1,
+                      padding: '8px 12px',
+                      background: 'var(--surface)',
+                      borderRadius: 'var(--r-sm)',
+                      fontSize: '11px',
+                      color: packTargetFolder ? 'var(--text)' : 'var(--text-4)',
+                      fontStyle: packTargetFolder ? 'normal' : 'italic',
+                      fontWeight: 500,
+                      minHeight: '32px',
                       display: 'flex',
-                      flexDirection: 'column',
-                      gap: 'clamp(8px, 0.75vw, 12px)',
+                      alignItems: 'center',
+                      whiteSpace: 'nowrap',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
                     }}>
-                      <div style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 'clamp(8px, 0.75vw, 12px)',
-                      }}>
-                        <div style={{
-                          flex: 1,
-                          display: 'flex',
-                          flexDirection: 'column',
-                          gap: 'clamp(2px, 0.25vw, 4px)',
-                          minWidth: 0,
-                        }}>
-                          <div style={{
-                            padding: 'clamp(6px, 0.65vw, 10px) clamp(8px, 0.75vw, 12px)',
-                            background: 'rgba(255,255,255,0.6)',
-                            borderRadius: 'var(--r-md)',
-                            border: '1px solid var(--border-light)',
-                            boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.5)',
-                            fontSize: 'clamp(0.7rem, 0.65rem + 0.2vw, 0.78rem)',
-                            color: packTargetFolder ? 'var(--text)' : 'var(--text-4)',
-                            fontStyle: packTargetFolder ? 'normal' : 'italic',
-                            whiteSpace: 'nowrap',
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            minHeight: '40px',
-                            display: 'flex',
-                            alignItems: 'center',
-                          }}>
-                            {packTargetFolder || '未设置 — 打包时弹出选择文件夹对话框'}
-                          </div>
-                          {packTargetFolder && (
-                            <button
-                              onClick={clearPackFolder}
-                              style={{
-                                alignSelf: 'flex-start',
-                                fontSize: 'clamp(0.625rem, 0.6rem + 0.15vw, 0.7rem)',
-                                color: 'var(--text-4)',
-                                background: 'none',
-                                border: 'none',
-                                cursor: 'pointer',
-                                padding: '2px 0',
-                                textDecoration: 'underline',
-                                textUnderlineOffset: '2px',
-                                transition: 'color 0.2s ease',
-                              }}
-                              onMouseEnter={(e) => e.currentTarget.style.color = 'var(--text-3)'}
-                              onMouseLeave={(e) => e.currentTarget.style.color = 'var(--text-4)'}
-                            >
-                              清除设置，恢复弹框选择
-                            </button>
-                          )}
-                        </div>
-
-                        <button
-                          onClick={selectPackFolder}
-                          style={{
-                            padding: 'clamp(6px, 0.65vw, 10px) clamp(12px, 1.25vw, 20px)',
-                            fontSize: 'clamp(0.7rem, 0.65rem + 0.2vw, 0.78rem)',
-                            fontWeight: 500,
-                            borderRadius: 'var(--r-md)',
-                            border: '1px solid var(--accent)',
-                            background: 'var(--accent)',
-                            color: 'white',
-                            cursor: 'pointer',
-                            fontFamily: 'inherit',
-                            whiteSpace: 'nowrap',
-                            transition: 'all 0.2s ease',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: 'clamp(4px, 0.4vw, 6px)',
-                            minWidth: 'clamp(100px, 12vw, 160px)',
-                            justifyContent: 'center',
-                            boxShadow: '0 1px 4px rgba(59, 108, 245, 0.20)',
-                          }}
-                          onMouseEnter={(e) => {
-                            e.currentTarget.style.background = 'var(--accent-dark)'
-                            e.currentTarget.style.transform = 'translateY(-1px)'
-                            e.currentTarget.style.boxShadow = '0 2px 8px rgba(59, 108, 245, 0.3)'
-                          }}
-                          onMouseLeave={(e) => {
-                            e.currentTarget.style.background = 'var(--accent)'
-                            e.currentTarget.style.transform = 'translateY(0)'
-                            e.currentTarget.style.boxShadow = 'none'
-                          }}
-                        >
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                            <path d="M3 15v4c0 1.1.9 2 2 2h14a2 2 0 0 0 2-2v-4"></path>
-                            <polyline points="8 10 12 14 16 10"></polyline>
-                            <line x1="12" y1="14" x2="12" y2="2"></line>
-                          </svg>
-                          选择文件夹
-                        </button>
-                      </div>
-
-                      <div style={{
-                        fontSize: 'clamp(0.625rem, 0.6rem + 0.15vw, 0.7rem)',
-                        color: 'var(--text-4)',
-                        lineHeight: 1.5,
-                        paddingTop: '20px',
-                        marginTop: 'clamp(2px, 0.25vw, 4px)',
-                      }}>
-                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 'clamp(4px, 0.4vw, 6px)' }}>
-                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                            <circle cx="12" cy="12" r="10"></circle>
-                            <line x1="12" y1="16" x2="12" y2="12"></line>
-                            <line x1="12" y1="8" x2="12.01" y2="8"></line>
-                          </svg>
-                          <span>
-                            设置后打包将直接输出到此文件夹；不设置则弹出选择文件夹对话框。
-                          </span>
-                        </div>
-                      </div>
-
+                      {packTargetFolder || '未设置 — 打包时弹出选择文件夹对话框'}
                     </div>
+                    <button
+                      onClick={selectPackFolder}
+                      style={{
+                        padding: '7px 16px',
+                        fontSize: '12px',
+                        fontWeight: 500,
+                        borderRadius: 'var(--r-sm)',
+                        border: 'none',
+                        background: 'var(--accent-gradient)',
+                        color: '#fff',
+                        cursor: 'pointer',
+                        fontFamily: 'inherit',
+                        whiteSpace: 'nowrap',
+                        transition: 'all 0.15s ease',
+                        boxShadow: '0 2px 6px rgba(79,124,255,0.25)',
+                        minHeight: '32px',
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.transform = 'translateY(-0.5px)'
+                        e.currentTarget.style.boxShadow = '0 3px 8px rgba(79,124,255,0.3)'
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.transform = 'translateY(0)'
+                        e.currentTarget.style.boxShadow = '0 2px 6px rgba(79,124,255,0.25)'
+                      }}
+                    >
+                      选择文件夹
+                    </button>
                   </div>
+
+                  {packTargetFolder && (
+                    <button
+                      onClick={clearPackFolder}
+                      style={{
+                        alignSelf: 'flex-start',
+                        fontSize: '11px',
+                        color: 'var(--text-4)',
+                        background: 'none',
+                        border: 'none',
+                        cursor: 'pointer',
+                        padding: '2px 0',
+                        textDecoration: 'underline',
+                        textUnderlineOffset: '2px',
+                        fontFamily: 'inherit',
+                        transition: 'color 0.15s ease',
+                      }}
+                      onMouseEnter={(e) => e.currentTarget.style.color = 'var(--text-2)'}
+                      onMouseLeave={(e) => e.currentTarget.style.color = 'var(--text-4)'}
+                    >
+                      清除设置，恢复弹框选择
+                    </button>
+                  )}
+
+                  <div className="printer-hint">设置后打包将直接输出到此文件夹；不设置则弹出选择文件夹对话框。</div>
                 </div>
+
               </div>
             </div>
           </div>

@@ -586,8 +586,8 @@ def upsert_invoice(row: Dict) -> Dict:
         # 新建记录
         new_id = uuid.uuid4().int
         new_invoice = {
-            'id': new_id,
             **row,
+            'id': new_id,
             'created_at': now_str,
             'updated_at': now_str,
             'deleted_at': None,
@@ -651,8 +651,8 @@ def batch_upsert_invoices(rows: List[Dict]) -> List[Dict]:
 
             new_id = uuid.uuid4().int
             new_invoice = {
-                'id': new_id,
                 **row,
+                'id': new_id,
                 'created_at': now_str,
                 'updated_at': now_str,
                 'deleted_at': None,
@@ -681,6 +681,15 @@ def batch_upsert_invoices(rows: List[Dict]) -> List[Dict]:
     logger.info("批量入库完成: %d 条（新增 %d，更新 %d）",
                 len(results), new_count, len(results) - new_count)
     return results
+
+
+def get_invoice(invoice_id: int) -> Optional[Dict]:
+    """按 ID 查询单条发票记录"""
+    _ensure_loaded()
+    idx = _invoice_index_by_id.get(invoice_id)
+    if idx is None:
+        return None
+    return _invoices[idx].copy()
 
 
 def soft_delete_invoice(invoice_id: int) -> Optional[Dict]:
