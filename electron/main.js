@@ -159,6 +159,9 @@ let pendingFilesFromSecondInstance = []
 // 开发模式判断
 const isDev = !app.isPackaged
 console.log(`[main.js] 运行模式: ${isDev ? '开发模式' : '生产模式'}`)
+console.log(`[main.js] Electron version: ${process.versions.electron}`)
+console.log(`[main.js] Chromium version: ${process.versions.chrome}`)
+console.log(`[main.js] Node.js version: ${process.versions.node}`)
 
 // 获取命令行参数中的文件路径（改造：支持多格式）
 function getFilesFromCommandLine() {

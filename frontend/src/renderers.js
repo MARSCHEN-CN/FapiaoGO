@@ -630,9 +630,9 @@ async function renderPDFPageRaw(pdfData, dpi, fileKey, paperKey = null, isLandsc
       if (page) {
         try { await page.cleanup() } catch (_) { /* ignore */ }
       }
-      if (pdf && typeof pdf.cleanup === 'function') {
-        try { await pdf.cleanup() } catch (_) { /* ignore */ }
-      }
+      // ⚠️ 不再对共享缓存的 pdfDoc 调 pdf.cleanup()：会清空文档级 commonObjs/字体缓存，
+      // 抵消 pdfDocCache 复用收益（性能回归），且同 pdfData 多文件并发时存在并发 cleanup 隐患。
+      // 文档级清理仅由 disposePdfDoc（LRU 淘汰）负责。
     }
   })
 
@@ -778,10 +778,7 @@ export async function renderTwoPDFsToCanvas(
           console.warn('[renderTwoPDFsToCanvas] page cleanup 失败:', e)
         }
       }
-      // cleanup() 先清空 font/image/document 内部缓存
-      if (pdfDoc && typeof pdfDoc.cleanup === 'function') {
-        try { await pdfDoc.cleanup() } catch (_) { /* ignore */ }
-      }
+      // ⚠️ 不再对共享缓存的 pdfDoc 调 pdf.cleanup()：文档级清理仅由 disposePdfDoc（LRU 淘汰）负责。
     }
   }
 

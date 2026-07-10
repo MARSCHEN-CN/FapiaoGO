@@ -96,4 +96,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // 进程内存信息（用于调试 Task Manager 内存增长）
   getProcessMemoryInfo: () => process.getProcessMemoryInfo(),
+
+  // 版本信息（用于验证 Electron 版本）
+  getVersions: () => ({
+    electron: process.versions.electron,
+    chrome: process.versions.chrome,
+    node: process.versions.node,
+  }),
 })
