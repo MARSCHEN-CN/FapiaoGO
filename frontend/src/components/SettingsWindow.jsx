@@ -260,7 +260,7 @@ export default function SettingsWindow({ settings, saveSettings, printers, elect
                       onChange={(val) => saveSettingsWithToast({ ...settings, extraSpecial: val })}
                     />
                     <label className="printer-checkbox-label">一普二专</label>
-                    <span style={{ fontSize: '11px', color: 'var(--text-4)', marginLeft: '4px' }}>专票打印两份</span>
+                    <span style={{ fontSize: '11px', color: 'var(--text-4)', marginLeft: '4px' }}>普票打印一份，专票打印两份</span>
                   </div>
                 </div>
               </div>

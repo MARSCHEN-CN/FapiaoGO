@@ -166,10 +166,13 @@ export default React.memo(function ActionBar({
                   <circle cx="12" cy="12" r="10" fill="none" strokeWidth="2" stroke="currentColor" strokeDasharray="31.4 31.4" />
                 </svg>
               ) : (
-                <svg viewBox="0 0 1025 1024" width="16" height="16" fill="currentColor">
-                  <path d="M736.1 82v521h-446V82h446m20-80h-486c-33.1 0-60 26.9-60 60v561c0 33.1 26.9 60 60 60h486c33.1 0 60-26.9 60-60V62c0-33.1-26.8-60-60-60z"/>
-                  <path d="M825.1 551c17.8 0 35 2.9 51 8.6 14.8 5.3 27.8 12.7 38.9 22 11.3 9.5 30.2 29.7 30.2 58.2V943h-864V639.8c0-28.5 18.9-48.7 30.2-58.2 11-9.3 24.1-16.7 38.9-22 16-5.7 33.1-8.6 51-8.6h9.5v51.5c0 44.2 35.8 80 80 80h446c44.2 0 80-35.8 80-80V551h8.3m0-80h-88.5v131.5h-446V471h-89.5c-110.5 0-200 75.6-200 168.8v332.6c0 28 26.9 50.6 60 50.6h904c33.1 0 60-22.7 60-50.6V639.8c0-93.2-89.5-168.8-200-168.8z"/>
-                  <path d="M668.1 534h-310c-22.1 0-40-17.9-40-40s17.9-40 40-40h310c22.1 0 40 17.9 40 40s-17.9 40-40 40z m0-145h-310c-22.1 0-40-17.9-40-40s17.9-40 40-40h310c22.1 0 40 17.9 40 40s-17.9 40-40 40z m0-149h-310c-22.1 0-40-17.9-40-40s17.9-40 40-40h310c22.1 0 40 17.9 40 40s-17.9 40-40 40zM595.1 924h-164c-22.1 0-40-17.9-40-40s17.9-40 40-40h164c22.1 0 40 17.9 40 40s-17.9 40-40 40z"/>
+                <svg
+                  viewBox="0 0 48 48"
+                  style={{ width: 16, height: 16, fill: 'none', stroke: 'currentColor', strokeWidth: 4 }}
+                >
+                  <path d="M37 32H11V44H37V32Z" strokeLinejoin="round" />
+                  <path fillRule="evenodd" clipRule="evenodd" d="M4 20H44V38H37.0173V32H10.9805V38H4V20Z" strokeLinecap="round" strokeLinejoin="round" />
+                  <path d="M38 4H10V20H38V4Z" strokeLinejoin="round" />
                 </svg>
               )}
             </div>

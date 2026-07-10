@@ -60,7 +60,11 @@ export default memo(function PreviewCanvas({ previewFile, displayInfo, previewCa
       <div className="paper" style={{
         width: displayInfo.displayWidth,
         height: displayInfo.displayHeight,
-        transition: 'width 0.2s ease, height 0.2s ease',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        // 移除 width/height transition：旋转时容器尺寸瞬变避免 overflow:hidden 中途裁剪，
+        // 旋转动画完全由 <img> 的 transform transition 承担
       }}>
         <img
           ref={imgRef}
@@ -70,16 +74,14 @@ export default memo(function PreviewCanvas({ previewFile, displayInfo, previewCa
           loading="eager"
           decoding="async"
           style={{
-            position: 'absolute',
-            top: '50%',
-            left: '50%',
             width: `${imgW}px`,
             height: `${imgH}px`,
-            transform: `translate(-50%, -50%) rotate(${angle}deg)`,
+            transform: `rotate(${angle}deg)`,
             transformOrigin: 'center center',
             objectFit: 'contain',
             transition: 'transform 0.2s ease',
             filter: grayscale ? 'grayscale(100%)' : 'none',
+            flexShrink: 0,
           }}
         />
       </div>
@@ -94,14 +96,6 @@ export default memo(function PreviewCanvas({ previewFile, displayInfo, previewCa
         <div className="preview-skeleton">
           <div className="preview-skeleton-paper">
             <div className="preview-skeleton-shimmer" />
-            <div className="preview-skeleton-loader">
-              <div className="ps-loader-dots">
-                <span className="ps-dot" />
-                <span className="ps-dot" />
-                <span className="ps-dot" />
-              </div>
-              <span className="ps-loader-text">高清渲染中</span>
-            </div>
           </div>
         </div>
       )
@@ -113,7 +107,9 @@ export default memo(function PreviewCanvas({ previewFile, displayInfo, previewCa
     <div className="paper" style={{
       width: displayInfo.displayWidth,
       height: displayInfo.displayHeight,
-      transition: 'width 0.2s ease, height 0.2s ease',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
     }}>
       <canvas
         ref={canvasCallbackRef}

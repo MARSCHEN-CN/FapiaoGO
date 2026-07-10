@@ -207,6 +207,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
       URL.revokeObjectURL(previewUrlRef.current)
       previewUrlRef.current = null
     }
+    setPreviewUrl(null)
   }, [])
 
   // ── 清理所有 blob URL ──
@@ -288,7 +289,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
     // ✅ L2 缓存旁路：fullCache 命中时跳过整个渲染流程
     if (skipRenderRef.current) { skipRenderRef.current = false; return }
 
-    if (!previewFile) { setPreviewCanvas(null); return }
+    if (!previewFile) { setPreviewCanvas(null); setPreviewUrl(null); setPreviewImgDims(null); return }
 
     const isImageOrOfd =
       previewFile._fileFormat === 'image' || previewFile._fileFormat === 'ofd'

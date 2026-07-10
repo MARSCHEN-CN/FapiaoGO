@@ -403,53 +403,6 @@
   100% { transform: translateX(160%); }
 }
 
-/* 加载内容 — 居中于纸张 */
-.preview-skeleton-loader {
-  position: relative;
-  z-index: 2;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 16px;
-}
-
-/* 三点动画 */
-.ps-loader-dots {
-  display: flex;
-  gap: 8px;
-}
-
-.ps-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--accent);
-  opacity: 0.15;
-  animation: ps-dot-pulse 1.4s ease-in-out infinite;
-}
-
-.ps-dot:nth-child(1) { animation-delay: 0s; }
-.ps-dot:nth-child(2) { animation-delay: 0.2s; }
-.ps-dot:nth-child(3) { animation-delay: 0.4s; }
-
-@keyframes ps-dot-pulse {
-  0%, 80%, 100% { opacity: 0.15; transform: scale(0.85); }
-  40%           { opacity: 1;    transform: scale(1); }
-}
-
-/* 加载文字 */
-.ps-loader-text {
-  color: var(--text-3);
-  font-size: 13px;
-  letter-spacing: 0.04em;
-  animation: ps-text-breathe 2.2s ease-in-out infinite;
-}
-
-@keyframes ps-text-breathe {
-  0%, 100% { opacity: 0.55; }
-  50%      { opacity: 1; }
-}
-
 
 .cz-separator {
   width: 1px;
