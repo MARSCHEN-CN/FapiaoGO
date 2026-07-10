@@ -274,10 +274,13 @@ def _rebuild_indexes() -> None:
 
 
 def _validate_invoice_ids() -> None:
-    """启动时一致性检查：确保内存中所有 invoice id 均为 str。
+    """启动时不变量检查：内存中所有 invoice id 必须为 str。
 
-    若发现非 str（如某处又写了 int），仅告警并就地归一化，避免在运行期
-    才暴露 int/str 混用导致的 _invoice_index_by_id 查找失败。
+    若发现非 str（如某处又写了 int），说明 id 归一化链路存在遗漏，属于
+    不变量已被破坏 —— 直接抛出 RuntimeError 终止启动（fail-fast），避免在
+    运行期才暴露 int/str 混用导致 _invoice_index_by_id 查找失败或索引错乱。
+    正常路径下历史 int/十进制 id 已在 _load_snapshot / _replay_oplog /
+    _migrate_legacy_ids 中统一归一为 str，此处不应再触发。
     """
     for inv in _invoices:
         if not isinstance(inv, dict):
@@ -285,11 +288,11 @@ def _validate_invoice_ids() -> None:
         inv_id = inv.get('id')
         if inv_id is not None and not isinstance(inv_id, str):
             fname = inv.get('file_name') or '<unknown>'
-            logger.error(
-                "启动一致性检查失败: 发票 id 应为 str，实为 %s（invoice=%r, id=%r）",
-                type(inv_id).__name__, fname, inv_id,
+            raise RuntimeError(
+                f"启动不变量检查失败: 发票 id 应为 str，实为 {type(inv_id).__name__} "
+                f"（invoice={fname!r}, id={inv_id!r}）；"
+                f"请检查 id 归一化链路或回滚至迁移备份 {INVOICES_PATH}.bak"
             )
-            inv['id'] = str(inv_id)   # 安全网：就地归一化，避免运行期 _invoice_index_by_id 查找失败
 
 
 def _to_hex_id(raw: object) -> Optional[str]:
