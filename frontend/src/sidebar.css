@@ -362,13 +362,13 @@
 
 .sb-search-bar {
   flex: 1;
+  min-width: 0;
   height: 32px;
   background-color: var(--surface);
   border-radius: var(--r-lg);
   display: flex;
   align-items: center;
   padding: 0 12px;
-  margin-right: 12px;
   transition: background-color 0.2s ease;
 }
 
@@ -386,6 +386,7 @@
 
 .sb-search-input {
   flex: 1;
+  min-width: 0;
   height: 100%;
   border: none;
   outline: none;
