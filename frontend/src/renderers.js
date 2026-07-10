@@ -6,7 +6,7 @@ import pdfjsWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import { PREVIEW_DPI } from './config'
 import { rotateContentOnPaper } from './utils/canvasUtils'
 import { createLayout, normalizeLayoutItem, normalizeLayoutItems, getPaperPixels, PRINT_SAFE_MARGIN_MM, PRINTER_PROFILES, getPrintableArea } from './layout'
-import { isDocumentEngineEnabled } from './documentEngine.js'  // P2C 统一入口门面（v12 契约 JS 实现；路线见 v14 §6/§13）
+import { isDocumentEngineEnabled, makeImageRef, ConcreteImageHandle, MemoryPixelHandle } from './documentEngine.js'  // P2C 统一入口门面（v12 契约 JS 实现；路线见 v14 §6/§13）+ ②b 桥接用 ImageHandle 值类型（facade 单向依赖，Law #2 允许）
 // ✅ renderModel.js 为死代码，renderMultipleItemsToCanvas 直接做 transform，不经过 RenderModel
 // import { createRenderModels, applyTransformToContext, restoreContext } from './renderModel'
 
@@ -385,100 +385,6 @@ export async function getOrLoadPdfDocument(pdfData) {
 }
 
 /**
- * 使用 Canvas 渲染 PDF 到固定尺寸
- * ✅ 方案二：不缓存 Canvas DOM 节点，而是缓存 PDF 文档对象
- * ✅ 每次调用都生成新的 Canvas，确保画布数据不会丢失
- */
-// @deprecated(deleted at P6) 死导出：无任何调用方。Legacy 单页渲染，P6 随 renderers.js 删除；
-// 等价能力由 documentEngine.getImage({kind:'docId'}) 提供。
-export async function renderPDFToCanvas(
-  pdfData, paperKey, dpi = PREVIEW_DPI, isLandscape = false, fitMode = 'contain',
-) {
-  const pixels = getPaperPixels(paperKey, dpi, isLandscape)
-
-  let pdf = null
-  let page = null
-
-  try {
-    pdf = await getOrLoadPdfDocument(pdfData)
-    page = await pdf.getPage(1)
-    // 缓存 PageProxy，LRU 淘汰时 disposePdfDoc 会清理
-    const _entry = pdfDocCache.get(getPdfId(pdfData))
-    if (_entry) _entry.pages.set(1, page)
-
-    const viewport = page.getViewport({ scale: 1 })
-    const vpW = viewport.width
-    const vpH = viewport.height
-    const contentIsLandscape = vpW > vpH
-
-    // ✅ 内容为纵向且纸张为横向时才需要旋转
-    // 内容本身是横向（如横向发票）放在横向纸上 → 不需要旋转
-    const needsRotation = isLandscape && !contentIsLandscape
-
-    const contentWidth = needsRotation ? vpH : vpW
-    const contentHeight = needsRotation ? vpW : vpH
-
-    const scaleX = pixels.width / contentWidth
-    const scaleY = pixels.height / contentHeight
-    const isCover = fitMode === 'cover'
-    const scale = isCover ? Math.max(scaleX, scaleY) : Math.min(scaleX, scaleY)
-    const scaledViewport = page.getViewport({ scale })
-
-    // ✅ Cover 模式：canvas 扩大以容纳完整缩放内容，避免裁剪
-    //    内容溢出纸张的部分在后续 pngToPdf 阶段由 PDF 页面边界自然裁切
-    const canvasW = isCover ? Math.max(pixels.width, Math.ceil(scaledViewport.width)) : pixels.width
-    const canvasH = isCover ? Math.max(pixels.height, Math.ceil(scaledViewport.height)) : pixels.height
-    const paperOffsetX = (canvasW - pixels.width) / 2
-    const paperOffsetY = (canvasH - pixels.height) / 2
-
-    const canvas = document.createElement('canvas')
-    canvas.width = canvasW
-    canvas.height = canvasH
-
-    const ctx = canvas.getContext('2d')
-    ctx.fillStyle = '#ffffff'
-    ctx.fillRect(0, 0, canvas.width, canvas.height)
-
-    ctx.save()
-
-    if (needsRotation) {
-      // 将纵向内容旋转90°以适应横向纸张
-      ctx.translate(paperOffsetX + pixels.width / 2, paperOffsetY + pixels.height / 2)
-      ctx.rotate(Math.PI / 2)
-      ctx.translate(-vpH * scale / 2, -vpW * scale / 2)
-    } else {
-      // 内容与纸张方向一致：居中放置
-      const scaledWidth = vpW * scale
-      const scaledHeight = vpH * scale
-      const offsetX = paperOffsetX + (pixels.width - scaledWidth) / 2
-      const offsetY = paperOffsetY + (pixels.height - scaledHeight) / 2
-      ctx.translate(offsetX, offsetY)
-    }
-
-    await page.render({ canvasContext: ctx, viewport: scaledViewport }).promise
-    ctx.restore()
-
-    // ✅ 计算 1x 基准像素尺寸（PDF 页面在目标 DPI 下的自然像素尺寸）
-    const baseWidth = vpW * dpi / 72
-    const baseHeight = vpH * dpi / 72
-
-    return {
-      canvas,
-      contentWidth: baseWidth,
-      contentHeight: baseHeight,
-    }
-  } catch (e) {
-    console.error('[renderPDFToCanvas] PDF 渲染失败:', e)
-    return null
-  } finally {
-    if (page) {
-      const ok = await page.cleanup()
-      if (!ok) console.warn('[cleanup] renderPDFToCanvas page.cleanup 返回 false')
-    }
-  }
-}
-
-/**
  * 渲染 PDF 页面为原始内容画布（无纸张适配、无自动旋转、无居中）
  * 画布尺寸 = PDF 页面在目标 DPI 下的实际像素尺寸
  * 专供 renderMultipleItemsToCanvas 使用，由 Layout/Slot 层统一处理放置和缩放
@@ -669,152 +575,6 @@ async function renderPDFPageRaw(pdfData, dpi, fileKey, paperKey = null, isLandsc
   }
 
   return result
-}
-
-// 渲染图片到固定纸张尺寸 Canvas
-// @param {string} imageSrc - 图片源（URL 或 blob URL）
-// @param {string} paperKey - 纸张尺寸
-// @param {number} dpi - DPI
-// @param {boolean} isLandscape - 是否横向
-// @returns {Promise<{canvas: HTMLCanvasElement, blobExpired: boolean}>}
-// @deprecated(deleted at P6) 死导出：无任何调用方。Legacy 图片渲染，P6 随 renderers.js 删除；
-// 等价能力由 documentEngine.getImage({kind:'clipboard'|'remote'|'memory'}) 提供。
-export async function renderImageToCanvas(
-  imageSrc, paperKey, dpi = PREVIEW_DPI, isLandscape = false, fitMode = 'contain',
-) {
-  const pixels = getPaperPixels(paperKey, dpi, isLandscape)
-  const { src: srcToLoad, expired: blobExpired } = await resolveImageSrc(imageSrc)
-
-  return new Promise((resolve) => {
-    const img = new Image()
-    img.onload = async () => {
-      const { width: imgW, height: imgH } = img
-      const imgIsLandscape = imgW > imgH
-
-      // ✅ 内容为纵向且纸张为横向时才需要旋转
-      const needsRotation = isLandscape && !imgIsLandscape
-
-      const contentWidth = needsRotation ? imgH : imgW
-      const contentHeight = needsRotation ? imgW : imgH
-
-      const scaleX = pixels.width / contentWidth
-      const scaleY = pixels.height / contentHeight
-      const isCover = fitMode === 'cover'
-      const scale = isCover ? Math.max(scaleX, scaleY) : Math.min(scaleX, scaleY)
-
-      // ✅ Cover 模式：canvas 扩大以容纳完整缩放内容
-      const w = contentWidth * scale
-      const h = contentHeight * scale
-      const canvasW = isCover ? Math.max(pixels.width, Math.ceil(w)) : pixels.width
-      const canvasH = isCover ? Math.max(pixels.height, Math.ceil(h)) : pixels.height
-      const paperOffsetX = (canvasW - pixels.width) / 2
-      const paperOffsetY = (canvasH - pixels.height) / 2
-
-      const canvas = document.createElement('canvas')
-      canvas.width = canvasW
-      canvas.height = canvasH
-      const ctx = canvas.getContext('2d')
-      ctx.fillStyle = '#ffffff'
-      ctx.fillRect(0, 0, canvas.width, canvas.height)
-
-      ctx.save()
-
-      if (needsRotation) {
-        // 将纵向图片旋转90°以适应横向纸张
-        ctx.translate(paperOffsetX + pixels.width / 2, paperOffsetY + pixels.height / 2)
-        ctx.rotate(Math.PI / 2)
-        const rw = imgH * scale
-        const rh = imgW * scale
-        ctx.drawImage(img, -rw / 2, -rh / 2, rw, rh)
-      } else {
-        // 图片与纸张方向一致：居中放置，无需旋转
-        const x = paperOffsetX + (pixels.width - w) / 2
-        const y = paperOffsetY + (pixels.height - h) / 2
-        ctx.drawImage(img, x, y, w, h)
-      }
-      
-      ctx.restore()
-      
-      img.src = ''
-      resolve({ canvas, blobExpired })
-    }
-    img.onerror = () => {
-      img.src = ''
-      resolve({ canvas, blobExpired: true })
-    }
-    img.src = srcToLoad
-  })
-}
-
-// 渲染两个 PDF 到一张 Canvas（上下各半）
-// @deprecated(deleted at P6) 死导出：无任何调用方。Legacy 双页渲染，P6 随 renderers.js 删除；
-// 等价能力由 documentEngine.getImage ×2 + Compose 提供。
-export async function renderTwoPDFsToCanvas(
-  pdfData1, pdfData2, paperKey, dpi = PREVIEW_DPI, isLandscape = false,
-) {
-  const pixels = getPaperPixels(paperKey, dpi, isLandscape)
-  const halfHeight = Math.floor(pixels.height / 2)
-
-  const canvas = document.createElement('canvas')
-  canvas.width = pixels.width
-  canvas.height = pixels.height
-  const ctx = canvas.getContext('2d')
-  ctx.fillStyle = '#ffffff'
-  ctx.fillRect(0, 0, canvas.width, canvas.height)
-
-  const drawSeparator = () => {
-    ctx.save()
-    ctx.strokeStyle = '#cccccc'
-    ctx.lineWidth = 1
-    ctx.setLineDash(DASH_PATTERN)
-    ctx.beginPath()
-    ctx.moveTo(SEPARATOR_MARGIN, halfHeight)
-    ctx.lineTo(pixels.width - SEPARATOR_MARGIN, halfHeight)
-    ctx.stroke()
-    ctx.restore()
-  }
-
-  // ✅ 顺序渲染，避免相同 PDF 数据的并发问题
-  const renderHalf = async (pdfData, yStart, areaHeight) => {
-    if (!pdfData) return
-    let pdfDoc = null
-    let page = null
-    try {
-      pdfDoc = await getOrLoadPdfDocument(pdfData)
-      page = await pdfDoc.getPage(1)
-
-      const viewport = page.getViewport({ scale: 1 })
-      const scaleX = pixels.width / viewport.width
-      const scaleY = areaHeight / viewport.height
-      const scale = Math.min(scaleX, scaleY)
-      const scaledViewport = page.getViewport({ scale })
-      const scaledWidth = viewport.width * scale
-      const scaledHeight = viewport.height * scale
-      const offsetX = (pixels.width - scaledWidth) / 2
-      const offsetY = yStart + (areaHeight - scaledHeight) / 2
-
-      ctx.save()
-      ctx.translate(offsetX, offsetY)
-      await page.render({ canvasContext: ctx, viewport: scaledViewport }).promise
-      ctx.restore()
-    } catch (e) {
-      console.error('[renderTwoPDFsToCanvas] 渲染 PDF 失败:', e)
-    } finally {
-      if (page) {
-        try { page.cleanup() } catch (e) {
-          console.warn('[renderTwoPDFsToCanvas] page cleanup 失败:', e)
-        }
-      }
-      // ⚠️ 不再对共享缓存的 pdfDoc 调 pdf.cleanup()：文档级清理仅由 disposePdfDoc（LRU 淘汰）负责。
-    }
-  }
-
-  // ✅ 先渲染所有内容，最后绘制分隔线
-  await renderHalf(pdfData1, 0, halfHeight)
-  await renderHalf(pdfData2, halfHeight, pixels.height - halfHeight)
-  drawSeparator()
-
-  return canvas
 }
 
 // ✅ renderPDFToPrintImage / renderImageToPrintImage / revokePrintBlobUrl 已移除
@@ -1404,6 +1164,14 @@ let _offscreenPreviewCanvas = null
 let _globalPreviewVersion = 0
 let _globalPreviewLock = Promise.resolve()  // 串行化渲染锁
 
+// [DIAG] 临时诊断：给 pdfDoc 一个稳定序号，排查"切文件预览不刷新"
+let __diagDocSeq = 0
+const __diagDocMap = new WeakMap()
+function __diagDocId(pdfDoc) {
+  if (!__diagDocMap.has(pdfDoc)) __diagDocMap.set(pdfDoc, ++__diagDocSeq)
+  return __diagDocMap.get(pdfDoc)
+}
+
 function _getOffscreenCanvas(width, height) {
   if (!_offscreenPreviewCanvas) {
     _offscreenPreviewCanvas = document.createElement('canvas')
@@ -1501,7 +1269,13 @@ async function _renderToGlobalCanvas(renderFn, signal) {
  * 切换 PDF 文件到全局 Canvas（双缓冲，防闪烁）
  */
 export async function switchPreviewFile(pdfDoc, pageNum = 1, signal, rotation = 0) {
-  return _renderToGlobalCanvas(async (ctx, contentW, contentH, marginL, marginT) => {
+  // ②b：像素来源从 pdf.js 直绘改为「ImageHandle → drawImage」桥接。
+  // 像素仍由旧 Renderer(pdf.js) 产生；documentEngine 仅提供 ImageHandle 值类型，
+  // 不参与编排（不调用 getImage / 不引入 P4 pdf.js 耦合 / Engine 不知 Canvas）。
+  const { dpi } = _globalPreviewCanvasConfig || {}
+  const __docId = __diagDocId(pdfDoc)
+  console.log(`[DIAG] switchPreviewFile ENTER doc=${__docId} page=${pageNum} rot=${rotation}`)
+  const v = await _renderToGlobalCanvas(async (ctx, contentW, contentH, marginL, marginT) => {
     if (signal?.aborted) return
     const page = await pdfDoc.getPage(pageNum)
 
@@ -1512,13 +1286,29 @@ export async function switchPreviewFile(pdfDoc, pageNum = 1, signal, rotation = 
     const offsetX = marginL + (contentW - renderViewport.width) / 2
     const offsetY = marginT + (contentH - renderViewport.height) / 2
 
-    ctx.save()
-    ctx.translate(offsetX, offsetY)
-    await page.render({ canvasContext: ctx, viewport: renderViewport }).promise
-    ctx.restore()
+    // —— ②b 桥接：pdf.js 光栅到临时 canvas，包成 ImageHandle，再 drawImage 到全局 canvas ——
+    // 复用上面完全相同的 scale / offset，确保输出像素级不变。
+    const tw = Math.max(1, Math.ceil(renderViewport.width))
+    const th = Math.max(1, Math.ceil(renderViewport.height))
+    const tempCanvas = document.createElement('canvas')
+    tempCanvas.width = tw
+    tempCanvas.height = th
+    const tctx = tempCanvas.getContext('2d')
+    await page.render({ canvasContext: tctx, viewport: renderViewport }).promise
+
+    const ref = makeImageRef(`pdf_${pageNum}_${rotation}`, tw, th, dpi || 72, {
+      source: 'preview-pdf', page: pageNum, rotation,
+    })
+    const handle = new ConcreteImageHandle(ref, () => { tempCanvas.width = 0; tempCanvas.height = 0 })
+    const pixel = new MemoryPixelHandle(ref, tempCanvas)
+    const bitmap = await pixel.asBitmap()  // 浏览器端返回 tempCanvas（HTMLCanvasElement），可作 drawImage 源
+    ctx.drawImage(bitmap, offsetX, offsetY, renderViewport.width, renderViewport.height)
+    await handle.release()
 
     await page.cleanup()
   }, signal)
+  console.log(`[DIAG] switchPreviewFile EXIT doc=${__docId} page=${pageNum} rot=${rotation} → globalVersion=${v}`)
+  return v
 }
 
 /**

@@ -33,6 +33,7 @@ export default memo(function PreviewCanvas({ previewFile, displayInfo, previewCa
   const canvasCallbackRef = useCallback((node) => {
     canvasRef.current = node
     if (!node || !previewCanvas) return
+    console.log('[DIAG] PreviewCanvas cb v=', previewRenderVersion, 'node?', !!node)
     // L1 命中：同一 DOM 节点 + 同 source canvas + 同滤镜 + 同版本 → 内容还在，跳过
     if (lastNodeRef.current === node &&
         lastSourceRef.current === previewCanvas &&
@@ -45,6 +46,7 @@ export default memo(function PreviewCanvas({ previewFile, displayInfo, previewCa
     const ctx = node.getContext('2d')
     ctx.clearRect(0, 0, previewCanvas.width, previewCanvas.height)
     ctx.filter = grayscale ? 'grayscale(100%)' : 'none'
+    console.log('[DIAG] PreviewCanvas DREW v=', previewRenderVersion)
     ctx.drawImage(previewCanvas, 0, 0)
   }, [previewCanvas, grayscale, previewRenderVersion])
 

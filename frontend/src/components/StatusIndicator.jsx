@@ -38,13 +38,11 @@ export default React.memo(function StatusIndicator({ paperSize, landscape, extra
   )
 
   // 方向
-  if (landscape) {
-    parts.push(
-      <span key="direction" className="status-indicator-item">
-        横向
-      </span>
-    )
-  }
+  parts.push(
+    <span key="direction" className="status-indicator-item">
+      {landscape ? '横向' : '竖向'}
+    </span>
+  )
 
   return <div className="status-indicator">{parts}</div>
 })

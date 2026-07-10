@@ -449,7 +449,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
           unrotatedCanvasRef.current = canvas
           setPreviewCanvas(canvas)
           // ✅ 递增渲染版本，通知 PreviewCanvas 内容已更新（全局 Canvas 对象引用不变时需要此标记）
-          setPreviewRenderVersion(v => v + 1)
+          setPreviewRenderVersion(v => { const nv = v + 1; console.log('[DIAG] usePreview version bump →', nv, 'key=', previewFile.key); return nv })
         }
       } catch (e) {
         console.error('Canvas 渲染失败:', e)

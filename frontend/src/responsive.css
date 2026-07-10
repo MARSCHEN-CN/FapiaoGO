@@ -111,8 +111,19 @@
     display: none;
   }
 
+  .abm-btn-content {
+    display: none;
+  }
+
+  .abm-btn-icon {
+    width: auto;
+    height: auto;
+  }
+
   .abm-btn {
     padding: 8px 10px;
+    gap: 0;
+    justify-content: center;
   }
 
   /* Amount section: slightly smaller */
