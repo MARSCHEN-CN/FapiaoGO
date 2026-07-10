@@ -89,7 +89,10 @@ export const db = {
     return apiGet('/api/db/search', filters)
   },
 
-  /** 获取单条发票 */
+  /** 获取单条发票
+   * @param {string} id 发票 id（迁移后为 uuid hex 字符串，非数字）
+   * 下同 deleteInvoice / restoreInvoice / update 的 id 参数均为字符串
+   */
   get(id) {
     return apiGet(`/api/db/invoice/${id}`)
   },
