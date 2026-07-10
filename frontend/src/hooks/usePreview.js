@@ -6,6 +6,7 @@ import {
 import { detectDocumentOrientation } from '../utils/detectOrientation'
 import { getForcedLandscape } from '../utils/mergeMode'
 import { buildPreviewCacheKey } from '../utils/previewCacheKey'
+import { getRenderEnginePreviewUrl } from '../utils/previewTarget'
 
 // ✅ 懒加载 PDF 渲染模块，避免首屏加载 1.4 MB 的 pdfjs-dist + react-pdf
 let _renderers = null
@@ -295,8 +296,10 @@ export function usePreview({ files, settings, electronAPIRef }) {
       previewFile._fileFormat === 'image' || previewFile._fileFormat === 'ofd'
 
     // ✅ Render Engine 路径：有 HTTP URL 时允许进入渲染（不在此截断）
-    const hasRenderEngineUrl = USE_RENDER_ENGINE_PREVIEW &&
-      previewFile._previewImageUrl && previewFile._previewImageUrl.startsWith('http')
+    //    统一用纯函数判定，确保 previewUrl 不变式（RE=URL / 其它=null）单一来源，
+    //    避免切换到 canvas 路径文件时 previewUrl 残留旧 RE URL（陈旧 <img> bug）。
+    const reUrl = getRenderEnginePreviewUrl(previewFile, USE_RENDER_ENGINE_PREVIEW)
+    const hasRenderEngineUrl = !!reUrl
     if (!isImageOrOfd && !previewFile._pdfData && !mergePair && !hasRenderEngineUrl) {
       setPreviewCanvas(null); setPreviewImgDims(null); return
     }
@@ -328,7 +331,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
 
     // ✅ Render Engine 路径：跳过 Canvas 管道，直接设置 <img> URL
     if (hasRenderEngineUrl) {
-      const url = previewFile._previewImageUrl
+      const url = reUrl
       renderEngineUrlRef.current = url
       setPreviewUrl(url)
       setPreviewCanvas(null)
@@ -352,6 +355,10 @@ export function usePreview({ files, settings, electronAPIRef }) {
     }
     // 非 <img> 路径：清理可能残留的 img 尺寸
     setPreviewImgDims(null)
+    // ✅ 不变式：非 RE 路径必须把 previewUrl 复位为 null，否则上一文件的 RE <img> 残留，
+    //    被 PreviewCanvas 的 `if (previewUrl && displayInfo)` 误判为 RE 路径 → 显示陈旧内容。
+    //    （React 对相同值 setPreviewUrl(null) 自动 bail-out，不会额外触发渲染）
+    setPreviewUrl(null)
 
     const renderToCanvas = async (signal) => {
       try {
@@ -870,6 +877,10 @@ export function usePreview({ files, settings, electronAPIRef }) {
       setPreviewPage(1)
       setNumPages(loadedFile._fileFormat === 'pdf' ? 0 : 1)
       setPreviewCanvas(cachedCanvas)
+      // ✅ cachedCanvas 分支会让渲染 effect 在 L290 提前 return（skipRenderRef），
+      //    导致 L333/L361 永不执行。此处必须显式对齐 previewUrl 不变式，否则切换到
+      //    canvas 路径文件时 previewUrl 残留旧 RE URL → 陈旧 <img> 显示错误内容。
+      setPreviewUrl(getRenderEnginePreviewUrl(loadedFile, USE_RENDER_ENGINE_PREVIEW))
       if (loadedFile._previewImageUrl) {
         previewUrlRef.current = loadedFile._previewImageUrl
       }

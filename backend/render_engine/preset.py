@@ -27,7 +27,7 @@ PRESETS: Dict[str, RenderPreset] = {
         name="preview",
         dpi=150,
         quality=88,
-        margin_mm=3,
+        margin_mm=0,          # 屏幕预览不贴纸/边距，内容填满图像（与 canvas 路径一致）
         white_bg=True,
     ),
     "print": RenderPreset(
