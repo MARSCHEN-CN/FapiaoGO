@@ -10,7 +10,6 @@ const CalculatorModal = memo(function CalculatorModal({ visible, onClose }) {
   const [lastResult, setLastResult] = useState('')
   const [history, setHistory] = useState([]) // oldest first
   const [justEvaluated, setJustEvaluated] = useState(false)
-  const [waitingForOperand, setWaitingForOperand] = useState(false) // true after pressing op post-=, before typing next number
 
   const exprElRef = useRef(null)
   const resultElRef = useRef(null)
@@ -241,7 +240,8 @@ const CalculatorModal = memo(function CalculatorModal({ visible, onClose }) {
   const getAvailWidth = useCallback(() => {
     const parent = exprElRef.current?.parentElement
     if (!parent) return 360
-    return parent.clientWidth - 6
+    // Display area has 24px horizontal padding on each side
+    return parent.clientWidth - 48
   }, [])
 
   const fitFontSize = useCallback((el, text, maxFont, minFont, allowScroll) => {
@@ -284,93 +284,57 @@ const CalculatorModal = memo(function CalculatorModal({ visible, onClose }) {
   }, [syncMeasurerStyles, getAvailWidth])
 
   // ========== Actions ==========
+  // All handlers match the design-version logic exactly for consistent UX.
   const inputNumber = useCallback((num) => {
     let newExpr = expression
-    let newJustEval = justEvaluated
-    let newLastExpr = lastExpr
-    let newLastResult = lastResult
-    let newWaiting = false
     if (justEvaluated) {
-      // Starting a brand new calculation after =
-      newExpr = num === '.' ? '0.' : num
-      newLastExpr = ''
-      newLastResult = ''
-      newJustEval = false
-    } else if (waitingForOperand) {
-      // Just pressed an operator after =, now typing the next number.
-      // Keep the expression (e.g. "50−") and append the new digit.
-      newExpr = expression + num
-      newWaiting = false
+      newExpr = ''
+      setLastExpr('')
+      setLastResult('')
+      setJustEvaluated(false)
     } else {
       const currentNum = newExpr.match(/[^+\-×÷−]*$/)?.[0] || ''
       if (currentNum === '0' && num !== '.') {
         newExpr = newExpr.slice(0, -1) + num
-      } else {
-        newExpr += num
+        setExpression(newExpr)
+        return
       }
     }
-    setExpression(newExpr)
-    setJustEvaluated(newJustEval)
-    setLastExpr(newLastExpr)
-    setLastResult(newLastResult)
-    setWaitingForOperand(newWaiting)
-  }, [expression, justEvaluated, lastExpr, lastResult, waitingForOperand])
+    setExpression(newExpr + num)
+  }, [expression, justEvaluated])
 
   const inputDecimal = useCallback(() => {
     let newExpr = expression
-    let newJustEval = justEvaluated
-    let newLastExpr = lastExpr
-    let newLastResult = lastResult
-    let newWaiting = false
     if (justEvaluated) {
-      newExpr = '0.'
-      newLastExpr = ''
-      newLastResult = ''
-      newJustEval = false
-    } else if (waitingForOperand) {
-      newExpr = expression + '0.'
-      newWaiting = false
+      newExpr = '0'
+      setLastExpr('')
+      setLastResult('')
+      setJustEvaluated(false)
     } else {
       const currentNum = newExpr.match(/[^+\-×÷−]*$/)?.[0] || ''
-      if (currentNum === '') newExpr += '0.'
-      else if (!currentNum.includes('.')) newExpr += '.'
+      if (currentNum === '') { setExpression(newExpr + '0.'); return }
+      if (currentNum.includes('.')) return
     }
-    setExpression(newExpr)
-    setJustEvaluated(newJustEval)
-    setLastExpr(newLastExpr)
-    setLastResult(newLastResult)
-    setWaitingForOperand(newWaiting)
-  }, [expression, justEvaluated, lastExpr, lastResult, waitingForOperand])
+    setExpression(newExpr + '.')
+  }, [expression, justEvaluated])
 
   const inputOperator = useCallback((op) => {
     let newExpr = expression
-    let newJustEval = justEvaluated
-    let newLastExpr = lastExpr
-    let newLastResult = lastResult
-    let newWaiting = false
     if (justEvaluated) {
-      // Continue calculation using previous result: "50" → "50−"
-      newExpr = (lastResult || expression) + op
-      newJustEval = false
-      // Keep lastResult/lastExpr so display continues showing result prominently
-      newWaiting = true
-    } else if (waitingForOperand) {
-      // Already waiting; just change the operator
+      // Continue calculation from previous result: "50" → "50−"
+      newExpr = lastResult || expression
+      setLastExpr('')
+      setLastResult('')
+      setJustEvaluated(false)
+    }
+    if (newExpr === '' && op !== '−') return
+    if (/[+\-×÷−]$/.test(newExpr)) {
       newExpr = newExpr.slice(0, -1) + op
     } else {
-      if (newExpr === '' && op !== '−') return
-      if (/[+\-×÷−]$/.test(newExpr)) {
-        newExpr = newExpr.slice(0, -1) + op
-      } else {
-        newExpr += op
-      }
+      newExpr += op
     }
     setExpression(newExpr)
-    setJustEvaluated(newJustEval)
-    setLastExpr(newLastExpr)
-    setLastResult(newLastResult)
-    setWaitingForOperand(newWaiting)
-  }, [expression, justEvaluated, lastExpr, lastResult, waitingForOperand])
+  }, [expression, justEvaluated, lastResult])
 
   const inputPercent = useCallback(() => {
     if (expression === '') return
@@ -385,39 +349,23 @@ const CalculatorModal = memo(function CalculatorModal({ visible, onClose }) {
       expression.lastIndexOf('×'), expression.lastIndexOf('÷'), expression.lastIndexOf('−')
     )
     let newExpr
-    let newJustEval = justEvaluated
-    let newLastExpr = lastExpr
-    let newLastResult = lastResult
     if (lastOpIdx === -1) newExpr = resStr
     else newExpr = expression.slice(0, lastOpIdx + 1) + resStr
-    if (justEvaluated) { newJustEval = false; newLastExpr = ''; newLastResult = '' }
+    if (justEvaluated) { setLastExpr(''); setLastResult(''); setJustEvaluated(false) }
     setExpression(newExpr)
-    setJustEvaluated(newJustEval)
-    setLastExpr(newLastExpr)
-    setLastResult(newLastResult)
-    setWaitingForOperand(false)
-  }, [expression, justEvaluated, lastExpr, lastResult, waitingForOperand])
+  }, [expression, justEvaluated])
 
   const backspace = useCallback(() => {
     if (justEvaluated) {
-      // Clear all when backspacing a result
       setExpression('')
       setLastExpr('')
       setLastResult('')
       setHistory([])
       setJustEvaluated(false)
-      setWaitingForOperand(false)
-      return
-    }
-    if (waitingForOperand) {
-      // Pressing backspace while waiting for operand cancels the pending op
-      setExpression(lastResult || '')
-      setJustEvaluated(true)
-      setWaitingForOperand(false)
       return
     }
     setExpression(prev => prev.slice(0, -1))
-  }, [justEvaluated, waitingForOperand, lastResult])
+  }, [justEvaluated])
 
   const clearAll = useCallback(() => {
     setExpression('')
@@ -425,20 +373,16 @@ const CalculatorModal = memo(function CalculatorModal({ visible, onClose }) {
     setLastResult('')
     setHistory([])
     setJustEvaluated(false)
-    setWaitingForOperand(false)
   }, [])
 
   const calculate = useCallback(() => {
     if (expression === '') return
-    // If waiting for operand (just pressed op after =), don't calculate again
-    if (waitingForOperand) return
     const evalExpr = expression.replace(/[+\-×÷−]$/, '')
     if (!evalExpr) return
     const result = evaluateExpression(evalExpr)
     if (isNaN(result)) {
       setExpression('Error')
       setJustEvaluated(true)
-      setWaitingForOperand(false)
       return
     }
     const resultStr = numberToString(result)
@@ -451,8 +395,7 @@ const CalculatorModal = memo(function CalculatorModal({ visible, onClose }) {
     setLastResult(resultStr)
     setExpression(resultStr)
     setJustEvaluated(true)
-    setWaitingForOperand(false)
-  }, [expression, evaluateExpression, numberToString, waitingForOperand])
+  }, [expression, evaluateExpression, numberToString])
 
   const reuseHistory = useCallback((index) => {
     const item = history[index]
@@ -461,7 +404,6 @@ const CalculatorModal = memo(function CalculatorModal({ visible, onClose }) {
     setLastExpr(item.expr)
     setExpression(item.result)
     setJustEvaluated(true)
-    setWaitingForOperand(false)
   }, [history])
 
   // ========== Keyboard Support ==========
@@ -492,7 +434,6 @@ const CalculatorModal = memo(function CalculatorModal({ visible, onClose }) {
       setLastExpr('')
       setLastResult('')
       setJustEvaluated(false)
-      setWaitingForOperand(false)
     }
   }, [visible])
 
@@ -500,32 +441,37 @@ const CalculatorModal = memo(function CalculatorModal({ visible, onClose }) {
   const isError = expression === 'Error'
   let exprText, resultText, chineseText, inResultMode = false
 
-  if (isError) {
-    exprText = 'Error'; resultText = ''; chineseText = ''
-  } else if ((justEvaluated || waitingForOperand) && lastResult) {
-    // Show result prominently:
-    // - justEvaluated: after pressing =
-    // - waitingForOperand: after pressing operator post-=, before typing next number
+  if (justEvaluated && !isError && lastExpr) {
+    // Result mode (after pressing =):
+    // - Primary row (big): shows the answer number
+    // - Secondary row (small gray): shows "expr =" e.g. "56−6 ="
+    // - Chinese row: shows the amount (slightly bolder)
     inResultMode = true
     exprText = formatNumber(lastResult)
     resultText = lastExpr
     const resultNum = parseFloat(lastResult)
     chineseText = (isFinite(resultNum) && Math.abs(resultNum) < 1e20) ? toChineseAmount(resultNum) : ''
   } else {
+    // Input mode (typing):
+    // - Primary row (big): shows what user is typing
+    // - Secondary row (small): shows live preview "= result"
+    // - Chinese row: shows live chinese amount
     exprText = expression || '0'
+
     let showLive = false, liveResult = null
-    if (expression && expression !== '0') {
-      // Strip trailing operators to get the "computable" part.
-      const stripped = expression.replace(/[+\-×÷−]+$/, '')
-      if (stripped && stripped !== '−' && stripped !== '-') {
-        const val = evaluateExpression(expression)
-        if (!isNaN(val)) {
-          showLive = true; liveResult = val
-        }
+    if (!isError && expression && expression !== '0') {
+      const val = evaluateExpression(expression)
+      if (!isNaN(val) && /[+\-×÷−]/.test(expression)) {
+        showLive = true; liveResult = val
       }
     }
+
     resultText = showLive ? '= ' + formatNumber(numberToString(liveResult)) : ''
     chineseText = (showLive && isFinite(liveResult) && Math.abs(liveResult) < 1e20) ? toChineseAmount(liveResult) : ''
+
+    if (isError) {
+      exprText = 'Error'; resultText = ''; chineseText = ''
+    }
   }
 
   // Apply font sizing after render
