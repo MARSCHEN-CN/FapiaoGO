@@ -466,8 +466,12 @@ def _replay_oplog() -> None:
 
                 elif op == "hard_delete":
                     if entry_id in _invoice_index_by_id:
-                        idx = _invoice_index_by_id.pop(entry_id)
-                        _invoices.pop(idx)
+                        idx = _invoice_index_by_id[entry_id]
+                        # 标记删除（墓碑 + hard_deleted），不 pop，避免索引偏移错乱；
+                        # 物理移除延迟到压缩时统一执行。仅从 by_id 移除使记录不可见。
+                        _invoices[idx]['deleted_at'] = entry.get('ts')
+                        _invoices[idx]['hard_deleted'] = True
+                        _invoice_index_by_id.pop(entry_id)
 
                 elif op == "restore":
                     if entry_id in _invoice_index_by_id:
@@ -503,6 +507,13 @@ def _compact_oplog() -> None:
     """
     global _oplog_count
     _flush_oplog_buffer_locked()  # 确保缓冲区内容写入磁盘
+
+    # 物理移除已被硬删除（墓碑）的记录，避免无限堆积；之后重建索引。
+    # 仅移除 hard_deleted 标记的记录，保留软删除（回收站）记录以便 restore。
+    surviving = [inv for inv in _invoices if not inv.get('hard_deleted')]
+    if len(surviving) != len(_invoices):
+        _invoices[:] = surviving
+        _rebuild_indexes()
 
     # 阶段1：标记压缩开始
     _touch_marker(COMPACT_MARKER)
@@ -927,26 +938,29 @@ def soft_delete_invoice(invoice_id: str) -> Optional[Dict]:
 
 
 def hard_delete_invoice(invoice_id: str) -> Optional[Dict]:
-    """硬删除发票（从数组中移除）"""
+    """硬删除发票（标记删除，物理移除延迟到压缩时批量执行）
+
+    不再使用 _invoices.pop(idx)：pop 会触发 O(N) 数组移位，使所有 idx > 被删项的
+    索引整体偏移 1，而 by_hash / by_filename / by_number 等索引未同步更新，导致
+    后续查找返回错误记录（原实现 L934-947 的 bug）。
+
+    改为统一标记删除：设置 deleted_at 墓碑 + hard_deleted 标记，并仅从 by_id 索引
+    移除该 id（O(1)，不触发数组移位，其余索引位置保持不变）。真正物理移除在
+    _compact_oplog 压缩时统一批量执行并重建索引，避免无限堆积。
+    """
     _ensure_loaded()
+    now_str = now().isoformat()
     with _lock:
         if invoice_id in _invoice_index_by_id:
-            idx = _invoice_index_by_id.pop(invoice_id)
-            inv = _invoices[idx]
-            # 从 number 索引中移除
-            num = inv.get('number')
-            if num:
-                num_key = str(num)
-                if num_key in _invoice_index_by_number:
-                    try:
-                        _invoice_index_by_number[num_key].remove(idx)
-                        if not _invoice_index_by_number[num_key]:
-                            del _invoice_index_by_number[num_key]
-                    except ValueError:
-                        pass
-            _invoices.pop(idx)
+            idx = _invoice_index_by_id[invoice_id]
+            _invoices[idx]['deleted_at'] = now_str
+            _invoices[idx]['hard_deleted'] = True
+            _invoices[idx]['updated_at'] = now_str
+            # 仅从 id 索引移除，使该记录对读路径不可见；其余索引位置不变，无偏移
+            _invoice_index_by_id.pop(invoice_id, None)
             _append_oplog("hard_delete", invoice_id)
             _maybe_compact()
+            _invalidate_search_cache()
             return {'ok': True}
     return None
 
