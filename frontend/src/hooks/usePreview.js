@@ -740,7 +740,9 @@ export function usePreview({ files, settings, electronAPIRef }) {
             buffer = await fObj.file.arrayBuffer()
             if (signal?.aborted) return fObj
           } else if (electronAPIRef.current?.ipcRenderer && fObj.printPath) {
+            console.log('[DIAG] LOAD IPC START key=', fObj.key?.slice(0,40))
             const fd = await electronAPIRef.current.ipcRenderer.invoke('read-file', fObj.printPath)
+            console.log('[DIAG] LOAD IPC DONE key=', fObj.key?.slice(0,40), 'succ=', fd?.success)
             if (signal?.aborted) return fObj
             if (fd.success) {
               buffer = fd.data.buffer
