@@ -31,6 +31,7 @@
 
 import fitz
 from dataclasses import dataclass, field
+from functools import cached_property
 from typing import List, Dict, Tuple, Optional, Any
 from enum import Enum
 import math
@@ -56,39 +57,39 @@ class LayoutElement:
     page: int = 0
     source: SourceType = SourceType.PDF
     
-    @property
+    @cached_property
     def x0(self) -> float:
         return min(p[0] for p in self.box) if self.box else 0
-    
-    @property
+
+    @cached_property
     def y0(self) -> float:
         return min(p[1] for p in self.box) if self.box else 0
-    
-    @property
+
+    @cached_property
     def x1(self) -> float:
         return max(p[0] for p in self.box) if self.box else 0
-    
-    @property
+
+    @cached_property
     def y1(self) -> float:
         return max(p[1] for p in self.box) if self.box else 0
-    
-    @property
+
+    @cached_property
     def width(self) -> float:
         return self.x1 - self.x0
-    
-    @property
+
+    @cached_property
     def height(self) -> float:
         return self.y1 - self.y0
-    
-    @property
+
+    @cached_property
     def area(self) -> float:
         return self.width * self.height
-    
-    @property
+
+    @cached_property
     def center_x(self) -> float:
         return (self.x0 + self.x1) / 2
-    
-    @property
+
+    @cached_property
     def center_y(self) -> float:
         return (self.y0 + self.y1) / 2
     
@@ -732,11 +733,18 @@ class LayoutParser:
         self.segmenter = RegionSegmenter()
         self.extractor = FieldExtractor()
     
-    def parse_pdf(self, pdf_bytes: bytes) -> List[LayoutElement]:
-        """使用 PyMuPDF dict 模式解析 PDF"""
+    def parse_pdf(self, pdf_bytes: bytes, doc: Optional["fitz.Document"] = None) -> List[LayoutElement]:
+        """使用 PyMuPDF dict 模式解析 PDF。
+
+        若传入外部已打开的 doc（例如由 validate_pdf 预打开并复用的 fitz.Document），
+        则复用该 doc，避免重复打开；此时不负责关闭 doc（所有权归调用方）。
+        """
         elements = []
+        owned_doc = False
         try:
-            doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+            if doc is None:
+                doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+                owned_doc = True
             try:
                 for page_idx, page in enumerate(doc):
                     layout = page.get_text("dict")
@@ -761,7 +769,8 @@ class LayoutParser:
                                     source=SourceType.PDF
                                 ))
             finally:
-                doc.close()
+                if owned_doc and doc is not None:
+                    doc.close()
         except Exception as e:
             logger.error(f"PDF 解析失败: {e}")
         return elements
