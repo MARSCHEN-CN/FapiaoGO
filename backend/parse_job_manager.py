@@ -14,8 +14,9 @@ import os
 import uuid
 import json
 import time
+import bisect
 import logging
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field
 from time_utils import now, now_timestamp
 from queue import Queue
 from concurrent.futures import ThreadPoolExecutor, Future
@@ -53,8 +54,23 @@ class ParseJob:
             self.updated_at = now().isoformat()
     
     def to_dict(self) -> Dict[str, Any]:
-        """转换为字典（用于 JSON 序列化）"""
-        return asdict(self)
+        """转换为字典（用于 JSON 序列化）
+
+        显式构造、仅浅拷贝，避免 dataclasses.asdict 的递归深拷贝开销
+        （asdict 会逐层深复制 metrics 等嵌套结构，list_jobs 每次调用都要付出）。
+        """
+        return {
+            'id': self.id,
+            'file_name': self.file_name,
+            'file_hash': self.file_hash,
+            'status': self.status,
+            'progress': self.progress,
+            'error': self.error,
+            'result_id': self.result_id,
+            'created_at': self.created_at,
+            'updated_at': self.updated_at,
+            'metrics': dict(self.metrics),  # 浅拷贝，防调用方误改 job.metrics
+        }
     
     def update_status(self, status: str, progress: Optional[int] = None, error: str = ''):
         """更新任务状态"""
@@ -81,56 +97,157 @@ class JobStore:
             storage_path = os.path.join(database_dir, 'parse_jobs.json')
         
         self.storage_path = storage_path
+        self._oplog_path = storage_path + '.oplog'  # 增量操作日志（append-only）
         self._lock = Lock()
         self._jobs: Dict[str, ParseJob] = {}
+        # 维护按 created_at 升序的有序表 [(created_at, job_id), ...]，
+        # list_jobs 倒序遍历即得「最新优先」且无需每次全量排序（O(limit)）。
+        self._job_order: list = []
         self._pending_save = False  # 延迟写入标记
+        self._dirty_ids: set = set()  # 待刷盘的脏任务 id（用于增量追加）
         self._save_interval = 5     # 批量保存间隔（秒）
         self._last_save_time = 0    # 上次保存时间
+        self._oplog_count = 0       # oplog 当前条目数
+        self._compact_threshold = 200            # oplog 条目数超过此值触发压缩
+        self._compact_max_bytes = 1024 * 1024    # 或 oplog 体积超过 1MB 触发压缩
         self._load()
     
     def _load(self):
-        """从文件加载任务数据"""
+        """从快照 + oplog 加载任务数据
+
+        加载顺序：先读全量快照 parse_jobs.json（上一次压缩的产物），
+        再回放增量日志 parse_jobs.json.oplog 得到最新状态。
+        回放时跳过损坏行，保证进程崩溃后仍可恢复。
+        """
         try:
             if os.path.exists(self.storage_path):
                 with open(self.storage_path, 'r', encoding='utf-8') as f:
                     data = json.load(f)
                     for job_id, job_data in data.items():
                         self._jobs[job_id] = ParseJob(**job_data)
-                logger.info(f"[JobStore] 加载了 {len(self._jobs)} 个任务")
+                logger.info(f"[JobStore] 加载快照: {len(self._jobs)} 个任务")
             else:
                 logger.info(f"[JobStore] 存储文件不存在，创建新存储")
-                self._save()
+                self._write_snapshot()
+
+            # 回放增量日志
+            if os.path.exists(self._oplog_path):
+                with open(self._oplog_path, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            entry = json.loads(line)
+                        except Exception:
+                            continue  # 跳过损坏/截断的行
+                        op = entry.get('op')
+                        jid = entry.get('id')
+                        if op == 'put' and jid and entry.get('data') is not None:
+                            try:
+                                self._jobs[jid] = ParseJob(**entry['data'])
+                            except Exception:
+                                continue
+                        elif op == 'del' and jid:
+                            self._jobs.pop(jid, None)
+                        self._oplog_count += 1
+                logger.info(f"[JobStore] 回放 oplog: {self._oplog_count} 条")
+
+            # 从最终状态重建有序表（启动期一次性 O(n log n)，热路径不再排序）
+            self._job_order = sorted(
+                ((j.created_at, jid) for jid, j in self._jobs.items()),
+                key=lambda x: x[0],
+            )
         except Exception as e:
             logger.error(f"[JobStore] 加载任务数据失败: {e}")
             self._jobs = {}
+            self._job_order = []
     
-    def _save(self):
-        """保存任务数据到文件（紧凑格式，减少 I/O）"""
+    def _write_snapshot(self):
+        """写全量快照到 parse_jobs.json（原子替换，崩溃安全）
+
+        此即「压缩」产物：oplog 增量日志累积到阈值后由 _maybe_compact_locked 调用，
+        将内存最新状态落盘为单一文件，随后清空 oplog。
+        """
         try:
             os.makedirs(os.path.dirname(self.storage_path), exist_ok=True)
             data = {job_id: job.to_dict() for job_id, job in self._jobs.items()}
-            with open(self.storage_path, 'w', encoding='utf-8') as f:
+            tmp = self.storage_path + '.tmp'
+            with open(tmp, 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, separators=(',', ':'))  # 紧凑格式
-            self._pending_save = False
-            self._last_save_time = time.time()
+            os.replace(tmp, self.storage_path)  # 原子替换，避免写一半崩溃导致文件损坏
         except Exception as e:
-            logger.error(f"[JobStore] 保存任务数据失败: {e}")
-    
-    def _mark_dirty(self):
+            logger.error(f"[JobStore] 写快照失败: {e}")
+
+    def _append_op(self, op: str, job_id: str, job_data: Optional[dict] = None):
+        """追加一条增量操作到 oplog（O(1)，不再全量重写文件）
+
+        caller 必须持有 self._lock。
+        """
+        entry = {'op': op, 'id': job_id}
+        if job_data is not None:
+            entry['data'] = job_data
+        line = json.dumps(entry, ensure_ascii=False, separators=(',', ':')) + '\n'
+        try:
+            os.makedirs(os.path.dirname(self._oplog_path), exist_ok=True)
+            with open(self._oplog_path, 'a', encoding='utf-8') as f:
+                f.write(line)
+            self._oplog_count += 1
+        except Exception as e:
+            # oplog 不可用时降级：直接落全量快照并清空 oplog，保证不丢数据
+            logger.error(f"[JobStore] 追加 oplog 失败，降级为全量快照: {e}")
+            try:
+                self._write_snapshot()
+                open(self._oplog_path, 'w', encoding='utf-8').close()
+                self._oplog_count = 0
+            except Exception as e2:
+                logger.error(f"[JobStore] 降级快照也失败: {e2}")
+
+    def _maybe_compact_locked(self):
+        """oplog 达到阈值时压缩：写快照 + 清空 oplog。caller 必须持有 self._lock。"""
+        try:
+            size = os.path.getsize(self._oplog_path) if os.path.exists(self._oplog_path) else 0
+        except OSError:
+            size = 0
+        if self._oplog_count >= self._compact_threshold or size >= self._compact_max_bytes:
+            self._write_snapshot()
+            try:
+                open(self._oplog_path, 'w', encoding='utf-8').close()  # 先快照后清空，保证一致
+                self._oplog_count = 0
+            except Exception as e:
+                logger.error(f"[JobStore] 清空 oplog 失败: {e}")
+
+    def _mark_dirty(self, job_id: Optional[str] = None):
         """标记需要保存（延迟写入）"""
         self._pending_save = True
-    
+        if job_id is not None:
+            self._dirty_ids.add(job_id)
+
     def _flush_if_needed(self):
-        """按需批量保存（超过间隔时间且有待保存数据）"""
-        now = time.time()
-        if self._pending_save and now - self._last_save_time >= self._save_interval:
-            self._save()
+        """按需批量保存（超过间隔时间且有待保存数据）
+
+        只把脏任务增量追加到 oplog，不重写全量文件；触发压缩阈值时由
+        _maybe_compact_locked 写一次快照。
+        """
+        with self._lock:
+            now = time.time()
+            if self._pending_save and now - self._last_save_time >= self._save_interval:
+                for jid in self._dirty_ids:
+                    job = self._jobs.get(jid)
+                    if job is not None:
+                        self._append_op('put', jid, job.to_dict())
+                self._dirty_ids.clear()
+                self._pending_save = False
+                self._last_save_time = now
+                self._maybe_compact_locked()
     
     def add(self, job: ParseJob):
         """添加任务"""
         with self._lock:
             self._jobs[job.id] = job
-            self._mark_dirty()  # 延迟写入
+            bisect.insort(self._job_order, (job.created_at, job.id))
+            self._append_op('put', job.id, job.to_dict())  # 增量追加，无需全量重写
+            self._maybe_compact_locked()
     
     def get(self, job_id: str) -> Optional[ParseJob]:
         """获取任务"""
@@ -139,27 +256,36 @@ class JobStore:
     
     def update(self, job: ParseJob, force_save: bool = False):
         """更新任务
-        
+
         Args:
             job: 任务对象
-            force_save: 是否立即保存（用于终态变更）
+            force_save: 是否立即持久化（用于终态变更）。
+                无论是否 force，均采用 oplog 增量追加；
+                force 表示立即落盘（追加一行），非 force 则进入延迟刷盘窗口。
         """
         with self._lock:
             self._jobs[job.id] = job
             if force_save:
-                self._save()  # 终态立即保存
+                self._append_op('put', job.id, job.to_dict())  # 终态：增量追加（O(1)）
+                self._maybe_compact_locked()
             else:
-                self._mark_dirty()  # 延迟写入
+                self._mark_dirty(job.id)  # 延迟写入
     
     def list_jobs(self, limit: int = 50, offset: int = 0) -> list:
-        """列出任务（按创建时间倒序）"""
+        """列出任务（按创建时间倒序）
+
+        直接倒序遍历 _job_order（按 created_at 升序维护），切片后即得最新优先，
+        避免每次调用对全量任务做 sorted() 全量排序；复杂度为 O(limit)。
+        """
         with self._lock:
-            sorted_jobs = sorted(
-                self._jobs.values(),
-                key=lambda j: j.created_at,
-                reverse=True
-            )
-            return [job.to_dict() for job in sorted_jobs[offset:offset+limit]]
+            n = len(self._job_order)
+            end = n - offset
+            if end <= 0:
+                return []
+            start = max(0, end - limit)
+            window = self._job_order[start:end]   # 升序窗口
+            window.reverse()                        # 降序：最新优先
+            return [self._jobs[jid].to_dict() for _, jid in window]
     
     def cleanup_old_jobs(self, max_age_hours: int = 24) -> int:
         """清理旧任务（保留最近的任务）"""
@@ -173,8 +299,14 @@ class JobStore:
             ]
             for job_id in old_jobs:
                 del self._jobs[job_id]
+                self._append_op('del', job_id)  # 增量记录删除
+            # 重建有序表（仅在清理这种低频路径做全量重排，热路径 list_jobs 不再排序）
+            self._job_order = sorted(
+                ((j.created_at, jid) for jid, j in self._jobs.items()),
+                key=lambda x: x[0],
+            )
             if old_jobs:
-                self._save()
+                self._maybe_compact_locked()  # 删除较多时顺带压缩
                 logger.info(f"[JobStore] 清理了 {len(old_jobs)} 个旧任务")
             return len(old_jobs)
 
@@ -200,6 +332,7 @@ class ParseJobManager:
             thread_name_prefix='ParseWorker'
         )
         self._active_tasks: Dict[str, bool] = {}  # 用于取消任务
+        self._cancel_flags: Dict[str, bool] = {}  # 取消标志，供执行中的任务检查
         self._futures: Dict[str, Future] = {}  # 追踪提交的 future，用于取消
         self._lock = Lock()
         
@@ -275,28 +408,41 @@ class ParseJobManager:
     def _execute_job(self, job: ParseJob):
         """执行解析任务（在线程池中）"""
         job_id = job.id
-        
+
         with self._lock:
             self._active_tasks[job_id] = True
-        
+
         try:
             # 更新状态为 running
             job.update_status('running', progress=10)
             self.store.update(job)
-            
+
+            # 关键检查点①：执行前再次确认未被取消
+            # （cancel 可能发生在任务提交之后、worker 真正开始之前）
+            if self._is_cancelled(job_id):
+                self._finalize_cancelled(job)
+                return
+
             # 执行解析
             start_time = time.time()
-            
+
             # 调用解析函数
             parse_func = job._parse_func
             parse_args = job._parse_args
             parse_kwargs = job._parse_kwargs
-            
-            # 执行解析并获取结果
+
+            # 执行解析并获取结果（阻塞调用，无法被 future.cancel 中断）
             result = parse_func(*parse_args, **parse_kwargs)
-            
+
+            # 关键检查点②：阻塞调用返回后再次确认取消标志
+            # future.cancel() 只能取消尚未开始执行的任务；已进入 worker 线程的任务
+            # 必须在此处检查标志，确保「取消」优先于 success/failed，避免覆盖状态。
+            if self._is_cancelled(job_id):
+                self._finalize_cancelled(job)
+                return
+
             elapsed = time.time() - start_time
-            
+
             if result is None:
                 job.update_status('failed', progress=100, error='解析失败：无法识别文件')
             else:
@@ -304,29 +450,45 @@ class ParseJobManager:
                 result_id = f"result_{job_id}"
                 job.result_id = result_id
                 job.update_status('success', progress=100)
-                
+
                 # 记录性能指标
                 job.metrics = {
                     'elapsed_seconds': round(elapsed, 2),
                     'file_size': parse_kwargs.get('file_size', 0),
                     'parse_method': result.get('parse_method', 'unknown'),
                 }
-                
+
                 # 缓存结果
                 from cache import set_ocr_cache
                 set_ocr_cache(result_id, result)
-            
+
             self.store.update(job, force_save=True)  # 终态立即保存
             logger.info(f"[JobManager] 任务完成: {job_id} (status={job.status}, elapsed={elapsed:.2f}s)")
-            
+
         except Exception as e:
+            # 若已取消，则不覆盖为 failed
+            if self._is_cancelled(job_id):
+                self._finalize_cancelled(job)
+                return
             job.update_status('failed', progress=100, error=str(e))
             self.store.update(job, force_save=True)  # 终态立即保存
             logger.error(f"[JobManager] 任务失败: {job_id}, error={e}", exc_info=True)
-        
+
         finally:
             with self._lock:
                 self._active_tasks.pop(job_id, None)
+                self._cancel_flags.pop(job_id, None)  # 清理取消标志
+
+    def _is_cancelled(self, job_id: str) -> bool:
+        """读取取消标志（线程安全）"""
+        with self._lock:
+            return self._cancel_flags.get(job_id, False)
+
+    def _finalize_cancelled(self, job: ParseJob):
+        """将任务收敛为 cancelled 状态并落盘（幂等）"""
+        job.update_status('cancelled', error='任务已取消')
+        self.store.update(job, force_save=True)
+        logger.info(f"[JobManager] 任务已在执行中被取消: {job.id}")
     
     def cancel_job(self, job_id: str) -> bool:
         """取消任务
@@ -347,14 +509,14 @@ class ParseJobManager:
             return True
         
         elif job.status == 'running':
-            # 尝试取消 future，并标记取消标志
+            # 尝试取消 future（仅对尚未开始执行的任务有效），
+            # 同时设置取消标志供执行中的任务在关键检查点读取。
             cancelled = False
             with self._lock:
+                self._cancel_flags[job_id] = True  # 供 _execute_job 检查
                 future = self._futures.get(job_id)
                 if future and not future.done():
                     cancelled = future.cancel()
-                if job_id in self._active_tasks:
-                    self._active_tasks[job_id] = False
             job.update_status('cancelled', error='任务已取消')
             self.store.update(job, force_save=True)  # 终态立即保存
             logger.info(f"[JobManager] 取消 running 任务: {job_id}, future_cancelled={cancelled}")
@@ -409,4 +571,21 @@ class ParseJobManager:
 
 # 默认配置：自适应并发 worker（至少 2，最多 4），队列最大 100 个任务
 _CPU_COUNT = os.cpu_count() or 1
-job_manager = ParseJobManager(max_workers=min(_CPU_COUNT, 4), max_queue_size=100)
+
+# 全局单例（惰性初始化）：模块被 import 时不立即构造，避免 import 链
+# （如 app.py 顶层 `from parse_job_manager import job_manager`）在加载期就拉起
+# ThreadPoolExecutor、启动队列处理线程并加载任务存储文件。仅在首次
+# get_job_manager() 调用时才真正创建实例。
+_job_manager_singleton = None
+_job_manager_lock = Lock()
+
+def get_job_manager() -> 'ParseJobManager':
+    """获取全局任务管理器单例（线程安全惰性初始化）"""
+    global _job_manager_singleton
+    if _job_manager_singleton is None:
+        with _job_manager_lock:
+            if _job_manager_singleton is None:  # 双重检查锁定，防并发重复构造
+                _job_manager_singleton = ParseJobManager(
+                    max_workers=min(_CPU_COUNT, 4), max_queue_size=100
+                )
+    return _job_manager_singleton

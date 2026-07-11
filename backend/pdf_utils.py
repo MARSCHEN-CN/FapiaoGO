@@ -45,38 +45,73 @@ def _normalize_for_dedup(s):
 
 def _dedup_ocr_lines(existing_text, ocr_lines):
     """过滤掉已在 existing_text 中出现的 OCR 行，返回去重后的行列表。
-    
+
     策略：将已有文本按行拆分为归一化集合，逐行检查 OCR 行是否已存在。
     允许部分匹配（OCR 行是已有行的子串或反之）以避免语义重复。
+
+    性能：原实现对每个 OCR 行都对所有已有行做「双向子串」扫描
+    （norm in existing or existing in norm），最坏 O(N×M×L)。
+    优化：按已有行长度分桶，对每个 OCR 行只做「单向」子串检查——
+      - 比 OCR 行严格短的已有行：检查 existing in norm
+      - 不短于 OCR 行的已有行：检查 norm in existing
+    两种单向检查合起来与原双向检查完全等价（子串关系必然要求
+    一方向被另一方向包含），但每条已有行只被扫描一个方向，
+    且「长度 >= 4」的守卫在分桶阶段完成。结果与原实现逐字节一致。
     """
     if not existing_text or not ocr_lines:
         return ocr_lines
-    
-    # 构建已有文本的归一化行集合
-    existing_normalized = {
-        _normalize_for_dedup(line)
-        for line in existing_text.split('\n')
-        if line.strip()
-    }
-    
+
+    # 归一化已有文本行；同时按长度分桶（仅保留长度 >= 4 的行，
+    # 因为子串检查带 len >= 4 守卫）。exact_set 含全部非空归一化行，
+    # 用于精确匹配（含短行）。
+    exact_set = set()
+    buckets = {}  # length -> list of normalized existing lines (len >= 4)
+    for line in existing_text.split('\n'):
+        norm = _normalize_for_dedup(line)
+        if not norm:
+            continue
+        exact_set.add(norm)
+        if len(norm) >= 4:
+            buckets.setdefault(len(norm), []).append(norm)
+
     deduped = []
     for line in ocr_lines:
         norm = _normalize_for_dedup(line)
         if not norm:
-            continue
+            continue  # 归一化后为空 → 丢弃（与原实现一致）
         # 精确匹配：归一化后完全相同
-        if norm in existing_normalized:
+        if norm in exact_set:
             continue
-        # 子串匹配：OCR 行是已有行的子串，或已有行是 OCR 行的子串
+        L = len(norm)
         is_dup = False
-        for existing in existing_normalized:
-            if len(norm) >= 4 and len(existing) >= 4:
-                if norm in existing or existing in norm:
-                    is_dup = True
+        if L >= 4 and buckets:
+            max_len = max(buckets)
+            # 比 OCR 行严格短的已有行：检查 existing in norm
+            for length in range(4, L):
+                bucket = buckets.get(length)
+                if bucket is None:
+                    continue
+                for existing in bucket:
+                    if existing in norm:
+                        is_dup = True
+                        break
+                if is_dup:
                     break
+            # 不短于 OCR 行的已有行：检查 norm in existing
+            if not is_dup:
+                for length in range(L, max_len + 1):
+                    bucket = buckets.get(length)
+                    if bucket is None:
+                        continue
+                    for existing in bucket:
+                        if norm in existing:
+                            is_dup = True
+                            break
+                    if is_dup:
+                        break
         if not is_dup:
             deduped.append(line)
-    
+
     return deduped
 
 # 发票号码模式：8-20 位连续数字（用于判断 PDF 文本层是否包含真实结构化数据）
@@ -174,7 +209,6 @@ def need_ocr(text, doc=None):
                 "[NEED_OCR] pages=%d, image_pages=%d, is_image_pdf=%s",
                 total_pages, image_pages, is_image_pdf,
             )
-            print(f"[NEED_OCR] pages={total_pages}, image_pages={image_pages}, is_image_pdf={is_image_pdf}")
             return is_image_pdf
         except Exception as e:
             logger.warning("[NEED_OCR] 结构检测失败，退化为文本判断: %s", e)
@@ -256,7 +290,7 @@ def extract_words_with_bbox(pdf_bytes):
     return words
 
 
-def extract_text_from_bytes(pdf_bytes, doc=None, return_words=False):
+def extract_text_from_bytes(pdf_bytes, doc=None, return_words=False, max_pages=5):
     """使用 PyMuPDF 提取文本，同时返回纯文本和 bbox 格式的坐标数据。
 
     [PERF] 每页只调用一次 get_text("words")，从 words 中拼接纯文本，
@@ -268,6 +302,8 @@ def extract_text_from_bytes(pdf_bytes, doc=None, return_words=False):
         pdf_bytes: PDF 文件字节
         doc: 可选的外部 fitz.Document，传入时复用而不新建/关闭
         return_words: 是否额外返回每页的原始 words 元组列表
+        max_pages: 最大提取页数上限；None 表示不限制（提取全部页）。
+            默认 5 页以约束超大 PDF 的文本提取开销。
 
     Returns:
         return_words=False: tuple (text, bbox_data)
@@ -289,9 +325,11 @@ def extract_text_from_bytes(pdf_bytes, doc=None, return_words=False):
     try:
         if own_doc:
             doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-        max_pages = min(len(doc), 5)
+        total_pages = len(doc)
+        # max_pages=None 表示不限制；否则取「上限与文档页数」的较小值
+        page_limit = total_pages if max_pages is None else min(total_pages, max_pages)
 
-        for page_idx in range(max_pages):
+        for page_idx in range(page_limit):
             page = doc[page_idx]
 
             # [PERF] 仅调用一次 get_text("words")，同时生成纯文本 + bbox
@@ -364,12 +402,8 @@ def parse_invoice_unified(pdf_bytes, auto_orient=True, force_ocr=False, enable_a
     Returns:
         tuple: (result_dict, from_cache)
     """
-    # 缓存键使用分块 SHA256 哈希
-    sha = hashlib.sha256()
-    chunk_size = 1024 * 1024
-    for i in range(0, len(pdf_bytes), chunk_size):
-        sha.update(pdf_bytes[i:i + chunk_size])
-    cache_key = sha.hexdigest() + ('_unified' if auto_orient else '_unified_no_orient')
+    # 缓存键使用 SHA256 哈希（pdf_bytes 已完整在内存中，无需分块）
+    cache_key = hashlib.sha256(pdf_bytes).hexdigest() + ('_unified' if auto_orient else '_unified_no_orient')
     # ⚠️ v5: force_ocr / enable_auto_ocr 需要独立的缓存键
     if force_ocr:
         cache_key += '_force_ocr'
@@ -380,7 +414,7 @@ def parse_invoice_unified(pdf_bytes, auto_orient=True, force_ocr=False, enable_a
     
     cached = get_ocr_cache(cache_key)
     if cached:
-        print(f"[CACHE] Hit! Returning cached result, skipping need_ocr() check")
+        logger.debug("[CACHE] Hit! Returning cached result, skipping need_ocr() check")
         return cached, True, None
     
     result = {
@@ -397,8 +431,8 @@ def parse_invoice_unified(pdf_bytes, auto_orient=True, force_ocr=False, enable_a
         
         # 第一步：提取文本和 bbox 数据（快速，复用已打开的 doc）
         text, bbox_data = extract_text_from_bytes(pdf_bytes, doc=doc)
-        print(f"[parse_invoice_unified] Extracted text length: {len(text)} chars")
-        print(f"[parse_invoice_unified] Text preview: {text[:200]!r}")
+        logger.debug("[parse_invoice_unified] Extracted text length: %d chars", len(text))
+        logger.debug("[parse_invoice_unified] Text preview: %r", text[:200])
         
         # 第二步：图片型 PDF 时用 OCR 补充首页（复用 doc，不再重新打开）
         used_ocr = False

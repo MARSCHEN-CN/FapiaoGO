@@ -32,9 +32,18 @@ const ALLOWED_INVOKE_PREFIXES = [
 const ALLOWED_ON = ['print-progress', 'settings-window-closed', 'context-menu-files', 'rename-progress', 'pack-progress', 'excel-progress', 'settings-changed', 'print-job-completed', 'print-job-failed']
 
 /** 检查通道是否允许（精确匹配或前缀匹配） */
+// ✅ 按首字母分组前缀：每次 invoke 无需遍历全部 15 个前缀，仅比对同首字母组
+//    （startsWith(prefix) 必然意味着 channel 首字母 == prefix 首字母，故分组不丢匹配）
+const _prefixByFirstChar = {}
+for (const p of ALLOWED_INVOKE_PREFIXES) {
+  (_prefixByFirstChar[p[0]] || (_prefixByFirstChar[p[0]] = [])).push(p)
+}
+
 function isAllowedInvoke(channel) {
   if (ALLOWED_INVOKE.includes(channel)) return true
-  return ALLOWED_INVOKE_PREFIXES.some(prefix => channel.startsWith(prefix))
+  const group = _prefixByFirstChar[channel[0]]
+  if (!group) return false
+  return group.some(prefix => channel.startsWith(prefix))
 }
 
 contextBridge.exposeInMainWorld('electronAPI', {

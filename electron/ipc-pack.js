@@ -115,9 +115,19 @@ function registerPackHandlers(ctx) {
       // 5. 遍历文件，准备列表
       const preparedFiles = []
 
+      // ✅ 进度 IPC 节流：大批量文件时逐条 send 会 flooding 渲染进程、触发过多 React 重渲染。
+      //    按时间窗口限频（首条必发；末条 100% 由下方 L210 无条件发送保证，绝不丢失）。
+      const PROGRESS_THROTTLE_MS = 100
+      let lastProgressSentAt = 0
+
       for (let i = 0; i < files.length; i++) {
         const file = files[i]
-        event.sender.send('pack-progress', { current: i + 1, total: total + 1 })  // +1 是压缩步骤
+        // 节流发送：首条（lastProgressSentAt=0 → 差值必 >= 窗口）始终发送，之后每 >=100ms 一次
+        const nowTs = Date.now()
+        if (nowTs - lastProgressSentAt >= PROGRESS_THROTTLE_MS) {
+          lastProgressSentAt = nowTs
+          event.sender.send('pack-progress', { current: i + 1, total: total + 1 })  // +1 是压缩步骤
+        }
 
         try {
           let originalPath = file.printPath || file.path

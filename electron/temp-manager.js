@@ -92,7 +92,7 @@ async function cleanupOrphanTempFiles(maxAgeMs = MAX_FILE_AGE_MS) {
       try {
         if (entry.isDirectory()) {
           await scanDir(fullPath)
-        } else if (entry.isFile()) {
+        } else         if (entry.isFile()) {
           // 检查是否在内存中注册（已注册的文件由调用方负责清理，跳过）
           if (tempFiles.has(fullPath)) continue
 
@@ -103,7 +103,22 @@ async function cleanupOrphanTempFiles(maxAgeMs = MAX_FILE_AGE_MS) {
             cleaned++
             freed += stat.size
             logger.log(`[temp-manager] 清理孤儿临时文件: ${entry.name} (${Math.round(stat.size / 1024)}KB)`)
+            // 顺手清理已空的父目录（如崩溃遗留的空 print_direct_*/mars_pack_* 目录），
+            // 仅当目录确实为空时 rmdir 才成功，否则忽略——避免残留空目录长期堆积。
+            try { await fs.promises.rmdir(path.dirname(fullPath)) } catch {}
           }
+        }
+      } catch {}
+    }
+
+    // 递归处理完子项后，若本目录（非根）已无内容且陈旧，则移除该空目录，
+    // 覆盖「从一开始就为空」的遗留临时目录（如崩溃残留的空 print_direct_*/mars_pack_*）。
+    // 仅当目录确实为空时 rmdir 才成功，年轻目录（活跃任务）不受影响。
+    if (dir !== TEMP_DIR) {
+      try {
+        const dirStat = await fs.promises.stat(dir)
+        if (now - dirStat.mtimeMs > maxAgeMs) {
+          await fs.promises.rmdir(dir)
         }
       } catch {}
     }

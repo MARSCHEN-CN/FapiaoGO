@@ -25,6 +25,10 @@ const fs = require('fs');
 const { resolvePrintTarget } = require('./print-target');
 const { buildPrintSettings, getPaperOrientation } = require('./print-settings');
 const { enhanceWithCapability } = require('./printer-capability');
+const { detectPdfOrientation: _detectPdfOrientation } = require('../shared/pdf-orientation')
+
+// getSumatraPath 解析结果缓存：仅缓存“发现”路径，环境变量覆盖仍优先且无需探测
+let _sumatraPathCache;  // undefined = 尚未解析
 
 // ─── SumatraPDF 路径查找 ──────────────────────────────────────────
 
@@ -35,16 +39,21 @@ const { enhanceWithCapability } = require('./printer-capability');
  * @returns {string} SumatraPDF.exe 路径
  */
 function getSumatraPath() {
-  // 优先从环境变量读取
+  // 环境变量覆盖始终优先，且无探测成本
   if (process.env.SUMATRA_PDF_PATH) {
     return process.env.SUMATRA_PDF_PATH;
+  }
+  // 命中缓存则跳过多次 existsSync 探测
+  if (_sumatraPathCache !== undefined) {
+    return _sumatraPathCache;
   }
 
   // 项目捆绑的 SumatraPDF（与 OsLauncherBridge 一致）
   const bundledPath = path.join(__dirname, '../../resources/sumatra/SumatraPDF.exe');
   try {
-    if (require('fs').existsSync(bundledPath)) {
-      return bundledPath;
+    if (fs.existsSync(bundledPath)) {
+      _sumatraPathCache = bundledPath;
+      return _sumatraPathCache;
     }
   } catch (e) { /* ignore */ }
 
@@ -58,16 +67,18 @@ function getSumatraPath() {
 
   for (const candidate of candidates) {
     try {
-      if (require('fs').existsSync(candidate)) {
-        return candidate;
+      if (fs.existsSync(candidate)) {
+        _sumatraPathCache = candidate;
+        return _sumatraPathCache;
       }
     } catch (e) {
       // 继续查找
     }
   }
 
-  // 在 PATH 中查找
-  return 'sumatraPDF.exe';
+  // 在 PATH 中查找（回退值；缓存以避免重复探测）
+  _sumatraPathCache = 'sumatraPDF.exe';
+  return _sumatraPathCache;
 }
 
 /**
@@ -76,32 +87,10 @@ function getSumatraPath() {
  * @returns {'portrait'|'landscape'|null} 方向（null = 无法检测）
  */
 function detectPdfOrientation(pdfPath) {
-  try {
-    if (!pdfPath || !fs.existsSync(pdfPath)) return null;
-    // 仅对 PDF 文件尝试检测
-    if (!pdfPath.toLowerCase().endsWith('.pdf')) return null;
-
-    const fd = fs.openSync(pdfPath, 'r');
-    const buffer = Buffer.alloc(8192);
-    const bytesRead = fs.readSync(fd, buffer, 0, 8192, 0);
-    fs.closeSync(fd);
-
-    const content = buffer.toString('latin1', 0, bytesRead);
-
-    // 匹配 /MediaBox [left bottom right top]（任意 left/bottom）
-    const match = content.match(/\/MediaBox\s*\[\s*([\d.-]+)\s+([\d.-]+)\s+([\d.-]+)\s+([\d.-]+)\s*\]/);
-    if (match) {
-      const w = parseFloat(match[3]) - parseFloat(match[1]);
-      const h = parseFloat(match[4]) - parseFloat(match[2]);
-      const orient = w > h ? 'landscape' : 'portrait';
-      console.log('[detectPdfOrientation] %s: MediaBox=%s×%s, %s', path.basename(pdfPath), w, h, orient);
-      return orient;
-    }
-    return null;
-  } catch (e) {
-    console.warn('[detectPdfOrientation] Failed for %s: %s', pdfPath, e.message);
-    return null;
-  }
+  // 委托到共享模块（带结果缓存）；保持原契约：存在性 + .pdf 守卫，仅 MediaBox，未知返回 null
+  if (!pdfPath || !fs.existsSync(pdfPath)) return null;
+  if (!pdfPath.toLowerCase().endsWith('.pdf')) return null;
+  return _detectPdfOrientation(pdfPath, { fallbackToCropBox: false });
 }
 
 // ─── CommandBuilder ───────────────────────────────────────────────

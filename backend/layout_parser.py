@@ -578,51 +578,71 @@ class FieldExtractor:
     
     def __init__(self):
         self.field_defs = FieldDefinitions.FIELDS
-    
+        # 预构建「锚点→字段名」有序列表（field_def 顺序 → anchor 顺序），
+        # 供 find_field_labels 扁平化遍历。保留原始遍历顺序可确保输出顺序与原
+        # 三重循环逐字节一致——extract_fields 按 labels 顺序对每字段取「首个有效
+        # label」胜出，顺序改变会改变字段取值（准确性风险），故不可翻转循环。
+        self._anchor_pairs = [
+            (fd.name, a) for fd in self.field_defs for a in fd.anchors
+        ]
+
     def find_field_labels(self, elements: List[LayoutElement]) -> List[Tuple[str, LayoutElement]]:
-        """找到所有字段标签"""
+        """找到所有字段标签
+
+        复杂度 O(F*A*E)，但 F（字段数，固定=4）、A（锚点总数，固定≈14）为常数，
+        E 为区域内元素数（通常数十），且本函数每次区域提取仅调用一次，实际开销极小，
+        远小于 find_nearest_candidate / 字段评分。因此保持「field→anchor→element」
+        的原始遍历顺序，保证输出与原实现完全一致。
+        """
         labels = []
-        for field_def in self.field_defs:
-            for anchor in field_def.anchors:
-                for elem in elements:
-                    if anchor in elem.text or elem.text in anchor:
-                        labels.append((field_def.name, elem))
+        for name, anchor in self._anchor_pairs:
+            for elem in elements:
+                if anchor in elem.text or elem.text in anchor:
+                    labels.append((name, elem))
         return labels
     
     def find_nearest_candidate(self, label: LayoutElement, elements: List[LayoutElement],
-                              max_distance: float = 300) -> Optional[LayoutElement]:
+                              max_distance: float = 300,
+                              label_elements: Optional[set] = None) -> Optional[LayoutElement]:
         """
         找到标签附近的候选值（支持多方向搜索）
-        
+
         搜索方向：
         1. 右侧（优先）
         2. 下方
         3. 右下方
-        
+
         Args:
             label: 标签元素
             elements: 候选元素列表
             max_distance: 最大搜索距离
-        
+            label_elements: 预计算的「标签类元素」集合（可选）。is_label 仅取决于
+                elem.text 与 field_defs（与位置/距离无关），可一次性算出后在候选循环中
+                O(1) 查表；多次调用同一 elements 时复用它可避免每候选重复 O(F×A) 锚点匹配。
+                不提供则内部等价计算一次，行为不变。
+
         Returns:
             LayoutElement: 最匹配的候选值
         """
+        # 预计算「标签类元素」集合：is_label 谓词（anchor in elem.text，任一锚点命中）
+        # 只依赖 elem.text 与 field_defs，与 label/位置/距离无关，因此一次性算出后
+        # 在候选循环里 O(1) 查表。与原实现逐元素嵌套匹配结果完全一致。
+        if label_elements is None:
+            label_elements = {
+                elem for elem in elements
+                if any(anchor in elem.text
+                       for field_def in self.field_defs
+                       for anchor in field_def.anchors)
+            }
+
         candidates = []
-        
+
         for elem in elements:
             if elem is label:
                 continue
-            
-            # 排除标签类元素
-            is_label = False
-            for field_def in self.field_defs:
-                for anchor in field_def.anchors:
-                    if anchor in elem.text:
-                        is_label = True
-                        break
-                if is_label:
-                    break
-            if is_label:
+
+            # 排除标签类元素（预计算集合，O(1) 查表）
+            if elem in label_elements:
                 continue
             
             dx = elem.center_x - label.center_x
@@ -671,13 +691,24 @@ class FieldExtractor:
             return result
         
         labels = self.find_field_labels(region_elements)
-        
+
+        # 预计算「标签类元素」集合，传入 find_nearest_candidate 复用：
+        # 避免对每个 label 重复执行 O(F×A) 的锚点匹配（is_label 仅取决于
+        # elem.text 与 field_defs，与位置/距离无关，结果与原实现完全一致）。
+        label_elements = {
+            elem for elem in region_elements
+            if any(anchor in elem.text
+                   for field_def in self.field_defs
+                   for anchor in field_def.anchors)
+        }
+
         for field_name, label_elem in labels:
             if result[field_name]:
                 continue
-            
+
             # 找到附近的候选值（支持多方向搜索）
-            value_elem = self.find_nearest_candidate(label_elem, region_elements)
+            value_elem = self.find_nearest_candidate(
+                label_elem, region_elements, label_elements=label_elements)
             
             if value_elem:
                 scorer = FieldTypeScore(value_elem)

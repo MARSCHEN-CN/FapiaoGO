@@ -239,9 +239,10 @@ function getPdfCacheKey(pdfData, paperKey, dpi, isLandscape, rotation = 0) {
  * @param {string} src - 图片源
  * @returns {{ src: string, expired: boolean }}
  */
-async function resolveImageSrc(src) {
+function resolveImageSrc(src) {
   // blob URL 不需要预校验 — 浏览器 Image/createImageBitmap 可原生解码
   // 若 blob 已过期，onerror 会自然触发
+  // ✅ 同步返回：原函数体无异步逻辑，async 只会多一次 Promise 分配 + 微任务调度
   return { src, expired: false }
 }
 
@@ -610,11 +611,15 @@ const _pendingRequests = new Map()
 // Canvas 复用池：同一尺寸的 canvas 不重复创建，减少 GC 压力
 const _canvasPool = new Map()  // "wxh" → [canvas, ...]
 
-// 归一化 Canvas 尺寸到 100px 档位，减少池子碎片化
+// 归一化 Canvas 尺寸到档位，平衡「像素浪费」与「池子碎片化」
+// ✅ 档位 50px（原为 100px）：最坏情况向上取整浪费由 ≈1 整档降为 ≤50px，
+//    池 key 数量至多翻倍，仍在可接受范围（单 key 上限 10 个 canvas）
+//    如需调回更省内存但更浪费像素，改大 _SIZE_BUCKET 即可
+const _SIZE_BUCKET = 50
 function _normalizeSize(w, h) {
   return {
-    w: Math.ceil(w / 100) * 100,
-    h: Math.ceil(h / 100) * 100,
+    w: Math.ceil(w / _SIZE_BUCKET) * _SIZE_BUCKET,
+    h: Math.ceil(h / _SIZE_BUCKET) * _SIZE_BUCKET,
   }
 }
 
@@ -750,7 +755,7 @@ async function _renderViaWorker(items, paperKey, dpi, isLandscape, rotations, sl
           contentSources.set(id, entry)
         }
       } else if (item._previewImageUrl) {
-        const { src: srcToLoad, expired } = await resolveImageSrc(item._previewImageUrl)
+        const { src: srcToLoad, expired } = resolveImageSrc(item._previewImageUrl)
         if (!expired) {
           const img = await new Promise((resolve) => {
             const image = new Image()
@@ -991,7 +996,7 @@ async function _renderDirect(
           console.warn('[renderMultipleItemsToCanvas] PDF 渲染返回 null，将使用 fallback:', { id, fileKey: item.key, pdfDataLength: item._pdfData?.length })
         }
       } else if (item._previewImageUrl) {
-        const { src: srcToLoad, expired } = await resolveImageSrc(item._previewImageUrl)
+        const { src: srcToLoad, expired } = resolveImageSrc(item._previewImageUrl)
         if (!expired) {
           const img = await new Promise((resolve) => {
             const image = new Image()

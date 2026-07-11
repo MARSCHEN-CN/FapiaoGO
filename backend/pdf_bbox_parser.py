@@ -295,7 +295,7 @@ class PdfBboxParser:
         seller_region.y_min = split_y
         seller_region.y_max = max_y + 50  # 扩展一点边界
     
-    def parse_pdf(self, pdf_bytes: bytes) -> Dict:
+    def parse_pdf(self, pdf_bytes: bytes, include_all_tokens: bool = True) -> Dict:
         """
         完整解析流程：
         1. 提取 tokens
@@ -322,12 +322,13 @@ class PdfBboxParser:
                            for t in buyer_region.tokens],
             'seller_tokens': [{'x0': t.x0, 'y0': t.y0, 'x1': t.x1, 'y1': t.y1, 'text': t.text} 
                            for t in seller_region.tokens],
-            'all_tokens': [{'x0': t.x0, 'y0': t.y0, 'x1': t.x1, 'y1': t.y1, 'text': t.text} 
-                         for t in tokens]
+            'all_tokens': ([{'x0': t.x0, 'y0': t.y0, 'x1': t.x1, 'y1': t.y1, 'text': t.text}
+                         for t in tokens] if include_all_tokens else [])
         }
 
     def parse_pdf_from_doc(self, doc: fitz.Document,
-                            pre_words: List[List[tuple]] = None) -> Dict:
+                            pre_words: List[List[tuple]] = None,
+                            include_all_tokens: bool = True) -> Dict:
         """
         从已打开的 fitz.Document 解析（避免重复打开 PDF）
 
@@ -356,8 +357,8 @@ class PdfBboxParser:
                            for t in buyer_region.tokens],
             'seller_tokens': [{'x0': t.x0, 'y0': t.y0, 'x1': t.x1, 'y1': t.y1, 'text': t.text} 
                            for t in seller_region.tokens],
-            'all_tokens': [{'x0': t.x0, 'y0': t.y0, 'x1': t.x1, 'y1': t.y1, 'text': t.text} 
-                         for t in tokens]
+            'all_tokens': ([{'x0': t.x0, 'y0': t.y0, 'x1': t.x1, 'y1': t.y1, 'text': t.text}
+                         for t in tokens] if include_all_tokens else [])
         }
 
 
@@ -372,16 +373,20 @@ def get_bbox_parser() -> PdfBboxParser:
     return _bbox_parser
 
 
-def parse_pdf_with_bbox(pdf_bytes: bytes) -> Dict:
+def parse_pdf_with_bbox(pdf_bytes: bytes, include_all_tokens: bool = True) -> Dict:
     """便捷函数：解析 PDF 获取区域信息"""
-    return get_bbox_parser().parse_pdf(pdf_bytes)
+    return get_bbox_parser().parse_pdf(pdf_bytes, include_all_tokens=include_all_tokens)
 
 
-def parse_pdf_with_bbox_from_doc(doc, pre_words: List[List[tuple]] = None) -> Dict:
+def parse_pdf_with_bbox_from_doc(doc, pre_words: List[List[tuple]] = None,
+                                 include_all_tokens: bool = True) -> Dict:
     """便捷函数：从已打开的 fitz.Document 解析（避免重复打开 PDF）
 
     Args:
         doc: 已打开的 fitz.Document
         pre_words: 可选，预先提取的每页 words 元组列表
+        include_all_tokens: 是否构建 all_tokens（仅开发脚本需要；
+            生产路径可传 False 跳过 500+ dict 分配）
     """
-    return get_bbox_parser().parse_pdf_from_doc(doc, pre_words=pre_words)
+    return get_bbox_parser().parse_pdf_from_doc(doc, pre_words=pre_words,
+                                               include_all_tokens=include_all_tokens)

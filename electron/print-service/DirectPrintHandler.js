@@ -11,6 +11,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { TEMP_DIR } = require('../temp-manager');
 
 // 直接打印支持的文件扩展名
 const DIRECT_PRINT_EXTENSIONS = ['.pdf', '.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif'];
@@ -78,7 +79,9 @@ async function handle(filePath, settings) {
   }
 
   const jobId = generateJobId();
-  const tempDir = path.join(require('os').tmpdir(), `print_direct_${jobId}`);
+  // 统一到 temp-manager 受管根目录（TEMP_DIR），纳入其孤儿/定时/启动清理，
+  // 避免崩溃时 os.tmpdir() 下的临时目录永久泄漏。调用方仍由各路径自己的清理逻辑负责。
+  const tempDir = path.join(TEMP_DIR, `print_direct_${jobId}`);
 
   try {
     await fs.promises.mkdir(tempDir, { recursive: true })

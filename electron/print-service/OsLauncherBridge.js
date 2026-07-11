@@ -23,8 +23,15 @@ const { app } = require('electron');
 const { execFile, execSync, spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const { detectPdfOrientation: _detectPdfOrientation } = require('../shared/pdf-orientation');
 const { EventEmitter } = require('events');
 const { resolveOrientationCommands, getPaperOrientation } = require('./print-settings');
+
+// detectPdfOrientation 委托到共享模块（带结果缓存，避免重复磁盘读）；
+// 保持原契约：MediaBox||CropBox，未知时默认 portrait
+function detectPdfOrientation(pdfPath) {
+  return _detectPdfOrientation(pdfPath) ?? 'portrait';
+}
 
 // ─── SumatraPDF Path ──────────────────────────────────────────────
 
@@ -41,6 +48,10 @@ function getSumatraPath() {
 // 8.3 路径基数极小（通常仅系统/用户目录，如 C:\PROGRA~1、C:\Users\MARS_C~1），
 // 缓存几乎不会无界增长，但能避免同一文件重复打印时重复启动 PowerShell。
 const _longPathCache = new Map();
+
+// 打印任务串行队列上限（仅约束“等待中”的任务；在途任务已出队，不计入）。
+// 防止打印风暴/异常调用方导致队列无界增长进而拖垮主进程。桌面场景极少触碰，可调。
+const MAX_PRINT_QUEUE = 50;
 
 /**
  * Convert Windows 8.3 short path to long path.
@@ -92,78 +103,6 @@ const PRINTER_SKIP_PATTERNS = [
   /send\s*to/i, /microsoft\s*xps/i,
 ];
 
-/**
- * 提取 PDF 的 MediaBox 信息
- */
-function extractMediaBox(pdfPath) {
-  try {
-    const fd = fs.openSync(pdfPath, 'r')
-    const buffer = Buffer.alloc(8192)
-    const bytesRead = fs.readSync(fd, buffer, 0, 8192, 0)
-    fs.closeSync(fd)
-
-    const content = buffer.toString('latin1', 0, bytesRead)
-
-    // 匹配 /MediaBox [left bottom right top]（任意 left/bottom）
-    const match = content.match(/\/MediaBox\s*\[\s*([\d.-]+)\s+([\d.-]+)\s+([\d.-]+)\s+([\d.-]+)\s*\]/)
-    if (match) {
-      return { width: parseFloat(match[3]) - parseFloat(match[1]), height: parseFloat(match[4]) - parseFloat(match[2]) }
-    }
-
-    // 如果没找到 MediaBox，尝试找 /CropBox
-    const cropMatch = content.match(/\/CropBox\s*\[\s*([\d.-]+)\s+([\d.-]+)\s+([\d.-]+)\s+([\d.-]+)\s*\]/)
-    if (cropMatch) {
-      return { width: parseFloat(cropMatch[3]) - parseFloat(cropMatch[1]), height: parseFloat(cropMatch[4]) - parseFloat(cropMatch[2]) }
-    }
-
-    return null
-  } catch (err) {
-    console.error(`[extractMediaBox] Failed: ${err.message}`)
-    return null
-  }
-}
-
-/**
- * 检测 PDF 的 MediaBox 方向
- * 读取 PDF 文件前 8KB，查找 /MediaBox [0 0 width height]
- */
-function detectPdfOrientation(pdfPath) {
-  try {
-    // 读取前 8KB 应该包含 MediaBox
-    const fd = fs.openSync(pdfPath, 'r')
-    const buffer = Buffer.alloc(8192)
-    const bytesRead = fs.readSync(fd, buffer, 0, 8192, 0)
-    fs.closeSync(fd)
-
-    const content = buffer.toString('latin1', 0, bytesRead)
-
-    // 匹配 /MediaBox [left bottom right top]（任意 left/bottom）
-    const match = content.match(/\/MediaBox\s*\[\s*([\d.-]+)\s+([\d.-]+)\s+([\d.-]+)\s+([\d.-]+)\s*\]/)
-    if (match) {
-      const width = parseFloat(match[3]) - parseFloat(match[1])
-      const height = parseFloat(match[4]) - parseFloat(match[2])
-      const orientation = width > height ? 'landscape' : 'portrait'
-      console.log(`[detectPdfOrientation] ${pdfPath}: MediaBox=${width}x${height}, ${orientation}`)
-      return orientation
-    }
-
-    // 如果没找到 MediaBox，尝试找 /CropBox 或 /ArtBox
-    const cropMatch = content.match(/\/CropBox\s*\[\s*([\d.-]+)\s+([\d.-]+)\s+([\d.-]+)\s+([\d.-]+)\s*\]/)
-    if (cropMatch) {
-      const width = parseFloat(cropMatch[3]) - parseFloat(cropMatch[1])
-      const height = parseFloat(cropMatch[4]) - parseFloat(cropMatch[2])
-      const orientation = width > height ? 'landscape' : 'portrait'
-      console.log(`[detectPdfOrientation] ${pdfPath}: CropBox=${width}x${height}, ${orientation}`)
-      return orientation
-    }
-
-    console.log(`[detectPdfOrientation] ${pdfPath}: MediaBox not found, default to portrait`)
-    return 'portrait'
-  } catch (err) {
-    console.error(`[detectPdfOrientation] Failed: ${err.message}`)
-    return 'portrait' // 默认竖向
-  }
-}
 
 // ─── Default Printer Cache ─────────────────────────────────────
 // The system default printer changes rarely, so cache the detection result
@@ -486,6 +425,14 @@ class OsLauncherBridge extends EventEmitter {
    */
   executeJob(job) {
     return new Promise((resolve, reject) => {
+      if (this.taskQueue.length >= MAX_PRINT_QUEUE) {
+        const err = new Error(
+          `[OsLauncherBridge] 打印队列已满（上限 ${MAX_PRINT_QUEUE}），请稍后重试`
+        );
+        console.warn(err.message);
+        reject(err);
+        return;
+      }
       this.taskQueue.push({ job, resolve, reject });
       this._processQueue();
     });

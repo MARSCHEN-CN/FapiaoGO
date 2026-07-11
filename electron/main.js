@@ -7,6 +7,7 @@ const { app, BrowserWindow, ipcMain, dialog, Menu, MenuItem, screen, session } =
 const path = require('path')
 const fs = require('fs')
 const os = require('os')
+const { extractMediaBoxAsync } = require('./shared/pdf-orientation')
 
 // ============================
 // 模块导入
@@ -18,98 +19,9 @@ const { registerRenameHandlers } = require('./ipc-rename')
 const { registerPackHandlers } = require('./ipc-pack')
 const pdfMargin = require('./print-service/pdf-margin-processor')
 
-// 启动时预热 Python 环境检测，避免首次打印等环境检查
-pdfMargin.checkPythonEnv().catch(() => {})
+// ⚠️ 预热已移至 app.whenReady() 内（见下方）：模块加载期不应产生副作用，
+//    且彼时 logger 尚未 init()，日志会丢失。
 
-// ============================
-// PDF 方向检测
-// ============================
-
-/**
- * 提取 PDF 的 MediaBox 信息
- */
-async function extractMediaBox(pdfPath) {
-  let fd
-  try {
-    fd = await fs.promises.open(pdfPath, 'r')
-    const buffer = Buffer.alloc(8192)
-    const { bytesRead } = await fd.read(buffer, 0, 8192, 0)
-    const content = buffer.toString('latin1', 0, bytesRead)
-
-    // 匹配 /MediaBox [left bottom right top]（任意 left/bottom，如加边距后为负值）
-    const match = content.match(/\/MediaBox\s*\[\s*([\d.-]+)\s+([\d.-]+)\s+([\d.-]+)\s+([\d.-]+)\s*\]/)
-    if (match) {
-      return { width: parseFloat(match[3]) - parseFloat(match[1]), height: parseFloat(match[4]) - parseFloat(match[2]) }
-    }
-
-    // 如果没找到 MediaBox，尝试找 /CropBox
-    const cropMatch = content.match(/\/CropBox\s*\[\s*([\d.-]+)\s+([\d.-]+)\s+([\d.-]+)\s+([\d.-]+)\s*\]/)
-    if (cropMatch) {
-      return { width: parseFloat(cropMatch[3]) - parseFloat(cropMatch[1]), height: parseFloat(cropMatch[4]) - parseFloat(cropMatch[2]) }
-    }
-
-    return null
-  } catch (err) {
-    console.error(`[extractMediaBox] Failed: ${err.message}`)
-    return null
-  } finally {
-    if (fd) await fd.close()
-  }
-}
-
-/**
- * 检测 PDF 的 MediaBox 方向
- * 读取 PDF 文件前 8KB，查找 /MediaBox [0 0 width height]
- */
-async function detectPdfOrientation(filePath) {
-  let fd
-  try {
-    // 读取前 8KB（足够覆盖 PNG IHDR 和 PDF MediaBox）
-    fd = await fs.promises.open(filePath, 'r')
-    const buffer = Buffer.alloc(8192)
-    const { bytesRead } = await fd.read(buffer, 0, 8192, 0)
-
-    // ✅ PNG 检测：读取 IHDR 块中的宽高（字节 16-23）
-    const PNG_SIG = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]
-    if (bytesRead >= 24 && PNG_SIG.every((b, i) => buffer[i] === b)) {
-      const width = buffer.readUInt32BE(16)
-      const height = buffer.readUInt32BE(20)
-      const orientation = width > height ? 'landscape' : 'portrait'
-      console.log(`[detectPdfOrientation] ${filePath}: PNG ${width}x${height}, ${orientation}`)
-      return orientation
-    }
-
-    const content = buffer.toString('latin1', 0, bytesRead)
-
-    // PDF: 匹配 /MediaBox [left bottom right top]（任意 left/bottom）
-    const match = content.match(/\/MediaBox\s*\[\s*([\d.-]+)\s+([\d.-]+)\s+([\d.-]+)\s+([\d.-]+)\s*\]/)
-    if (match) {
-      const width = parseFloat(match[3]) - parseFloat(match[1])
-      const height = parseFloat(match[4]) - parseFloat(match[2])
-      const orientation = width > height ? 'landscape' : 'portrait'
-      console.log(`[detectPdfOrientation] ${filePath}: MediaBox=${width}x${height}, ${orientation}`)
-      return orientation
-    }
-
-    // 如果没找到 MediaBox，尝试找 /CropBox 或 /ArtBox
-    const cropMatch = content.match(/\/CropBox\s*\[\s*([\d.-]+)\s+([\d.-]+)\s+([\d.-]+)\s+([\d.-]+)\s*\]/)
-    if (cropMatch) {
-      const width = parseFloat(cropMatch[3]) - parseFloat(cropMatch[1])
-      const height = parseFloat(cropMatch[4]) - parseFloat(cropMatch[2])
-      const orientation = width > height ? 'landscape' : 'portrait'
-      console.log(`[detectPdfOrientation] ${filePath}: CropBox=${width}x${height}, ${orientation}`)
-      return orientation
-    }
-
-    console.log(`[detectPdfOrientation] ${filePath}: MediaBox not found, default to portrait`)
-    return 'portrait'
-  } catch (err) {
-    console.error(`[detectPdfOrientation] Failed: ${err.message}`)
-    return 'portrait' // 默认竖向
-  } finally {
-    if (fd) await fd.close()
-  }
-}
 
 // ============================
 // 新打印管线 — OS Trust Delegation
@@ -652,7 +564,7 @@ ipcMain.handle('print-merged-images', async (_event, { images, settings }) => {
         if (!validation.valid) {
           console.warn(`[print-merged-images] PDF ${i + 1} validation issues:`, validation.issues)
         }
-        const mediaBox = await extractMediaBox(p)
+        const mediaBox = await extractMediaBoxAsync(p)
         console.log(`[print-merged-images] PNG ${i + 1} → PDF: ${p}, MediaBox=${JSON.stringify(mediaBox)}`)
       })()
     )
@@ -882,6 +794,9 @@ if (!gotTheLock) {
 
   app.whenReady().then(async () => {
     logger.init()  // 初始化日志模块
+    // ✅ 预热 Python 环境检测（移至 app ready 后）：
+    //   1) 避免模块加载期副作用；2) 此时 logger 已 init，预热日志可落盘
+    pdfMargin.checkPythonEnv().catch(() => {})
     await initTempManager()  // 启动 30 分钟定时清理 + 清理上次崩溃遗留的孤儿临时文件
 
     // ✅ 初始化新打印管线

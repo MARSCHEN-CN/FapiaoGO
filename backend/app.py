@@ -30,7 +30,7 @@ from response_builder import build_response
 from services.invoice_service import (
     parse_invoice_service, allowed_file, sanitize_filename, detect_file_format
 )
-from parse_job_manager import job_manager
+from parse_job_manager import get_job_manager
 from services.decision_router import DecisionRouter
 from render_engine import registry, engine
 from render_engine.api import render_bp
@@ -941,8 +941,10 @@ def _run_parse_offthread(file_bytes, filename, auto_orient, enable_auto_ocr):
         return _parse_sync(file_bytes, filename, auto_orient, enable_auto_ocr)
 
 
-# 供 parse_batch 使用的并发限流（批量解析走独立线程池，保持原 10 上限）
-parse_semaphore = threading.Semaphore(10)
+# 供 parse_batch 使用的并发限流（批量解析走独立线程池）。
+# 上限改为与 CPU 核数挂钩：max(2, cpu_count())，避免在低核机器上超卖，
+# 也避免在高核机器上被固定 10 限制 throughput。cpu_count() 为 None 时回退到 2。
+parse_semaphore = threading.Semaphore(max(2, os.cpu_count() or 1))
 
 
 @app.route('/parse_invoice', methods=['POST'])
@@ -1197,6 +1199,6 @@ if __name__ == '__main__':
     @atexit.register
     def shutdown_job_manager():
         logger.info("[App] 正在关闭任务队列管理器...")
-        job_manager.shutdown()
+        get_job_manager().shutdown()
         logger.info("[App] 任务队列管理器已关闭")
     app.run(port=5000, debug=True, threaded=True)

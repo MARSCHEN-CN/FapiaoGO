@@ -105,6 +105,10 @@ _SEARCH_CACHE: Dict[str, List[Dict]] = {}  # cache_key → filtered results
 _SEARCH_CACHE_MAX = 32
 _SEARCH_CACHE_ORDER: List[str] = []  # 用于 LRU 淘汰
 
+# upsert/batch_upsert 覆盖时不可被外部数据改写/清除的内部元数据字段。
+# 提升为模块级 frozenset：不可变、仅做成员判定，避免每次调用重复创建集合。
+_PRESERVED_KEYS = frozenset({'id', 'created_at', 'deleted_at', 'is_duplicate', 'duplicate_of'})
+
 logger.info("数据目录: %s", DB_DIR)
 logger.info("发票数据: %s", INVOICES_PATH)
 logger.info("配置数据: %s", CONFIG_PATH)
@@ -655,6 +659,11 @@ def _load_invoices() -> None:
     _rebuild_indexes()      # 最终以规范后的 hex id 重建索引
     _validate_invoice_ids()
 
+    # 预计算所有发票搜索文本（覆盖「快照加载 + oplog 回放」后的最终状态）
+    _search_text_cache.clear()
+    for _inv in _invoices:
+        _refresh_search_text(_inv)
+
 
 def _handle_compact_markers() -> None:
     """处理 compact 两阶段提交标记，清理残余状态。
@@ -803,9 +812,6 @@ def upsert_invoice(row: Dict) -> Dict:
     _ensure_loaded()
     now_str = now().isoformat()
 
-    # 不可被覆盖的内部元数据字段
-    _PRESERVED_KEYS = {'id', 'created_at', 'deleted_at', 'is_duplicate', 'duplicate_of'}
-
     with _rw_lock.gen_wlock():
         # 按 hash 去重（使用索引）
         hash_val = row.get('hash_sha256')
@@ -818,6 +824,7 @@ def upsert_invoice(row: Dict) -> Dict:
                     if key not in _PRESERVED_KEYS:
                         inv[key] = value
                 inv['updated_at'] = now_str
+                _refresh_search_text(inv)
                 _append_oplog("update", inv['id'], {k: v for k, v in row.items() if k not in _PRESERVED_KEYS})
                 _maybe_compact()
                 _invalidate_search_cache()
@@ -845,6 +852,7 @@ def upsert_invoice(row: Dict) -> Dict:
             _invoice_index_by_filename[str(new_invoice['file_name']).strip().lower()] = idx
         if new_invoice.get('number'):
             _invoice_index_by_number.setdefault(str(new_invoice['number']), []).append(idx)
+        _refresh_search_text(new_invoice)
         _append_oplog("upsert", new_id, new_invoice)
         _maybe_compact()
         _invalidate_search_cache()
@@ -870,7 +878,6 @@ def batch_upsert_invoices(rows: List[Dict]) -> List[Dict]:
 
     _ensure_loaded()
     now_str = now().isoformat()
-    _PRESERVED_KEYS = {'id', 'created_at', 'deleted_at', 'is_duplicate', 'duplicate_of'}
     results = []
 
     with _rw_lock.gen_wlock():
@@ -884,6 +891,7 @@ def batch_upsert_invoices(rows: List[Dict]) -> List[Dict]:
                         if key not in _PRESERVED_KEYS:
                             inv[key] = value
                     inv['updated_at'] = now_str
+                    _refresh_search_text(inv)
                     _append_oplog("update", inv['id'],
                                   {k: v for k, v in row.items() if k not in _PRESERVED_KEYS})
                     results.append({'id': inv['id'], 'is_new': False})
@@ -909,6 +917,7 @@ def batch_upsert_invoices(rows: List[Dict]) -> List[Dict]:
                 _invoice_index_by_filename[str(new_invoice['file_name']).strip().lower()] = idx
             if new_invoice.get('number'):
                 _invoice_index_by_number.setdefault(str(new_invoice['number']), []).append(idx)
+            _refresh_search_text(new_invoice)
             _append_oplog("upsert", new_id, new_invoice)
             results.append({'id': new_id, 'is_new': True})
 
@@ -1084,11 +1093,46 @@ def get_invoices_by_filenames(filenames: List[str]) -> List[Dict]:
     return results
 
 
-def get_all_invoices() -> List[Dict]:
-    """获取所有未删除的发票记录"""
+def get_all_invoices(limit: Optional[int] = None, offset: int = 0) -> List[Dict]:
+    """获取所有未删除的发票记录（支持分页：limit<=0 或 None 时返回全部）"""
     _ensure_loaded()
     with _rw_lock.gen_rlock():
-        return [inv.copy() for inv in _invoices if not inv.get('deleted_at')]
+        # 先过滤出未删除记录（不复制），分页时仅复制目标页，避免全量浅拷贝
+        filtered = [inv for inv in _invoices if not inv.get('deleted_at')]
+    if limit and limit > 0:
+        return [inv.copy() for inv in filtered[offset:offset + limit]]
+    return [inv.copy() for inv in filtered]
+
+
+# ── 搜索文本预计算缓存 ──
+# 避免每次搜索对每条发票重复 5 次 str() + .lower()；按发票 id 缓存预拼接的小写串。
+# 独立于发票记录存储，避免污染返回给前端的 JSON（不泄漏内部字段）。
+_SEARCH_FIELDS = ('number', 'buyer', 'seller', 'note', 'file_name')
+_search_text_cache: Dict[str, str] = {}
+
+
+def _compute_search_text(inv: Dict) -> str:
+    return ' '.join(str(inv.get(f, '') or '') for f in _SEARCH_FIELDS).lower()
+
+
+def _refresh_search_text(inv: Dict) -> None:
+    """发票创建/更新/加载后调用，预计算其搜索文本并写入缓存。"""
+    inv_id = inv.get('id')
+    if inv_id is not None:
+        _search_text_cache[str(inv_id)] = _compute_search_text(inv)
+
+
+def _search_text_of(inv: Dict) -> str:
+    """取预计算搜索文本；缓存缺失时惰性计算并回填（自愈任意未预热的记录）。"""
+    inv_id = inv.get('id')
+    if inv_id is not None:
+        cached = _search_text_cache.get(str(inv_id))
+        if cached is not None:
+            return cached
+    text = _compute_search_text(inv)
+    if inv_id is not None:
+        _search_text_cache[str(inv_id)] = text
+    return text
 
 
 def search_invoices(
@@ -1130,13 +1174,7 @@ def search_invoices(
             results = [
                 inv for inv in _invoices
                 if not inv.get('deleted_at')
-                and (not kw or (
-                    (inv.get('number') and kw in str(inv['number']).lower()) or
-                    (inv.get('buyer') and kw in str(inv['buyer']).lower()) or
-                    (inv.get('seller') and kw in str(inv['seller']).lower()) or
-                    (inv.get('note') and kw in str(inv['note']).lower()) or
-                    (inv.get('file_name') and kw in str(inv['file_name']).lower())
-                ))
+                and (not kw or kw in _search_text_of(inv))
                 and (not type_filter or inv.get('type') == type_filter)
                 and (not date_from or (inv.get('date') or '') >= date_from)
                 and (not date_to or (inv.get('date') or '') <= date_to)
@@ -1161,7 +1199,8 @@ def search_invoices(
                 return 0.0
         return val
 
-    results.sort(key=sort_key, reverse=reverse)
+    # 使用 sorted() 返回新列表，避免原地排序任何共享对象（含缓存列表）
+    results = sorted(results, key=sort_key, reverse=reverse)
 
     total = len(results)
     limit = min(max(limit, 1), 1000)
@@ -1218,19 +1257,29 @@ def get_statistics() -> Dict:
     _ensure_loaded()
 
     with _rw_lock.gen_rlock():
-        active = [inv for inv in _invoices if not inv.get('deleted_at')]
-        total_count = len(active)
-        total_amount = sum(float(inv.get('amount', 0)) for inv in active)
-        ok_count = sum(1 for inv in active if inv.get('parse_ok') == 1)
-        fail_count = total_count - ok_count
+        # 单次遍历完成全部统计，避免对数据集反复扫描
+        total_count = 0
+        total_amount = 0.0
+        ok_count = 0
+        by_type: Dict[str, Dict[str, float]] = {}
 
-        by_type = {}
-        for inv in active:
+        for inv in _invoices:
+            if inv.get('deleted_at'):
+                continue
+            amt = float(inv.get('amount', 0))
+            total_count += 1
+            total_amount += amt
+            if inv.get('parse_ok') == 1:
+                ok_count += 1
             inv_type = inv.get('type', '其他')
-            if inv_type not in by_type:
-                by_type[inv_type] = {'count': 0, 'total': 0}
-            by_type[inv_type]['count'] += 1
-            by_type[inv_type]['total'] += float(inv.get('amount', 0))
+            bucket = by_type.get(inv_type)
+            if bucket is None:
+                bucket = {'count': 0, 'total': 0.0}
+                by_type[inv_type] = bucket
+            bucket['count'] += 1
+            bucket['total'] += amt
+
+        fail_count = total_count - ok_count
 
         by_type_array = [
             {'type': t, **data}

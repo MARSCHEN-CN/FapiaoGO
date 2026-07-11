@@ -39,12 +39,18 @@ class Logger {
 
   // 生产环境默认收敛到 INFO，减少主线程文件 I/O；开发环境保留全部。
   // 可通过环境变量 MARSPRINT_LOG_LEVEL 覆盖（DEBUG/INFO/WARN/ERROR）。
+  // ✅ 同时识别 Electron 打包环境：app.isPackaged 比 NODE_ENV 更可靠
+  //    （打包脚本未设置 NODE_ENV 时，文件日志此前不会自动收敛）。
   _resolveMinLevel() {
     const env = process.env.MARSPRINT_LOG_LEVEL
     if (env && LEVEL_RANK[env.toUpperCase()] !== undefined) {
       return env.toUpperCase()
     }
-    if (process.env.NODE_ENV === 'production') return 'INFO'
+    const isPackaged =
+      typeof app !== 'undefined' && app && typeof app.isPackaged === 'boolean'
+        ? app.isPackaged
+        : process.env.NODE_ENV === 'production'
+    if (isPackaged) return 'INFO'
     return 'DEBUG'
   }
 
@@ -126,7 +132,7 @@ class Logger {
       if (arg instanceof Error) return arg.stack || arg.message
       if (typeof arg === 'object') {
         try {
-          return JSON.stringify(arg, null, 2)
+          return JSON.stringify(arg)
         } catch (e) {
           return String(arg)
         }

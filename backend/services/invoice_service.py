@@ -318,7 +318,8 @@ def parse_invoice_service(file_bytes, filename, auto_orient=True, force_ocr=Fals
                 if pdf_doc is None:
                     return None
                 try:
-                    return parse_pdf_with_bbox_from_doc(pdf_doc, pre_words=pre_words)
+                    return parse_pdf_with_bbox_from_doc(pdf_doc, pre_words=pre_words,
+                                                       include_all_tokens=False)
                 except Exception as e:
                     logger.warning(f"bbox 解析失败: {e}")
                     return None

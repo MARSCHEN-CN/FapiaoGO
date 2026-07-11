@@ -422,26 +422,28 @@ const DISK_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;  // 7 天
 const MAX_MEMORY_ENTRIES = 10;
 
 // 内存缓存: printerName → { data, expiresAt }
+// 利用 Map 的插入顺序特性实现 LRU：最新访问 delete 后重新 set 即移到末尾，
+// 插入序首位即最久未用（淘汰目标），全部为 O(1)，无需额外的 _memoryAccessOrder 数组。
 const _memoryCache = new Map();
-const _memoryAccessOrder = [];  // LRU 追踪
 
-function _getCacheDir() {
+async function _getCacheDir() {
   // 优先用 app.getPath('userData')，但这里可能没有 Electron 上下文
   // fallback 到项目目录下的 printer-cache 文件夹
   const userDataDir = process.env.APPDATA
     ? path.join(process.env.APPDATA, 'marsprint')
     : path.join(__dirname, '../../printer-cache');
   const cacheDir = path.join(userDataDir, 'printer-cache');
+  // 异步创建目录，避免打印/解析链路主线程被 mkdir 阻塞（_loadDiskCache/_saveDiskCache 均为 async）
   try {
-    fs.mkdirSync(cacheDir, { recursive: true });
+    await fs.promises.mkdir(cacheDir, { recursive: true });
   } catch (e) { /* ignore */ }
   return cacheDir;
 }
 
-function _getCacheFilePath(printerName) {
+async function _getCacheFilePath(printerName) {
   const crypto = require('crypto');
   const hash = crypto.createHash('md5').update(printerName).digest('hex');
-  return path.join(_getCacheDir(), `${hash}.json`);
+  return path.join(await _getCacheDir(), `${hash}.json`);
 }
 
 function _checkMemoryCache(printerName) {
@@ -450,42 +452,35 @@ function _checkMemoryCache(printerName) {
 
   // 惰性过期
   if (Date.now() > entry.expiresAt) {
-    _memoryCache.delete(printerName);
-    const idx = _memoryAccessOrder.indexOf(printerName);
-    if (idx > -1) _memoryAccessOrder.splice(idx, 1);
+    _memoryCache.delete(printerName);  // 自动脱离插入序（即最旧端）
     return null;
   }
 
-  // 更新 LRU 顺序
-  const idx = _memoryAccessOrder.indexOf(printerName);
-  if (idx > -1) {
-    _memoryAccessOrder.splice(idx, 1);
-    _memoryAccessOrder.push(printerName);
-  }
+  // 更新 LRU 顺序：delete 后重新 set 即移到插入序末尾（最近使用）
+  _memoryCache.delete(printerName);
+  _memoryCache.set(printerName, entry);
 
   return entry.data;
 }
 
 function _setMemoryCache(printerName, data) {
-  // LRU 淘汰
-  if (_memoryCache.size >= MAX_MEMORY_ENTRIES && !_memoryCache.has(printerName)) {
-    const oldest = _memoryAccessOrder.shift();
-    if (oldest) _memoryCache.delete(oldest);
+  if (_memoryCache.has(printerName)) {
+    // 已存在：先删除以便后面 set 时移到末尾（更新为最近使用），不触发淘汰
+    _memoryCache.delete(printerName);
+  } else if (_memoryCache.size >= MAX_MEMORY_ENTRIES) {
+    // LRU 淘汰：Map 插入序首位即最久未用
+    const oldest = _memoryCache.keys().next().value;
+    if (oldest !== undefined) _memoryCache.delete(oldest);
   }
 
   _memoryCache.set(printerName, {
     data,
     expiresAt: Date.now() + MEMORY_CACHE_TTL_MS,
   });
-
-  // 更新 LRU 顺序
-  const idx = _memoryAccessOrder.indexOf(printerName);
-  if (idx > -1) _memoryAccessOrder.splice(idx, 1);
-  _memoryAccessOrder.push(printerName);
 }
 
 async function _loadDiskCache(printerName) {
-  const filePath = _getCacheFilePath(printerName);
+  const filePath = await _getCacheFilePath(printerName);
   try {
     // 真正异步读取，避免打印/解析链路主线程被磁盘 I/O 阻塞
     const raw = await fs.promises.readFile(filePath, 'utf-8');
@@ -510,22 +505,23 @@ async function _loadDiskCache(printerName) {
 }
 
 async function _saveDiskCache(printerName, capabilities) {
-  const filePath = _getCacheFilePath(printerName);
+  const filePath = await _getCacheFilePath(printerName);
   const entry = {
     printerName,
     fetchedAt: new Date().toISOString(),
     capabilities,
   };
 
-  // 原子写入：写临时文件 → rename
+  // 原子写入：写临时文件 → rename（全部走 fs.promises，避免阻塞打印链路主线程）
   const tmpPath = filePath + '.tmp';
   try {
-    fs.writeFileSync(tmpPath, JSON.stringify(entry, null, 2), 'utf-8');
-    fs.renameSync(tmpPath, filePath);
+    await fs.promises.writeFile(tmpPath, JSON.stringify(entry, null, 2), 'utf-8');
+    await fs.promises.rename(tmpPath, filePath);
     log('Disk cache saved for "%s"', printerName);
   } catch (e) {
     log('Disk cache write failed for "%s": %s', printerName, e.message);
-    try { if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath); } catch (e2) { /* ignore */ }
+    // 清理可能残留的临时文件（无需 existsSync 预检，unlink 失败即忽略）
+    try { await fs.promises.unlink(tmpPath); } catch (e2) { /* ignore */ }
   }
 }
 

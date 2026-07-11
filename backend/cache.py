@@ -183,7 +183,6 @@ class CacheManager:
         # LRU 容量上限：至少为 max_files 的若干倍（覆盖并发命名空间下的活跃 key），
         # 同时用绝对值封顶，避免 max_files 配置过大时本结构本身占用过高。
         self._hit_counter_max = min(50000, max(2000, self.max_files * 4))
-        self._stats_cache: Dict[str, Dict] = {}
         # 每 namespace 的内存统计计数器（增量维护，供 stats() 无扫描读取）。
         # files/size 在 set/删除/清理/失效时增量更新；hits 在 get 命中时递增。
         # 仅在 __init__ 与 migrate_legacy 后做一次性全量重建（_recompute_ns_stats）。
@@ -194,6 +193,9 @@ class CacheManager:
         # ✅ 惰性清理：每 N 次写入才做一次目录遍历
         self._write_counter = 0
         self._cleanup_interval = 10  # 每 10 次 set() 扫描一次
+        # 清理节流保护：计数器加锁防并发丢失；连续跳过超阈值则强制（阻塞）清理一次
+        self._enforce_skips = 0
+        self._enforce_skip_threshold = 3
 
         # 确保 namespace 子目录存在
         for ns in self.NAMESPACES:
@@ -202,6 +204,14 @@ class CacheManager:
 
         # 启动时一次性从磁盘重建 per-namespace 文件数/体积统计（非 stats 热路径）
         self._recompute_ns_stats()
+
+        # 后台定时 TTL 清理线程：即使没有写入流量，过期缓存也会被定期回收，
+        # 不再仅依赖写入时触发的惰性清理（_enforce_capacity）。daemon 线程，
+        # 进程退出时自动回收；亦可显式调用 stop() 优雅停止。
+        self._ttl_sweep_interval = 3600  # 秒：默认每小时扫描一次
+        self._stop_sweep = threading.Event()
+        self._sweep_thread: Optional[threading.Thread] = None
+        self._start_sweep()
 
     def _get_version(self, namespace: str) -> str:
         """获取 namespace 对应的版本号"""
@@ -316,35 +326,8 @@ class CacheManager:
             # 增量维护 namespace 级命中计数（供 stats() 无扫描读取）
             self._ns_hits[namespace] = self._ns_hits.get(namespace, 0) + 1
 
-        # 每 10 次命中刷盘一次（更新 accessed_at 和 hit_count）
-        if hits % 10 == 0 and meta:
-            self._flush_meta(path, entry)
-
         logger.debug("[Cache] 命中 %s/%s (hits=%d)", namespace, key[:16], hits)
         return data
-
-    def _flush_meta(self, path: str, entry: Dict):
-        """刷写元数据到磁盘"""
-        try:
-            meta = entry.get('__meta__', {})
-            meta['accessed_at'] = now().isoformat()
-            # 加锁读取命中计数（避免并发修改）
-            with self._counter_lock:
-                counter_value = self._hit_counters.get(
-                    f"{meta.get('namespace', '')}:{meta.get('key', '')}", 0)
-            meta['hit_count'] = meta.get('hit_count', 0) + counter_value
-            entry['__meta__'] = meta
-
-            with self._lock:
-                with tempfile.NamedTemporaryFile(
-                    mode='w', suffix='.json', dir=os.path.dirname(path),
-                    encoding='utf-8', delete=False
-                ) as f:
-                    f.write(_json_dumps(entry))
-                    temp_path = f.name
-                os.replace(temp_path, path)
-        except (IOError, OSError) as e:
-            logger.warning("[Cache] 刷写元数据失败: %s", e)
 
     def set(self, namespace: str, key: str, value: Any,
             params: Optional[Dict] = None, file_size: int = 0) -> None:
@@ -444,6 +427,42 @@ class CacheManager:
         with self._lock:
             return self._cleanup_by_ttl_locked()
 
+    # ───────────────────────────────────────────────────────────
+    # 后台定时 TTL 清理（补充写入时惰性清理的盲区）
+    # ───────────────────────────────────────────────────────────
+    def _start_sweep(self) -> None:
+        """启动后台定时 TTL 清理线程（幂等，避免重复创建）"""
+        if self._sweep_thread is not None and self._sweep_thread.is_alive():
+            return
+        self._stop_sweep.clear()
+        t = threading.Thread(target=self._sweep_loop, daemon=True)
+        t.name = "cache-ttl-sweep"
+        self._sweep_thread = t
+        t.start()
+
+    def _sweep_loop(self) -> None:
+        """后台循环：周期性调用 cleanup_by_ttl 回收过期缓存。
+
+        wait() 返回 True 表示收到停止信号，返回 False 表示超时到点需工作；
+        因此 `while not self._stop_sweep.wait(interval)` 在每次到点执行一次清理，
+        收到 stop() 信号后优雅退出。
+        """
+        while not self._stop_sweep.wait(self._ttl_sweep_interval):
+            try:
+                removed = self.cleanup_by_ttl()
+                if removed:
+                    logger.debug("[Cache] 后台 TTL 清理: 删除 %d 个过期文件", removed)
+            except Exception:
+                # 后台线程异常不应拖垮主流程
+                logger.exception("[Cache] 后台 TTL 清理异常")
+
+    def stop(self) -> None:
+        """停止后台定时清理线程（可选；daemon 线程在进程退出时自动回收）"""
+        self._stop_sweep.set()
+        if self._sweep_thread is not None:
+            self._sweep_thread.join(timeout=5)
+            self._sweep_thread = None
+
     def cleanup_by_size(self) -> int:
         """当总容量超过限制时，按最后访问时间淘汰"""
         total_size = 0
@@ -502,16 +521,28 @@ class CacheManager:
         - 每第 N 次写入执行完整目录遍历 + TTL/容量清理
         - 使用 try_lock 模式：锁被持有时跳过本次清理，避免阻塞 get/set
 
-        注意：定时清理靠外部调用方（如 cleanup_by_ttl）补充。
+        注意：周期性 TTL 清理已由 __init__ 启动的后台线程 _sweep_loop 补充
+        （默认每小时调用一次 cleanup_by_ttl），不再依赖外部调用方。
         """
-        self._write_counter += 1
-        if self._write_counter % self._cleanup_interval != 0:
-            return  # ✅ 跳过扫描，仅计数
+        # 计数与周期判定加锁，保证并发 set() 下计数不丢失、周期判定准确
+        with self._counter_lock:
+            self._write_counter += 1
+            if self._write_counter % self._cleanup_interval != 0:
+                return
 
-        # try_lock 模式：获取不到锁时跳过本次清理，不阻塞 get/set
+        # try_lock 模式：锁空闲则非阻塞执行清理；锁忙则累计跳过次数，
+        # 连续跳过超过阈值后改为阻塞等待一次，避免高并发下清理永不执行
+        forced = False
         if not self._lock.acquire(blocking=False):
-            logger.debug("[Cache] 容量清理被跳过（锁被占用）")
-            return
+            with self._counter_lock:
+                self._enforce_skips += 1
+                force = self._enforce_skips >= self._enforce_skip_threshold
+            if not force:
+                logger.debug("[Cache] 容量清理被跳过（锁被占用）")
+                return
+            # 连续跳过过多，强制阻塞等待锁以执行一次清理（防高并发下永不清理）
+            self._lock.acquire(blocking=True)
+            forced = True
 
         try:
             # 1. 先按 TTL 清理
@@ -574,6 +605,9 @@ class CacheManager:
                 logger.debug("[Cache] 容量清理: 删除 %d 个文件", len(files_to_delete))
         finally:
             self._lock.release()
+            # 清理已执行：重置连续跳过计数（无论是否强制）
+            with self._counter_lock:
+                self._enforce_skips = 0
 
     def _cleanup_by_ttl_locked(self):
         """按 TTL 清理过期缓存（调用方须持有 self._lock）"""

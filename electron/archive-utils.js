@@ -3,8 +3,10 @@
 const fs = require('fs')
 const path = require('path')
 const { execSync, execFile } = require('child_process')
-const os = require('os')
+const { TEMP_DIR } = require('./temp-manager')
 const { formatCurrentDate } = require('./constants')
+// ✅ archiver 移至模块顶部：避免在 createZipArchive 每次调用时重复 require（已确认 ZipArchive 为合法命名导出）
+const { ZipArchive } = require('archiver')
 
 /**
  * 根据当前时间和设置生成压缩包文件名
@@ -65,7 +67,6 @@ function resolveArchiveFileNames(files) {
  * @param {string} archivePath - 输出路径
  */
 async function createZipArchive(files, archivePath) {
-  const { ZipArchive } = require('archiver')
   return new Promise((resolve, reject) => {
     const output = fs.createWriteStream(archivePath)
     const archive = new ZipArchive()
@@ -97,9 +98,14 @@ async function createZipArchive(files, archivePath) {
 
 /**
  * 查找系统中的 7z 命令行工具路径
+ * ✅ 结果模块级缓存：避免每次打包都同步 execSync('where 7z') 阻塞主线程；
+ *    7-Zip 安装状态在会话内不会变化，缓存安全（含「未找到」结果）。
  * @returns {string|null}
  */
+let _7zPathCache = undefined // undefined=未探测；string|null=已探测结果
 function find7zPath() {
+  if (_7zPathCache !== undefined) return _7zPathCache
+
   // 常见安装路径
   const commonPaths = [
     'C:\\Program Files\\7-Zip\\7z.exe',
@@ -108,18 +114,24 @@ function find7zPath() {
   ]
 
   for (const p of commonPaths) {
-    if (fs.existsSync(p)) return p
+    if (fs.existsSync(p)) {
+      _7zPathCache = p
+      return _7zPathCache
+    }
   }
 
-  // 尝试 PATH 中查找
+  // 尝试 PATH 中查找：用 execFileSync 直接调 where.exe，避免 execSync 额外拉起 shell
   try {
-    const result = execSync('where 7z', { encoding: 'utf-8', timeout: 3000 }).trim()
-    if (result && fs.existsSync(result.split('\n')[0].trim())) {
-      return result.split('\n')[0].trim()
+    const result = execFileSync('where.exe', ['7z'], { encoding: 'utf-8', timeout: 3000 }).trim()
+    const first = result.split('\n')[0].trim()
+    if (first && fs.existsSync(first)) {
+      _7zPathCache = first
+      return _7zPathCache
     }
   } catch (e) {}
 
-  return null
+  _7zPathCache = null
+  return _7zPathCache
 }
 
 /**
@@ -149,7 +161,9 @@ function linkOrCopy(src, dest) {
  */
 async function createArchiveWith7z(files, archivePath, sevenZipPath) {
   // 先将文件以硬链接方式放入临时目录（零数据拷贝），再打包
-  const tempDir = path.join(os.tmpdir(), `mars_pack_${Date.now()}`)
+  // 统一到 temp-manager 受管根目录（TEMP_DIR），纳入其孤儿/定时/启动清理，
+  // 避免崩溃时 os.tmpdir() 下的临时目录永久泄漏。本函数 finally 的显式清理仍保留为快路径。
+  const tempDir = path.join(TEMP_DIR, `mars_pack_${Date.now()}`)
   await fs.promises.mkdir(tempDir, { recursive: true })
 
   try {
@@ -202,7 +216,9 @@ function findWinRarPath() {
  * @param {string} rarPath - rar 可执行文件路径
  */
 async function createRarWithWinRAR(files, archivePath, rarPath) {
-  const tempDir = path.join(os.tmpdir(), `mars_pack_${Date.now()}`)
+  // 统一到 temp-manager 受管根目录（TEMP_DIR），纳入其孤儿/定时/启动清理，
+  // 避免崩溃时 os.tmpdir() 下的临时目录永久泄漏。本函数 finally 的显式清理仍保留为快路径。
+  const tempDir = path.join(TEMP_DIR, `mars_pack_${Date.now()}`)
   await fs.promises.mkdir(tempDir, { recursive: true })
 
   try {
