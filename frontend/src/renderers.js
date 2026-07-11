@@ -810,7 +810,17 @@ async function _renderViaWorker(items, paperKey, dpi, isLandscape, rotations, sl
       const cs = contentSources.get(id)
       if (!cs) return null
       try {
-        return await createImageBitmap(cs.source)
+        const src = cs.source
+        // ✅ 已是可 transfer 的零拷贝对象（ImageBitmap / OffscreenCanvas）：
+        // 直接复用，避免 createImageBitmap 二次拷贝（A4@300DPI canvas ≈ 35MB）。
+        // 注：当前 contentSources 缓存的 source 为 HTMLCanvasElement(renderPDFPageRaw 结果)
+        // 或 HTMLImageElement(预览图)，二者均不可 transfer 且被主线程直接合成路径(_renderDirect)复用，
+        // 故不能 transferControlToOffscreen（会 detach 主线程画布、破坏 LRU 缓存与直接渲染）。
+        // 该分支为上游若改为产出 ImageBitmap/OffscreenCanvas 时的零拷贝快路径。
+        if (src instanceof ImageBitmap || src instanceof OffscreenCanvas) {
+          return src
+        }
+        return await createImageBitmap(src)
       } catch (e) {
         console.error('createImageBitmap 失败:', id, e)
         return null
@@ -1266,6 +1276,24 @@ async function _renderToGlobalCanvas(renderFn, signal) {
 }
 
 /**
+ * 复用模块级临时 canvas（M1 修复）
+ * 原实现每次 switchPreviewFile 都 document.createElement('canvas') + getContext('2d')，
+ * 快速翻页时产生大量 canvas/2D 上下文分配与 GC 抖动，造成预览卡顿。
+ * 这里缓存单个 canvas，仅在尺寸变化时重新分配 backing store；同尺寸（同页/同分辨率切换）零重分配。
+ * 安全性：_renderToGlobalCanvas 通过 _globalPreviewLock 串行化所有预览渲染，任意时刻仅一个临时 canvas 在使用中。
+ * @param {number} w
+ * @param {number} h
+ * @returns {HTMLCanvasElement}
+ */
+let _previewPdfTempCanvas = null
+function _getPreviewPdfTempCanvas(w, h) {
+  if (!_previewPdfTempCanvas) _previewPdfTempCanvas = document.createElement('canvas')
+  if (_previewPdfTempCanvas.width !== w) _previewPdfTempCanvas.width = w
+  if (_previewPdfTempCanvas.height !== h) _previewPdfTempCanvas.height = h
+  return _previewPdfTempCanvas
+}
+
+/**
  * 切换 PDF 文件到全局 Canvas（双缓冲，防闪烁）
  */
 export async function switchPreviewFile(pdfDoc, pageNum = 1, signal, rotation = 0) {
@@ -1290,16 +1318,18 @@ export async function switchPreviewFile(pdfDoc, pageNum = 1, signal, rotation = 
     // 复用上面完全相同的 scale / offset，确保输出像素级不变。
     const tw = Math.max(1, Math.ceil(renderViewport.width))
     const th = Math.max(1, Math.ceil(renderViewport.height))
-    const tempCanvas = document.createElement('canvas')
-    tempCanvas.width = tw
-    tempCanvas.height = th
+    // ✅ 复用模块级临时 canvas（M1 修复）：避免每次预览切换都 createElement + getContext（GC 抖动/卡顿）。
+    // 仅当尺寸变化时重新分配 backing store；同尺寸（同页切换）时零重分配。
+    const tempCanvas = _getPreviewPdfTempCanvas(tw, th)
     const tctx = tempCanvas.getContext('2d')
     await page.render({ canvasContext: tctx, viewport: renderViewport }).promise
 
     const ref = makeImageRef(`pdf_${pageNum}_${rotation}`, tw, th, dpi || 72, {
       source: 'preview-pdf', page: pageNum, rotation,
     })
-    const handle = new ConcreteImageHandle(ref, () => { tempCanvas.width = 0; tempCanvas.height = 0 })
+    // 桥接层保留（documentEngine 的 ImageHandle 值类型契约，Engine 不感知 Canvas）。
+    // release 改为 no-op：画布已被模块级缓存复用，清零反而会在同尺寸重用时强制 backing store 重分配。
+    const handle = new ConcreteImageHandle(ref, () => {})
     const pixel = new MemoryPixelHandle(ref, tempCanvas)
     const bitmap = await pixel.asBitmap()  // 浏览器端返回 tempCanvas（HTMLCanvasElement），可作 drawImage 源
     ctx.drawImage(bitmap, offsetX, offsetY, renderViewport.width, renderViewport.height)
