@@ -14,7 +14,7 @@
 const { execFile } = require('child_process')
 const path = require('path')
 const fs = require('fs')
-const os = require('os')
+const { TEMP_DIR } = require('../temp-manager')
 
 // ============================
 // 路径与常量
@@ -232,7 +232,7 @@ async function process(inputPath, margins, isImage, orientation, timeout = DEFAU
   const pythonCmd = env.cmd
 
   // ── 创建临时输出路径（始终使用 .pdf 扩展名） ──
-  const tmpDir = os.tmpdir()
+  const tmpDir = TEMP_DIR
   const timestamp = Date.now()
   const outputName = `pdf_margin_${timestamp}.pdf`
   const outputPath = path.join(tmpDir, outputName)

@@ -7,7 +7,7 @@
 const { nativeImage } = require('electron')
 const path = require('path')
 const fs = require('fs')
-const os = require('os')
+const { TEMP_DIR } = require('../temp-manager')
 
 /**
  * Strip ICC_PROFILE (APP2/FFE2) segments from JPEG data.
@@ -284,7 +284,7 @@ async function validatePdfStructureAsync(pdfPath) {
  */
 function generatePdfFromCanvas({ pngBuffer, widthMM, heightMM, prefix }) {
   const pdfBuffer = pngToPdf(pngBuffer, widthMM, heightMM)
-  const tmpDir = os.tmpdir()
+  const tmpDir = TEMP_DIR
   const pdfPath = path.join(tmpDir, `${prefix || 'print'}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.pdf`)
   fs.writeFileSync(pdfPath, pdfBuffer)
   const size = fs.statSync(pdfPath).size

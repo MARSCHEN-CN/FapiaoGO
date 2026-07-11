@@ -12,7 +12,7 @@ const os = require('os')
 // 模块导入
 // ============================
 const { SUPPORTED_EXTENSIONS, FILE_DIALOG_FILTERS } = require('./constants')
-const { cleanupAllTempFiles } = require('./temp-manager')
+const { init: initTempManager, cleanupAllTempFiles, TEMP_DIR } = require('./temp-manager')
 const { registerFileOpsHandlers } = require('./ipc-file-ops')
 const { registerRenameHandlers } = require('./ipc-rename')
 const { registerPackHandlers } = require('./ipc-pack')
@@ -568,7 +568,7 @@ ipcMain.handle('print-merged-images', async (_event, { images, settings }) => {
   }
 
   // 创建临时目录
-  const tempDir = path.join(os.tmpdir(), 'electron_merge_' + Date.now())
+  const tempDir = path.join(TEMP_DIR, 'electron_merge_' + Date.now())
   const filePaths = []
   // 诊断校验的 Promise 集合：在 finally 清理临时文件前必须 await，避免文件已删导致 stat 失败
   let validationPromises = []
@@ -871,6 +871,7 @@ if (!gotTheLock) {
 
   app.whenReady().then(async () => {
     logger.init()  // 初始化日志模块
+    await initTempManager()  // 启动 30 分钟定时清理 + 清理上次崩溃遗留的孤儿临时文件
 
     // ✅ 初始化新打印管线
     initNewPrintPipeline()

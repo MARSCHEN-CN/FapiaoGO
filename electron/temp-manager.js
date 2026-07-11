@@ -74,36 +74,42 @@ async function cleanupOldestTempFiles(targetSize) {
  */
 async function cleanupOrphanTempFiles(maxAgeMs = MAX_FILE_AGE_MS) {
   const now = Date.now()
-  let entries
-
-  try {
-    entries = await fs.promises.readdir(TEMP_DIR, { withFileTypes: true })
-  } catch {
-    return { cleaned: 0, freed: 0 }
-  }
-
   let cleaned = 0
   let freed = 0
 
-  for (const entry of entries) {
-    if (!entry.isFile()) continue
-
-    const fullPath = path.join(TEMP_DIR, entry.name)
+  // 递归扫描 TEMP_DIR（含子目录，如 print-merged-images 的 electron_merge_<ts> 临时目录），
+  // 使崩溃遗留、落在子目录中的临时文件也能被回收。注册在内存 Map 中的文件会被跳过。
+  async function scanDir(dir) {
+    let entries
     try {
-      const stat = await fs.promises.stat(fullPath)
-      
-      // 检查是否在内存中注册
-      if (tempFiles.has(fullPath)) continue
+      entries = await fs.promises.readdir(dir, { withFileTypes: true })
+    } catch {
+      return
+    }
 
-      // 检查文件年龄
-      if (now - stat.mtimeMs > maxAgeMs) {
-        await fs.promises.unlink(fullPath)
-        cleaned++
-        freed += stat.size
-        logger.log(`[temp-manager] 清理孤儿临时文件: ${entry.name} (${Math.round(stat.size / 1024)}KB)`)
-      }
-    } catch {}
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name)
+      try {
+        if (entry.isDirectory()) {
+          await scanDir(fullPath)
+        } else if (entry.isFile()) {
+          // 检查是否在内存中注册（已注册的文件由调用方负责清理，跳过）
+          if (tempFiles.has(fullPath)) continue
+
+          const stat = await fs.promises.stat(fullPath)
+          // 检查文件年龄
+          if (now - stat.mtimeMs > maxAgeMs) {
+            await fs.promises.unlink(fullPath)
+            cleaned++
+            freed += stat.size
+            logger.log(`[temp-manager] 清理孤儿临时文件: ${entry.name} (${Math.round(stat.size / 1024)}KB)`)
+          }
+        }
+      } catch {}
+    }
   }
+
+  await scanDir(TEMP_DIR)
 
   if (cleaned > 0) {
     logger.log(`[temp-manager] 孤儿文件清理完成: ${cleaned} 个文件, ${Math.round(freed / 1024 / 1024)}MB`)
