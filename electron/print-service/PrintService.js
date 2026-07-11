@@ -249,13 +249,18 @@ class PrintService extends EventEmitter {
 
       this.emitter.once(completedEvent, onCompleted);
       this.emitter.once(failedEvent, onFailed);
-    });
 
-    try {
-      this.emit('PrintJob', job);
-    } catch (err) {
-      reject({ success: false, error: err?.message || 'Unknown error' });
-    }
+      // 同步发射 PrintJob；若监听器抛出异常，需在此 reject。
+      // 注意：reject 是 executor 作用域内的参数，必须在 executor 内调用，
+      // 不能外移到外层（外层作用域中 reject 未定义 → ReferenceError）。
+      try {
+        this.emit('PrintJob', job);
+      } catch (err) {
+        this.emitter.off(completedEvent, onCompleted);
+        this.emitter.off(failedEvent, onFailed);
+        reject({ success: false, error: err?.message || 'Unknown error' });
+      }
+    });
 
     return jobPromise;
   }
