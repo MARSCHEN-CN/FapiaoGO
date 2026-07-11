@@ -234,32 +234,48 @@ def preprocess_for_invoice(img_array):
     return img_array
 
 
-def _apply_kernel(img_array, kernel):
+def _apply_kernel(img_array, kernel, chunk_rows=256):
     """
-    对 RGB 图像应用 3x3 卷积核（完全向量化实现）
+    对 RGB 图像应用 3x3 卷积核（分块向量化实现）
 
-    相比 Python 循环，利用 numpy 堆叠切片一次性计算所有位置的卷积：
-    - 一次 np.pad 处理所有通道（edge 模式）
-    - 堆叠 9 个 3x3 位置的切片，向量化加权求和
-    - 消除所有 Python 循环，性能提升 10-15 倍
+    原始实现用 np.stack 一次性堆叠 9 个 (h, w, 3) 切片，形成 (h, w, 3, 9)
+    临时数组——对 2000×3000 RGB 图像峰值达 ~648MB，并发 OCR 时极易 OOM。
+
+    改为按行分块处理：每块仅对 chunk_rows 行做堆叠，临时数组大小仅与
+    图像宽度 w 相关、与高度 h 解耦（O(1) 于 h）。边界用 edge 模式复制，
+    与 np.pad(mode='edge') 逐元素等价，因此计算结果与原全量堆叠完全一致，
+    且不引入 cv2/scipy 等额外依赖。
+
+    Args:
+        img_array: numpy array, RGB 格式
+        kernel: 3x3 numpy array
+        chunk_rows: 分块行数，控制峰值内存。默认 256 行即可将 3000 宽图像的
+                    临时数组从 ~648MB 降至 ~83MB。
     """
     img_float = img_array.astype(np.float32)
     h, w = img_float.shape[:2]
+    kflat = np.asarray(kernel, dtype=np.float32).ravel()  # 长度 9，row-major
 
-    # 对三通道同时 pad（axis=(0,1) 仅 pad 高和宽，通道轴不 pad）
-    padded = np.pad(img_float, ((1, 1), (1, 1), (0, 0)), mode='edge')
+    out = np.empty((h, w, 3), dtype=np.float32)
 
-    # 堆叠 9 个 3x3 位置的切片，形状为 (h, w, 3, 9)
-    patches = np.stack([
-        padded[0:h, 0:w, :], padded[0:h, 1:w+1, :], padded[0:h, 2:w+2, :],
-        padded[1:h+1, 0:w, :], padded[1:h+1, 1:w+1, :], padded[1:h+1, 2:w+2, :],
-        padded[2:h+2, 0:w, :], padded[2:h+2, 1:w+1, :], padded[2:h+2, 2:w+2, :]
-    ], axis=-1)
+    for rs in range(0, h, chunk_rows):
+        re = min(rs + chunk_rows, h)          # 本块输出行 [rs, re)
+        pr0 = max(rs - 1, 0)                   # 需要的原图行起点（含上边界）
+        pr1 = min(re + 1, h)                   # 需要的原图行终点（不含，含下边界）
+        # 取带（含上下各 1 行缓冲），再 pad 成 (band_h+2, w+2, 3)，edge 模式
+        band = img_float[pr0:pr1, :, :]
+        padded_band = np.pad(band, ((1, 1), (1, 1), (0, 0)), mode='edge')
+        off = rs - pr0                         # 全局行 rs 在 padded_band 中的偏移
+        bh = re - rs                           # 本块输出行数
+        # 堆叠 9 个切片（r-1/r/r+1 行 × c-1/c/c+1 列），形状 (bh, w, 3, 9)
+        stacked = np.stack([
+            padded_band[off:off+bh, 0:w, :],     padded_band[off:off+bh, 1:w+1, :],     padded_band[off:off+bh, 2:w+2, :],
+            padded_band[off+1:off+1+bh, 0:w, :], padded_band[off+1:off+1+bh, 1:w+1, :], padded_band[off+1:off+1+bh, 2:w+2, :],
+            padded_band[off+2:off+2+bh, 0:w, :], padded_band[off+2:off+2+bh, 1:w+1, :], padded_band[off+2:off+2+bh, 2:w+2, :],
+        ], axis=-1)
+        out[rs:re, :, :] = np.sum(stacked * kflat, axis=-1)
 
-    # 向量化加权求和：沿最后一个轴（9 个位置）加权求和
-    result = np.sum(patches * kernel.ravel(), axis=-1)
-
-    return np.clip(result, 0, 255).astype(np.uint8)
+    return np.clip(out, 0, 255).astype(np.uint8)
 
 
 # 行合并密度阈值：OCR 结果行数低于此值时跳过行合并（避免非表格场景误合并）

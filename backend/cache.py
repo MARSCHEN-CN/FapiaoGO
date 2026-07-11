@@ -184,6 +184,12 @@ class CacheManager:
         # 同时用绝对值封顶，避免 max_files 配置过大时本结构本身占用过高。
         self._hit_counter_max = min(50000, max(2000, self.max_files * 4))
         self._stats_cache: Dict[str, Dict] = {}
+        # 每 namespace 的内存统计计数器（增量维护，供 stats() 无扫描读取）。
+        # files/size 在 set/删除/清理/失效时增量更新；hits 在 get 命中时递增。
+        # 仅在 __init__ 与 migrate_legacy 后做一次性全量重建（_recompute_ns_stats）。
+        self._ns_files: Dict[str, int] = {}
+        self._ns_size: Dict[str, int] = {}
+        self._ns_hits: Dict[str, int] = {}
 
         # ✅ 惰性清理：每 N 次写入才做一次目录遍历
         self._write_counter = 0
@@ -193,6 +199,9 @@ class CacheManager:
         for ns in self.NAMESPACES:
             os.makedirs(os.path.join(self.base_dir, ns), exist_ok=True)
         os.makedirs(os.path.join(self.base_dir, self.LEGACY_DIR), exist_ok=True)
+
+        # 启动时一次性从磁盘重建 per-namespace 文件数/体积统计（非 stats 热路径）
+        self._recompute_ns_stats()
 
     def _get_version(self, namespace: str) -> str:
         """获取 namespace 对应的版本号"""
@@ -304,6 +313,8 @@ class CacheManager:
             if len(c) > self._hit_counter_max:
                 c.popitem(last=False)
             hits = c[counter_key]
+            # 增量维护 namespace 级命中计数（供 stats() 无扫描读取）
+            self._ns_hits[namespace] = self._ns_hits.get(namespace, 0) + 1
 
         # 每 10 次命中刷盘一次（更新 accessed_at 和 hit_count）
         if hits % 10 == 0 and meta:
@@ -385,6 +396,8 @@ class CacheManager:
             self._enforce_capacity()
 
             with self._lock:
+                pre_existed = os.path.exists(path)
+                prev_size = os.path.getsize(path) if pre_existed else 0
                 with tempfile.NamedTemporaryFile(
                     mode='w', suffix='.json', dir=ns_dir,
                     encoding='utf-8', delete=False
@@ -392,6 +405,13 @@ class CacheManager:
                     f.write(_json_dumps(entry))
                     temp_path = f.name
                 os.replace(temp_path, path)
+                new_size = os.path.getsize(path)
+                # 增量维护 per-namespace 内存统计（覆盖写只更新体积差，新建才加计数）
+                if pre_existed:
+                    self._ns_size[namespace] = self._ns_size.get(namespace, 0) + (new_size - prev_size)
+                else:
+                    self._ns_files[namespace] = self._ns_files.get(namespace, 0) + 1
+                    self._ns_size[namespace] = self._ns_size.get(namespace, 0) + new_size
 
             logger.debug("[Cache] 写入 %s/%s (size=%d)", namespace, key[:16], data_size)
         except (IOError, OSError) as e:
@@ -412,6 +432,10 @@ class CacheManager:
                         count += 1
                     except OSError:
                         pass
+            # 清空该 namespace 的内存统计
+            self._ns_files[namespace] = 0
+            self._ns_size[namespace] = 0
+            self._ns_hits[namespace] = 0
         logger.info("[Cache] 失效 namespace=%s, 删除 %d 个文件", namespace, count)
         return count
 
@@ -509,7 +533,7 @@ class CacheManager:
                                 total_count += 1
                                 mtime = os.path.getmtime(filepath)
                                 size = os.path.getsize(filepath)
-                                all_files.append((filepath, mtime, size))
+                                all_files.append((filepath, mtime, size, ns))
                             except OSError:
                                 pass
                 except OSError:
@@ -518,29 +542,31 @@ class CacheManager:
             # 3. 检查体积
             total_size = sum(f[2] for f in all_files)
 
-            # 4. 收集待删除文件
-            files_to_delete = set()
+            # 4. 收集待删除文件（dict: filepath -> (ns, size)，避免重复与漏计）
+            files_to_delete = {}
 
             # 按数量限制
             if total_count > self.max_files:
                 for f in sorted(all_files, key=lambda x: x[1])[:total_count - self.max_files]:
-                    files_to_delete.add(f[0])
+                    files_to_delete[f[0]] = (f[3], f[2])
 
             # 按体积限制
             if total_size > self.max_bytes:
                 sorted_files = sorted(all_files, key=lambda x: x[1])
                 freed = 0
                 target_freed = total_size - self.max_bytes
-                for filepath, mtime, size in sorted_files:
+                for filepath, mtime, size, ns in sorted_files:
                     if freed >= target_freed:
                         break
-                    files_to_delete.add(filepath)
+                    files_to_delete[filepath] = (ns, size)
                     freed += size
 
-            # 5. 执行删除
-            for filepath in files_to_delete:
+            # 5. 执行删除并增量维护 per-namespace 内存统计
+            for filepath, (ns, size) in files_to_delete.items():
                 try:
                     os.remove(filepath)
+                    self._ns_files[ns] = max(0, self._ns_files.get(ns, 0) - 1)
+                    self._ns_size[ns] = max(0, self._ns_size.get(ns, 0) - size)
                 except OSError:
                     pass
 
@@ -568,8 +594,17 @@ class CacheManager:
                         try:
                             mtime = os.path.getmtime(filepath)
                             if (now - mtime) > expire_seconds:
+                                try:
+                                    sz = os.path.getsize(filepath)
+                                except OSError:
+                                    sz = 0
                                 os.remove(filepath)
                                 count += 1
+                                # 增量维护 per-namespace 内存统计
+                                ns = self._ns_from_path(filepath)
+                                if ns is not None:
+                                    self._ns_files[ns] = max(0, self._ns_files.get(ns, 0) - 1)
+                                    self._ns_size[ns] = max(0, self._ns_size.get(ns, 0) - sz)
                         except OSError:
                             pass
             except OSError:
@@ -579,47 +614,53 @@ class CacheManager:
             logger.info("[Cache] TTL 清理: 删除 %d 个过期文件", count)
         return count
 
+    def _recompute_ns_stats(self):
+        """从磁盘全量重建 per-namespace 文件数/体积统计。
+
+        仅供初始化与 migrate_legacy 后调用（一次性成本，非 stats 热路径）。
+        调用方不持锁——本方法内部自行获取 self._lock。
+        """
+        with self._lock:
+            self._ns_files = {}
+            self._ns_size = {}
+            all_dirs = [self._ns_dir(ns) for ns in self.NAMESPACES]
+            all_dirs.append(self._ns_dir(self.LEGACY_DIR))
+            for ns, ns_dir in zip(self.NAMESPACES + [self.LEGACY_DIR], all_dirs):
+                if not os.path.exists(ns_dir):
+                    continue
+                try:
+                    for filename in os.listdir(ns_dir):
+                        if filename.endswith('.json'):
+                            filepath = os.path.join(ns_dir, filename)
+                            try:
+                                self._ns_files[ns] = self._ns_files.get(ns, 0) + 1
+                                self._ns_size[ns] = self._ns_size.get(ns, 0) + os.path.getsize(filepath)
+                            except OSError:
+                                pass
+                except OSError:
+                    pass
+
+    def _ns_from_path(self, filepath: str) -> Optional[str]:
+        """根据文件路径反查其所属 namespace（用于删除时维护内存统计）"""
+        for ns in self.NAMESPACES + [self.LEGACY_DIR]:
+            ns_dir = self._ns_dir(ns)
+            if filepath.startswith(ns_dir + os.sep):
+                return ns
+        return None
+
     def stats(self) -> Dict:
-        """返回缓存统计信息"""
+        """返回缓存统计信息。
+
+        基于内存增量计数器，O(namespaces) 读取，无需全量扫描/解析磁盘 JSON。
+        """
         result = {'namespaces': {}, 'total_files': 0, 'total_size': 0, 'total_hits': 0}
 
         all_dirs = self.NAMESPACES + [self.LEGACY_DIR]
 
         for ns in all_dirs:
-            ns_dir = self._ns_dir(ns)
-            if not os.path.exists(ns_dir):
-                continue
-
-            ns_files = 0
-            ns_size = 0
-            ns_hits = 0
-
-            try:
-                for filename in os.listdir(ns_dir):
-                    if filename.endswith('.json'):
-                        filepath = os.path.join(ns_dir, filename)
-                        try:
-                            ns_files += 1
-                            ns_size += os.path.getsize(filepath)
-                            # 尝试从元数据中读取 hit_count
-                            try:
-                                with open(filepath, 'r', encoding='utf-8') as f:
-                                    entry = _json_loads(f.read())
-                                if isinstance(entry, dict) and '__meta__' in entry:
-                                    ns_hits += entry['__meta__'].get('hit_count', 0)
-                            except (json.JSONDecodeError, ValueError, IOError):
-                                pass
-                        except OSError:
-                            pass
-            except OSError:
-                pass
-
-            # 加上内存中的命中计数（加锁保护，避免遍历过程中被并发修改）
-            with self._counter_lock:
-                hit_counters_snapshot = dict(self._hit_counters.items())
-            for counter_key, count in hit_counters_snapshot.items():
-                if counter_key.startswith(f"{ns}:"):
-                    ns_hits += count
+            ns_files = self._ns_files.get(ns, 0)
+            ns_size = self._ns_size.get(ns, 0)
+            ns_hits = self._ns_hits.get(ns, 0)
 
             result['namespaces'][ns] = {
                 'files': ns_files,
@@ -679,6 +720,8 @@ class CacheManager:
 
         if count > 0:
             logger.info("[Cache] 迁移旧缓存: %d 个文件移入 %s/", count, self.LEGACY_DIR)
+            # 迁移改变了文件布局，重建内存统计
+            self._recompute_ns_stats()
         return count
 
 
