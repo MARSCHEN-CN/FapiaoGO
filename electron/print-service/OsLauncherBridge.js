@@ -37,21 +37,48 @@ function getSumatraPath() {
 
 // ─── 8.3 Short Path → Long Path ──────────────────────────────────
 
+// 8.3 短路径 → 长路径 转换结果缓存。
+// 8.3 路径基数极小（通常仅系统/用户目录，如 C:\PROGRA~1、C:\Users\MARS_C~1），
+// 缓存几乎不会无界增长，但能避免同一文件重复打印时重复启动 PowerShell。
+const _longPathCache = new Map();
+
 /**
  * Convert Windows 8.3 short path to long path.
  * SumatraPDF cannot parse paths like C:\Users\MARS_C~1\...
- * fs.realpathSync does NOT resolve 8.3 names on Windows.
- * PowerShell [System.IO.Path]::GetFullPath() resolves all path components.
+ * fs.realpathSync does NOT resolve 8.3 names on Windows (see L43 comment),
+ * so PowerShell [System.IO.Path]::GetFullPath() remains the reliable engine.
+ *
+ * Performance fix (2026-07-11):
+ *  - Only invoke PowerShell when the path actually contains a `~` (the 8.3
+ *    signature, e.g. PROGRA~1). The vast majority of paths are normal long
+ *    paths and return immediately — eliminating the per-print 200-500ms
+ *    synchronous main-thread block caused by spawning PowerShell.
+ *  - Conversion results are cached per source path, so re-printing the same
+ *    file never re-spawns a process.
  */
 function toLongPath(shortPath) {
+  if (!shortPath) return shortPath;
+  // 8.3 短路径组件形如 NAME~1，必然包含 `~`；普通长路径不含。
+  // 启发式：不含 `~` 即视为无需转换（文件名本身含 `~` 的极端情况最多多一次
+  // PowerShell 调用，PowerShell 对其返回自身，无正确性问题）。
+  if (!shortPath.includes('~')) {
+    return shortPath;
+  }
+  const cached = _longPathCache.get(shortPath);
+  if (cached !== undefined) {
+    return cached;
+  }
   try {
     const escaped = shortPath.replace(/\\/g, '\\\\');
     const result = execSync(
       `powershell -NoProfile -Command "[System.IO.Path]::GetFullPath('${escaped}')"`,
       { encoding: 'utf8', timeout: 3000, windowsHide: true }
     );
-    return result.trim() || shortPath;
+    const longPath = result.trim() || shortPath;
+    _longPathCache.set(shortPath, longPath);
+    return longPath;
   } catch (e) {
+    _longPathCache.set(shortPath, shortPath);
     return shortPath;
   }
 }
@@ -138,40 +165,89 @@ function detectPdfOrientation(pdfPath) {
   }
 }
 
+// ─── Default Printer Cache ─────────────────────────────────────
+// The system default printer changes rarely, so cache the detection result
+// to avoid spawning PowerShell / querying Chromium on every print job.
+const _defaultPrinterCache = { value: undefined, expiresAt: 0 };
+const DEFAULT_PRINTER_CACHE_TTL_MS = 60000; // 60s
+
 /**
- * Detect system default printer. If none set, return first reliable printer.
- * Skips virtual/export printers that are incompatible with SumatraPDF.
- * Returns null if no printers are available.
- * @returns {string|null}
+ * Detect system default printer (async, non-blocking).
+ * Prefers Electron's webContents.getPrintersAsync() — no PowerShell spawn.
+ * Falls back to PowerShell via execFile when webContents is unavailable.
+ * If no default is set, returns the first reliable (non-virtual) printer.
+ * Skips virtual/export printers incompatible with SumatraPDF.
+ * Success results are cached (TTL); transient failures are NOT cached so the
+ * next call retries immediately instead of degrading for the full TTL.
+ * @param {import('electron').WebContents|null} [webContents]
+ * @returns {Promise<string|null>}
  */
-function detectDefaultPrinter() {
+async function detectDefaultPrinter(webContents) {
+  const now = Date.now();
+  if (_defaultPrinterCache.value !== undefined && now < _defaultPrinterCache.expiresAt) {
+    return _defaultPrinterCache.value;
+  }
+
+  let result = null;
   try {
-    // Force UTF-8 output encoding to handle non-ASCII printer names
-    const cmd = 'powershell -NoProfile -Command "[Console]::OutputEncoding = [Text.Encoding]::UTF8; Get-Printer | Select-Object Name,Default | ConvertTo-Csv -NoTypeInformation"';
-    const output = execSync(cmd, { encoding: 'utf8', timeout: 5000 });
-    const lines = output.trim().split(/\r?\n/).slice(1); // handle CRLF, skip CSV header
-
-    let fallbackPrinter = null;
-    for (const line of lines) {
-      const match = line.match(/"([^"]+)"/);
-      if (!match) continue;
-      const name = match[1];
-      const isDefault = line.includes('"True"');
-
-      // If system has a default printer, use it immediately
-      if (isDefault) return name;
-
-      // Check if this printer should be skipped (virtual/export)
-      const shouldSkip = PRINTER_SKIP_PATTERNS.some(p => p.test(name));
-      if (!shouldSkip && !fallbackPrinter) {
-        fallbackPrinter = name;
+    if (webContents && typeof webContents.getPrintersAsync === 'function') {
+      // ✅ Preferred: Electron-native, no external process spawned
+      const printers = await webContents.getPrintersAsync();
+      let fallback = null;
+      for (const p of printers) {
+        if (p.isDefault) { result = p.name; break; }
+        const shouldSkip = PRINTER_SKIP_PATTERNS.some(re => re.test(p.name));
+        if (!shouldSkip && !fallback) fallback = p.name;
       }
+      result = result || fallback || null;
+    } else {
+      // Fallback: PowerShell, executed asynchronously (does not block main thread)
+      result = await detectDefaultPrinterViaPowershell();
     }
-    return fallbackPrinter;
   } catch (e) {
     console.warn('[OsLauncherBridge] detectDefaultPrinter failed:', e.message);
-    return null;
+    result = null;
   }
+
+  // Only cache successful detections; let transient failures retry next time.
+  if (result !== null) {
+    _defaultPrinterCache.value = result;
+    _defaultPrinterCache.expiresAt = now + DEFAULT_PRINTER_CACHE_TTL_MS;
+  }
+  return result;
+}
+
+/**
+ * Fallback default-printer detection via PowerShell, executed asynchronously
+ * with execFile so it never blocks the Electron main thread.
+ * @returns {Promise<string|null>}
+ */
+function detectDefaultPrinterViaPowershell() {
+  return new Promise((resolve) => {
+    const args = [
+      '-NoProfile',
+      '-Command',
+      '[Console]::OutputEncoding = [Text.Encoding]::UTF8; ' +
+        'Get-Printer | Select-Object Name,Default | ConvertTo-Csv -NoTypeInformation',
+    ];
+    execFile('powershell', args, { encoding: 'utf8', timeout: 5000, windowsHide: true }, (err, stdout) => {
+      if (err) {
+        console.warn('[OsLauncherBridge] PowerShell default-printer detection failed:', err.message);
+        return resolve(null);
+      }
+      const lines = stdout.trim().split(/\r?\n/).slice(1); // skip CSV header
+      let fallback = null;
+      for (const line of lines) {
+        const match = line.match(/"([^"]+)"/);
+        if (!match) continue;
+        const name = match[1];
+        if (line.includes('"True"')) return resolve(name); // system default
+        const shouldSkip = PRINTER_SKIP_PATTERNS.some(p => p.test(name));
+        if (!shouldSkip && !fallback) fallback = name;
+      }
+      resolve(fallback);
+    });
+  });
 }
 
 // ─── Layer 1: PrintSpec — 纯数据层 ──────────────────────────
@@ -464,8 +540,13 @@ class OsLauncherBridge extends EventEmitter {
     if (job.printerName && job.printerName.trim()) {
       args.push('-print-to', job.printerName.trim());
     } else {
-      // Detect system default printer; fall back to first available
-      const detected = detectDefaultPrinter();
+      // Detect system default printer; fall back to first available.
+      // Pass webContents for the async, non-blocking Electron-native path;
+      // falls back to async PowerShell only if the window is unavailable.
+      const wc = (this.mainWindow && !this.mainWindow.isDestroyed())
+        ? this.mainWindow.webContents
+        : null;
+      const detected = await detectDefaultPrinter(wc);
       if (detected) {
         console.log(`[OsLauncherBridge] Resolved printer: ${detected}`);
         args.push('-print-to', detected);

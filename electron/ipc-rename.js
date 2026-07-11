@@ -46,24 +46,24 @@ function registerRenameHandlers(ctx) {
     }
 
     // 带重试的 unlink（解决 EBUSY: resource busy or locked）
-    function unlinkWithRetry(filePath, maxRetries = 3) {
+    // 使用 async + setTimeout 让出事件循环，避免 CPU 自旋锁冻结主线程
+    async function unlinkWithRetry(filePath, maxRetries = 3) {
+      let lastErr = null
       for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
-          fs.unlinkSync(filePath)
+          await fs.promises.unlink(filePath)
           return true
         } catch (e) {
+          lastErr = e
           if (attempt < maxRetries) {
-            // 递增延迟: 200ms, 500ms
+            // 递增延迟: 200ms, 500ms，使用 setTimeout 让出事件循环而非忙等
             const delay = attempt === 1 ? 200 : 500
             console.log(`[rename] unlink 重试 ${attempt}/${maxRetries}，等待 ${delay}ms: ${e.message}`)
-            const end = Date.now() + delay
-            while (Date.now() < end) { /* busy wait */ }
-          } else {
-            throw e
+            await new Promise(resolve => setTimeout(resolve, delay))
           }
         }
       }
-      return false
+      throw lastErr
     }
 
     for (let i = 0; i < files.length; i++) {
@@ -137,7 +137,7 @@ function registerRenameHandlers(ctx) {
           } else {
             fs.copyFileSync(originalPath, newPath)
             try {
-              unlinkWithRetry(originalPath)
+              await unlinkWithRetry(originalPath)
             } catch (unlinkErr) {
               // unlink 失败不算完全失败 — 文件已复制成功
               console.warn(`[rename] ⚠️ 原文件删除失败（文件被占用），但新文件已复制成功: ${unlinkErr.message}`)
