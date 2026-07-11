@@ -7,6 +7,7 @@ import { detectDocumentOrientation } from '../utils/detectOrientation'
 import { getForcedLandscape } from '../utils/mergeMode'
 import { buildPreviewCacheKey } from '../utils/previewCacheKey'
 import { getRenderEnginePreviewUrl } from '../utils/previewTarget'
+import { placeholderPaperLayout, emptyContentLayout, initialRenderState } from '../previewState'
 
 // ✅ 懒加载 PDF 渲染模块，避免首屏加载 1.4 MB 的 pdfjs-dist + react-pdf
 let _renderers = null
@@ -29,7 +30,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
   const [previewPage, setPreviewPage] = useState(1)
   const [previewCanvas, setPreviewCanvas] = useState(null)
   const [previewUrl, setPreviewUrl] = useState(null)  // Render Engine <img> URL
-  // ✅ <img> 模式下图片的自然像素尺寸（naturalWidth/Height），用于 displayInfo 计算缩放/旋转容器
+  // ✅ <img> 模式下图片的自然像素尺寸（naturalWidth/Height），用于内容布局计算
   const [previewImgDims, setPreviewImgDims] = useState(null)
   // ✅ 全局 Canvas 渲染版本号：每次 switchPreviewFile 后递增，
   //    用于 PreviewCanvas 的 L1 缓存失效，确保内容更新后重绘
@@ -105,6 +106,59 @@ export function usePreview({ files, settings, electronAPIRef }) {
   //    直接用闭包 settings 会拿到陈旧值，导致读写缓存 key 不一致。统一走 settingsRef.current 取最新布局。
   const settingsRef = useRef(settings)
   settingsRef.current = settings
+  // ── V16 Preview State Model ──
+  const documentStateRef = useRef(null)
+  const paperLayoutRef = useRef(placeholderPaperLayout())
+  const [paperLayoutVersion, setPaperLayoutVersion] = useState(0)
+  const [contentLayout, setContentLayout] = useState(null)
+  const [renderState, setRenderState] = useState(initialRenderState())
+
+  // V16 断言：验证 DocumentState 方向与实际渲染图像一致（仅 warn，不做修正）
+  useEffect(() => {
+    if (!previewImgDims || previewImgDims.w <= 0 || previewImgDims.h <= 0) return
+    const pl = paperLayoutRef.current
+    if (!pl || !pl.paperRect?.w) return
+    const imgOrient = previewImgDims.w > previewImgDims.h ? 'landscape' : 'portrait'
+    if (pl.orientation !== imgOrient) {
+      console.warn('[V16 ASSERT] DocumentState.orientation mismatch: doc=%s img=%s dims=%dx%d',
+        pl.orientation, imgOrient, previewImgDims.w, previewImgDims.h)
+    }
+  }, [previewImgDims, paperLayoutVersion])
+
+  /** 从 loadedFile 提取 DocumentState */
+  function computeDocumentState(loadedFile) {
+    const pageW = loadedFile._pdfPageWidth || loadedFile._imageWidth || 0
+    const pageH = loadedFile._pdfPageHeight || loadedFile._imageHeight || 0
+    return {
+      id: loadedFile.key || loadedFile.id || '',
+      pageCount: loadedFile._pdfPageCount || 1,
+      pageSize: { w: pageW, h: pageH },
+      pageOrientation: pageW > pageH ? 'landscape' : 'portrait',
+      sourceType: loadedFile._fileFormat || 'pdf',
+      pageNum: loadedFile.pageNum || 1,
+    }
+  }
+
+  /** 从 DocumentState + 设置计算 PaperLayout */
+  function computePaperLayout(docState, paperSize, containerW, containerH) {
+    const paperDims = PAPER_SIZE_MAP[paperSize]
+    if (!paperDims) return placeholderPaperLayout()
+    const dpi = PREVIEW_DPI
+    const paperW = Math.round(paperDims.widthMM / 25.4 * dpi)
+    const paperH = Math.round(paperDims.heightMM / 25.4 * dpi)
+    const paperOrient = paperW > paperH ? 'landscape' : 'portrait'
+    const isLandscape = docState.pageOrientation !== paperOrient
+    const dw = paperW; const dh = paperH
+    const displayW = isLandscape ? dh : dw
+    const displayH = isLandscape ? dw : dh
+    return {
+      paperRect: { w: paperW, h: paperH },
+      displayRect: { w: displayW, h: displayH },
+      orientation: isLandscape ? 'landscape' : 'portrait',
+      clipRect: { w: containerW || displayW, h: containerH || displayH },
+    }
+  }
+  // ──
   // ✅ loadFilePreview 数据缓存：避免每次文件切换都重复 b64toBlob / IPC 读文件
   //    图片缓存 Blob 对象，PDF 缓存 Uint8Array
   //    LRU 自清理（max 50 条 + 200MB 内存限制），文件删除后主动清理
@@ -149,6 +203,27 @@ export function usePreview({ files, settings, electronAPIRef }) {
     map.delete(key)
     map.set(key, value)
     return value
+  }
+
+  /** 从图像 URL 提取自然尺寸（带 LRU 缓存）—— image/ofd 路径与 RE pdf 路径共用 */
+  const fetchImageDims = async (url, key) => {
+    const map = previewLoadCacheRef.current
+    const dimsKey = 'dims_' + key
+    const cached = lruGet(map, dimsKey)
+    if (cached) return { w: cached.w, h: cached.h }
+    try {
+      const img = new Image()
+      const dims = await new Promise((resolve) => {
+        img.onload = () => resolve({ w: img.naturalWidth, h: img.naturalHeight })
+        img.onerror = () => resolve(null)
+        img.src = url
+      })
+      if (dims) {
+        lruSet(map, dimsKey, dims)
+        return dims
+      }
+    } catch (_) { /* 提取失败 fallback null */ }
+    return null
   }
 
   const clearFilePreviewCache = useCallback((fileKey) => {
@@ -356,7 +431,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
     // 非 <img> 路径：清理可能残留的 img 尺寸
     setPreviewImgDims(null)
     // ✅ 不变式：非 RE 路径必须把 previewUrl 复位为 null，否则上一文件的 RE <img> 残留，
-    //    被 PreviewCanvas 的 `if (previewUrl && displayInfo)` 误判为 RE 路径 → 显示陈旧内容。
+    //    被 PreviewCanvas 的 RE 路径误判为有效 Preview → 显示陈旧内容。
     //    （React 对相同值 setPreviewUrl(null) 自动 bail-out，不会额外触发渲染）
     setPreviewUrl(null)
 
@@ -501,65 +576,84 @@ export function usePreview({ files, settings, electronAPIRef }) {
   // ✅ 直接使用 previewCanvas 显示，无需转换为 img
   // 移除了 Canvas → PNG → IMG 的转换步骤，减少内存开销和渲染延迟
 
-  // ✅ previewRotation 必须在 displayInfo memo 之前声明（useMemo 首次渲染立即执行，不能闭包捕获尚未初始化的 const）
+  // ✅ previewRotation 必须在 contentLayout memo 之前声明（useMemo 首次渲染立即执行，不能闭包捕获尚未初始化的 const）
   const previewRotation = fileRotations[previewFile?.key] || 0
 
-  const displayInfo = useMemo(() => {
-    // ✅ 尺寸来源：canvas 路径用 previewCanvas；<img> 路径用 previewImgDims（自然像素）
-    const isImg = !previewCanvas && !!previewImgDims
-    const srcW = previewCanvas ? previewCanvas.width : (previewImgDims ? previewImgDims.w : 0)
-    const srcH = previewCanvas ? previewCanvas.height : (previewImgDims ? previewImgDims.h : 0)
-    if (!srcW || !srcH || !containerSize.width || !containerSize.height) return null
+  // ── ContentLayout：内容在 PaperLayout.contentRect 内的位置和缩放 + 纸张→窗口 zoom ──
+  const computedContentLayout = useMemo(() => {
+    const pl = paperLayoutRef.current
+    if (!pl || !pl.contentRect?.w) return emptyContentLayout()
 
-    // ── 自适应内边距 ──
-    // 优先使用宽松 padding（正常窗口布局），如果放不下则自动缩减
-    // 避免 DevTools 打开时预览区直接消失
-    let PAD = 64, LABEL_H = 36, MIN_MARGIN = 28
-    let availW = containerSize.width - PAD - MIN_MARGIN * 2
-    let availH = containerSize.height - PAD - LABEL_H - MIN_MARGIN * 2
-    if (availW <= 0 || availH <= 0) {
-      PAD = 20; LABEL_H = 0; MIN_MARGIN = 8
-      availW = containerSize.width - PAD - MIN_MARGIN * 2
-      availH = containerSize.height - PAD - LABEL_H - MIN_MARGIN * 2
+    // ── 纸张→窗口缩放基线（与旧版 padding 策略一致） ──
+    let paperScaleBase = 1
+    if (containerSize.width && containerSize.height) {
+      let PAD = 64, LABEL_H = 36, MIN_MARGIN = 28
+      let availW = containerSize.width - PAD - MIN_MARGIN * 2
+      let availH = containerSize.height - PAD - LABEL_H - MIN_MARGIN * 2
+      if (availW <= 0 || availH <= 0) {
+        PAD = 20; LABEL_H = 0; MIN_MARGIN = 8
+        availW = containerSize.width - PAD - MIN_MARGIN * 2
+        availH = containerSize.height - PAD - LABEL_H - MIN_MARGIN * 2
+      }
+      if (availW > 0 && availH > 0) {
+        paperScaleBase = Math.min(availW / pl.displayRect.w, availH / pl.displayRect.h)
+      }
     }
-    if (availW <= 0 || availH <= 0) return null
+    // 自适应 = 基线；手动 = 基线 × zoomPercent/100
+    const paperScale = zoomMode === 'adaptive' ? paperScaleBase : paperScaleBase * (zoomPercent / 100)
 
-    // 缩放参考系（职责分离，避免状态迁移时参考系混淆）
-    //   fitScale     —— 永远负责「适配窗口」（窗口变化只更新它）
-    //   zoomPercent  —— 永远负责「用户放大倍率」（100 = fit）
-    //   displayScale —— = fitScale × zoomPercent/100，最终显示倍率（不要直接写裸 scale）
-    const fitScale = Math.min(availW / srcW, availH / srcH)
-    const displayScale = zoomMode === 'adaptive' ? fitScale : fitScale * (zoomPercent / 100)
+    const paperDisplayW = Math.round(pl.displayRect.w * paperScale)
+    const paperDisplayH = Math.round(pl.displayRect.h * paperScale)
 
-    // ✅ <img> 模式：旋转走 CSS transform，容器尺寸需按旋转交换宽高（90/270）
-    //    canvas 路径旋转已 bake 进位图，无需交换
-    const angle = isImg ? (previewRotation % 360) : 0
-    const swapped = (angle % 180 !== 0)
-    const displayWidth = (swapped ? srcH : srcW) * displayScale
-    const displayHeight = (swapped ? srcW : srcH) * displayScale
+    let srcW = 0, srcH = 0
+    if (previewCanvas) {
+      srcW = previewCanvas.width
+      srcH = previewCanvas.height
+    } else if (previewImgDims && previewImgDims.w > 0) {
+      srcW = previewImgDims.w
+      srcH = previewImgDims.h
+    }
+    if (!srcW || !srcH) return emptyContentLayout()
+
+    // 内容→contentRect（纸张内缩放，不变）
+    const boundsW = pl.contentRect.w
+    const boundsH = pl.contentRect.h
+    const fitScale = Math.min(boundsW / srcW, boundsH / srcH)
     return {
-      displayWidth: Math.round(displayWidth),
-      displayHeight: Math.round(displayHeight),
-      displayScale,
+      ready: true,
       fitScale,
-      isImg,
-      angle,
-      swapped,
+      imageRect: {
+        x: Math.round((boundsW - srcW * fitScale) / 2),
+        y: Math.round((boundsH - srcH * fitScale) / 2),
+        w: Math.round(srcW * fitScale),
+        h: Math.round(srcH * fitScale),
+      },
+      rotation: previewRotation || 0,
+      paperDisplayScale: paperScale,
+      paperDisplayRect: { w: paperDisplayW, h: paperDisplayH },
     }
-  }, [previewCanvas, previewImgDims, previewRotation, containerSize, zoomMode, zoomPercent])
+  }, [previewCanvas, previewImgDims, previewRotation, containerSize, zoomMode, zoomPercent, paperLayoutVersion])
 
-  useEffect(() => { if (displayInfo) fitScaleRef.current = displayInfo.fitScale }, [displayInfo])
+  // 同步到 state，使外部可消费
+  useEffect(() => { setContentLayout(computedContentLayout) }, [computedContentLayout])
+
+  // 供 zoom 控件消费的 fitScale（来自 contentLayout，只有一条依赖链）
+  useEffect(() => {
+    if (computedContentLayout?.ready) {
+      fitScaleRef.current = computedContentLayout.fitScale
+    }
+  }, [computedContentLayout])
 
   // ── 自动居中滚动（内容溢出时初始视图居中）──
   useEffect(() => {
     const el = previewContainerRef.current
-    if (!el || !displayInfo || !previewCanvas) return
+    if (!el || !computedContentLayout?.paperDisplayRect || !previewCanvas) return
     // 用 rAF 确保 DOM 已完成布局
     requestAnimationFrame(() => {
       el.scrollLeft = Math.max(0, (el.scrollWidth - el.clientWidth) / 2)
       el.scrollTop = Math.max(0, (el.scrollHeight - el.clientHeight) / 2)
     })
-  }, [previewCanvas, displayInfo, previewContainerRef])
+  }, [previewCanvas, computedContentLayout, previewContainerRef])
 
   // ── 手型拖拽平移（Hand Tool）──
   // 点击按住可拖拽画布，类似图片浏览软件
@@ -694,27 +788,12 @@ export function usePreview({ files, settings, electronAPIRef }) {
           }
         }
 
-        // 提取图片/OFD 尺寸用于方向检测（带缓存）
+        // 提取图片/OFD 尺寸用于方向检测（复用 fetchImageDims）
         if (_previewImageUrl && !fObj._imageWidth && !fObj.previewWidth) {
-          const dimsKey = 'dims_' + fObj.key
-          const cachedDims = lruGet(previewLoadCacheRef.current, dimsKey)
-          if (cachedDims) {
-            fObj._imageWidth = cachedDims.w
-            fObj._imageHeight = cachedDims.h
-          } else {
-            try {
-              const img = new Image()
-              const dims = await new Promise((resolve) => {
-                img.onload = () => resolve({ w: img.naturalWidth, h: img.naturalHeight })
-                img.onerror = () => resolve(null)
-                img.src = _previewImageUrl
-              })
-              if (dims) {
-                fObj._imageWidth = dims.w
-                fObj._imageHeight = dims.h
-                lruSet(previewLoadCacheRef.current, dimsKey, dims)
-              }
-            } catch (e) { /* 尺寸提取失败 fallback portrait */ }
+          const dims = await fetchImageDims(_previewImageUrl, fObj.key)
+          if (dims) {
+            fObj._imageWidth = dims.w
+            fObj._imageHeight = dims.h
           }
         }
 
@@ -722,10 +801,19 @@ export function usePreview({ files, settings, electronAPIRef }) {
       }
 
       if (fmt === 'pdf') {
+        console.log('[DIAG] LOAD PDF ENTER key=', fObj.key?.slice(0,20), 'cachedPdf=', !!lruGet(previewLoadCacheRef.current, 'pdf_' + fObj.key), 'hasFile=', !!fObj.file, 'hasPrintPath=', !!fObj.printPath, 'hasIpc=', !!electronAPIRef.current?.ipcRenderer, 'docId=', fObj.docId, 'RE=', USE_RENDER_ENGINE_PREVIEW)
         // ✅ Render Engine Preview：优先走后端渲染 URL，绕过 pdfjs + Canvas
         if (USE_RENDER_ENGINE_PREVIEW && fObj.docId) {
           // 多页 PDF 拆页后每个分页项携带真实页码 pageNum；非拆页文件为 null → 回退 1
           _previewImageUrl = buildPreviewUrl(fObj.docId, fObj.pageNum || 1)
+          // 从 RE 预览图提取页面尺寸用于 DocumentState（与 image/ofd 路径共用 fetchImageDims）
+          if (!fObj._imageWidth && !fObj._pdfPageWidth) {
+            const dims = await fetchImageDims(_previewImageUrl, fObj.key)
+            if (dims) {
+              fObj._imageWidth = dims.w
+              fObj._imageHeight = dims.h
+            }
+          }
           return { ...fObj, _previewImageUrl, _fileFormat: 'pdf' }
         }
 
@@ -736,8 +824,10 @@ export function usePreview({ files, settings, electronAPIRef }) {
         if (cachedPdfData) {
           _pdfData = cachedPdfData
         } else {
+          console.log('[DIAG] LOAD BRANCH key=', fObj.key?.slice(0,20), 'hasFile=', !!fObj.file, 'hasPath=', !!fObj.printPath, 'hasIpc=', !!electronAPIRef.current?.ipcRenderer)
           if (fObj.file) {
             buffer = await fObj.file.arrayBuffer()
+            console.log('[DIAG] LOAD FILE ARRAYBUF key=', fObj.key?.slice(0,20), 'bufSize=', buffer?.byteLength)
             if (signal?.aborted) return fObj
           } else if (electronAPIRef.current?.ipcRenderer && fObj.printPath) {
             console.log('[DIAG] LOAD IPC START key=', fObj.key?.slice(0,40))
@@ -859,6 +949,40 @@ export function usePreview({ files, settings, electronAPIRef }) {
     const paperDims = PAPER_SIZE_MAP[settingsRef.current.paperSize || 'A4']
     const paperOrient = paperDims && paperDims.widthMM > paperDims.heightMM ? 'landscape' : 'portrait'
     const isLandscape = contentOrient !== paperOrient
+
+    // ── 建立 PaperLayout（始终存在，不依赖渲染结果） ──
+    const plPaperW = Math.round((paperDims?.widthMM || 210) / 25.4 * PREVIEW_DPI)
+    const plPaperH = Math.round((paperDims?.heightMM || 297) / 25.4 * PREVIEW_DPI)
+    const plDisplayW = isLandscape ? plPaperH : plPaperW
+    const plDisplayH = isLandscape ? plPaperW : plPaperH
+    const docW = loadedFile._pdfPageWidth || loadedFile._imageWidth || 0
+    const docH = loadedFile._pdfPageHeight || loadedFile._imageHeight || 0
+    const docOrientation = (docW && docH) ? (docW > docH ? 'landscape' : 'portrait') : contentOrient
+    paperLayoutRef.current = {
+      paperRect: { w: plPaperW, h: plPaperH },
+      marginRect: { w: plDisplayW, h: plDisplayH },   // Phase 2A: 安全边距暂用 displayRect
+      contentRect: { w: plDisplayW, h: plDisplayH },   // Phase 2A: = marginRect，预留装订边/水印空间
+      displayRect: { w: plDisplayW, h: plDisplayH },
+      orientation: isLandscape ? 'landscape' : 'portrait',
+      clipRect: { w: containerSize.width || plDisplayW, h: containerSize.height || plDisplayH },
+    }
+    documentStateRef.current = {
+      id: loadedFile.key || loadedFile.id || '',
+      pageCount: loadedFile._pdfPageCount || 1,
+      pageSize: { w: docW, h: docH },
+      pageOrientation: docOrientation,
+      sourceType: loadedFile._fileFormat || 'pdf',
+      pageNum: loadedFile.pageNum || 1,
+    }
+    setPaperLayoutVersion(v => v + 1)
+    // V16 四层快照：DocumentState + PaperLayout（ContentLayout / RenderState 尚未填充，Phase 2）
+    const pl = paperLayoutRef.current
+    const ds = documentStateRef.current
+    console.log('[DIAG] V16 SNAP key=', loadedFile.key?.slice(0,20),
+      '| DS=', ds.pageOrientation, ds.pageSize.w+'x'+ds.pageSize.h,
+      '| PL=', pl.orientation, 'paperRect=', pl.paperRect.w+'x'+pl.paperRect.h, 'dispRect=', pl.displayRect.w+'x'+pl.displayRect.h, 'clipRect=', pl.clipRect.w+'x'+pl.clipRect.h,
+      '| paper=', settingsRef.current.paperSize, 'isLand=', isLandscape)
+
     const cacheKey = buildPreviewCacheKey(
       { fileKey: loadedFile.key, rotation },
       {
@@ -880,6 +1004,10 @@ export function usePreview({ files, settings, electronAPIRef }) {
       previewFileRef.current = loadedFile
       setMergePair(null)
       setPreviewFile(loadedFile)
+      // ✅ 跳过 render effect（skipRenderRef=true）时，L323 不会执行，
+      //    lastRenderKeyRef 残留旧值，后续切换到新文件时可能被 L322 误拦。
+      //    清空它以允许新文件的 render effect 正常进入渲染管线。
+      lastRenderKeyRef.current = ''
       setPreviewPage(1)
       setNumPages(loadedFile._fileFormat === 'pdf' ? 0 : 1)
       setPreviewCanvas(cachedCanvas)
@@ -1202,7 +1330,12 @@ export function usePreview({ files, settings, electronAPIRef }) {
       fileRotations,
       showLeftArrow,
       showRightArrow,
-      displayInfo,
+      // V16 Preview State Model
+      documentState: documentStateRef.current,
+      paperLayout: paperLayoutRef.current,
+      paperLayoutVersion,
+      contentLayout,
+      renderState,
     },
 
     /**

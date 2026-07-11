@@ -1,0 +1,30 @@
+{
+  "data": [
+    {
+      "id": "page-calculator",
+      "title": "计算器",
+      "type": "page",
+      "version": 1,
+      "createdAt": 1720708800000,
+      "canvasData": {
+        "x": 0,
+        "y": 0,
+        "group": 0
+      },
+      "devMetadata": {
+        "htmlSrc": "pages/calculator.html",
+        "interactions": []
+      }
+    }
+  ],
+  "config": {
+    "autoLayout": true,
+    "deviceType": "desktop",
+    "projectName": "计算器",
+    "designLibrary": null,
+    "windowSize": {
+      "width": 780,
+      "height": 600
+    }
+  }
+}

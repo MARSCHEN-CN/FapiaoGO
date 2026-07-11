@@ -446,3 +446,4 @@ P2C-step2b-recon.md
 performance-review.md
 backend/_db_harddelete_test.py
 backend/_db_harddelete_replay_test.py
+preview-state-architecture.md

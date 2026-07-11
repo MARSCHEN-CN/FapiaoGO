@@ -113,17 +113,24 @@ export default function RenameSettings({ renameSettings, onSave, electronAPI, ac
     if (!electronAPI || !active) return
     
     const width = getWindowWidth()
-    const height = getWindowHeight()
     
     setTimeout(() => {
+      const contentContainer = document.querySelector('.settings-content')
+      if (!contentContainer) return
+      const innerContainer = contentContainer.firstElementChild
+      const contentHeight = innerContainer ? innerContainer.scrollHeight : contentContainer.scrollHeight
+      const titlebarHeight = 40
+      const padding = 30
+      const calculatedHeight = contentHeight + titlebarHeight + padding
+      
       electronAPI.ipcRenderer.invoke('resize-settings-window', {
         width,
-        height
+        height: calculatedHeight
       }).catch(err => {
         console.warn('[RenameSettings] 调整窗口大小失败:', err)
       })
     }, 100)
-  }, [electronAPI, active, getWindowWidth, getWindowHeight])
+  }, [electronAPI, active, getWindowWidth])
   
   // 当内容变化或激活状态变化时调整窗口大小
   useEffect(() => {

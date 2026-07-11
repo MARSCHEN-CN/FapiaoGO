@@ -1001,3 +1001,322 @@ button.pc-btn.outline,
 [data-theme="dark"] .pcm-select:focus {
   border-color: var(--accent);
 }
+
+/* ================================================================
+   Calculator Modal
+   ================================================================ */
+.calc-modal-overlay {
+  z-index: 200;
+  align-items: center;
+  justify-content: center;
+}
+
+.calc-modal-panel {
+  width: 380px;
+  max-width: 92vw;
+  background: var(--canvas-float-bg);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--canvas-float-border);
+  border-radius: 16px;
+  box-shadow: var(--shadow-2xl), 0 0 0 1px rgba(255,255,255,0.02) inset;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  animation: modalScaleIn 0.25s var(--ease-spring);
+  user-select: none;
+}
+
+/* Display Area */
+.calc-display-area {
+  padding: 16px 24px 0;
+  background: color-mix(in srgb, var(--surface) 60%, var(--bg));
+  flex-shrink: 0;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+/* History - fixed height reservation (always occupies space) */
+.calc-history {
+  height: 66px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  text-align: right;
+  margin-bottom: 8px;
+  padding: 4px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+  visibility: hidden;
+}
+
+.calc-history.has-items {
+  visibility: visible;
+}
+
+.calc-history::-webkit-scrollbar {
+  width: 4px;
+}
+.calc-history::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 2px;
+}
+
+.calc-history-item {
+  display: flex;
+  justify-content: flex-end;
+  align-items: baseline;
+  padding: 2px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1.5;
+  transition: background var(--t-fast);
+  gap: 4px;
+}
+
+.calc-history-item:hover {
+  background: var(--accent-soft);
+}
+
+.calc-hist-expr {
+  color: var(--text-4);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex-shrink: 1;
+  min-width: 0;
+}
+
+.calc-hist-res {
+  color: var(--text-3);
+  font-weight: 500;
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Primary expression/result row - ALWAYS large, bold, dark */
+.calc-expr {
+  font-family: 'Segoe UI', 'SF Pro Display', -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+  font-size: 46px;
+  font-weight: 500;
+  color: var(--text);
+  text-align: right;
+  line-height: 1;
+  min-height: 56px;
+  height: 56px;
+  padding: 8px 3px 0;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.5px;
+  transition: font-size 0.1s ease;
+  overflow: hidden;
+  display: block;
+  -webkit-font-smoothing: antialiased;
+}
+
+.calc-expr.calc-hscroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+.calc-expr.calc-hscroll::-webkit-scrollbar { display: none; }
+
+/* Secondary row: live preview during input, "expr =" after equals */
+.calc-result {
+  font-family: 'Segoe UI', 'SF Pro Display', -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+  font-size: 22px;
+  font-weight: 400;
+  color: var(--text-3);
+  text-align: right;
+  line-height: 28px;
+  height: 28px;
+  min-height: 28px;
+  padding: 2px 3px 0;
+  margin-top: 2px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  display: block;
+  text-overflow: ellipsis;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* After equals: secondary row shows the original expression - smaller, lighter */
+.calc-modal-panel.is-result .calc-result {
+  font-size: 15px;
+  font-weight: 400;
+  color: var(--text-4);
+  line-height: 28px;
+}
+
+/* Chinese amount row */
+.calc-chinese {
+  font-family: 'Segoe UI', 'SF Pro Display', -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--text-4);
+  text-align: right;
+  line-height: 22px;
+  min-height: 42px;
+  height: 42px;
+  padding: 2px 3px 19px;
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  display: block;
+  text-overflow: ellipsis;
+  border-bottom: 1px solid var(--border-light);
+  box-sizing: border-box;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* After equals: chinese amount becomes more visible */
+.calc-modal-panel.is-result .calc-chinese {
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--text-2);
+  line-height: 22px;
+}
+
+/* Buttons Grid */
+.calc-buttons {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  padding: 16px;
+}
+
+.calc-btn {
+  height: 56px;
+  border: none;
+  border-radius: 14px;
+  font-family: 'Segoe UI', 'SF Pro Display', -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+  font-size: 22px;
+  font-weight: 400;
+  cursor: pointer;
+  transition: all 0.12s var(--ease);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  outline: none;
+  font-variant-numeric: tabular-nums;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-font-smoothing: antialiased;
+}
+
+.calc-btn:active {
+  transform: scale(0.94);
+}
+
+/* Number buttons */
+.calc-btn-num {
+  background: var(--surface);
+  color: var(--text);
+  font-size: 22px;
+  font-weight: 400;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.03), var(--highlight-top);
+}
+
+.calc-btn-num:hover {
+  background: var(--surface-hover);
+}
+
+.calc-btn-num:active {
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+}
+
+/* Function buttons (C, backspace, %, operators ÷×−+) */
+.calc-btn-func {
+  background: var(--surface);
+  color: var(--accent);
+  font-size: 20px;
+  font-weight: 500;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.03), var(--highlight-top);
+}
+
+.calc-btn-func:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+/* Equals button - brand accent */
+.calc-btn-eq {
+  background: var(--accent);
+  color: #fff;
+  font-size: 26px;
+  font-weight: 500;
+  box-shadow: 0 4px 12px rgba(79, 124, 255, 0.3), var(--highlight-top);
+}
+
+.calc-btn-eq:hover {
+  background: var(--accent-hover);
+  box-shadow: 0 4px 16px rgba(79, 124, 255, 0.4), var(--highlight-top);
+}
+
+.calc-btn-eq:active {
+  background: var(--accent-dark);
+  box-shadow: 0 2px 6px rgba(79, 124, 255, 0.3);
+}
+
+/* Zero button spans 2 columns, left-aligned to match design */
+.calc-btn-zero {
+  grid-column: span 2;
+  justify-content: flex-start;
+  padding-left: 26px;
+}
+
+/* ── Dark mode refinements ── */
+[data-theme="dark"] .calc-modal-panel {
+  background: rgba(20, 23, 31, 0.98);
+  border-color: rgba(255, 255, 255, 0.08);
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.6),
+              var(--highlight-top-strong);
+}
+
+[data-theme="dark"] .calc-display-area {
+  background: color-mix(in srgb, var(--surface) 40%, var(--bg));
+}
+
+[data-theme="dark"] .calc-chinese {
+  border-bottom-color: rgba(255, 255, 255, 0.06);
+}
+
+[data-theme="dark"] .calc-btn-num {
+  background: rgba(255, 255, 255, 0.04);
+  box-shadow: var(--highlight-top);
+}
+
+[data-theme="dark"] .calc-btn-num:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+[data-theme="dark"] .calc-btn-func {
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--accent);
+  box-shadow: var(--highlight-top);
+}
+
+[data-theme="dark"] .calc-btn-func:hover {
+  background: rgba(108, 138, 255, 0.12);
+  color: var(--accent-hover);
+}
+
+[data-theme="dark"] .calc-history-item:hover {
+  background: rgba(108, 138, 255, 0.10);
+}
+
+[data-theme="dark"] .calc-btn-eq {
+  background: var(--accent);
+  box-shadow: 0 2px 12px rgba(108, 138, 255, 0.3), var(--highlight-top);
+}
+
+[data-theme="dark"] .calc-btn-eq:hover {
+  background: var(--accent-hover);
+  box-shadow: 0 4px 20px rgba(108, 138, 255, 0.4);
+}
+

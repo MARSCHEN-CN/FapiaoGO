@@ -12,6 +12,7 @@ const AlertModal = lazy(() => import('./components/AlertModal'))
 const PrintConfirmModal = lazy(() => import('./components/PrintConfirmModal'))
 const ImportProgressModal = lazy(() => import('./components/ImportProgressModal'))
 const ExportProgressModal = lazy(() => import('./components/ExportProgressModal'))
+const CalculatorModal = lazy(() => import('./components/CalculatorModal'))
 
 import { PREVIEW_DPI, SUPPORTED_EXTENSIONS, ZOOM_STEPS } from './config'
 import {
@@ -83,7 +84,7 @@ function AppContent() {
     previewUrl,
     previewRenderVersion,
     previewRotation, fileRotations, showLeftArrow, showRightArrow,
-    displayInfo,
+    paperLayout, contentLayout,
   } = preview.state
   const {
     handlePreview, preloadHD, handleRotate, prevPage, nextPage,
@@ -105,6 +106,11 @@ function AppContent() {
 
   // ── Invoice Detail Edit Modal ──
   const [detailFile, setDetailFile] = useState(null)
+
+  // ── Calculator Modal ──
+  const [calculatorOpen, setCalculatorOpen] = useState(false)
+  const openCalculator = useCallback(() => setCalculatorOpen(true), [])
+  const closeCalculator = useCallback(() => setCalculatorOpen(false), [])
 
   const {
     importing, parseFiles, parsing, parseProgress,
@@ -339,12 +345,16 @@ function AppContent() {
       dismissWithCleanup()
       return
     }
+    if (calculatorOpen) {
+      setCalculatorOpen(false)
+      return
+    }
     if (renamePreviewVisible) {
       setRenamePreviewVisible(false)
       return
     }
     // ESC 不再退出预览
-  }, [currentAlert, dismissWithCleanup, renamePreviewVisible, setRenamePreviewVisible])
+  }, [currentAlert, dismissWithCleanup, calculatorOpen, renamePreviewVisible, setRenamePreviewVisible])
 
   useKeyboardShortcuts({
     onPrevFile: handlePrevFile,
@@ -543,6 +553,7 @@ function AppContent() {
           onSettingsChange={updateSettings}
           onRotate={handleRotate}
           previewRotation={previewRotation}
+          openCalculator={openCalculator}
         />
 
         <div
@@ -571,9 +582,9 @@ function AppContent() {
             // hasPreview 统一覆盖两种预览来源：旧 Canvas 预览（previewCanvas）与 Render Engine 的 <img> 预览（previewUrl）。
             // 迁移到 RE 后 previewCanvas 恒为 null，不能再单独以它为"就绪"判据。
             const hasPreview = !!previewCanvas || !!previewUrl;
-            if (!displayInfo || !hasPreview) {
+            if (!contentLayout?.ready || !hasPreview) {
               // 区分：预览 canvas 已就绪但容器太小 → 显示友好提示
-              if (previewCanvas && !displayInfo) {
+              if (previewCanvas && !contentLayout?.ready) {
                 return (
                   <div className="canvas-center-overlay canvas-loading" style={{ gap: '10px' }}>
                     <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" style={{ opacity: 0.5 }}>
@@ -613,11 +624,13 @@ function AppContent() {
           <div ref={previewContainerRef} className="canvas-scroll">
             <PreviewCanvas
               previewFile={previewFile}
-              displayInfo={displayInfo}
               previewCanvas={previewCanvas}
               previewUrl={previewUrl}
               grayscale={settings.grayscale}
               previewRenderVersion={previewRenderVersion}
+              paperLayout={paperLayout}
+              contentLayout={contentLayout}
+              previewRotation={previewRotation}
             />
           </div>
 
@@ -806,6 +819,13 @@ function AppContent() {
           onClose={() => setDetailFile(null)}
         />
       )}
+
+      <Suspense fallback={<ModalFallback />}>
+        <CalculatorModal
+          visible={calculatorOpen}
+          onClose={closeCalculator}
+        />
+      </Suspense>
 
     </div>
   )

@@ -18,6 +18,7 @@ export default memo(function TopBar({
   onRotate,
   previewRotation = 0,
   onSettingsChange,
+  openCalculator,
 }) {
   const [isMaximized, setIsMaximized] = useState(false)
   const [isDarkMode, setIsDarkMode] = useState(() => {
@@ -155,6 +156,18 @@ export default memo(function TopBar({
       </div>
 
       <div className="tb-right">
+        <button
+          className="tb-icon-btn"
+          title="计算器"
+          onClick={openCalculator}
+        >
+          <svg viewBox="0 0 1024 1024" style={{ fill: 'currentColor', stroke: 'none', width: 16, height: 16 }}>
+            <path d="M383.98 512.13h-63.92v63.92h63.92v-63.92z"/>
+            <path d="M97.93 98.23V928.3H928V98.23H97.93zM864 255.95h-63.82v-93.73H864v93.73z m-191.85 0v-93.73h63.98v93.73h-63.98z m-64.05-93.72v93.73H161.93v-93.73H608.1zM161.93 864.29V320H864v544.3H161.93z"/>
+            <path d="M256.05 448.21h192.04v63.92H256.05zM576.38 448.64h192.04v63.92H576.38zM576.38 678.52h192.04v63.92H576.38zM391.87 619.98l-45.3 45.3-45.29-45.3-45.2 45.2 45.3 45.3-45.3 45.29 45.2 45.2 45.29-45.3 45.3 45.3 45.2-45.2-45.3-45.29 45.3-45.3zM320.06 384.1h63.92v63.92h-63.92zM649.83 623.89h45.14v45.14h-45.14zM649.83 751.92h45.14v45.14h-45.14z"/>
+          </svg>
+        </button>
+
         {/* 菜单按钮（三横条图标） */}
         <div className="tb-icon-group" ref={dropdownRef}>
           <button

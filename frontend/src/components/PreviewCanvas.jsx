@@ -1,12 +1,18 @@
 import { useRef, useCallback, memo, useEffect } from 'react'
 
-export default memo(function PreviewCanvas({ previewFile, displayInfo, previewCanvas, previewUrl, grayscale, previewRenderVersion }) {
+export default memo(function PreviewCanvas({ previewFile, previewCanvas, previewUrl, grayscale, previewRenderVersion, paperLayout, contentLayout, previewRotation }) {
   const canvasRef = useRef(null)
   const imgRef = useRef(null)
 
+  // ── 容器尺寸：从 ContentLayout.paperDisplayRect 读取（含 zoom），fallback PaperLayout ──
+  const containerW = contentLayout?.paperDisplayRect?.w || paperLayout?.displayRect?.w || 0
+  const containerH = contentLayout?.paperDisplayRect?.h || paperLayout?.displayRect?.h || 0
+  const contentReady = contentLayout?.ready
+  const imgRect = contentLayout?.imageRect
+
   // ⚠️ DIAGNOSTIC — 调试完删除。测量实际渲染尺寸，排查 data 正确但视觉异常的问题。
   useEffect(() => {
-    if (window.__PREVIEW_DIAG__ && imgRef.current && displayInfo) {
+    if (window.__PREVIEW_DIAG__ && imgRef.current) {
       const img = imgRef.current
       const rect = img.getBoundingClientRect()
       console.log('[diag:canvas] img rendered', {
@@ -20,7 +26,7 @@ export default memo(function PreviewCanvas({ previewFile, displayInfo, previewCa
         inlineStyle: img.style.cssText,
       })
     }
-  }, [previewUrl, displayInfo])
+  }, [previewUrl, contentLayout])
 
   // ✅ L1 缓存：跟踪 DOM canvas 上次绘制的内容
   //    仅当同一 DOM canvas + 同 source canvas + 同滤镜 + 同版本时跳过重绘
@@ -57,22 +63,20 @@ export default memo(function PreviewCanvas({ previewFile, displayInfo, previewCa
   }, [previewCanvas, grayscale, previewRenderVersion])
 
   // ── Render Engine <img> 路径 ──
-  if (previewUrl && displayInfo) {
-    // ✅ 旋转走 CSS transform：容器尺寸已在 displayInfo 按旋转交换宽高，
-    //    <img> 以自然显示尺寸绝对居中后 rotate，正好贴合包围盒（90/270 不裁切）
-    const angle = displayInfo.angle || 0
-    const swapped = displayInfo.swapped
-    const imgW = swapped ? displayInfo.displayHeight : displayInfo.displayWidth
-    const imgH = swapped ? displayInfo.displayWidth : displayInfo.displayHeight
+  if (previewUrl && contentReady && containerW > 0) {
+    // 旋转走 CSS transform：容器尺寸从 PaperLayout 取（交换后的宽高），
+    // <img> 以自然显示尺寸绝对居中后 rotate，贴合包围盒
+    const angle = (previewRotation || 0) % 360
+    const swapped = (angle % 180 !== 0)
+    const imgW = swapped ? containerH : containerW
+    const imgH = swapped ? containerW : containerH
     return (
       <div className="paper" style={{
-        width: displayInfo.displayWidth,
-        height: displayInfo.displayHeight,
+        width: containerW,
+        height: containerH,
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        // 移除 width/height transition：旋转时容器尺寸瞬变避免 overflow:hidden 中途裁剪，
-        // 旋转动画完全由 <img> 的 transform transition 承担
       }}>
         <img
           ref={imgRef}
@@ -97,12 +101,11 @@ export default memo(function PreviewCanvas({ previewFile, displayInfo, previewCa
   }
 
   // ── 骨架屏：高清未就绪时显示纸张轮廓+加载态 ──
-  //    不显示旧内容（无模糊/中间态），符合"始终高清"约束
-  if (!displayInfo || !previewCanvas) {
-    if (previewFile) {
+  if (!contentReady || !previewCanvas) {
+    if (previewFile && containerW > 0) {
       return (
         <div className="preview-skeleton">
-          <div className="preview-skeleton-paper">
+          <div className="preview-skeleton-paper" style={{ width: containerW, height: containerH }}>
             <div className="preview-skeleton-shimmer" />
           </div>
         </div>
@@ -113,8 +116,8 @@ export default memo(function PreviewCanvas({ previewFile, displayInfo, previewCa
 
   return (
     <div className="paper" style={{
-      width: displayInfo.displayWidth,
-      height: displayInfo.displayHeight,
+      width: containerW,
+      height: containerH,
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',

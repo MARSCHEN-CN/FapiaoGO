@@ -3,7 +3,6 @@
 const { ipcMain, dialog } = require('electron')
 const path = require('path')
 const fs = require('fs')
-const { Blob } = require('buffer')
 const { FILE_DIALOG_FILTERS, SUPPORTED_EXTENSIONS } = require('./constants')
 
 // 文件扫描配置
@@ -100,10 +99,10 @@ function registerFileOpsHandlers(ctx) {
         }
       }
 
-      // ✅ 返回 Blob 而非 Buffer：经 Electron blob registry 共享引用，跨进程零拷贝。
-      // 渲染进程用 `await blob.arrayBuffer()` 取字节（拷贝发生在渲染线程，不在主进程）。
-      const blob = new Blob([await fs.promises.readFile(filePath)])
-      return { success: true, data: blob }
+      // 直接返回 Buffer：Electron IPC 原生序列化 Buffer/Uint8Array 为 TypedArray，
+      // 渲染进程直接使用或通过 `new Blob([data])` 转为 Blob。
+      const buffer = await fs.promises.readFile(filePath)
+      return { success: true, data: buffer }
     } catch (error) {
       return { success: false, error: error.message }
     }

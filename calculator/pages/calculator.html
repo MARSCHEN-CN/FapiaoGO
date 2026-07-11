@@ -1,0 +1,790 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>计算器</title>
+    <style id="theme-vars">
+/* ================================================================
+   colors_and_type.css — Calculator Brand CSS
+   Brand primary: #4f7cff (blue) - matches project variables.css
+   ================================================================ */
+
+:root {
+  --brand-primary: #4f7cff;
+  --brand-primary-hover: #3d6af5;
+  --brand-primary-active: #3a58d6;
+  --brand-primary-soft: rgba(79, 124, 255, 0.10);
+  --brand-background: #f5f6f8;
+  --brand-surface: #ffffff;
+  --brand-foreground: #1a1a1a;
+  --brand-text: #1a1a1a;
+  --brand-text-2: #555555;
+  --brand-text-3: #888888;
+  --brand-text-4: #b0b0b0;
+  --brand-text-on-primary: #ffffff;
+  --brand-border: rgba(0, 0, 0, 0.06);
+  --brand-r-sm: 8px;
+  --brand-r-md: 12px;
+  --brand-r-lg: 16px;
+  --brand-r-full: 9999px;
+  --brand-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --brand-shadow-md: 0 2px 8px rgba(0, 0, 0, 0.04);
+  --brand-shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.06), 0 2px 8px rgba(0, 0, 0, 0.04);
+  --brand-font: "Segoe UI", Roboto, "Helvetica Neue", Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.3.1/dist/index.global.js"></script>
+    <style type="text/tailwindcss">
+  @theme inline {
+    --color-background: var(--brand-background);
+    --color-foreground: var(--brand-foreground);
+    --color-primary: var(--brand-primary);
+    --color-border: var(--brand-border);
+  }
+  @layer base {
+    body { background: var(--brand-background); color: var(--brand-foreground); font-family: var(--brand-font); }
+  }
+    </style>
+    <style>
+      .no-scrollbar::-webkit-scrollbar { display: none; }
+      .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+      /* Invisible horizontal scrollbar for expression overflow */
+      .hscroll {
+        overflow-x: auto !important;
+        overflow-y: hidden !important;
+        scrollbar-width: none;
+        -ms-overflow-style: none;
+      }
+      .hscroll::-webkit-scrollbar { height: 0; display: none; }
+      .hscroll::-webkit-scrollbar-track,
+      .hscroll::-webkit-scrollbar-thumb,
+      .hscroll::-webkit-scrollbar-button { display: none; }
+
+      * { box-sizing: border-box; }
+      body { margin: 0; }
+
+      /* ========== Calculator Container ========== */
+      .calc-container {
+        width: 420px;
+        background: var(--brand-surface);
+        border-radius: 20px;
+        box-shadow: 0 12px 40px rgba(0,0,0,0.07), 0 2px 12px rgba(0,0,0,0.04);
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+
+      /* ========== Display Area (fixed height, stable layout) ========== */
+      .calc-display-area {
+        padding: 16px 24px 18px;
+        background: var(--brand-background);
+        flex-shrink: 0;
+        position: relative;
+      }
+
+      /* History - always reserve fixed height (oldest on top, newest at bottom) */
+      .calc-history {
+        height: 66px;       /* always reserve space for ~3 history items */
+        overflow-y: auto;
+        overflow-x: hidden;
+        text-align: right;
+        margin-bottom: 8px;
+        font-family: var(--brand-font);
+        font-variant-numeric: tabular-nums;
+        visibility: hidden; /* reserve space even when empty */
+      }
+      .calc-history.has-items {
+        visibility: visible;
+      }
+      .calc-history-item {
+        font-size: 13px;
+        line-height: 1.7;
+        font-weight: 400;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        text-align: right;
+        cursor: pointer;
+        padding: 1px 0;
+        border-radius: 4px;
+      }
+      .calc-history-item:hover {
+        background: rgba(79, 124, 255, 0.06);
+      }
+      .calc-history-item .expr { color: var(--brand-text-4); margin-right: 4px; }
+      .calc-history-item .res { color: var(--brand-text-3); font-weight: 500; }
+
+      @keyframes fadeIn {
+        from { opacity: 0; }
+        to { opacity: 1; }
+      }
+
+      /* ========== Text Rows (fixed heights for stable layout) ==========
+         Three rows share a fixed total area. Visual weight swaps between
+         input mode (expr=big) and result mode (result=big) but total
+         height never changes.
+      */
+      .calc-rows {
+        display: flex;
+        flex-direction: column;
+      }
+
+      /* Row base */
+      .calc-row {
+        text-align: right;
+        font-family: var(--brand-font);
+        font-variant-numeric: tabular-nums;
+        -webkit-font-smoothing: antialiased;
+        white-space: nowrap;
+        overflow: hidden;
+        direction: ltr;
+        display: block;
+      }
+
+      /* ---- Expression row (primary: shows expression OR answer) ---- */
+      .calc-expr {
+        color: var(--brand-text);
+        font-weight: 500;
+        line-height: 1;
+        height: 56px;       /* fixed: big number area, never changes */
+        font-size: 46px;
+        padding-top: 8px;
+      }
+
+      /* ---- Result row (secondary: shows preview OR finished expression) ---- */
+      .calc-result {
+        color: var(--brand-text-3);
+        font-weight: 400;
+        line-height: 28px;
+        height: 28px;       /* fixed: secondary row, never changes */
+        font-size: 22px;
+        margin-top: 2px;
+        text-overflow: ellipsis;
+      }
+      /* In result mode: result row shows the original expression in small gray */
+      .is-result .calc-result {
+        color: var(--brand-text-4);
+        font-weight: 400;
+        font-size: 15px;
+        line-height: 28px;
+      }
+
+      /* ---- Chinese amount row ---- */
+      .calc-chinese {
+        color: var(--brand-text-4);
+        font-weight: 400;
+        line-height: 22px;
+        height: 42px;       /* fixed: 22px content + 19px padding-bottom + 1px border */
+        font-size: 13px;
+        margin-top: 2px;
+        padding-bottom: 19px;
+        border-bottom: 1px solid var(--brand-border);
+        text-overflow: ellipsis;
+        box-sizing: border-box;
+      }
+      /* In result mode: chinese amount is more visible */
+      .is-result .calc-chinese {
+        color: var(--brand-text-2);
+        font-weight: 500;
+        font-size: 15px;
+        line-height: 22px;
+      }
+
+      /* ========== Buttons ========== */
+      .calc-buttons {
+        padding: 16px;
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 10px;
+      }
+
+      .calc-btn {
+        height: 60px;
+        border-radius: 14px;
+        border: none;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: var(--brand-font);
+        font-variant-numeric: tabular-nums;
+        -webkit-font-smoothing: antialiased;
+        cursor: pointer;
+        transition: transform 0.08s ease, background-color 0.12s ease, box-shadow 0.12s ease;
+        user-select: none;
+        outline: none;
+      }
+      .calc-btn:hover { filter: brightness(0.97); }
+      .calc-btn:active { transform: scale(0.94); }
+      .calc-btn:focus-visible { outline: 2px solid var(--brand-primary); outline-offset: 2px; }
+      .calc-btn-num {
+        background: #f7f8fa;
+        color: var(--brand-text);
+        font-size: 22px;
+        font-weight: 400;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+      }
+      .calc-btn-num:hover { background: #eef0f4; }
+      .calc-btn-func {
+        background: #f7f8fa;
+        color: var(--brand-primary);
+        font-size: 20px;
+        font-weight: 500;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+      }
+      .calc-btn-func:hover { background: var(--brand-primary-soft); }
+      .calc-btn-eq {
+        background: var(--brand-primary);
+        color: var(--brand-text-on-primary);
+        font-size: 26px;
+        font-weight: 500;
+        box-shadow: 0 4px 12px rgba(79, 124, 255, 0.3);
+      }
+      .calc-btn-eq:hover { background: var(--brand-primary-hover); filter: none; }
+      .calc-btn-eq:active { background: var(--brand-primary-active); }
+      .calc-btn-zero {
+        grid-column: span 2;
+        justify-content: flex-start;
+        padding-left: 26px;
+      }
+      .calc-btn svg { display: block; }
+    </style>
+</head>
+<body class="min-h-screen flex items-center justify-center">
+    <div class="calc-container" id="calculator">
+      <div class="calc-display-area" id="calc-display-area">
+        <div class="calc-history no-scrollbar" id="calc-history"></div>
+        <div class="calc-rows" id="calc-rows">
+          <div class="calc-row calc-expr" id="calc-expr">0</div>
+          <div class="calc-row calc-result" id="calc-result"></div>
+          <div class="calc-row calc-chinese" id="calc-chinese"></div>
+        </div>
+      </div>
+      <div class="calc-buttons" id="calc-buttons">
+        <button class="calc-btn calc-btn-func" data-action="clear">C</button>
+        <button class="calc-btn calc-btn-func" data-action="backspace" aria-label="退格">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 4H8l-7 8 7 8h13a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2z"></path>
+            <line x1="18" y1="9" x2="12" y2="15"></line>
+            <line x1="12" y1="9" x2="18" y2="15"></line>
+          </svg>
+        </button>
+        <button class="calc-btn calc-btn-func" data-action="percent">%</button>
+        <button class="calc-btn calc-btn-func" data-op="÷">÷</button>
+
+        <button class="calc-btn calc-btn-num" data-num="7">7</button>
+        <button class="calc-btn calc-btn-num" data-num="8">8</button>
+        <button class="calc-btn calc-btn-num" data-num="9">9</button>
+        <button class="calc-btn calc-btn-func" data-op="×">×</button>
+
+        <button class="calc-btn calc-btn-num" data-num="4">4</button>
+        <button class="calc-btn calc-btn-num" data-num="5">5</button>
+        <button class="calc-btn calc-btn-num" data-num="6">6</button>
+        <button class="calc-btn calc-btn-func" data-op="−">−</button>
+
+        <button class="calc-btn calc-btn-num" data-num="1">1</button>
+        <button class="calc-btn calc-btn-num" data-num="2">2</button>
+        <button class="calc-btn calc-btn-num" data-num="3">3</button>
+        <button class="calc-btn calc-btn-func" data-op="+">+</button>
+
+        <button class="calc-btn calc-btn-num calc-btn-zero" data-num="0">0</button>
+        <button class="calc-btn calc-btn-num" data-num=".">.</button>
+        <button class="calc-btn calc-btn-eq" data-action="equals">=</button>
+      </div>
+    </div>
+
+    <!-- Off-screen measurer for reliable font-size auto-fit -->
+    <div id="calc-measurer" style="position:fixed;top:-99999px;left:0;visibility:visible;white-space:nowrap;pointer-events:none;line-height:normal;display:block;"></div>
+
+    <script>
+    (function() {
+      'use strict';
+
+      // ========== Chinese Amount Conversion ==========
+      function toChineseAmount(amount) {
+        if (isNaN(amount) || !isFinite(amount)) return '';
+        if (Math.abs(amount) < 0.005) return '零元整';
+
+        const digits = '零壹贰叁肆伍陆柒捌玖';
+        const intUnits = ['', '拾', '佰', '仟'];
+        const bigUnits = ['', '万', '亿', '兆', '京'];
+
+        const negative = amount < 0;
+        const absAmount = Math.abs(amount);
+        const rounded = Math.round(absAmount * 100) / 100;
+        const integerPart = Math.floor(rounded);
+        const decimalPart = Math.round((rounded - integerPart) * 100);
+
+        if (integerPart >= 1e20) return '数值过大';
+
+        function sectionToChinese(sec) {
+          if (sec === 0) return '';
+          let str = '';
+          let zeroFlag = false;
+          let started = false;
+          for (let i = 3; i >= 0; i--) {
+            const d = Math.floor(sec / Math.pow(10, i)) % 10;
+            if (d === 0) {
+              zeroFlag = true;
+            } else {
+              if (zeroFlag && started) str += '零';
+              str += digits[d] + intUnits[i];
+              zeroFlag = false;
+              started = true;
+            }
+          }
+          return str;
+        }
+
+        function convertInteger(n) {
+          if (n === 0) return '零';
+          let result = '';
+          let bigUnitIdx = 0;
+          let needZero = false;
+          while (n > 0) {
+            const section = n % 10000;
+            const sectionStr = sectionToChinese(section);
+            if (sectionStr) {
+              if (needZero) result = '零' + result;
+              result = sectionStr + bigUnits[bigUnitIdx] + result;
+              needZero = section < 1000;
+            } else {
+              if (result.length > 0 && !result.startsWith('零')) needZero = true;
+            }
+            n = Math.floor(n / 10000);
+            bigUnitIdx++;
+          }
+          return result || '零';
+        }
+
+        let result = (negative ? '负' : '') + convertInteger(integerPart) + '元';
+        if (decimalPart === 0) {
+          result += '整';
+        } else {
+          const jiao = Math.floor(decimalPart / 10);
+          const fen = decimalPart % 10;
+          if (jiao > 0 && fen > 0) result += digits[jiao] + '角' + digits[fen] + '分';
+          else if (jiao > 0) result += digits[jiao] + '角整';
+          else result += '零' + digits[fen] + '分';
+        }
+        return result;
+      }
+
+      // ========== Number Formatting ==========
+      function numberToString(num) {
+        if (typeof num !== 'number' || isNaN(num)) return String(num);
+        if (!isFinite(num)) return num > 0 ? '∞' : '-∞';
+        if (num === 0) return '0';
+        const str = String(num);
+        if (str.indexOf('e') === -1 && str.indexOf('E') === -1) return str;
+        const match = str.match(/^(-?)(\d+(?:\.\d+)?)[eE]([+-]?\d+)$/);
+        if (!match) return str;
+        const sign = match[1];
+        const mantissa = match[2].replace('.', '');
+        const exponent = parseInt(match[3], 10);
+        const decimalPos = match[2].indexOf('.');
+        const totalDigits = mantissa.length;
+        let originalDecimalOffset = decimalPos === -1 ? totalDigits : decimalPos;
+        let newDecimalOffset = originalDecimalOffset + exponent;
+        let result;
+        if (newDecimalOffset <= 0) {
+          result = sign + '0.' + '0'.repeat(-newDecimalOffset) + mantissa;
+        } else if (newDecimalOffset >= totalDigits) {
+          result = sign + mantissa + '0'.repeat(newDecimalOffset - totalDigits);
+        } else {
+          result = sign + mantissa.slice(0, newDecimalOffset) + '.' + mantissa.slice(newDecimalOffset);
+        }
+        result = result.replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');
+        return result;
+      }
+
+      function formatNumber(numStr) {
+        if (!numStr) return numStr;
+        if (numStr.indexOf('e') === -1 && numStr.indexOf('E') === -1) {
+          const parts = numStr.split('.');
+          const intPart = parts[0];
+          let decPart = parts[1] || '';
+          if (decPart.length > 10) decPart = decPart.slice(0, 10).replace(/0+$/, '');
+          const sign = intPart.startsWith('-') ? '-' : '';
+          const intAbs = sign ? intPart.slice(1) : intPart;
+          const formattedInt = intAbs.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+          return sign + formattedInt + (decPart ? '.' + decPart : '');
+        }
+        const num = parseFloat(numStr);
+        if (!isFinite(num)) return numStr;
+        const fullStr = numberToString(num);
+        const digitsOnly = fullStr.replace(/[-.]/g, '');
+        if (digitsOnly.length > 30) {
+          const expStr = numStr.split(/[eE]/);
+          if (expStr.length === 2) {
+            const m = parseFloat(expStr[0]).toPrecision(10).replace(/\.?0+$/, '');
+            return m + 'e' + expStr[1];
+          }
+          return numStr;
+        }
+        return formatNumber(fullStr);
+      }
+
+      // ========== Calculator State ==========
+      let expression = '';      // current expression being typed
+      let lastExpr = '';        // the expression that was just evaluated (for display in result mode)
+      let lastResult = '';      // the result string
+      let history = [];         // array of {expr, result}, oldest first
+      let justEvaluated = false;
+
+      const exprEl = document.getElementById('calc-expr');
+      const resultEl = document.getElementById('calc-result');
+      const chineseEl = document.getElementById('calc-chinese');
+      const historyEl = document.getElementById('calc-history');
+      const displayArea = document.getElementById('calc-display-area');
+      const rowsEl = document.getElementById('calc-rows');
+
+      // Font bounds per row (row heights are fixed in CSS, fonts auto-fit within them)
+      const EXPR_MAX = 46, EXPR_MIN = 10;    // primary row: big number (expr or answer)
+      const RES_MAX = 22, RES_MIN = 10;     // secondary row: preview or "expr ="
+      const RES_SMALL_MAX = 15;             // secondary row in result mode shows small "expr ="
+      const CHN_MAX = 13, CHN_MIN = 10;     // chinese: small in input mode
+      const CHN_BOLD_MAX = 15;              // chinese: slightly bolder in result mode
+
+      // ========== Off-screen Measurer ==========
+      const _measurer = document.getElementById('calc-measurer');
+
+      function syncMeasurerStyles(el) {
+        const cs = window.getComputedStyle(el);
+        _measurer.style.fontFamily = cs.fontFamily;
+        _measurer.style.fontWeight = cs.fontWeight;
+        _measurer.style.fontStyle = cs.fontStyle;
+        _measurer.style.fontVariantNumeric = cs.fontVariantNumeric || 'normal';
+        _measurer.style.letterSpacing = cs.letterSpacing || 'normal';
+        _measurer.style.fontKerning = cs.fontKerning || 'auto';
+        _measurer.style.fontFeatureSettings = cs.fontFeatureSettings || 'normal';
+        _measurer.style.lineHeight = 'normal';
+      }
+
+      function getAvailWidth(el) {
+        // The rows container constrains width (same as display-area padding)
+        const parent = rowsEl;
+        return parent.clientWidth - 6;
+      }
+
+      function fitFontSize(el, text, maxFont, minFont, allowScroll) {
+        if (!text || text.length === 0) {
+          el.style.fontSize = '';
+          el.classList.remove('hscroll');
+          el.style.overflowX = '';
+          el.scrollLeft = 0;
+          return;
+        }
+        syncMeasurerStyles(el);
+        const availW = getAvailWidth(el);
+        if (availW <= 0) return;
+
+        let lo = minFont, hi = maxFont, best = minFont;
+        while (lo <= hi) {
+          const mid = (lo + hi) >> 1;
+          _measurer.style.fontSize = mid + 'px';
+          _measurer.textContent = text;
+          if (_measurer.scrollWidth <= availW) { best = mid; lo = mid + 1; }
+          else { hi = mid - 1; }
+        }
+        el.style.fontSize = best + 'px';
+
+        // Overflow fallback for expression only
+        _measurer.style.fontSize = minFont + 'px';
+        _measurer.textContent = text;
+        const overflows = _measurer.scrollWidth > availW;
+        if (allowScroll && overflows && best === minFont) {
+          el.style.overflowX = 'auto';
+          el.style.overflowY = 'hidden';
+          el.classList.add('hscroll');
+          requestAnimationFrame(function() { requestAnimationFrame(function() { el.scrollLeft = el.scrollWidth; }); });
+        } else {
+          el.classList.remove('hscroll');
+          el.style.overflowX = '';
+          el.style.overflowY = '';
+          el.scrollLeft = 0;
+        }
+      }
+
+      function evaluateExpression(expr) {
+        if (!expr) return 0;
+        try {
+          let sanitized = expr.replace(/×/g, '*').replace(/÷/g, '/').replace(/−/g, '-');
+          sanitized = sanitized.replace(/[+\-*/]$/, '');
+          if (!sanitized) return 0;
+          const result = Function('"use strict"; return (' + sanitized + ')')();
+          if (!isFinite(result)) return NaN;
+          const decimals = sanitized.split(/[+\-*/()]/).map(n => (n.split('.')[1] || '').length);
+          const maxDec = Math.max(0, ...decimals);
+          const factor = Math.pow(10, Math.min(maxDec, 10));
+          return Math.round(result * factor) / factor;
+        } catch(e) { return NaN; }
+      }
+
+      function getCurrentNumber() {
+        const match = expression.match(/[^+\-×÷−]*$/);
+        return match ? match[0] : '';
+      }
+
+      function setMode(isResult) {
+        if (isResult) displayArea.classList.add('is-result');
+        else displayArea.classList.remove('is-result');
+      }
+
+      // ========== Actions ==========
+      function inputNumber(num) {
+        if (justEvaluated) {
+          expression = '';
+          lastExpr = '';
+          lastResult = '';
+          justEvaluated = false;
+          setMode(false);
+        }
+        const currentNum = getCurrentNumber();
+        if (currentNum === '0' && num !== '.') {
+          expression = expression.slice(0, -1) + num;
+        } else {
+          expression += num;
+        }
+        render();
+      }
+
+      function inputDecimal() {
+        if (justEvaluated) {
+          expression = '0';
+          lastExpr = '';
+          lastResult = '';
+          justEvaluated = false;
+          setMode(false);
+        }
+        const currentNum = getCurrentNumber();
+        if (currentNum === '') expression += '0.';
+        else if (!currentNum.includes('.')) expression += '.';
+        render();
+      }
+
+      function inputOperator(op) {
+        if (justEvaluated) {
+          // Continue from the previous result
+          expression = lastResult || expression;
+          justEvaluated = false;
+          setMode(false);
+        }
+        if (expression === '' && op !== '−') return;
+        if (/[+\-×÷−]$/.test(expression)) {
+          expression = expression.slice(0, -1) + op;
+        } else {
+          expression += op;
+        }
+        render();
+      }
+
+      function inputPercent() {
+        if (expression === '') return;
+        const currentNum = getCurrentNumber();
+        if (currentNum === '' || currentNum === '-' || currentNum === '−') return;
+        const num = parseFloat(currentNum.replace(/−/g, '-'));
+        if (!isNaN(num)) {
+          const res = num / 100;
+          const resStr = String(res);
+          const lastOpIdx = Math.max(
+            expression.lastIndexOf('+'), expression.lastIndexOf('-'),
+            expression.lastIndexOf('×'), expression.lastIndexOf('÷'), expression.lastIndexOf('−')
+          );
+          if (lastOpIdx === -1) expression = resStr;
+          else expression = expression.slice(0, lastOpIdx + 1) + resStr;
+          if (justEvaluated) { justEvaluated = false; setMode(false); }
+          render();
+        }
+      }
+
+      function backspace() {
+        if (justEvaluated) { clearAll(); return; }
+        expression = expression.slice(0, -1);
+        render();
+      }
+
+      function clearAll() {
+        expression = '';
+        lastExpr = '';
+        lastResult = '';
+        history = [];
+        justEvaluated = false;
+        setMode(false);
+        render();
+      }
+
+      function calculate() {
+        if (expression === '') return;
+        // Strip trailing operator before evaluating
+        let evalExpr = expression.replace(/[+\-×÷−]$/, '');
+        if (!evalExpr) return;
+        const result = evaluateExpression(evalExpr);
+        if (isNaN(result)) {
+          expression = 'Error';
+          justEvaluated = true;
+          setMode(false);
+          render();
+          return;
+        }
+        const resultStr = numberToString(result);
+        // Save to history (oldest first, newest last)
+        history.push({ expr: evalExpr + '=', result: resultStr });
+        if (history.length > 10) history.shift();
+        // Save for result-mode display
+        lastExpr = evalExpr + ' =';
+        lastResult = resultStr;
+        expression = resultStr;
+        justEvaluated = true;
+        setMode(true);
+        render();
+      }
+
+      function reuseHistory(index) {
+        const item = history[index];
+        if (!item) return;
+        // Clicking a history item shows that result as the current answer
+        // (same state as if we just calculated it)
+        lastResult = item.result;
+        lastExpr = item.expr;  // already has trailing "="
+        expression = item.result;
+        justEvaluated = true;
+        setMode(true);
+        render();
+      }
+
+      // ========== Render ==========
+      function render() {
+        const isError = expression === 'Error';
+
+        let exprText, resultText, chineseText;
+
+        if (justEvaluated && !isError && lastExpr) {
+          // Result mode (after pressing =):
+          // - Primary row (big): shows the answer number
+          // - Secondary row (small gray): shows "expr =" e.g. "56-6 ="
+          // - Chinese row: shows the amount (slightly bolder)
+          exprText = formatNumber(lastResult);
+          resultText = lastExpr;
+          const resultNum = parseFloat(lastResult);
+          chineseText = (isFinite(resultNum) && Math.abs(resultNum) < 1e20) ? toChineseAmount(resultNum) : '';
+        } else {
+          // Input mode (typing):
+          // - Primary row (big): shows what user is typing
+          // - Secondary row (small): shows live preview "= result"
+          // - Chinese row: shows live chinese amount
+          exprText = expression || '0';
+
+          // Show preview if expression contains an operator (even if it ends with one,
+          // e.g. "50-" shows "= 50" as the running value)
+          let showLive = false;
+          let liveResult = null;
+          if (!isError && expression && expression !== '0') {
+            // Evaluate the expression (trailing operators are stripped by evaluateExpression)
+            const val = evaluateExpression(expression);
+            if (!isNaN(val) && /[+\-×÷−]/.test(expression)) {
+              // Only show preview if there's actually an operator typed
+              // (a lone number with no operator doesn't need a preview)
+              showLive = true;
+              liveResult = val;
+            }
+          }
+
+          resultText = showLive ? '= ' + formatNumber(numberToString(liveResult)) : '';
+          chineseText = (showLive && isFinite(liveResult) && Math.abs(liveResult) < 1e20) ? toChineseAmount(liveResult) : '';
+
+          if (isError) {
+            exprText = 'Error';
+            resultText = '';
+            chineseText = '';
+          }
+        }
+
+        // History - oldest on top, newest at bottom
+        historyEl.innerHTML = history.map((h, i) =>
+          '<div class="calc-history-item" data-idx="' + i + '"><span class="expr">' + h.expr + '</span><span class="res">' + formatNumber(h.result) + '</span></div>'
+        ).join('');
+        if (history.length > 0) {
+          historyEl.classList.add('has-items');
+          requestAnimationFrame(function() { historyEl.scrollTop = historyEl.scrollHeight; });
+        } else {
+          historyEl.classList.remove('has-items');
+        }
+
+        // Set text content
+        exprEl.textContent = exprText;
+        resultEl.textContent = resultText;
+        chineseEl.textContent = chineseText;
+
+        // Auto-fit font sizes within fixed row heights
+        const inResultMode = displayArea.classList.contains('is-result');
+        if (inResultMode) {
+          fitFontSize(exprEl, exprText, EXPR_MAX, EXPR_MIN, true);        // big answer
+          fitFontSize(resultEl, resultText, RES_SMALL_MAX, RES_MIN, false); // small "expr ="
+          fitFontSize(chineseEl, chineseText, CHN_BOLD_MAX, CHN_MIN, false);
+        } else {
+          fitFontSize(exprEl, exprText, EXPR_MAX, EXPR_MIN, true);        // big expression
+          fitFontSize(resultEl, resultText, RES_MAX, RES_MIN, false);     // preview
+          fitFontSize(chineseEl, chineseText, CHN_MAX, CHN_MIN, false);
+        }
+      }
+
+      // ========== Events ==========
+      document.getElementById('calc-buttons').addEventListener('click', function(e) {
+        const btn = e.target.closest('button');
+        if (!btn) return;
+        if (btn.dataset.num !== undefined) {
+          if (btn.dataset.num === '.') inputDecimal();
+          else inputNumber(btn.dataset.num);
+        } else if (btn.dataset.op) {
+          inputOperator(btn.dataset.op);
+        } else if (btn.dataset.action) {
+          switch(btn.dataset.action) {
+            case 'clear': clearAll(); break;
+            case 'backspace': backspace(); break;
+            case 'percent': inputPercent(); break;
+            case 'equals': calculate(); break;
+          }
+        }
+      });
+
+      historyEl.addEventListener('click', function(e) {
+        const item = e.target.closest('.calc-history-item');
+        if (!item) return;
+        const idx = parseInt(item.dataset.idx, 10);
+        if (!isNaN(idx)) reuseHistory(idx);
+      });
+
+      document.addEventListener('keydown', function(e) {
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+        const key = e.key;
+        if (key >= '0' && key <= '9') { e.preventDefault(); inputNumber(key); }
+        else if (key === '.') { e.preventDefault(); inputDecimal(); }
+        else if (key === '+') { e.preventDefault(); inputOperator('+'); }
+        else if (key === '-') { e.preventDefault(); inputOperator('−'); }
+        else if (key === '*') { e.preventDefault(); inputOperator('×'); }
+        else if (key === '/') { e.preventDefault(); inputOperator('÷'); }
+        else if (key === 'Enter' || key === '=') { e.preventDefault(); calculate(); }
+        else if (key === 'Backspace') { e.preventDefault(); backspace(); }
+        else if (key === 'Escape' || key === 'Delete') { e.preventDefault(); clearAll(); }
+        else if (key === '%') { e.preventDefault(); inputPercent(); }
+      });
+
+      window.addEventListener('resize', function() { render(); });
+
+      window.calcApi = {
+        num: inputNumber, decimal: inputDecimal, op: inputOperator,
+        percent: inputPercent, backspace: backspace, clear: clearAll,
+        equals: calculate, toChineseAmount: toChineseAmount
+      };
+
+      if (document.fonts && document.fonts.ready) {
+        document.fonts.ready.then(function() { render(); });
+      } else {
+        render();
+      }
+    })();
+    </script>
+</body>
+</html>

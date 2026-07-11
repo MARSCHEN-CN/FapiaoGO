@@ -230,8 +230,8 @@ function createSettingsWindow() {
     modal: false,
     resizable: true,
     minimizable: true,
-    minWidth: 850,
-    minHeight: 850,
+    minWidth: 750,
+    minHeight: 600,
     show: false,
     frame: false,
     webPreferences: {
@@ -674,8 +674,8 @@ ipcMain.handle('resize-settings-window', async (event, { width, height }) => {
       const newWidth = width || currentWidth
       const newHeight = height || currentHeight
 
-      const finalWidth = Math.max(newWidth, 850)
-      const finalHeight = Math.max(newHeight, 850)
+      const finalWidth = Math.max(newWidth, 750)
+      const finalHeight = Math.max(newHeight, 600)
 
       settingsWindow.setSize(finalWidth, finalHeight)
       return { success: true }

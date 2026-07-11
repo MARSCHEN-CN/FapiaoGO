@@ -1,0 +1,40 @@
+/* ================================================================
+   colors_and_type.css — Calculator Brand CSS
+   Brand primary: #4f7cff (blue)
+   ================================================================ */
+
+:root {
+  /* Brand primary - single hue only */
+  --brand-primary: #4f7cff;
+  --brand-primary-hover: #3d6af5;
+  --brand-primary-active: #3a58d6;
+  --brand-primary-soft: rgba(79, 124, 255, 0.10);
+
+  /* Backgrounds */
+  --brand-background: #f5f6f8;
+  --brand-surface: #ffffff;
+  --brand-foreground: #1a1a1a;
+
+  /* Text - neutral scale only, no secondary/accent hues */
+  --brand-text: #1a1a1a;
+  --brand-text-2: #555555;
+  --brand-text-3: #888888;
+  --brand-text-4: #b0b0b0;
+  --brand-text-on-primary: #ffffff;
+
+  /* Borders - subtle */
+  --brand-border: rgba(0, 0, 0, 0.06);
+
+  /* Radius - restrained scale */
+  --brand-r-sm: 8px;
+  --brand-r-md: 12px;
+  --brand-r-lg: 16px;
+  --brand-r-full: 9999px;
+
+  /* Shadows - alpha <= 0.05 for static surfaces */
+  --brand-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --brand-shadow-md: 0 2px 8px rgba(0, 0, 0, 0.04);
+
+  /* Font */
+  --brand-font: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+}

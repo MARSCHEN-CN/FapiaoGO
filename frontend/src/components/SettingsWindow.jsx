@@ -114,24 +114,28 @@ export default function SettingsWindow({ settings, saveSettings, printers, elect
     if (!contentRef.current || !electronAPI) return
 
     const width = getWindowWidth()
-    const height = getWindowHeight()
+    const innerContainer = contentRef.current.firstElementChild
+    const contentHeight = innerContainer ? innerContainer.scrollHeight : contentRef.current.scrollHeight
+    const titlebarHeight = 40
+    const padding = 30
+    const calculatedHeight = contentHeight + titlebarHeight + padding
     
     if (activeTab === 'printer') {
       electronAPI.ipcRenderer.invoke('resize-settings-window', {
         width,
-        height
+        height: calculatedHeight
       }).catch(err => {
         console.warn('[SettingsWindow] 调整窗口大小失败:', err)
       })
     } else if (activeTab === 'pack') {
       electronAPI.ipcRenderer.invoke('resize-settings-window', {
         width,
-        height
+        height: calculatedHeight
       }).catch(err => {
         console.warn('[SettingsWindow] 调整窗口大小失败:', err)
       })
     }
-  }, [electronAPI, activeTab, getWindowWidth, getWindowHeight])
+  }, [electronAPI, activeTab, getWindowWidth])
 
   // 当标签切换时调整窗口大小
   useEffect(() => {
@@ -204,12 +208,12 @@ export default function SettingsWindow({ settings, saveSettings, printers, elect
           }}>
             {/* 打印机标签内容 */}
             <div className="printer-settings" style={{
-              position: activeTab === 'printer' ? 'relative' : 'absolute',
-              opacity: activeTab === 'printer' ? 1 : 0,
-              transform: activeTab === 'printer' ? 'translateX(0) translateY(0)' : 'translateX(8px) translateY(4px)',
-              transition: 'opacity 0.25s ease, transform 0.25s ease',
-              pointerEvents: activeTab === 'printer' ? 'auto' : 'none',
-            }}>
+            display: activeTab === 'printer' ? 'flex' : 'none',
+            opacity: activeTab === 'printer' ? 1 : 0,
+            transform: activeTab === 'printer' ? 'translateX(0) translateY(0)' : 'translateX(8px) translateY(4px)',
+            transition: 'opacity 0.25s ease, transform 0.25s ease',
+            pointerEvents: activeTab === 'printer' ? 'auto' : 'none',
+          }}>
               {/* 打印机选择卡片 */}
               <div className="printer-card">
                 <div className="printer-card-header">
@@ -537,7 +541,7 @@ export default function SettingsWindow({ settings, saveSettings, printers, elect
             </div>
             {/* 重命名标签内容 */}
             <div style={{
-              position: activeTab === 'rename' ? 'relative' : 'absolute',
+              display: activeTab === 'rename' ? 'block' : 'none',
               opacity: activeTab === 'rename' ? 1 : 0,
               transform: activeTab === 'rename' ? 'translateX(0) translateY(0)' : 'translateX(8px) translateY(4px)',
               transition: 'opacity 0.25s ease, transform 0.25s ease',
@@ -554,7 +558,7 @@ export default function SettingsWindow({ settings, saveSettings, printers, elect
 
             {/* ========== 打包设置 ========== */}
             <div style={{
-              position: activeTab === 'pack' ? 'relative' : 'absolute',
+              display: activeTab === 'pack' ? 'block' : 'none',
               opacity: activeTab === 'pack' ? 1 : 0,
               transform: activeTab === 'pack' ? 'translateX(0) translateY(0)' : 'translateX(8px) translateY(4px)',
               transition: 'opacity 0.25s ease, transform 0.25s ease',
