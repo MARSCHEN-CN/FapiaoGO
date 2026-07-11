@@ -215,6 +215,63 @@ function validatePdfStructure(pdfPath) {
 }
 
 /**
+ * 异步版 validatePdfStructure —— 用 fs.promises 读取，避免在主线程同步读取整个 PDF。
+ * 用于 print-merged-images 等需并行校验多文件的场景，不阻塞事件循环。
+ *
+ * @param {string} pdfPath - path to the PDF file
+ * @returns {Promise<{ valid: boolean, issues: string[] }>}
+ */
+async function validatePdfStructureAsync(pdfPath) {
+  const issues = []
+
+  // 1. File existence and minimum size
+  const stat = await fs.promises.stat(pdfPath)
+  if (stat.size < 1024) {
+    issues.push(`PDF too small: ${stat.size} bytes (min 1KB)`)
+  }
+
+  // 2. PDF header signature
+  const header = await fs.promises.readFile(pdfPath, { encoding: 'latin1', length: 8 })
+  if (!header.startsWith('%PDF-')) {
+    issues.push(`Missing PDF header signature: "${header.slice(0, 8)}"`)
+  }
+
+  // 3. xref table and startxref integrity
+  const content = await fs.promises.readFile(pdfPath, 'latin1')
+  const startxrefMatch = content.match(/startxref\s*(\d+)/)
+  if (!startxrefMatch) {
+    issues.push('Missing startxref pointer')
+  } else {
+    const declaredOffset = parseInt(startxrefMatch[1], 10)
+    const xrefHeaderMatch = content.match(/\n?xref\n\d+ \d+\n/)
+    const actualOffset = xrefHeaderMatch ? xrefHeaderMatch.index + (content[xrefHeaderMatch.index] === '\n' ? 1 : 0) : -1
+    if (actualOffset === -1) {
+      issues.push('Missing xref table header')
+    } else if (Math.abs(declaredOffset - actualOffset) > 5) {
+      console.warn(`[PDF_VALIDATION] startxref hint mismatch: declared=${declaredOffset}, near=${actualOffset} (non-critical)`)
+    }
+  }
+
+  // 4. %%EOF marker
+  if (!content.trimEnd().endsWith('%%EOF')) {
+    issues.push('Missing or misplaced %%EOF marker')
+  }
+
+  // 5. MediaBox presence
+  if (!content.includes('/MediaBox')) {
+    issues.push('Missing /MediaBox entry')
+  }
+
+  if (issues.length > 0) {
+    console.error(`[PDF_VALIDATION] FAILED for ${pdfPath}:`, issues)
+  } else {
+    console.log(`[PDF_VALIDATION] PASSED for ${pdfPath}: ${stat.size} bytes, MediaBox OK, xref OK`)
+  }
+
+  return { valid: issues.length === 0, issues }
+}
+
+/**
  * Generate a PDF from canvas PNG data and write to temp file.
  * Validates the output PDF structure before returning.
  *
@@ -247,4 +304,4 @@ function generatePdfFromCanvas({ pngBuffer, widthMM, heightMM, prefix }) {
   return { pdfPath, size }
 }
 
-module.exports = { pngToPdf, generatePdfFromCanvas, validatePdfStructure }
+module.exports = { pngToPdf, generatePdfFromCanvas, validatePdfStructure, validatePdfStructureAsync }

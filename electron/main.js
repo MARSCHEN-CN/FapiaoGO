@@ -387,7 +387,7 @@ ipcMain.handle('print-file-direct', async (_event, { filePath, settings }) => {
 })
 
 // ── Canvas → PDF 生成 ──
-const { generatePdfFromCanvas, pngToPdf, validatePdfStructure } = require('./print-service/pdf-generator')
+const { generatePdfFromCanvas, pngToPdf, validatePdfStructure, validatePdfStructureAsync } = require('./print-service/pdf-generator')
 const { PaperRegistryProvider } = require('./shared/PaperRegistryProvider')
 
 ipcMain.handle('generate-print-pdf', async (_event, { canvasBuffer, paperSize, orientation, customPaper }) => {
@@ -570,13 +570,17 @@ ipcMain.handle('print-merged-images', async (_event, { images, settings }) => {
   // 创建临时目录
   const tempDir = path.join(os.tmpdir(), 'electron_merge_' + Date.now())
   const filePaths = []
+  // 诊断校验的 Promise 集合：在 finally 清理临时文件前必须 await，避免文件已删导致 stat 失败
+  let validationPromises = []
 
   try {
     fs.mkdirSync(tempDir, { recursive: true })
 
-    // 1. 写入临时 PNG 文件
-    for (let i = 0; i < images.length; i++) {
-      const buf = toImageBuffer(images[i])
+    // 1. 并行写入临时 PNG 文件（异步 I/O，避免主线程同步阻塞）
+    //    PNG 魔数校验在写入前于内存中完成；异步写入失败会以 reject 暴露，等价于原同步写入的异常路径。
+    //    原每文件 fs.statSync 仅用于日志，已移除——writeFile 成功即保证磁盘内容==buf。
+    const writeTasks = images.map(async (img, i) => {
+      const buf = toImageBuffer(img)
 
       // ✅ PNG 完整性校验：前 8 字节必须是 PNG 魔数
       const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
@@ -586,16 +590,23 @@ ipcMain.handle('print-merged-images', async (_event, { images, settings }) => {
       }
 
       const filePath = path.join(tempDir, `page_${i + 1}.png`)
-      fs.writeFileSync(filePath, buf)
-      // ✅ 验证实际写入的文件大小
-      const actualSize = fs.statSync(filePath).size
-      filePaths.push(filePath)
+      await fs.promises.writeFile(filePath, buf)
+      return {
+        filePath,
+        size: buf.length,
+        rawType: Object.prototype.toString.call(img),
+        rawLen: img?.length,
+        header: buf.subarray(0, 8).toString('hex'),
+      }
+    })
 
-      console.log('[print-merged-images] PNG %d: buf=%d bytes, file=%d bytes, rawType=%s, rawLen=%d, header=%s',
-        i + 1, buf.length, actualSize,
-        Object.prototype.toString.call(images[i]), images[i]?.length,
-        buf.subarray(0, 8).toString('hex'))
-    }
+    const written = await Promise.all(writeTasks)
+    for (const w of written) filePaths.push(w.filePath)
+
+    written.forEach((w, i) => {
+      console.log('[print-merged-images] PNG %d: buf=%d bytes, rawType=%s, rawLen=%d, header=%s',
+        i + 1, w.size, w.rawType, w.rawLen, w.header)
+    })
     console.log('[print-merged-images] 已写入 %d 个 PNG 到 %s', filePaths.length, tempDir)
 
     // 2. ✅ 批量 PNG → PDF 转换（一次 Python 进程处理全部，节省 spawn 开销）
@@ -617,15 +628,21 @@ ipcMain.handle('print-merged-images', async (_event, { images, settings }) => {
       if (result && !result.success) {
         console.warn(`[print-merged-images] PNG ${i + 1} 转换警告:`, result.error)
       }
-
-      const validation = validatePdfStructure(pdfPaths[i])
-      if (!validation.valid) {
-        console.warn(`[print-merged-images] PDF ${i + 1} validation issues:`, validation.issues)
-      }
-
-      const mediaBox = extractMediaBox(pdfPaths[i])
-      console.log(`[print-merged-images] PNG ${i + 1} → PDF: ${pdfPaths[i]}, MediaBox=${JSON.stringify(mediaBox)}`)
     }
+
+    // 3. 并行、异步地做 PDF 结构校验与 MediaBox 提取（诊断日志，不阻塞打印管线）
+    //    校验仅产生告警/日志，不影响控制流；用异步 I/O 避免主线程同步读取整个 PDF。
+    //    收集为 Promise，在 finally 清理临时文件前 await，确保日志完整且文件尚在。
+    validationPromises = pdfPaths.map((p, i) =>
+      (async () => {
+        const validation = await validatePdfStructureAsync(p)
+        if (!validation.valid) {
+          console.warn(`[print-merged-images] PDF ${i + 1} validation issues:`, validation.issues)
+        }
+        const mediaBox = extractMediaBox(p)
+        console.log(`[print-merged-images] PNG ${i + 1} → PDF: ${p}, MediaBox=${JSON.stringify(mediaBox)}`)
+      })()
+    )
 
     // 4. 走 DirectPrintHandler 打印每个 PDF（与非合并模式相同的管线）
     //    复用其 SumatraPDF 参数构建、spawn、超时、清理逻辑
@@ -643,6 +660,8 @@ ipcMain.handle('print-merged-images', async (_event, { images, settings }) => {
     console.error('[print-merged-images] 失败:', error.message)
     return { success: false, error: error.message }
   } finally {
+    // 等诊断校验完成再删临时文件（避免文件已删导致 stat 失败、日志丢失）
+    try { await Promise.allSettled(validationPromises) } catch (e) { /* 忽略 */ }
     // 6. 清理临时文件（PNG + PDF 都在 tempDir 内）
     try { fs.rmSync(tempDir, { recursive: true, force: true }) } catch (e) { /* 忽略 */ }
   }
