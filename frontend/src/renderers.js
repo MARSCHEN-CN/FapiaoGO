@@ -624,13 +624,13 @@ function _getPoolCanvas(w, h) {
   const pool = _canvasPool.get(key)
   if (pool && pool.length > 0) {
     const c = pool.pop()
-    console.log(`[Canvas] Got canvas from pool, key=${key}, remaining: ${pool.length}`)
+    console.debug(`[Canvas] Got canvas from pool, key=${key}, remaining: ${pool.length}`)
     // 清空内容（尺寸不变，不需要重新设置 width/height）
     const ctx = c.getContext('2d')
     ctx.clearRect(0, 0, c.width, c.height)
     return c
   }
-  console.log(`[Canvas] Pool miss, creating new canvas, key=${key} (requested ${Math.round(w)}x${Math.round(h)})`)
+  console.debug(`[Canvas] Pool miss, creating new canvas, key=${key} (requested ${Math.round(w)}x${Math.round(h)})`)
   const c = document.createElement('canvas')
   c.width = nw
   c.height = nh
@@ -649,9 +649,9 @@ function _returnPoolCanvas(canvas) {
     //    下次 getContext('2d') 时创建全新上下文
     canvas.width = canvas.width
     pool.push(canvas)
-    console.log(`[Canvas] Returned canvas to pool, key=${key}, pool size: ${pool.length}`)
+    console.debug(`[Canvas] Returned canvas to pool, key=${key}, pool size: ${pool.length}`)
   } else {
-    console.log(`[Canvas] Pool full, dropping canvas, key=${key}, pool size: ${pool.length}`)
+    console.debug(`[Canvas] Pool full, dropping canvas, key=${key}, pool size: ${pool.length}`)
   }
 }
 
@@ -670,6 +670,7 @@ function _dispatchWorkerMessage(e) {
   }
 
   _pendingRequests.delete(id)
+  if (handler.timer) clearTimeout(handler.timer)  // 正常返回，撤销超时定时器
 
   if (type === 'error') {
     handler.reject(new Error(error))
@@ -839,7 +840,25 @@ async function _renderViaWorker(items, paperKey, dpi, isLandscape, rotations, sl
   const transferables = imageBitmaps.filter(Boolean)
 
   return new Promise((resolve, reject) => {
-    _pendingRequests.set(id, { resolve, reject, version, cacheKey: _cacheKey })
+    const timer = setTimeout(() => {
+      const h = _pendingRequests.get(id)
+      if (!h) return
+      _pendingRequests.delete(id)
+      imageBitmaps.forEach(b => b?.close())
+      reject(new Error('Worker 合成超时（已终止并重建 Worker）'))
+      // Worker 是单例且同步执行合成，自身无法中断正在进行的操作，也无法在 hang 期间
+      // 处理 cancel 消息。超时即 terminate 释放被卡死的 CPU，并置空单例使下次调用惰性重建。
+      // 仅当本请求持有的 worker 仍是当前活动单例时才终止——避免重复 terminate，
+      // 也避免误杀已被其他超时/重建路径替换的新 worker（否则会再次卡死其它在途请求）。
+      if (_renderWorker === worker) {
+        try { _renderWorker.terminate() } catch (e) { /* 已终止 */ }
+        _renderWorker = null
+        _workerReady = null
+      }
+    }, 30000)
+
+    // 把 timer 存入 pending，正常返回路径（_dispatchWorkerMessage）据此清除，避免悬挂定时器
+    _pendingRequests.set(id, { resolve, reject, version, cacheKey: _cacheKey, timer })
 
     worker.postMessage({
       sources: imageBitmaps,
@@ -850,16 +869,6 @@ async function _renderViaWorker(items, paperKey, dpi, isLandscape, rotations, sl
       id,
       version,
     }, transferables)
-
-    // 超时保护（30s）：过期时清理 bitmaps
-    setTimeout(() => {
-      const h = _pendingRequests.get(id)
-      if (h) {
-        _pendingRequests.delete(id)
-        imageBitmaps.forEach(b => b?.close())
-        reject(new Error('Worker 合成超时'))
-      }
-    }, 30000)
   })
 }
 
