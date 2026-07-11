@@ -12,3 +12,4 @@ scikit-learn
 pikepdf
 img2pdf
 orjson
+readerwriterlock

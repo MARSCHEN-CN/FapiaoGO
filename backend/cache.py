@@ -33,6 +33,7 @@ import tempfile
 import shutil
 import threading
 import logging
+from collections import OrderedDict
 from datetime import timedelta
 from time_utils import now, from_isoformat, to_timestamp
 from typing import Any, Dict, Optional
@@ -175,8 +176,13 @@ class CacheManager:
 
         self._lock = threading.Lock()
         self._counter_lock = threading.Lock()  # 专用锁：保护 _hit_counters 的 RMW 操作
-        # 内存中的命中计数器（避免每次 get 都写文件）
-        self._hit_counters: Dict[str, int] = {}
+        # 内存中的命中计数器（避免每次 get 都写文件）。
+        # 用 OrderedDict 实现 LRU：超出容量上限时淘汰最久未访问的条目，
+        # 防止长期运行处理大量不同文件时本 dict 无界增长造成内存泄漏。
+        self._hit_counters: "OrderedDict[str, int]" = OrderedDict()
+        # LRU 容量上限：至少为 max_files 的若干倍（覆盖并发命名空间下的活跃 key），
+        # 同时用绝对值封顶，避免 max_files 配置过大时本结构本身占用过高。
+        self._hit_counter_max = min(50000, max(2000, self.max_files * 4))
         self._stats_cache: Dict[str, Dict] = {}
 
         # ✅ 惰性清理：每 N 次写入才做一次目录遍历
@@ -288,11 +294,16 @@ class CacheManager:
             if not isinstance(data, dict):
                 return None
 
-        # 更新内存命中计数器（加锁保护 RMW 操作）
+        # 更新内存命中计数器（加锁保护 RMW 操作，并维护 LRU 顺序）
         counter_key = f"{namespace}:{key}"
         with self._counter_lock:
-            self._hit_counters[counter_key] = self._hit_counters.get(counter_key, 0) + 1
-            hits = self._hit_counters[counter_key]
+            c = self._hit_counters
+            c[counter_key] = c.get(counter_key, 0) + 1
+            c.move_to_end(counter_key)  # 最近访问移到末尾
+            # 超出容量上限时淘汰最久未访问（队首）条目，限制内存增长
+            if len(c) > self._hit_counter_max:
+                c.popitem(last=False)
+            hits = c[counter_key]
 
         # 每 10 次命中刷盘一次（更新 accessed_at 和 hit_count）
         if hits % 10 == 0 and meta:

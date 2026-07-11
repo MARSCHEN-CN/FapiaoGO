@@ -19,7 +19,7 @@ oplog，保证数据不丢失。
   3. 用户主目录 ~/.marsprint/（最终兜底）
 
 并发控制：
-  - 使用 threading.Lock 保证线程安全
+  - 使用读写锁（readerwriterlock.RWLockFair）保证线程安全：读路径共享锁、写路径排他锁
   - 使用原子写入（写临时文件再 rename）防止数据损坏
   - 懒加载模式减少启动时间
   - 返回数据时做深拷贝，防止外部修改内部状态
@@ -40,6 +40,7 @@ from pathlib import Path
 from typing import Optional, Dict, List, Any
 import threading
 import logging
+from readerwriterlock import rwlock
 
 logger = logging.getLogger(__name__)
 
@@ -122,8 +123,18 @@ _invoice_index_by_filename: Dict[str, int] = {}  # file_name (lowercase) → lis
 _invoice_index_by_number: Dict[str, List[int]] = {}  # number → [list_index, ...]（一对多）
 
 # 分离读写锁：读操作使用共享锁，写操作使用排他锁
-# 注意：threading 模块没有 RLock 的读写锁，使用普通锁保证简单性和安全性
-_lock = threading.Lock()
+# 读写锁：读者获取共享锁（可并发），写者获取排他锁。
+# 替换原 threading.Lock()，使 search_invoices 等读路径与写路径不再竞态
+# （并发写 _invoices / 索引时，无锁读会导致 RuntimeError: dictionary changed
+#  size during iteration 或返回错误/不一致数据）。
+# 读写锁（readerwriterlock.RWLockFair）：
+#   - 读路径使用 _rw_lock.gen_rlock() 获取共享锁
+#   - 写路径使用 _rw_lock.gen_wlock() 获取排他锁
+# 注意：gen_rlock()/gen_wlock() 返回的是有状态对象（内部 v_locked 标志），
+#       必须每次加锁时【重新调用】生成新实例，绝不能复用模块级单例——
+#       否则多线程并发 enter/exit 同一对象会破坏 v_locked 状态，
+#       触发 "release unlocked lock" 并连锁死锁。
+_rw_lock = rwlock.RWLockFair()
 _loaded = False
 
 
@@ -191,12 +202,12 @@ def _write_snapshot(invoices: List[Dict]) -> None:
 
 
 def _save_invoices() -> None:
-    """持久化发票数据到磁盘（调用方须持有 _lock）；写入带 schemaVersion 信封"""
+    """持久化发票数据到磁盘（调用方须持有 _write_lock）；写入带 schemaVersion 信封"""
     _write_snapshot(_invoices)
 
 
 def _append_oplog(op_type: str, invoice_id: str, data: dict = None) -> None:
-    """追加一条操作日志到缓冲区（调用方须持有 _lock，且数据已加载）
+    """追加一条操作日志到缓冲区（调用方须持有 _write_lock，且数据已加载）
 
     缓冲策略：累积到 _oplog_buffer，延迟 0.5s 或达 20 条时批量写入磁盘。
     相比逐条写入，批量场景下 I/O 次数减少 ~N 倍。
@@ -226,7 +237,7 @@ def _append_oplog(op_type: str, invoice_id: str, data: dict = None) -> None:
 
 
 def _flush_oplog_buffer_locked() -> None:
-    """将缓冲区批量写入 oplog 文件（调用方须持有 _lock）"""
+    """将缓冲区批量写入 oplog 文件（调用方须持有 _write_lock）"""
     global _oplog_count, _oplog_flush_timer
     if not _oplog_buffer:
         return
@@ -242,13 +253,13 @@ def _flush_oplog_buffer_locked() -> None:
 
 def _flush_oplog_buffer() -> None:
     """Timer 回调：获取锁后 flush 缓冲区"""
-    with _lock:
+    with _rw_lock.gen_wlock():
         _flush_oplog_buffer_locked()
 
 
 def flush_oplog_buffer() -> None:
     """公开接口：立即将 oplog 缓冲区刷盘（批量操作后可主动调用）"""
-    with _lock:
+    with _rw_lock.gen_wlock():
         _flush_oplog_buffer_locked()
 
 
@@ -396,7 +407,7 @@ def _migrate_legacy_ids() -> None:
 
 
 def _replay_oplog() -> None:
-    """回放 oplog 到内存中的 _invoices（启动时调用，调用方须持有 _lock）
+    """回放 oplog 到内存中的 _invoices（启动时调用，调用方须持有 _write_lock）
 
     容错机制：单行损坏不影响后续回放，损坏行跳过并记录警告，
     避免因一次磁盘故障导致整个恢复流程中止。
@@ -605,13 +616,13 @@ def _build_search_cache_key(keyword: str, type_filter: str, date_from: str, date
 
 
 def _maybe_compact() -> None:
-    """oplog 达到阈值时触发压缩（调用方须持有 _lock）"""
+    """oplog 达到阈值时触发压缩（调用方须持有 _write_lock）"""
     if _oplog_count >= COMPACT_THRESHOLD:
         _compact_oplog()
 
 
 def _save_config() -> None:
-    """持久化配置数据到磁盘（调用方须持有 _lock）"""
+    """持久化配置数据到磁盘（调用方须持有 _write_lock）"""
     _atomic_write(CONFIG_PATH, _config)
 
 
@@ -718,7 +729,7 @@ def _ensure_loaded() -> None:
     """确保数据已加载（懒加载）"""
     global _loaded
     if not _loaded:
-        with _lock:
+        with _rw_lock.gen_wlock():
             if not _loaded:
                 _load_invoices()
                 _load_config()
@@ -727,7 +738,7 @@ def _ensure_loaded() -> None:
 
 def _load_data() -> None:
     """加载所有数据（线程安全，兼容旧接口）"""
-    with _lock:
+    with _rw_lock.gen_wlock():
         _load_invoices()
         _load_config()
 
@@ -748,7 +759,7 @@ def cleanup_expired_invoices(days: int = INVOICE_RETENTION_DAYS) -> int:
     now_ts = now_timestamp()
     retention_seconds = days * 86400
 
-    with _lock:
+    with _rw_lock.gen_wlock():
         original_count = len(_invoices)
         kept = []
         for inv in _invoices:
@@ -795,7 +806,7 @@ def upsert_invoice(row: Dict) -> Dict:
     # 不可被覆盖的内部元数据字段
     _PRESERVED_KEYS = {'id', 'created_at', 'deleted_at', 'is_duplicate', 'duplicate_of'}
 
-    with _lock:
+    with _rw_lock.gen_wlock():
         # 按 hash 去重（使用索引）
         hash_val = row.get('hash_sha256')
         if hash_val and hash_val in _invoice_index_by_hash:
@@ -862,7 +873,7 @@ def batch_upsert_invoices(rows: List[Dict]) -> List[Dict]:
     _PRESERVED_KEYS = {'id', 'created_at', 'deleted_at', 'is_duplicate', 'duplicate_of'}
     results = []
 
-    with _lock:
+    with _rw_lock.gen_wlock():
         for row in rows:
             hash_val = row.get('hash_sha256')
             if hash_val and hash_val in _invoice_index_by_hash:
@@ -915,17 +926,18 @@ def batch_upsert_invoices(rows: List[Dict]) -> List[Dict]:
 def get_invoice(invoice_id: str) -> Optional[Dict]:
     """按 ID 查询单条发票记录"""
     _ensure_loaded()
-    idx = _invoice_index_by_id.get(invoice_id)
-    if idx is None:
-        return None
-    return _invoices[idx].copy()
+    with _rw_lock.gen_rlock():
+        idx = _invoice_index_by_id.get(invoice_id)
+        if idx is None:
+            return None
+        return _invoices[idx].copy()
 
 
 def soft_delete_invoice(invoice_id: str) -> Optional[Dict]:
     """软删除发票"""
     _ensure_loaded()
     now_str = now().isoformat()
-    with _lock:
+    with _rw_lock.gen_wlock():
         if invoice_id in _invoice_index_by_id:
             idx = _invoice_index_by_id[invoice_id]
             _invoices[idx]['deleted_at'] = now_str
@@ -950,7 +962,7 @@ def hard_delete_invoice(invoice_id: str) -> Optional[Dict]:
     """
     _ensure_loaded()
     now_str = now().isoformat()
-    with _lock:
+    with _rw_lock.gen_wlock():
         if invoice_id in _invoice_index_by_id:
             idx = _invoice_index_by_id[invoice_id]
             _invoices[idx]['deleted_at'] = now_str
@@ -969,7 +981,7 @@ def restore_invoice(invoice_id: str) -> Optional[Dict]:
     """恢复软删除的发票"""
     _ensure_loaded()
     now_str = now().isoformat()
-    with _lock:
+    with _rw_lock.gen_wlock():
         if invoice_id in _invoice_index_by_id:
             idx = _invoice_index_by_id[invoice_id]
             _invoices[idx]['deleted_at'] = None
@@ -984,7 +996,7 @@ def update_invoice_fields(invoice_id: str, fields: Dict) -> Optional[Dict]:
     """更新发票的指定字段"""
     _ensure_loaded()
     now_str = now().isoformat()
-    with _lock:
+    with _rw_lock.gen_wlock():
         if invoice_id in _invoice_index_by_id:
             idx = _invoice_index_by_id[invoice_id]
             inv = _invoices[idx]
@@ -1021,21 +1033,22 @@ def get_invoice_by_filename(filename: str) -> Optional[Dict]:
     if not filename:
         return None
     _ensure_loaded()
-    target = filename.strip().lower()
-    
-    # 先尝试精确匹配（索引查找）
-    idx = _invoice_index_by_filename.get(target)
-    if idx is not None and not _invoices[idx].get('deleted_at'):
-        return _invoices[idx].copy()
-    
-    # 再尝试纯文件名匹配（路径提取后）
-    pure_name = target.split('/')[-1].split('\\')[-1]
-    if pure_name != target:
-        idx = _invoice_index_by_filename.get(pure_name)
+    with _rw_lock.gen_rlock():
+        target = filename.strip().lower()
+
+        # 先尝试精确匹配（索引查找）
+        idx = _invoice_index_by_filename.get(target)
         if idx is not None and not _invoices[idx].get('deleted_at'):
             return _invoices[idx].copy()
-    
-    return None
+
+        # 再尝试纯文件名匹配（路径提取后）
+        pure_name = target.split('/')[-1].split('\\')[-1]
+        if pure_name != target:
+            idx = _invoice_index_by_filename.get(pure_name)
+            if idx is not None and not _invoices[idx].get('deleted_at'):
+                return _invoices[idx].copy()
+
+        return None
 
 
 def get_invoices_by_filenames(filenames: List[str]) -> List[Dict]:
@@ -1051,29 +1064,31 @@ def get_invoices_by_filenames(filenames: List[str]) -> List[Dict]:
         return []
     _ensure_loaded()
 
-    results = []
-    for fname in filenames:
-        if not fname:
-            continue
-        key = fname.strip().lower()
-        # 先尝试精确匹配
-        idx = _invoice_index_by_filename.get(key)
-        if idx is not None and not _invoices[idx].get('deleted_at'):
-            results.append(_invoices[idx].copy())
-            continue
-        # 再尝试纯文件名匹配
-        pure_name = key.split('/')[-1].split('\\')[-1]
-        if pure_name != key:
-            idx = _invoice_index_by_filename.get(pure_name)
+    with _rw_lock.gen_rlock():
+        results = []
+        for fname in filenames:
+            if not fname:
+                continue
+            key = fname.strip().lower()
+            # 先尝试精确匹配
+            idx = _invoice_index_by_filename.get(key)
             if idx is not None and not _invoices[idx].get('deleted_at'):
                 results.append(_invoices[idx].copy())
+                continue
+            # 再尝试纯文件名匹配
+            pure_name = key.split('/')[-1].split('\\')[-1]
+            if pure_name != key:
+                idx = _invoice_index_by_filename.get(pure_name)
+                if idx is not None and not _invoices[idx].get('deleted_at'):
+                    results.append(_invoices[idx].copy())
     return results
 
 
 def get_all_invoices() -> List[Dict]:
     """获取所有未删除的发票记录"""
     _ensure_loaded()
-    return [inv.copy() for inv in _invoices if not inv.get('deleted_at')]
+    with _rw_lock.gen_rlock():
+        return [inv.copy() for inv in _invoices if not inv.get('deleted_at')]
 
 
 def search_invoices(
@@ -1099,34 +1114,38 @@ def search_invoices(
     # 预先计算过滤值，避免在 comprehension 中反复计算
     kw = keyword.lower() if keyword else None
 
-    # 尝试搜索缓存
+    # 尝试搜索缓存（读路径：共享锁）
     cache_key = _build_search_cache_key(
         kw or '', type_filter, date_from or '', date_to or '',
         order_by, order_dir,
     )
-    cached = _search_cache_get(cache_key)
+    with _rw_lock.gen_rlock():
+        cached = _search_cache_get(cache_key)
     if cached is not None:
         logger.debug("[Search] 缓存命中: %s", cache_key[:40])
-        results = cached
+        results = list(cached)  # 复制，避免原地排序污染共享缓存对象
     else:
-        # ✅ 单次遍历 + 组合条件，避免多个中间临时列表
-        results = [
-            inv for inv in _invoices
-            if not inv.get('deleted_at')
-            and (not kw or (
-                (inv.get('number') and kw in str(inv['number']).lower()) or
-                (inv.get('buyer') and kw in str(inv['buyer']).lower()) or
-                (inv.get('seller') and kw in str(inv['seller']).lower()) or
-                (inv.get('note') and kw in str(inv['note']).lower()) or
-                (inv.get('file_name') and kw in str(inv['file_name']).lower())
-            ))
-            and (not type_filter or inv.get('type') == type_filter)
-            and (not date_from or (inv.get('date') or '') >= date_from)
-            and (not date_to or (inv.get('date') or '') <= date_to)
-        ]
-        _search_cache_set(cache_key, results)
+        # ✅ 单次遍历 + 组合条件；读路径在共享锁下执行，避免与写者竞态
+        with _rw_lock.gen_rlock():
+            results = [
+                inv for inv in _invoices
+                if not inv.get('deleted_at')
+                and (not kw or (
+                    (inv.get('number') and kw in str(inv['number']).lower()) or
+                    (inv.get('buyer') and kw in str(inv['buyer']).lower()) or
+                    (inv.get('seller') and kw in str(inv['seller']).lower()) or
+                    (inv.get('note') and kw in str(inv['note']).lower()) or
+                    (inv.get('file_name') and kw in str(inv['file_name']).lower())
+                ))
+                and (not type_filter or inv.get('type') == type_filter)
+                and (not date_from or (inv.get('date') or '') >= date_from)
+                and (not date_to or (inv.get('date') or '') <= date_to)
+            ]
+        # 缓存写回须排他锁，与上面的读锁分开获取，避免嵌套死锁
+        with _rw_lock.gen_wlock():
+            _search_cache_set(cache_key, results)
 
-    # 排序
+    # 排序（操作本地 results，无共享数据访问，无需持锁）
     valid_order_fields = {'date', 'amount', 'created_at', 'file_name'}
     sort_field = order_by if order_by in valid_order_fields else 'created_at'
     reverse = order_dir.upper() != 'ASC'
@@ -1154,9 +1173,10 @@ def find_by_hash(hash_val: str) -> Optional[Dict]:
     if not hash_val:
         return None
     _ensure_loaded()
-    idx = _invoice_index_by_hash.get(hash_val)
-    if idx is not None and not _invoices[idx].get('deleted_at'):
-        return _invoices[idx].copy()
+    with _rw_lock.gen_rlock():
+        idx = _invoice_index_by_hash.get(hash_val)
+        if idx is not None and not _invoices[idx].get('deleted_at'):
+            return _invoices[idx].copy()
     return None
 
 
@@ -1170,23 +1190,24 @@ def find_duplicates(number: str) -> List[Dict]:
         return []
     _ensure_loaded()
 
-    indices = _invoice_index_by_number.get(str(number), [])
-    if not indices:
-        return []
+    with _rw_lock.gen_rlock():
+        indices = _invoice_index_by_number.get(str(number), [])
+        if not indices:
+            return []
 
-    duplicates = []
-    for idx in indices:
-        inv = _invoices[idx]
-        if inv.get('deleted_at'):
-            continue
-        duplicates.append(dict({
-            'id': inv['id'],
-            'file_name': inv.get('file_name', ''),
-            'amount': inv.get('amount', 0),
-            'date': inv.get('date', ''),
-            'created_at': inv.get('created_at', '')
-        }))
-    duplicates.sort(key=lambda x: x.get('created_at', ''), reverse=True)
+        duplicates = []
+        for idx in indices:
+            inv = _invoices[idx]
+            if inv.get('deleted_at'):
+                continue
+            duplicates.append(dict({
+                'id': inv['id'],
+                'file_name': inv.get('file_name', ''),
+                'amount': inv.get('amount', 0),
+                'date': inv.get('date', ''),
+                'created_at': inv.get('created_at', '')
+            }))
+        duplicates.sort(key=lambda x: x.get('created_at', ''), reverse=True)
     return duplicates
 
 
@@ -1194,34 +1215,35 @@ def get_statistics() -> Dict:
     """获取统计数据"""
     _ensure_loaded()
 
-    active = [inv for inv in _invoices if not inv.get('deleted_at')]
-    total_count = len(active)
-    total_amount = sum(float(inv.get('amount', 0)) for inv in active)
-    ok_count = sum(1 for inv in active if inv.get('parse_ok') == 1)
-    fail_count = total_count - ok_count
+    with _rw_lock.gen_rlock():
+        active = [inv for inv in _invoices if not inv.get('deleted_at')]
+        total_count = len(active)
+        total_amount = sum(float(inv.get('amount', 0)) for inv in active)
+        ok_count = sum(1 for inv in active if inv.get('parse_ok') == 1)
+        fail_count = total_count - ok_count
 
-    by_type = {}
-    for inv in active:
-        inv_type = inv.get('type', '其他')
-        if inv_type not in by_type:
-            by_type[inv_type] = {'count': 0, 'total': 0}
-        by_type[inv_type]['count'] += 1
-        by_type[inv_type]['total'] += float(inv.get('amount', 0))
+        by_type = {}
+        for inv in active:
+            inv_type = inv.get('type', '其他')
+            if inv_type not in by_type:
+                by_type[inv_type] = {'count': 0, 'total': 0}
+            by_type[inv_type]['count'] += 1
+            by_type[inv_type]['total'] += float(inv.get('amount', 0))
 
-    by_type_array = [
-        {'type': t, **data}
-        for t, data in sorted(by_type.items(), key=lambda x: x[1]['total'], reverse=True)
-    ]
+        by_type_array = [
+            {'type': t, **data}
+            for t, data in sorted(by_type.items(), key=lambda x: x[1]['total'], reverse=True)
+        ]
 
-    return {
-        'summary': {
-            'total_count': total_count,
-            'total_amount': total_amount,
-            'ok_count': ok_count,
-            'fail_count': fail_count,
-        },
-        'byType': [dict(item) for item in by_type_array],
-    }
+        return {
+            'summary': {
+                'total_count': total_count,
+                'total_amount': total_amount,
+                'ok_count': ok_count,
+                'fail_count': fail_count,
+            },
+            'byType': [dict(item) for item in by_type_array],
+        }
 
 
 # ═══════════════════════════════════════════════════════════
@@ -1232,20 +1254,21 @@ def get_statistics() -> Dict:
 def get_config(key: str = '') -> Any:
     """读取配置。key 为空时返回所有配置（深拷贝，防止外部修改）"""
     _ensure_loaded()
-    if not key:
-        # 使用深拷贝确保嵌套结构也被复制，防止外部修改影响内部状态
-        return copy.deepcopy(_config)
-    value = _config.get(key)
-    # 如果值是可变类型，返回深拷贝
-    if isinstance(value, (dict, list)):
-        return copy.deepcopy(value)
-    return value
+    with _rw_lock.gen_rlock():
+        if not key:
+            # 使用深拷贝确保嵌套结构也被复制，防止外部修改影响内部状态
+            return copy.deepcopy(_config)
+        value = _config.get(key)
+        # 如果值是可变类型，返回深拷贝
+        if isinstance(value, (dict, list)):
+            return copy.deepcopy(value)
+        return value
 
 
 def set_config(key: str, value: Any) -> Dict:
     """写入配置项"""
     _ensure_loaded()
-    with _lock:
+    with _rw_lock.gen_wlock():
         _config[key] = value
         _save_config()
     return {'ok': True}

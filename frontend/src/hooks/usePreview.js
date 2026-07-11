@@ -815,6 +815,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
 
     // ✅ 在加载前先递增版本号，确保旧请求被丢弃
     const version = ++previewVersionRef.current
+    console.log('[DIAG] doLoadPreview ENTER key=', fileObj?.key?.slice(0,40), 'v=', version)
 
     // ✅ 保存旧的 blob URL，在新预览加载完成后再清理
     const oldBlobUrls = [...pendingBlobUrlsRef.current]
@@ -848,7 +849,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
     // key 必须包含所有影响 Canvas 的布局参数，且读写两侧用同一份 settings（settingsRef.current），
     // 否则命中陈旧缓存 + skipRenderRef 跳过纠正渲染 → 显示错误预览（正确性 Bug）。
     const loadedFile = await loadFilePreview(fileObj)
-    if (version !== previewVersionRef.current) return
+    if (version !== previewVersionRef.current) { console.log('[DIAG] doLoadPreview BAIL v=', version, 'cur=', previewVersionRef.current, 'key=', loadedFile?.key?.slice(0,40)); return }
 
     const rotation = (fileRotations[loadedFile.key] || 0)
     // 与 render effect（L306-309）保持一致的 isLandscape 计算，确保读写 key 同源
