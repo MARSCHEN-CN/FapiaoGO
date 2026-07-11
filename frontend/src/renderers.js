@@ -710,13 +710,8 @@ function _getWorker() {
 }
 
 async function _renderViaWorker(items, paperKey, dpi, isLandscape, rotations, slotCount, layoutOptions) {
-  // L2 cache key（与 _renderDirect 一致）
-  const _rotKeys = Object.keys(rotations || {}).sort().map(k => `${k}:${rotations[k]}`).join(',')
-  const _marginKey = layoutOptions.userMargins
-    ? `m${layoutOptions.userMargins.left||0}_${layoutOptions.userMargins.right||0}_${layoutOptions.userMargins.top||0}_${layoutOptions.userMargins.bottom||0}`
-    : 'm0'
-  const _customKey = layoutOptions.customPaper?.widthMM ? `c${layoutOptions.customPaper.widthMM}x${layoutOptions.customPaper.heightMM}` : ''
-  const _cacheKey = `multi_${paperKey}_${dpi}_${isLandscape ? 'L' : 'P'}_${slotCount || items.length}_${layoutOptions.strategy || 'vertical'}_${_rotKeys}_${_marginKey}_${_customKey}_${items.map(i => i.key || i.id).join(',')}`
+  // L2 cache key（与 _renderDirect 一致，统一由 buildCacheKey 生成）
+  const _cacheKey = buildCacheKey(items, paperKey, dpi, isLandscape, rotations, slotCount, layoutOptions)
 
   // ✅ 版本控制：同 cacheKey 递增版本号
   const version = (_workerVersions.get(_cacheKey) || 0) + 1
@@ -872,6 +867,28 @@ async function _renderViaWorker(items, paperKey, dpi, isLandscape, rotations, sl
 // 公开 API：自动选择 Worker 路径或直接渲染路径
 // ═══════════════════════════════════════════════════════════════
 
+/**
+ * 构建多项目渲染结果缓存键（L2）。
+ * 三个调用点（renderMultipleItemsToCanvas / _renderViaWorker / _renderDirect）必须产出**完全一致**的字串，
+ * 否则同一组参数在不同路径下无法命中同一份缓存。请勿在各调用点内联改写此逻辑——统一在此维护。
+ * @param {Array} items
+ * @param {string} paperKey
+ * @param {number} dpi
+ * @param {boolean} isLandscape
+ * @param {Object} rotations
+ * @param {number} [slotCount]
+ * @param {Object} [layoutOptions]
+ * @returns {string}
+ */
+function buildCacheKey(items, paperKey, dpi, isLandscape, rotations, slotCount, layoutOptions = {}) {
+  const _rotKeys = Object.keys(rotations || {}).sort().map(k => `${k}:${rotations[k]}`).join(',')
+  const _marginKey = layoutOptions.userMargins
+    ? `m${layoutOptions.userMargins.left || 0}_${layoutOptions.userMargins.right || 0}_${layoutOptions.userMargins.top || 0}_${layoutOptions.userMargins.bottom || 0}`
+    : 'm0'
+  const _customKey = layoutOptions.customPaper?.widthMM ? `c${layoutOptions.customPaper.widthMM}x${layoutOptions.customPaper.heightMM}` : ''
+  return `multi_${paperKey}_${dpi}_${isLandscape ? 'L' : 'P'}_${slotCount || items.length}_${layoutOptions.strategy || 'vertical'}_${_rotKeys}_${_marginKey}_${_customKey}_${items.map(i => i.key || i.id).join(',')}`
+}
+
 export async function renderMultipleItemsToCanvas(
   items, paperKey, dpi = PREVIEW_DPI, isLandscape = false, rotations = {}, slotCount, isPrint = false,
   showSafeMargin = false,
@@ -884,13 +901,8 @@ export async function renderMultipleItemsToCanvas(
     console.warn('[P2C] USE_DOCUMENT_ENGINE 已开启，但 renderers.js 合并/打印合成尚未接 documentEngine；回退旧实现。P2C 完成、P3 启动前必须删除此开关。')
   }
 
-  // L2 缓存命中检查
-  const _rotKeys = Object.keys(rotations || {}).sort().map(k => `${k}:${rotations[k]}`).join(',')
-  const _marginKey = layoutOptions.userMargins
-    ? `m${layoutOptions.userMargins.left||0}_${layoutOptions.userMargins.right||0}_${layoutOptions.userMargins.top||0}_${layoutOptions.userMargins.bottom||0}`
-    : 'm0'
-  const _customKey = layoutOptions.customPaper?.widthMM ? `c${layoutOptions.customPaper.widthMM}x${layoutOptions.customPaper.heightMM}` : ''
-  const _cacheKey = `multi_${paperKey}_${dpi}_${isLandscape ? 'L' : 'P'}_${slotCount || items.length}_${layoutOptions.strategy || 'vertical'}_${_rotKeys}_${_marginKey}_${_customKey}_${items.map(i => i.key || i.id).join(',')}`
+  // L2 缓存命中检查（buildCacheKey 与 _renderDirect / _renderViaWorker 一致）
+  const _cacheKey = buildCacheKey(items, paperKey, dpi, isLandscape, rotations, slotCount, layoutOptions)
 
   const cachedCanvas = renderResultCache.get(_cacheKey)
   if (cachedCanvas) return cachedCanvas
@@ -923,13 +935,9 @@ async function _renderDirect(
 ) {
   // ═══════════════════════════════════════════════
   // ✅ 渲染结果缓存（L2）：预览和打印使用相同参数时直接命中
+  // （buildCacheKey 与 renderMultipleItemsToCanvas / _renderViaWorker 一致）
   // ═══════════════════════════════════════════════
-  const _rotKeys = Object.keys(rotations || {}).sort().map(k => `${k}:${rotations[k]}`).join(',')
-  const _marginKey = layoutOptions.userMargins
-    ? `m${layoutOptions.userMargins.left||0}_${layoutOptions.userMargins.right||0}_${layoutOptions.userMargins.top||0}_${layoutOptions.userMargins.bottom||0}`
-    : 'm0'
-  const _customKey = layoutOptions.customPaper?.widthMM ? `c${layoutOptions.customPaper.widthMM}x${layoutOptions.customPaper.heightMM}` : ''
-  const _cacheKey = `multi_${paperKey}_${dpi}_${isLandscape ? 'L' : 'P'}_${slotCount || items.length}_${layoutOptions.strategy || 'vertical'}_${_rotKeys}_${_marginKey}_${_customKey}_${items.map(i => i.key || i.id).join(',')}`
+  const _cacheKey = buildCacheKey(items, paperKey, dpi, isLandscape, rotations, slotCount, layoutOptions)
 
   const cachedCanvas = renderResultCache.get(_cacheKey)
   if (cachedCanvas) {
