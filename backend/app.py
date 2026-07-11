@@ -13,6 +13,12 @@ from logging.handlers import RotatingFileHandler
 from flask import Flask, request, jsonify, Response, stream_with_context
 from flask_cors import CORS
 import base64
+from concurrent.futures import ThreadPoolExecutor
+# fitz (PyMuPDF) 可能在某些运行时缺失，安全导入以避免整个模块加载失败
+try:
+    import fitz
+except ImportError:
+    fitz = None
 
 logger = logging.getLogger(__name__)
 
@@ -639,41 +645,55 @@ def split_pdf():
                 if expired:
                     logger.debug("[page_cache] 惰性清理 %d 个过期条目", len(expired))
 
-        for i in range(doc.page_count):
-            page_num = i + 1
-
-            # 拆出单页 PDF（走引擎）
-            page_bytes = engine.extract_page_pdf(doc.doc_id, page_num)
-
-            # 渲染预览图（走引擎，200dpi JPEG 向后兼容）
-            preview_data, preview_fmt, _ = engine.render(
-                doc_id=doc.doc_id,
-                preset_name="preview",
-                page=page_num,
-                override_params={"dpi": 200, "fmt": "jpeg"},
-            )
+        # 单页任务：拆页 + 200dpi 预览渲染 + base64。
+        # fitz.Document 不可跨线程共享，因此每个 worker 用独立副本打开。
+        def _process_page(task):
+            i, page_num, page_id = task
+            local_pdf = fitz.open(stream=file_bytes, filetype="pdf")
+            try:
+                page_bytes = engine.extract_page_pdf(
+                    doc.doc_id, page_num, pdf_doc=local_pdf)
+                preview_data, _, _ = engine.render(
+                    doc_id=doc.doc_id,
+                    preset_name="preview",
+                    page=page_num,
+                    override_params={"dpi": 200, "fmt": "jpeg"},
+                    pdf_doc=local_pdf,
+                )
+            finally:
+                local_pdf.close()
             preview_b64 = base64.b64encode(preview_data).decode('ascii')
+            return (i, page_num, page_id, page_bytes, preview_b64)
 
-            # 生成唯一 page_id（格式不变，向后兼容 download_page）
-            page_id = f"{file_hash}_{i}"
+        def _register_and_collect(results):
+            # 主线程写 registry/cache，保证字典写入集中、顺序稳定
+            for (i, page_num, page_id, page_bytes, preview_b64) in results:
+                with _page_registry_lock:
+                    _page_registry[page_id] = {"doc_id": doc.doc_id, "page": page_num}
+                with _page_cache_lock:
+                    _page_cache[page_id] = {"bytes": page_bytes, "created_at": now}
+                pages.append({
+                    "page_index": page_num,
+                    "page_id": page_id,
+                    "preview_image": preview_b64,
+                    "page_bytes": base64.b64encode(page_bytes).decode('ascii'),
+                })
 
-            # 注册 Document Pipeline 映射（新 download_page 走引擎）
-            with _page_registry_lock:
-                _page_registry[page_id] = {"doc_id": doc.doc_id, "page": page_num}
+        tasks = [(i, i + 1, f"{file_hash}_{i}") for i in range(doc.page_count)]
 
-            # 缓存单页 PDF（供 download_page 使用 / 旧管线回退）
-            with _page_cache_lock:
-                _page_cache[page_id] = {
-                    "bytes": page_bytes,
-                    "created_at": now,
-                }
-
-            pages.append({
-                "page_index": i + 1,
-                "page_id": page_id,
-                "preview_image": preview_b64,
-                "page_bytes": base64.b64encode(page_bytes).decode('ascii'),
-            })
+        # 并行渲染：多页并发处理，消除串行 30s+ 瓶颈。
+        # 并发上限约束同时持有的整本 PDF 副本数，避免内存峰值过高。
+        SPLIT_MAX_WORKERS = 8
+        if fitz is not None and doc.page_count > 1:
+            max_workers = min(doc.page_count, SPLIT_MAX_WORKERS)
+            with ThreadPoolExecutor(max_workers=max_workers) as ex:
+                # ex.map 按任务顺序返回结果
+                results = list(ex.map(_process_page, tasks))
+            _register_and_collect(results)
+        else:
+            # 串行回退：fitz 不可用或单页文档（与原行为一致）
+            results = [_process_page(t) for t in tasks]
+            _register_and_collect(results)
 
         return jsonify({
             "success": True,
@@ -737,9 +757,92 @@ def download_page(page_id):
     return _respond_pdf(cache_entry["bytes"], page_id)
 
 
-# 并发解析限流
-import asyncio
-from concurrent.futures import ThreadPoolExecutor, as_completed
+# ── 并发解析限流 + OCR 执行器 ──
+# 原实现在 Flask 请求线程上同步执行 OCR（CPU/GPU 密集），且并发上限硬编码为 10。
+# 在普通 CPU 上，10 个并发 OCR 会因 ONNX 内部 intra_op 线程而严重「超卖」、互相争抢物理核。
+# 现改为：
+#   (1) 将解析提交到执行器（优先 ProcessPoolExecutor 绕过 GIL；不可用时回退 ThreadPoolExecutor），
+#       释放 Flask 请求线程；
+#   (2) 并发上限降为 CPU 核数相关值（OCR_WORKERS，默认 2：2 × ONNX(cpu_count//2) ≈ cpu_count，避免超卖）；
+#   (3) DB 写入改在主进程完成（worker 内 skip_db_write=True），避免多进程写库与跨进程回传连接。
+from concurrent.futures import ThreadPoolExecutor, as_completed  # 仍供 parse_batch 使用
+from timer_utils import MAX_PARSE_TIME
+
+import os as _os
+import atexit
+import ocr_pool_task
+
+# OCR 并发度：默认 2。若需提高，请同步将 OCR 引擎 ONNX intra_op_num_threads 调小，
+# 否则多进程各自拉满 cpu_count//2 线程会导致整体超卖。可用 MARSPRINT_OCR_WORKERS 覆盖。
+OCR_WORKERS = int(_os.environ.get('MARSPRINT_OCR_WORKERS', max(1, min(_os.cpu_count() or 4, 2))))
+_parse_semaphore = threading.Semaphore(OCR_WORKERS)
+
+# 执行器（懒加载，带锁）：优先进程池，回退线程池，再回退同步。
+_ocr_executor = None
+_ocr_executor_kind = None  # None=未初始化 | 'process' | 'thread' | False=不可用
+_executor_lock = threading.Lock()
+
+
+def _get_executor():
+    """返回 OCR 执行器；不可用时返回 None（调用方应同步执行）。"""
+    global _ocr_executor, _ocr_executor_kind
+    if _ocr_executor_kind is not None:
+        return _ocr_executor
+    with _executor_lock:
+        if _ocr_executor_kind is not None:
+            return _ocr_executor
+        try:
+            from concurrent.futures import ProcessPoolExecutor
+            _ocr_executor = ProcessPoolExecutor(
+                max_workers=OCR_WORKERS,
+                initializer=ocr_pool_task.init_ocr,
+            )
+            _ocr_executor_kind = 'process'
+            atexit.register(lambda: _ocr_executor.shutdown(wait=False))
+            logger.info("OCR 执行器: ProcessPoolExecutor (workers=%d)", OCR_WORKERS)
+        except Exception as e:
+            logger.warning("ProcessPoolExecutor 不可用，回退 ThreadPoolExecutor: %s", e)
+            try:
+                _ocr_executor = ThreadPoolExecutor(max_workers=OCR_WORKERS, thread_name_prefix='ocr')
+                _ocr_executor_kind = 'thread'
+                atexit.register(lambda: _ocr_executor.shutdown(wait=False))
+                logger.info("OCR 执行器: ThreadPoolExecutor (workers=%d)", OCR_WORKERS)
+            except Exception as e2:
+                logger.error("OCR 执行器创建失败，将同步执行: %s", e2)
+                _ocr_executor = None
+                _ocr_executor_kind = False
+    return _ocr_executor
+
+
+def _parse_sync(file_bytes, filename, auto_orient, enable_auto_ocr):
+    """请求线程内同步解析（回退路径，等价于改造前的行为）。"""
+    return parse_invoice_service(
+        file_bytes, filename,
+        auto_orient=auto_orient, enable_auto_ocr=enable_auto_ocr,
+        skip_db_write=True,
+    )
+
+
+def _run_parse_offthread(file_bytes, filename, auto_orient, enable_auto_ocr):
+    """将解析任务提交到执行器，释放 Flask 请求线程。
+
+    返回 parse_invoice_service 的结果字典（worker 内 skip_db_write=True）。
+    任何异常（进程池不可用 / 任务超时 / 子进程故障）均回退为同步执行，保证端点不中断。
+    """
+    executor = _get_executor()
+    if executor is None:
+        return _parse_sync(file_bytes, filename, auto_orient, enable_auto_ocr)
+    try:
+        # 超时略大于 MAX_PARSE_TIME，避免单任务无限挂起占用信号量
+        timeout = MAX_PARSE_TIME / 1000.0 + 30.0
+        future = executor.submit(ocr_pool_task.run_parse, file_bytes, filename, auto_orient, enable_auto_ocr)
+        return future.result(timeout=timeout)
+    except Exception as e:
+        logger.warning("OCR 执行器执行失败，回退同步解析: %s", e)
+        return _parse_sync(file_bytes, filename, auto_orient, enable_auto_ocr)
+
+
+# 供 parse_batch 使用的并发限流（批量解析走独立线程池，保持原 10 上限）
 parse_semaphore = threading.Semaphore(10)
 
 
@@ -753,7 +856,7 @@ def parse_invoice():
     if not allowed_file(file.filename):
         return jsonify({"success": False, "error": "不支持的文件格式"}), 400
 
-    if not parse_semaphore.acquire(blocking=False):
+    if not _parse_semaphore.acquire(blocking=False):
         return jsonify({"success": False, "error": "当前解析任务较多，请稍后重试"}), 429
 
     try:
@@ -763,14 +866,27 @@ def parse_invoice():
         auto_orient = request.form.get('autoOrient', '1') == '1'
         enable_auto_ocr = request.form.get('enableAutoOcr', '0') == '1'
         _legacy_start = time.time()
-        result = parse_invoice_service(file_bytes, file.filename, auto_orient=auto_orient, enable_auto_ocr=enable_auto_ocr)
+        # 交由执行器（进程池/线程池）执行，释放 Flask 请求线程；
+        # worker 内 skip_db_write=True，DB 写入改在主线程完成（见下方）。
+        result = _run_parse_offthread(file_bytes, file.filename, auto_orient, enable_auto_ocr)
         _legacy_ms = round((time.time() - _legacy_start) * 1000, 2)
-        logger.info("[PERF] 旧管道 parse_invoice_service 耗时: %.2fms", _legacy_ms)
+        logger.info("[PERF] 旧管道 parse_invoice_service 耗时: %.2fms (executor=%s)",
+                    _legacy_ms, _ocr_executor_kind or 'sync')
     except Exception as e:
         logger.exception("发票解析失败")
         return jsonify({"success": False, "error": "发票解析失败"}), 500
     finally:
-        parse_semaphore.release()
+        _parse_semaphore.release()
+
+    # ── 主进程完成 DB 写入（worker 中 skip_db_write=True，避免跨进程写库） ──
+    if result is not None:
+        db_record = result.get('db_record')
+        if db_record:
+            try:
+                result['db_result'] = db_module.upsert_invoice(db_record)
+            except Exception as e:
+                logger.warning("发票自动入库失败: %s", e)
+                result['db_result'] = None
 
     if result is None:
         return jsonify({"success": False, "error": "无法识别的文件格式"}), 400

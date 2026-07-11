@@ -20,10 +20,32 @@ try {
 // 日志保留天数
 const LOG_RETENTION_DAYS = 7
 
+// 定时批量 flush 间隔（毫秒）
+const FLUSH_INTERVAL_MS = 500
+// 缓冲区达到该行数立即冲刷，避免内存无限增长
+const FLUSH_THRESHOLD_LINES = 100
+
+const LEVEL_RANK = { DEBUG: 0, INFO: 1, WARN: 2, ERROR: 3 }
+
 class Logger {
   constructor() {
     this.logFile = null
     this.enabled = true
+    this.writeStream = null   // 常驻写入流，保持 fd 打开，避免每次 open-write-close
+    this.buffer = []          // 内存写入缓冲
+    this.flushTimer = null    // 定时 flush 定时器
+    this.minLevel = this._resolveMinLevel()
+  }
+
+  // 生产环境默认收敛到 INFO，减少主线程文件 I/O；开发环境保留全部。
+  // 可通过环境变量 MARSPRINT_LOG_LEVEL 覆盖（DEBUG/INFO/WARN/ERROR）。
+  _resolveMinLevel() {
+    const env = process.env.MARSPRINT_LOG_LEVEL
+    if (env && LEVEL_RANK[env.toUpperCase()] !== undefined) {
+      return env.toUpperCase()
+    }
+    if (process.env.NODE_ENV === 'production') return 'INFO'
+    return 'DEBUG'
   }
 
   init() {
@@ -47,6 +69,25 @@ class Logger {
 
       const date = new Date().toISOString().split('T')[0]
       this.logFile = path.join(logDir, `app-${date}.log`)
+
+      // 常驻写入流：保持文件描述符打开，写入走 libuv 线程池（异步），
+      // 不再每次 console.log 都同步 open-write-close 阻塞主线程。
+      this.writeStream = fs.createWriteStream(this.logFile, { flags: 'a', encoding: 'utf8' })
+      this.writeStream.on('error', (e) => {
+        // 写入流异常不抛出，避免拖垮主流程；降级为同步写
+        try {
+          originalError('[Logger] 写入流错误:', e.message)
+        } catch (_) {}
+      })
+
+      // 冲刷 init 之前已累积的缓冲
+      this._flush()
+
+      // 定时批量 flush，作为兜底保证日志不会长期滞留内存
+      if (!this.flushTimer) {
+        this.flushTimer = setInterval(() => this._flush(), FLUSH_INTERVAL_MS)
+        if (this.flushTimer.unref) this.flushTimer.unref()
+      }
     } catch (e) {
       originalError('[Logger] 初始化失败:', e.message)
     }
@@ -95,15 +136,49 @@ class Logger {
   }
 
   writeToFile(level, message) {
-    if (!this.enabled || !this.logFile) return
+    if (!this.enabled) return
+    // 日志级别过滤：生产环境默认丢弃 DEBUG，降低 I/O 量
+    if (LEVEL_RANK[level] < LEVEL_RANK[this.minLevel]) return
 
     try {
       const timestamp = new Date().toISOString()
       const logLine = `[${timestamp}] [${level}] ${message}\n`
-      fs.appendFileSync(this.logFile, logLine, 'utf8')
+      this.buffer.push(logLine)
+      // 缓冲区积压较多时立即冲刷，避免内存无限增长
+      if (this.buffer.length >= FLUSH_THRESHOLD_LINES) this._flush()
     } catch (e) {
-      // 文件写入失败不影响主流程
-      originalError('[Logger] 写入失败:', e.message)
+      // 缓冲失败不影响主流程
+      originalError('[Logger] 写入缓冲失败:', e.message)
+    }
+  }
+
+  // 将内存缓冲异步写入常驻流；流未就绪时保留缓冲待 init 后冲刷
+  _flush() {
+    if (!this.buffer.length) return
+    if (!this.writeStream || this.writeStream.destroyed) return
+    const chunk = this.buffer.join('')
+    this.buffer.length = 0
+    // write 是异步的，背压时 libuv 内部缓存，无需额外处理
+    this.writeStream.write(chunk)
+  }
+
+  // 强制落盘（应用退出前由 main.js 的 before-quit 调用）。
+  // 退出场景用同步写兜底，确保缓冲全部落盘，不依赖异步流排空。
+  flush() {
+    if (this.buffer.length && this.logFile) {
+      try {
+        fs.appendFileSync(this.logFile, this.buffer.join(''), 'utf8')
+      } catch (e) {
+        try { originalError('[Logger] 退出冲刷失败:', e.message) } catch (_) {}
+      }
+      this.buffer.length = 0
+    }
+    if (this.writeStream && !this.writeStream.destroyed) {
+      try { this.writeStream.end() } catch (_) {}
+    }
+    if (this.flushTimer) {
+      clearInterval(this.flushTimer)
+      this.flushTimer = null
     }
   }
 

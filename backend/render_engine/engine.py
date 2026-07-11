@@ -269,7 +269,8 @@ class RenderEngine:
                view_state: dict = None, page: int = 1,
                highlights: list = None, hl_token: str = None,
                accept_header: str = "",
-               override_params: dict = None) -> Tuple[bytes, str, str]:
+               override_params: dict = None,
+               pdf_doc: Optional["fitz.Document"] = None) -> Tuple[bytes, str, str]:
         """
         Render a single page. Returns (image_bytes, format, etag).
 
@@ -306,7 +307,8 @@ class RenderEngine:
             raise ValueError(f"Document not registered: {doc_id[:12]}...")
 
         fmt = negotiate_format(accept_header, preset.fmt)
-        data, actual_fmt = self._render_page(doc, preset, vs, page, fmt, highlights)
+        data, actual_fmt = self._render_page(doc, preset, vs, page, fmt,
+                                             highlights, pdf_doc=pdf_doc)
 
         # --- cache write ---
         etag = generate_etag(
@@ -324,22 +326,36 @@ class RenderEngine:
         """Return a DocumentPage wrapping a single page for unified operations."""
         return DocumentPage(self, doc_id, page_no)
 
-    def extract_page_pdf(self, doc_id: str, page: int = 1) -> bytes:
-        """Extract a single page as standalone PDF bytes."""
+    def extract_page_pdf(self, doc_id: str, page: int = 1,
+                          pdf_doc: Optional["fitz.Document"] = None) -> bytes:
+        """Extract a single page as standalone PDF bytes.
+
+        Args:
+            doc_id:   opaque document id from Registry
+            page:     1-based page number
+            pdf_doc:  optional pre-opened fitz.Document. When provided, it is
+                      used instead of the registry's shared document. This lets
+                      callers process different pages of the same doc from
+                      isolated fitz handles — required for thread-safe
+                      concurrency, since a single fitz.Document must not be
+                      shared across threads.
+        """
         if fitz is None:
             raise RuntimeError("PyMuPDF (fitz) is not available")
         doc = self._registry.get(doc_id)
         if doc is None:
             raise ValueError(f"Document not registered: {doc_id[:12]}...")
-        if doc.pdf is None:
+        # Prefer the caller-supplied isolated handle; fall back to shared doc.
+        src = pdf_doc if pdf_doc is not None else doc.pdf
+        if src is None:
             raise ValueError("Document is not a PDF")
 
         page_idx = max(0, page - 1)
-        if page_idx >= len(doc.pdf):
-            raise ValueError(f"Page {page} out of range ({len(doc.pdf)} pages)")
+        if page_idx >= len(src):
+            raise ValueError(f"Page {page} out of range ({len(src)} pages)")
 
         page_doc = fitz.open()
-        page_doc.insert_pdf(doc.pdf, from_page=page_idx, to_page=page_idx)
+        page_doc.insert_pdf(src, from_page=page_idx, to_page=page_idx)
         data = page_doc.tobytes()
         page_doc.close()
         return data
@@ -347,7 +363,8 @@ class RenderEngine:
     # ── internal rendering ──────────────────────────────────────
 
     def _render_page(self, doc, preset: RenderPreset, vs: dict,
-                     page: int, fmt: str, highlights: list = None) -> bytes:
+                     page: int, fmt: str, highlights: list = None,
+                     pdf_doc: Optional["fitz.Document"] = None) -> bytes:
         """Render a single page to image bytes via PyMuPDF."""
         if fitz is None:
             raise RuntimeError("PyMuPDF (fitz) is not available")
@@ -355,7 +372,8 @@ class RenderEngine:
         page_idx = max(0, page - 1)
 
         if doc.pdf is not None:
-            data = self._render_pdf_page(doc, preset, vs, page_idx, fmt)
+            data = self._render_pdf_page(doc, preset, vs, page_idx, fmt,
+                                         pdf_doc=pdf_doc)
         else:
             data = self._render_image_page(doc, preset, vs, page_idx, fmt)
 
@@ -369,13 +387,18 @@ class RenderEngine:
         return data
 
     def _render_pdf_page(self, doc, preset: RenderPreset, vs: dict,
-                         page_idx: int, fmt: str) -> bytes:
-        """Render a PDF page."""
-        pdf_doc = doc.pdf
-        if page_idx >= len(pdf_doc):
-            raise ValueError(f"Page {page_idx + 1} out of range ({len(pdf_doc)} pages)")
+                         page_idx: int, fmt: str,
+                         pdf_doc: Optional["fitz.Document"] = None) -> bytes:
+        """Render a PDF page.
 
-        page = pdf_doc[page_idx]
+        Uses ``pdf_doc`` (an isolated fitz.Document supplied by the caller) when
+        provided, otherwise falls back to the registry's shared ``doc.pdf``.
+        """
+        pdf = pdf_doc if pdf_doc is not None else doc.pdf
+        if page_idx >= len(pdf):
+            raise ValueError(f"Page {page_idx + 1} out of range ({len(pdf)} pages)")
+
+        page = pdf[page_idx]
 
         # --- zoom / rotation ---
         zoom = preset.dpi / PDF_DPI
