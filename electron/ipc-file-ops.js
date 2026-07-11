@@ -221,39 +221,41 @@ function registerFileOpsHandlers(ctx) {
         return supportedExts.includes(ext)
       }
 
-      const processPath = (p) => {
+      const processPath = async (p) => {
         if (seenPaths.has(p)) return
-        seenPaths.add(p)
+        seenPaths.add(p) // 同步登记，避免并发重复处理同一路径
 
-        if (!fs.existsSync(p)) return
+        let stat
+        try {
+          stat = await fs.promises.stat(p)
+        } catch {
+          return // 路径不存在或不可访问
+        }
 
-        const stat = fs.statSync(p)
         if (stat.isDirectory()) {
-          // 扫描顶层文件（不递归子文件夹）
+          // 扫描顶层文件（不递归子文件夹）；readdir withFileTypes 免去逐文件 stat
+          let entries
           try {
-            const entries = fs.readdirSync(p)
-            for (const name of entries) {
-              const fullPath = path.join(p, name)
-              try {
-                const entryStat = fs.statSync(fullPath)
-                if (entryStat.isFile() && isInvoiceFile(name)) {
-                  files.push({ name, path: fullPath })
-                }
-              } catch (e) {
-                // 跳过无法访问的文件
+            entries = await fs.promises.readdir(p, { withFileTypes: true })
+          } catch {
+            return // 跳过无法读取的文件夹
+          }
+          for (const entry of entries) {
+            if (entry.isFile() && isInvoiceFile(entry.name)) {
+              const fullPath = path.join(p, entry.name)
+              if (!seenPaths.has(fullPath)) {
+                seenPaths.add(fullPath)
+                files.push({ name: entry.name, path: fullPath })
               }
             }
-          } catch (e) {
-            // 跳过无法读取的文件夹
           }
         } else if (stat.isFile() && isInvoiceFile(p)) {
           files.push({ name: path.basename(p), path: p })
         }
       }
 
-      for (const p of paths) {
-        processPath(p)
-      }
+      // 复用本模块已有的并发控制工具，避免主线程同步 I/O 阻塞
+      await mapLimit(paths, MAX_STAT_CONCURRENCY, (p) => processPath(p))
 
       return { success: true, files }
     } catch (error) {
