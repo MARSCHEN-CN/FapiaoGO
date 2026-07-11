@@ -209,11 +209,38 @@ class SumatraBackend {
   async print(target, settings) {
     const { exe, args } = buildSumatraCommand(target, settings);
 
+    // 超时阈值与 OsLauncherBridge.js 的 timeout:120000 对齐（2 分钟）。
+    // spawn 本身不支持 timeout 选项，须手动用 setTimeout + child.kill 实现。
+    const PRINT_TIMEOUT_MS = 120000;
+
     return new Promise((resolve) => {
       const child = spawn(exe, args, {
         windowsHide: true,
         stdio: ['ignore', 'pipe', 'pipe'],
       });
+
+      // 防止 SumatraPDF 挂起（如等待打印机响应）导致 Promise 永不 settle：
+      // 超时后 kill 子进程并以结构化失败结果 resolve。
+      // settled 守卫确保超时 resolve 与后续可能触发的 'close' 不会重复 settle。
+      let settled = false;
+      let timer = null;
+      const finish = (result) => {
+        if (settled) return;
+        settled = true;
+        if (timer) clearTimeout(timer);
+        resolve(result);
+      };
+
+      timer = setTimeout(() => {
+        console.error('[SumatraBackend] print timed out after %dms, killing SumatraPDF', PRINT_TIMEOUT_MS);
+        try { child.kill('SIGKILL'); } catch (e) { /* 进程可能已自行退出 */ }
+        finish({
+          success: false,
+          exitCode: -1,
+          message: `SumatraPDF 打印超时（>${PRINT_TIMEOUT_MS}ms），已终止进程`,
+          stderr: 'timeout',
+        });
+      }, PRINT_TIMEOUT_MS);
 
       let stderr = '';
       child.stderr.on('data', (data) => {
@@ -222,7 +249,7 @@ class SumatraBackend {
 
       child.on('error', (err) => {
         console.error('[SumatraBackend] spawn error:', err.message);
-        resolve({
+        finish({
           success: false,
           exitCode: -1,
           message: `无法启动 SumatraPDF: ${err.message}`,
@@ -233,7 +260,7 @@ class SumatraBackend {
       child.on('close', (exitCode) => {
         const message = interpretExitCode(exitCode);
         console.log('[SumatraBackend] exitCode=%d, message=%s', exitCode, message);
-        resolve({
+        finish({
           success: exitCode === 0,
           exitCode,
           message,
