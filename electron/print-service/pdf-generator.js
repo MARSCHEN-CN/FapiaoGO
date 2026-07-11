@@ -154,9 +154,69 @@ function pngToPdf(pngBuffer, pageWMM, pageHMM) {
   return Buffer.concat([p1, p2, p3, p4, p5h, jpegBuffer, p5t, xref, trailer])
 }
 
+// 校验 PDF 结构时只读取文件头/尾而非整文件，避免大 PDF（10MB+）整文件读入内存
+// （约 20MB：Buffer + Latin1 String）。MediaBox 通常位于页对象（靠近文件头），
+// xref / startxref / %%EOF 均位于文件尾部。
+const VALIDATE_HEAD_BYTES = 8 * 1024    // 8KB：MediaBox 检测窗口
+const VALIDATE_TAIL_BYTES = 16 * 1024   // 16KB：xref / startxref / %%EOF 窗口
+
+// 读取文件尾部 len 字节（Latin1），用于 xref / startxref / %%EOF 校验
+function readTailSync(pdfPath, size) {
+  const len = Math.min(size, VALIDATE_TAIL_BYTES)
+  const buf = Buffer.alloc(len)
+  const fd = fs.openSync(pdfPath, 'r')
+  try {
+    fs.readSync(fd, buf, 0, len, size - len)
+  } finally {
+    fs.closeSync(fd)
+  }
+  return buf.toString('latin1')
+}
+
+async function readTailAsync(pdfPath, size) {
+  const len = Math.min(size, VALIDATE_TAIL_BYTES)
+  const buf = Buffer.alloc(len)
+  const fh = await fs.promises.open(pdfPath, 'r')
+  try {
+    await fh.read(buf, 0, len, size - len)
+  } finally {
+    await fh.close()
+  }
+  return buf.toString('latin1')
+}
+
+// 读取文件头部 len 字节（Latin1），用于 header 签名与 MediaBox 检测。
+// 注意：fs.readFileSync/readFile 的 options 不接收 length 参数（会被静默忽略，
+// 导致仍整文件读取），因此必须用 fd 级别的 readSync/read 显式限定长度。
+function readHeadSync(pdfPath, size) {
+  const len = Math.min(size, VALIDATE_HEAD_BYTES)
+  const buf = Buffer.alloc(len)
+  const fd = fs.openSync(pdfPath, 'r')
+  try {
+    fs.readSync(fd, buf, 0, len, 0)
+  } finally {
+    fs.closeSync(fd)
+  }
+  return buf.toString('latin1')
+}
+
+async function readHeadAsync(pdfPath, size) {
+  const len = Math.min(size, VALIDATE_HEAD_BYTES)
+  const buf = Buffer.alloc(len)
+  const fh = await fs.promises.open(pdfPath, 'r')
+  try {
+    await fh.read(buf, 0, len, 0)
+  } finally {
+    await fh.close()
+  }
+  return buf.toString('latin1')
+}
+
 /**
  * Validate a PDF file's structural integrity.
  * Throws if the PDF is corrupted or suspicious.
+ *
+ * 仅读取文件头（MediaBox / header）与文件尾（xref / startxref / %%EOF），不读入整个文件。
  *
  * @param {string} pdfPath - path to the PDF file
  * @returns {{ valid: boolean, issues: string[] }}
@@ -164,28 +224,32 @@ function pngToPdf(pngBuffer, pageWMM, pageHMM) {
 function validatePdfStructure(pdfPath) {
   const issues = []
 
-  // 1. File existence and minimum size
+  // 1. 文件存在性与最小尺寸
   const stat = fs.statSync(pdfPath)
   if (stat.size < 1024) {
     issues.push(`PDF too small: ${stat.size} bytes (min 1KB)`)
   }
 
-  // 2. PDF header signature
-  const header = fs.readFileSync(pdfPath, { encoding: 'latin1', length: 8 })
-  if (!header.startsWith('%PDF-')) {
-    issues.push(`Missing PDF header signature: "${header.slice(0, 8)}"`)
+  // 2. PDF 头签名（仅读取文件头 VALIDATE_HEAD_BYTES，避免整文件读入）
+  const head = readHeadSync(pdfPath, stat.size)
+  if (!head.startsWith('%PDF-')) {
+    issues.push(`Missing PDF header signature: "${head.slice(0, 8)}"`)
   }
 
-  // 3. xref table and startxref integrity
-  const content = fs.readFileSync(pdfPath, 'latin1')
-  const startxrefMatch = content.match(/startxref\s*(\d+)/)
+  // 3. xref 表与 startxref 完整性（均位于文件尾部）
+  const tail = readTailSync(pdfPath, stat.size)
+  const tailStart = stat.size - tail.length
+  const startxrefMatch = tail.match(/startxref\s*(\d+)/)
   if (!startxrefMatch) {
     issues.push('Missing startxref pointer')
   } else {
     const declaredOffset = parseInt(startxrefMatch[1], 10)
-    // Use regex to find the xref table header (not JPEG binary that might contain "xref")
-    const xrefHeaderMatch = content.match(/\n?xref\n\d+ \d+\n/)
-    const actualOffset = xrefHeaderMatch ? xrefHeaderMatch.index + (content[xrefHeaderMatch.index] === '\n' ? 1 : 0) : -1
+    // 用正则定位 xref 表头（避开二进制中可能出现的 "xref" 字样）
+    const xrefHeaderMatch = tail.match(/\n?xref\n\d+ \d+\n/)
+    // tail 内匹配下标转回文件绝对偏移，保证与 declaredOffset 可比（与整文件读取语义一致）
+    const actualOffset = xrefHeaderMatch
+      ? tailStart + xrefHeaderMatch.index + (tail[xrefHeaderMatch.index] === '\n' ? 1 : 0)
+      : -1
     if (actualOffset === -1) {
       issues.push('Missing xref table header')
     } else if (Math.abs(declaredOffset - actualOffset) > 5) {
@@ -195,13 +259,13 @@ function validatePdfStructure(pdfPath) {
     }
   }
 
-  // 4. %%EOF marker
-  if (!content.trimEnd().endsWith('%%EOF')) {
+  // 4. %%EOF 标记（文件末尾）
+  if (!tail.trimEnd().endsWith('%%EOF')) {
     issues.push('Missing or misplaced %%EOF marker')
   }
 
-  // 5. MediaBox presence
-  if (!content.includes('/MediaBox')) {
+  // 5. MediaBox 存在性（通常在文件头附近的页对象内）
+  if (!head.includes('/MediaBox')) {
     issues.push('Missing /MediaBox entry')
   }
 
@@ -218,33 +282,38 @@ function validatePdfStructure(pdfPath) {
  * 异步版 validatePdfStructure —— 用 fs.promises 读取，避免在主线程同步读取整个 PDF。
  * 用于 print-merged-images 等需并行校验多文件的场景，不阻塞事件循环。
  *
+ * 与同步版行为一致：仅读取文件头/尾，不读入整个文件。
+ *
  * @param {string} pdfPath - path to the PDF file
  * @returns {Promise<{ valid: boolean, issues: string[] }>}
  */
 async function validatePdfStructureAsync(pdfPath) {
   const issues = []
 
-  // 1. File existence and minimum size
+  // 1. 文件存在性与最小尺寸
   const stat = await fs.promises.stat(pdfPath)
   if (stat.size < 1024) {
     issues.push(`PDF too small: ${stat.size} bytes (min 1KB)`)
   }
 
-  // 2. PDF header signature
-  const header = await fs.promises.readFile(pdfPath, { encoding: 'latin1', length: 8 })
-  if (!header.startsWith('%PDF-')) {
-    issues.push(`Missing PDF header signature: "${header.slice(0, 8)}"`)
+  // 2. PDF 头签名（仅读取文件头 VALIDATE_HEAD_BYTES，避免整文件读入）
+  const head = await readHeadAsync(pdfPath, stat.size)
+  if (!head.startsWith('%PDF-')) {
+    issues.push(`Missing PDF header signature: "${head.slice(0, 8)}"`)
   }
 
-  // 3. xref table and startxref integrity
-  const content = await fs.promises.readFile(pdfPath, 'latin1')
-  const startxrefMatch = content.match(/startxref\s*(\d+)/)
+  // 3. xref 表与 startxref 完整性（均位于文件尾部）
+  const tail = await readTailAsync(pdfPath, stat.size)
+  const tailStart = stat.size - tail.length
+  const startxrefMatch = tail.match(/startxref\s*(\d+)/)
   if (!startxrefMatch) {
     issues.push('Missing startxref pointer')
   } else {
     const declaredOffset = parseInt(startxrefMatch[1], 10)
-    const xrefHeaderMatch = content.match(/\n?xref\n\d+ \d+\n/)
-    const actualOffset = xrefHeaderMatch ? xrefHeaderMatch.index + (content[xrefHeaderMatch.index] === '\n' ? 1 : 0) : -1
+    const xrefHeaderMatch = tail.match(/\n?xref\n\d+ \d+\n/)
+    const actualOffset = xrefHeaderMatch
+      ? tailStart + xrefHeaderMatch.index + (tail[xrefHeaderMatch.index] === '\n' ? 1 : 0)
+      : -1
     if (actualOffset === -1) {
       issues.push('Missing xref table header')
     } else if (Math.abs(declaredOffset - actualOffset) > 5) {
@@ -252,13 +321,13 @@ async function validatePdfStructureAsync(pdfPath) {
     }
   }
 
-  // 4. %%EOF marker
-  if (!content.trimEnd().endsWith('%%EOF')) {
+  // 4. %%EOF 标记（文件末尾）
+  if (!tail.trimEnd().endsWith('%%EOF')) {
     issues.push('Missing or misplaced %%EOF marker')
   }
 
-  // 5. MediaBox presence
-  if (!content.includes('/MediaBox')) {
+  // 5. MediaBox 存在性（通常在文件头附近的页对象内）
+  if (!head.includes('/MediaBox')) {
     issues.push('Missing /MediaBox entry')
   }
 
