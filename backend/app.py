@@ -40,14 +40,53 @@ _decision_router = None
 _init_lock = threading.Lock()
 
 # 单页 PDF 缓存（用于拆分后的下载）
-_page_cache: dict = {}  # {page_id: {"bytes": bytes, "created_at": timestamp}}
+_page_cache: dict = {}  # {page_id: {"bytes": bytes, "created_at": ts, "last_used": ts}}
 _page_cache_lock = threading.Lock()
 _page_cache_ttl = 3600  # 缓存有效期（秒），默认 1 小时
-_page_cache_max = 500   # 惰性清理阈值，超限时才扫描过期条目
+_page_cache_max = 500   # LRU 硬上限：超限时按 last_used 驱逐，杜绝无限增长
 
 # Document Pipeline 映射：page_id → {doc_id, page}（轻量，替代 _page_cache 直接引用）
 _page_registry: dict = {}  # {page_id: {"doc_id": "...", "page": int}}
 _page_registry_lock = threading.Lock()
+
+
+def _page_cache_evict():
+    """
+    单页缓存惰性清理 + LRU 硬上限。
+
+    - 仅当 len(_page_cache) > _page_cache_max 时触发（保持惰性，避免每次请求全表扫描）。
+    - 触发后：先清过期项（created_at 超过 TTL），若仍超限，再按 last_used 升序
+      驱逐最久未用项，直到 len 回到 _page_cache_max（真正的硬上限，杜绝无限增长）。
+    - 任何被驱逐的 key，联动从 _page_registry 删除，避免 registry 悬空 / 无限增长。
+    - 两个锁分两段独立获取（不嵌套），与 _register_and_collect / download_page 的
+      加锁顺序兼容，不会引发死锁。
+    """
+    cutoff = time.time() - _page_cache_ttl
+    evicted = []
+    with _page_cache_lock:
+        if len(_page_cache) > _page_cache_max:
+            # 1) 过期项优先清理
+            for k in [k for k, v in _page_cache.items()
+                      if v.get("created_at", 0) < cutoff]:
+                _page_cache.pop(k, None)
+                evicted.append(k)
+            # 2) 仍超限 → 按 LRU（last_used 升序）驱逐至硬上限
+            over = len(_page_cache) - _page_cache_max
+            if over > 0:
+                lru = sorted(
+                    _page_cache.keys(),
+                    key=lambda k: _page_cache[k].get("last_used",
+                                                     _page_cache[k].get("created_at", 0)),
+                )
+                for k in lru[:over]:
+                    _page_cache.pop(k, None)
+                    evicted.append(k)
+    if evicted:
+        with _page_registry_lock:
+            for k in evicted:
+                _page_registry.pop(k, None)
+        logger.debug("[page_cache] 驱逐 %d 个条目（含 registry 联动清理）", len(evicted))
+
 
 def get_decision_router():
     global _decision_router
@@ -287,12 +326,24 @@ def api_export_excel_sse():
 
     def generate():
         yield ": keepalive\n\n"
-        while not progress_queue.empty():
-            msg = progress_queue.get_nowait()
-            yield f"data: {_json.dumps(msg, ensure_ascii=False)}\n\n"
-        while not result_queue.empty():
-            msg = result_queue.get_nowait()
-            yield f"data: {_json.dumps(msg, ensure_ascii=False)}\n\n"
+        # 阻塞等待进度/结果：导出线程完成前 SSE 不提前断开（修复原实现只排空一次即结束，
+        # 导致客户端收不到完成事件、误判导出失败）
+        while True:
+            # 先排空已就绪的进度消息
+            while not progress_queue.empty():
+                msg = progress_queue.get_nowait()
+                yield f"data: {_json.dumps(msg, ensure_ascii=False)}\n\n"
+            # 结果已就绪则发送并结束（成功或失败）
+            if not result_queue.empty():
+                msg = result_queue.get_nowait()
+                yield f"data: {_json.dumps(msg, ensure_ascii=False)}\n\n"
+                break
+            # 阻塞等待下一个进度事件（最多 0.1s），避免忙轮询
+            try:
+                msg = progress_queue.get(timeout=0.1)
+                yield f"data: {_json.dumps(msg, ensure_ascii=False)}\n\n"
+            except queue.Empty:
+                continue
 
     return Response(
         stream_with_context(generate()),
@@ -503,9 +554,32 @@ def api_invoice_export_data():
 def get_review_queue():
     try:
         status_filter = request.args.get('status', 'pending')
+
+        # 解析分页参数（缺失/非法时回退默认值，不报错）
+        def _parse_int(name, default):
+            raw = request.args.get(name)
+            if raw is None:
+                return default
+            try:
+                return int(raw)
+            except (ValueError, TypeError):
+                return default
+
+        limit = _parse_int('limit', None)
+        if limit is not None and limit < 0:
+            limit = None
+        offset = max(0, _parse_int('offset', 0))
+
         router = get_decision_router()
-        records = router.list_review_queue(status=status_filter)
-        return jsonify({"success": True, "data": records, "count": len(records)})
+        records, total = router.list_review_queue(
+            status=status_filter, limit=limit, offset=offset)
+        return jsonify({
+            "success": True,
+            "data": records,
+            "count": total,
+            "limit": limit,
+            "offset": offset,
+        })
     except Exception as e:
         logger.exception("查询审核队列失败")
         return jsonify({"success": False, "error": str(e)}), 500
@@ -584,9 +658,31 @@ def resolve_review_manual():
 def get_exception_queue():
     try:
         status_filter = request.args.get('status', 'pending')
+
+        def _parse_int(name, default):
+            raw = request.args.get(name)
+            if raw is None:
+                return default
+            try:
+                return int(raw)
+            except (ValueError, TypeError):
+                return default
+
+        limit = _parse_int('limit', None)
+        if limit is not None and limit < 0:
+            limit = None
+        offset = max(0, _parse_int('offset', 0))
+
         router = get_decision_router()
-        records = router.list_exception_queue(status=status_filter)
-        return jsonify({"success": True, "data": records, "count": len(records)})
+        records, total = router.list_exception_queue(
+            status=status_filter, limit=limit, offset=offset)
+        return jsonify({
+            "success": True,
+            "data": records,
+            "count": total,
+            "limit": limit,
+            "offset": offset,
+        })
     except Exception as e:
         logger.exception("查询异常队列失败")
         return jsonify({"success": False, "error": str(e)}), 500
@@ -635,15 +731,8 @@ def split_pdf():
         pages = []
         now = time.time()
 
-        # 清理过期缓存（惰性清理逻辑不变）
-        with _page_cache_lock:
-            if len(_page_cache) > _page_cache_max:
-                cutoff = now - _page_cache_ttl
-                expired = [k for k, v in _page_cache.items() if v["created_at"] < cutoff]
-                for k in expired:
-                    del _page_cache[k]
-                if expired:
-                    logger.debug("[page_cache] 惰性清理 %d 个过期条目", len(expired))
+        # 惰性清理 + LRU 硬上限（过期项与超限 LRU 驱逐，联动清理 registry）
+        _page_cache_evict()
 
         # 单页任务：拆页 + 200dpi 预览渲染 + base64。
         # fitz.Document 不可跨线程共享，因此每个 worker 用独立副本打开。
@@ -671,7 +760,11 @@ def split_pdf():
                 with _page_registry_lock:
                     _page_registry[page_id] = {"doc_id": doc.doc_id, "page": page_num}
                 with _page_cache_lock:
-                    _page_cache[page_id] = {"bytes": page_bytes, "created_at": now}
+                    _page_cache[page_id] = {
+                        "bytes": page_bytes,
+                        "created_at": now,
+                        "last_used": now,
+                    }
                 pages.append({
                     "page_index": page_num,
                     "page_id": page_id,
@@ -736,7 +829,11 @@ def download_page(page_id):
             # 写入 _page_cache（后续请求直接命中旧缓存路径）
             now = time.time()
             with _page_cache_lock:
-                _page_cache[page_id] = {"bytes": page_bytes, "created_at": now}
+                _page_cache[page_id] = {
+                    "bytes": page_bytes,
+                    "created_at": now,
+                    "last_used": now,
+                }
             return _respond_pdf(page_bytes, page_id)
         except Exception as e:
             logger.debug("download_page pipeline fallback for %s: %s", page_id, e)
@@ -745,14 +842,16 @@ def download_page(page_id):
     # ── ② 回退：旧 _page_cache ──
     with _page_cache_lock:
         cache_entry = _page_cache.get(page_id)
-
-    if not cache_entry:
-        return jsonify({"success": False, "error": "页面不存在或已过期，请重新拆分"}), 404
-
-    if time.time() - cache_entry["created_at"] > _page_cache_ttl:
-        with _page_cache_lock:
+        if not cache_entry:
+            return jsonify({"success": False, "error": "页面不存在或已过期，请重新拆分"}), 404
+        if time.time() - cache_entry["created_at"] > _page_cache_ttl:
+            # 过期：同步清理 cache 与 registry，避免悬空条目
             _page_cache.pop(page_id, None)
-        return jsonify({"success": False, "error": "页面已过期，请重新拆分"}), 410
+            with _page_registry_lock:
+                _page_registry.pop(page_id, None)
+            return jsonify({"success": False, "error": "页面已过期，请重新拆分"}), 410
+        # 命中：刷新 LRU 时间戳
+        cache_entry["last_used"] = time.time()
 
     return _respond_pdf(cache_entry["bytes"], page_id)
 
@@ -986,6 +1085,10 @@ def parse_batch():
                 record_index_map[len(db_records)] = idx
                 db_records.append(svc_result['db_record'])
 
+        # 预构建反向映射 {file_idx: db_record 位置}，把下方「逐个文件匹配 db 结果」从 O(N·M) 降为 O(N)。
+        # 依赖 batch_upsert_invoices 返回顺序与入参 rows 对应的契约（见 db.py 文档）。
+        file_db_map = {idx: pos for pos, idx in record_index_map.items()}
+
         db_results = []
         if db_records:
             try:
@@ -1004,10 +1107,9 @@ def parse_batch():
             }
             if svc_result:
                 db_res = None
-                for rec_idx, file_idx in record_index_map.items():
-                    if file_idx == idx and rec_idx < len(db_results):
-                        db_res = db_results[rec_idx]
-                        break
+                rec_idx = file_db_map.get(idx)
+                if rec_idx is not None and rec_idx < len(db_results):
+                    db_res = db_results[rec_idx]
                 item['db_result'] = db_res
 
                 extra = svc_result.get('extra_fields', {}) or {}
@@ -1048,18 +1150,23 @@ def parse_batch():
 
     def generate():
         yield ": keepalive\n\n"
+        # 阻塞等待事件：进度到达即唤醒（零额外延迟），而非 time.sleep 忙轮询
         while True:
-            # 先消费 progress_queue
+            # 先消费已就绪的进度消息
             while not progress_queue.empty():
                 msg = progress_queue.get_nowait()
                 yield f"data: {_json.dumps(msg, ensure_ascii=False)}\n\n"
-            # 检查 result_queue（有结果说明解析完成）
+            # 结果已就绪则发送并结束（解析完成）
             if not result_queue.empty():
                 msg = result_queue.get_nowait()
                 yield f"data: {_json.dumps(msg, ensure_ascii=False)}\n\n"
                 break
-            # 没有数据时短暂休眠，避免 busy loop
-            time.sleep(0.05)
+            # 阻塞等待下一个进度事件（最多 0.1s），超时再探活 result_queue；无空转
+            try:
+                msg = progress_queue.get(timeout=0.1)
+                yield f"data: {_json.dumps(msg, ensure_ascii=False)}\n\n"
+            except queue.Empty:
+                continue
 
     return Response(
         stream_with_context(generate()),

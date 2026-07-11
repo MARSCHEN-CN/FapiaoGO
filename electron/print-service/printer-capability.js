@@ -487,23 +487,24 @@ function _setMemoryCache(printerName, data) {
 async function _loadDiskCache(printerName) {
   const filePath = _getCacheFilePath(printerName);
   try {
-    if (!fs.existsSync(filePath)) return null;
-
-    const raw = fs.readFileSync(filePath, 'utf-8');
+    // 真正异步读取，避免打印/解析链路主线程被磁盘 I/O 阻塞
+    const raw = await fs.promises.readFile(filePath, 'utf-8');
     const entry = JSON.parse(raw);
 
     // 检查 TTL
     const age = Date.now() - new Date(entry.fetchedAt).getTime();
     if (age > DISK_CACHE_TTL_MS) {
       log('Disk cache expired for "%s" (age=%.1fd)', printerName, age / 86400000);
-      fs.unlinkSync(filePath);
+      try { await fs.promises.unlink(filePath); } catch (e) { /* ignore */ }
       return null;
     }
 
     log('Disk cache hit for "%s" (age=%.1fd)', printerName, age / 86400000);
     return entry.capabilities;
   } catch (e) {
-    log('Disk cache read failed for "%s": %s', printerName, e.message);
+    if (e.code !== 'ENOENT') {
+      log('Disk cache read failed for "%s": %s', printerName, e.message);
+    }
     return null;
   }
 }
@@ -643,7 +644,7 @@ const _DEBUG = () => process.env.PRINT_DEBUG_CAPABILITY === 'true';
  * @param {object} settings - PrintSettings（会被修改）
  * @param {string} printerName - 打印机名称
  */
-function enhanceWithCapability(settings, printerName) {
+async function enhanceWithCapability(settings, printerName) {
   if (!settings || !printerName || settings.paperkind != null) return;
 
   const paperName = settings.paper;
@@ -654,17 +655,12 @@ function enhanceWithCapability(settings, printerName) {
   // 仅检查内存缓存和磁盘缓存（不触发 Sumatra 查询）
   let capabilities = _checkMemoryCache(printerName);
   if (!capabilities) {
-    // 同步读取磁盘缓存（不 await，因为打印链路不能阻塞）
+    // 内存未命中：异步读磁盘缓存（复用 _loadDiskCache，避免同步 readFileSync 阻塞打印链路主线程）
     try {
-      const filePath = _getCacheFilePath(printerName);
-      if (fs.existsSync(filePath)) {
-        const raw = fs.readFileSync(filePath, 'utf-8');
-        const entry = JSON.parse(raw);
-        if (entry.capabilities) {
-          capabilities = entry.capabilities;
-          // 加载到内存缓存
-          _setMemoryCache(printerName, capabilities);
-        }
+      capabilities = await _loadDiskCache(printerName);
+      if (capabilities) {
+        // 回填内存缓存，避免后续重复磁盘读取
+        _setMemoryCache(printerName, capabilities);
       }
     } catch (e) {
       // 缓存不可用时不阻塞打印

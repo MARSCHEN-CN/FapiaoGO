@@ -52,7 +52,7 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
           const ext = getExtension(fileObj.name)
           const mimeType = getMimeType(ext)
 
-          const blob = new Blob([new Uint8Array(fileData.data)], { type: mimeType })
+          const blob = new Blob([fileData.data], { type: mimeType })
           preparedFiles.push(new File([blob], fileObj.name, { type: mimeType }))
         } else {
           preparedFiles.push(null)
@@ -287,7 +287,7 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
                 const ext = getExtension(fileObj.name)
                 const mimeType = getMimeType(ext)
 
-                const blob = new Blob([new Uint8Array(fileData.data)], { type: mimeType })
+                const blob = new Blob([fileData.data], { type: mimeType })
                 const file = new File([blob], fileObj.name, { type: mimeType })
                 const formData = new FormData()
                 formData.append('file', file)
@@ -428,7 +428,7 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
         if (result.success) {
           const ext = getExtension(f.name)
           const mimeType = getMimeType(ext)
-          const blob = new Blob([new Uint8Array(result.data)], { type: mimeType })
+          const blob = new Blob([result.data], { type: mimeType })
           fileData = new File([blob], f.name, { type: mimeType })
         }
       }
@@ -536,7 +536,7 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
             if (fileData.success) {
               const ext = getExtension(f.name)
               const mimeType = getMimeType(ext)
-              const blob = new Blob([new Uint8Array(fileData.data)], { type: mimeType })
+              const blob = new Blob([fileData.data], { type: mimeType })
               const file = new File([blob], f.name, { type: mimeType })
               const fd = new FormData()
               fd.append('file', file)
@@ -789,7 +789,7 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
         try {
           const fileData = await ipc.invoke('read-file', file.path)
           if (fileData.success) {
-            const blob = new Blob([new Uint8Array(fileData.data)], { type: 'application/pdf' })
+            const blob = new Blob([fileData.data], { type: 'application/pdf' })
             const pdfFile = new File([blob], file.name, { type: 'application/pdf' })
             filesToAdd.push({
               file: pdfFile,
@@ -832,7 +832,7 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
         try {
           const fileData = await ipc.invoke('read-file', file.path)
           if (fileData.success) {
-            const blob = new Blob([new Uint8Array(fileData.data)], { type: 'application/pdf' })
+            const blob = new Blob([fileData.data], { type: 'application/pdf' })
             const pdfFile = new File([blob], file.name, { type: 'application/pdf' })
             filesToAdd.push({
               file: pdfFile,

@@ -115,7 +115,7 @@ function detectPdfOrientation(pdfPath) {
  * @param {object} settings - PrintSettings
  * @returns {{ exe: string, args: string[] }}
  */
-function buildSumatraCommand(target, settings) {
+async function buildSumatraCommand(target, settings) {
   const exe = getSumatraPath();
   const resolved = resolvePrintTarget(target);
 
@@ -148,8 +148,8 @@ function buildSumatraCommand(target, settings) {
       normalizedSettings.paper, normalizedSettings.rotation || 0);
   }
 
-  // Step 2: Capability 自动映射 — 从缓存补齐 paperkind
-  enhanceWithCapability(normalizedSettings, target.printer);
+  // Step 2: Capability 自动映射 — 从缓存补齐 paperkind（异步，避免打印链路同步磁盘读取）
+  await enhanceWithCapability(normalizedSettings, target.printer);
 
   const printSettingsStr = buildPrintSettings(normalizedSettings);
 
@@ -207,7 +207,7 @@ class SumatraBackend {
    * @returns {Promise<PrintResult>}
    */
   async print(target, settings) {
-    const { exe, args } = buildSumatraCommand(target, settings);
+    const { exe, args } = await buildSumatraCommand(target, settings);
 
     // 超时阈值与 OsLauncherBridge.js 的 timeout:120000 对齐（2 分钟）。
     // spawn 本身不支持 timeout 选项，须手动用 setTimeout + child.kill 实现。

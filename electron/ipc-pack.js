@@ -18,6 +18,18 @@ const {
  * @param {Object} ctx
  * @param {Function} ctx.getMainWindow - 获取主窗口引用的函数
  */
+/**
+ * 异步判断路径是否存在（Node 无 fs.promises.exists，用 access 容错）
+ */
+async function pathExists(p) {
+  try {
+    await fs.promises.access(p)
+    return true
+  } catch {
+    return false
+  }
+}
+
 function registerPackHandlers(ctx) {
 
   // ==========================================
@@ -46,9 +58,8 @@ function registerPackHandlers(ctx) {
         outputDir = result.filePaths[0]
       }
 
-      if (!fs.existsSync(outputDir)) {
-        fs.mkdirSync(outputDir, { recursive: true })
-      }
+      // 目录存在则 mkdir(recursive) 为 no-op，行为与「existsSync 守卫 + mkdirSync」等价
+      await fs.promises.mkdir(outputDir, { recursive: true })
 
       // 2. 解析打包设置
       const archiveFormat = (packSettings.packArchiveFormat || 'ZIP').toUpperCase()
@@ -67,7 +78,7 @@ function registerPackHandlers(ctx) {
       let counter = 1
       const archiveExt = path.extname(archiveName)
       const archiveBase = path.basename(archiveName, archiveExt)
-      while (fs.existsSync(finalArchivePath)) {
+      while (await pathExists(finalArchivePath)) {
         finalArchivePath = path.join(outputDir, `${archiveBase}_${counter}${archiveExt}`)
         counter++
       }
@@ -120,7 +131,7 @@ function registerPackHandlers(ctx) {
             originalPath = path.resolve(originalPath)
           }
 
-          if (!fs.existsSync(originalPath)) {
+          if (!(await pathExists(originalPath))) {
             packResult.failed++
             packResult.errors.push({ file: file.name, error: '源文件不存在' })
             continue
@@ -182,17 +193,17 @@ function registerPackHandlers(ctx) {
         return { success: false, error: `创建压缩包失败: ${archiveError.message}` }
       }
 
-      // 7. 处理原件（不保留原件则删除）
+      // 7. 处理原件（不保留原件则删除；各文件独立，并行删除避免逐个 await 累积延迟）
       if (!keepOriginal) {
-        for (const pf of preparedFiles) {
+        await Promise.all(preparedFiles.map(async (pf) => {
           try {
-            if (fs.existsSync(pf.originalPath)) {
-              fs.unlinkSync(pf.originalPath)
+            if (await pathExists(pf.originalPath)) {
+              await fs.promises.unlink(pf.originalPath)
             }
           } catch (unlinkErr) {
             console.warn(`[pack] 删除原件失败: ${pf.originalPath}`, unlinkErr.message)
           }
-        }
+        }))
       }
 
       packResult.packed = preparedFiles.length

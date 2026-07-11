@@ -28,13 +28,12 @@ pdfMargin.checkPythonEnv().catch(() => {})
 /**
  * 提取 PDF 的 MediaBox 信息
  */
-function extractMediaBox(pdfPath) {
+async function extractMediaBox(pdfPath) {
+  let fd
   try {
-    const fd = fs.openSync(pdfPath, 'r')
+    fd = await fs.promises.open(pdfPath, 'r')
     const buffer = Buffer.alloc(8192)
-    const bytesRead = fs.readSync(fd, buffer, 0, 8192, 0)
-    fs.closeSync(fd)
-
+    const { bytesRead } = await fd.read(buffer, 0, 8192, 0)
     const content = buffer.toString('latin1', 0, bytesRead)
 
     // 匹配 /MediaBox [left bottom right top]（任意 left/bottom，如加边距后为负值）
@@ -53,6 +52,8 @@ function extractMediaBox(pdfPath) {
   } catch (err) {
     console.error(`[extractMediaBox] Failed: ${err.message}`)
     return null
+  } finally {
+    if (fd) await fd.close()
   }
 }
 
@@ -60,13 +61,13 @@ function extractMediaBox(pdfPath) {
  * 检测 PDF 的 MediaBox 方向
  * 读取 PDF 文件前 8KB，查找 /MediaBox [0 0 width height]
  */
-function detectPdfOrientation(filePath) {
+async function detectPdfOrientation(filePath) {
+  let fd
   try {
     // 读取前 8KB（足够覆盖 PNG IHDR 和 PDF MediaBox）
-    const fd = fs.openSync(filePath, 'r')
+    fd = await fs.promises.open(filePath, 'r')
     const buffer = Buffer.alloc(8192)
-    const bytesRead = fs.readSync(fd, buffer, 0, 8192, 0)
-    fs.closeSync(fd)
+    const { bytesRead } = await fd.read(buffer, 0, 8192, 0)
 
     // ✅ PNG 检测：读取 IHDR 块中的宽高（字节 16-23）
     const PNG_SIG = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]
@@ -105,6 +106,8 @@ function detectPdfOrientation(filePath) {
   } catch (err) {
     console.error(`[detectPdfOrientation] Failed: ${err.message}`)
     return 'portrait' // 默认竖向
+  } finally {
+    if (fd) await fd.close()
   }
 }
 
@@ -411,7 +414,7 @@ ipcMain.handle('generate-print-pdf', async (_event, { canvasBuffer, paperSize, o
   }
 
   try {
-    const { pdfPath, size } = generatePdfFromCanvas({
+    const { pdfPath, size } = await generatePdfFromCanvas({
       pngBuffer: Buffer.from(canvasBuffer),
       widthMM,
       heightMM,
@@ -507,6 +510,12 @@ const { spawn } = require('child_process')
  */
 function toImageBuffer(raw) {
   if (Buffer.isBuffer(raw)) return raw
+  // 真实 TypedArray 视图：零拷贝引用底层 ArrayBuffer 批量构造（大图逐字节循环开销显著）
+  if (raw && raw.buffer instanceof ArrayBuffer) {
+    return Buffer.from(raw.buffer, raw.byteOffset, raw.byteLength)
+  }
+  // 退化情形：structured clone 把 Uint8Array 变成普通对象 {0:..,1:..,length:N}
+  // 此时无 .buffer，只能逐字节拷贝还原（保留原行为，确保任何情况下都能正确还原）。
   const len = raw.length
   if (typeof len !== 'number' || len === 0) {
     throw new Error(`toImageBuffer: 无效数据, typeof=${typeof raw}, keys=${Object.keys(raw || {}).slice(0, 5)}`)
@@ -546,13 +555,17 @@ async function callPython(args, timeoutMs = 30000) {
         PYTHONIOENCODING: 'utf-8',
       }
     })
-    let stdout = ''
-    let stderr = ''
-    child.stdout.on('data', d => stdout += d)
-    child.stderr.on('data', d => stderr += d)
+    // 用 Buffer 数组收集，最后一次性 concat，避免每次 'data' 都重新拷贝整段字符串（大输出 O(n²)）；
+    // 同时避免逐块 Buffer.toString() 在 UTF-8 多字节跨块边界时被截断成乱码。
+    const outChunks = []
+    const errChunks = []
+    child.stdout.on('data', d => outChunks.push(d))
+    child.stderr.on('data', d => errChunks.push(d))
     const timer = setTimeout(() => { child.kill(); reject(new Error('Python 超时')) }, timeoutMs)
     child.on('close', code => {
       clearTimeout(timer)
+      const stdout = Buffer.concat(outChunks).toString('utf-8')
+      const stderr = Buffer.concat(errChunks).toString('utf-8')
       if (code !== 0) reject(new Error(stderr.slice(0, 500) || `退出码 ${code}`))
       else resolve(JSON.parse(stdout))
     })
@@ -639,7 +652,7 @@ ipcMain.handle('print-merged-images', async (_event, { images, settings }) => {
         if (!validation.valid) {
           console.warn(`[print-merged-images] PDF ${i + 1} validation issues:`, validation.issues)
         }
-        const mediaBox = extractMediaBox(p)
+        const mediaBox = await extractMediaBox(p)
         console.log(`[print-merged-images] PNG ${i + 1} → PDF: ${p}, MediaBox=${JSON.stringify(mediaBox)}`)
       })()
     )
@@ -765,12 +778,10 @@ ipcMain.handle('resize-settings-window', async (event, { width, height }) => {
 ipcMain.handle('save-print-settings', async (event, settings) => {
   try {
     console.log('保存打印设置:', settings)
-    // 确保目录存在
+    // 确保目录存在（mkdir recursive 在目录已存在时为 no-op，等价于原 existsSync 守卫）
     const settingsDir = path.dirname(settingsPath)
-    if (!fs.existsSync(settingsDir)) {
-      fs.mkdirSync(settingsDir, { recursive: true })
-    }
-    fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf-8')
+    await fs.promises.mkdir(settingsDir, { recursive: true })
+    await fs.promises.writeFile(settingsPath, JSON.stringify(settings, null, 2), 'utf-8')
     // ✅ 立即通知主窗口设置已变化（尤其是 mergeMode）
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('settings-changed', settings)
@@ -783,8 +794,8 @@ ipcMain.handle('save-print-settings', async (event, settings) => {
 
 ipcMain.handle('load-print-settings', async () => {
   try {
-    if (!fs.existsSync(settingsPath)) return {}
-    return JSON.parse(fs.readFileSync(settingsPath, 'utf-8'))
+    const data = await fs.promises.readFile(settingsPath, 'utf-8')
+    return JSON.parse(data)
   } catch (error) {
     return {}
   }

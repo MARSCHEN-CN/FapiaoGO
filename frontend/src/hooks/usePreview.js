@@ -688,7 +688,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
           const fd = await electronAPIRef.current.ipcRenderer.invoke('read-file', fObj.printPath)
           if (signal?.aborted) return fObj
           if (fd.success) {
-            const blob = new Blob([new Uint8Array(fd.data)])
+            const blob = new Blob([fd.data])
             _previewImageUrl = URL.createObjectURL(blob)
             pendingBlobUrlsRef.current.push(_previewImageUrl)
           }
@@ -745,7 +745,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
             console.log('[DIAG] LOAD IPC DONE key=', fObj.key?.slice(0,40), 'succ=', fd?.success)
             if (signal?.aborted) return fObj
             if (fd.success) {
-              buffer = fd.data.buffer
+              buffer = await fd.data.arrayBuffer()
             }
           }
           if (buffer) {

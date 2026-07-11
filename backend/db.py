@@ -1142,8 +1142,10 @@ def search_invoices(
                 and (not date_to or (inv.get('date') or '') <= date_to)
             ]
         # 缓存写回须排他锁，与上面的读锁分开获取，避免嵌套死锁
+        # 存入副本而非活动对象引用：避免后续原地 upsert 修改 _invoices 时，
+        # 已缓存的搜索结果（仍持有旧引用）出现不一致窗口。
         with _rw_lock.gen_wlock():
-            _search_cache_set(cache_key, results)
+            _search_cache_set(cache_key, [inv.copy() for inv in results])
 
     # 排序（操作本地 results，无共享数据访问，无需持锁）
     valid_order_fields = {'date', 'amount', 'created_at', 'file_name'}

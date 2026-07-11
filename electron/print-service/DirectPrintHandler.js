@@ -34,6 +34,18 @@ function generateJobId() {
   return `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 }
 
+/**
+ * 异步判断路径是否存在（Node 无 fs.promises.exists，用 access 容错）
+ */
+async function pathExists(p) {
+  try {
+    await fs.promises.access(p)
+    return true
+  } catch {
+    return false
+  }
+}
+
 let printService = null;
 
 function setPrintService(service) {
@@ -57,7 +69,7 @@ async function handle(filePath, settings) {
     return { success: false, error: `Unsupported file type. Supported: ${DIRECT_PRINT_EXTENSIONS.join(', ')}` };
   }
 
-  if (!fs.existsSync(filePath)) {
+  if (!(await pathExists(filePath))) {
     return { success: false, error: `File not found: ${filePath}` };
   }
 
@@ -69,7 +81,7 @@ async function handle(filePath, settings) {
   const tempDir = path.join(require('os').tmpdir(), `print_direct_${jobId}`);
 
   try {
-    fs.mkdirSync(tempDir, { recursive: true })
+    await fs.promises.mkdir(tempDir, { recursive: true })
     console.log(`[DirectPrintHandler] Created temp dir: ${tempDir}`)
   } catch (err) {
     return { success: false, error: `Failed to create temp dir: ${err.message}` }
@@ -84,11 +96,11 @@ async function handle(filePath, settings) {
   console.log(`[DEBUG-DPH] Dest PDF: ${destPath}`);
 
   try {
-    fs.copyFileSync(filePath, destPath);
+    await fs.promises.copyFile(filePath, destPath);
     console.log(`[DirectPrintHandler] Copied file to: ${destPath}`);
-    fs.chmodSync(destPath, 0o444);
+    await fs.promises.chmod(destPath, 0o444);
   } catch (err) {
-    try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch (e) {}
+    try { await fs.promises.rm(tempDir, { recursive: true, force: true }); } catch (e) {}
     return { success: false, error: `Failed to copy file: ${err.message}` };
   }
 
@@ -118,11 +130,11 @@ async function handle(filePath, settings) {
     if (result.success) {
       return { success: true, jobId };
     } else {
-      try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch (e) {}
+      try { await fs.promises.rm(tempDir, { recursive: true, force: true }); } catch (e) {}
       return { success: false, error: result.error };
     }
   } catch (err) {
-    try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch (e) {}
+    try { await fs.promises.rm(tempDir, { recursive: true, force: true }); } catch (e) {}
     return { success: false, error: err.message };
   }
 }

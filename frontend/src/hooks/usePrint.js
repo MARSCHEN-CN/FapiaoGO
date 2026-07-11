@@ -174,7 +174,7 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
         // PDF 文件
         const fileData = await ipc.invoke('read-file', f.printPath)
         if (fileData.success) {
-          items.push({ ...f, _pdfData: new Uint8Array(fileData.data) })
+          items.push({ ...f, _pdfData: new Uint8Array(await fileData.data.arrayBuffer()) })
         } else {
           console.error('[usePrint] 读取 PDF 文件失败:', f.printPath)
           return null
@@ -187,7 +187,7 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
         } else {
           const fileData = await ipc.invoke('read-file', f.printPath)
           if (fileData.success) {
-            blob = new Blob([new Uint8Array(fileData.data)])
+            blob = new Blob([fileData.data])
           } else {
             console.error('[usePrint] 读取图片文件失败:', f.printPath)
             return null
@@ -249,7 +249,7 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
           if (f.fileFormat === 'pdf' || (!f.fileFormat && !f.previewImage)) {
             const fileData = await ipc.invoke('read-file', f.printPath)
             if (fileData.success) {
-              return { ...f, _pdfData: new Uint8Array(fileData.data) }
+              return { ...f, _pdfData: new Uint8Array(await fileData.data.arrayBuffer()) }
             }
           } else if (f.fileFormat === 'ofd' && f.previewImage) {
             const blob = b64toBlob(f.previewImage, 'image/png')
@@ -265,7 +265,7 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
             }
             const fileData = await ipc.invoke('read-file', f.printPath)
             if (fileData.success) {
-              const blob = new Blob([new Uint8Array(fileData.data)])
+              const blob = new Blob([fileData.data])
               const blobUrl = URL.createObjectURL(blob)
               localBlobUrls.push(blobUrl)
               return { ...f, _previewImageUrl: blobUrl }
@@ -884,9 +884,9 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
         // ── 3. Build DTO items (clean, no underscore prefixes) ──
         const dtoItems = []
         if (file.fileFormat === 'pdf' || (!file.fileFormat && !file.previewImage)) {
-          dtoItems.push({ key: file.key, name: file.name, fileFormat: 'pdf', pdfData: new Uint8Array(fileData.data) })
+          dtoItems.push({ key: file.key, name: file.name, fileFormat: 'pdf', pdfData: new Uint8Array(await fileData.data.arrayBuffer()) })
         } else {
-          const blob = new Blob([new Uint8Array(fileData.data)])
+          const blob = new Blob([fileData.data])
           const blobUrl = URL.createObjectURL(blob)
           dtoItems.push({ key: file.key, name: file.name, fileFormat: file.fileFormat || 'image', imageUrl: blobUrl })
         }

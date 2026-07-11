@@ -351,22 +351,27 @@ async function validatePdfStructureAsync(pdfPath) {
  * @param {string} [params.prefix] - filename prefix
  * @returns {{ pdfPath: string, size: number }}
  */
-function generatePdfFromCanvas({ pngBuffer, widthMM, heightMM, prefix }) {
+async function generatePdfFromCanvas({ pngBuffer, widthMM, heightMM, prefix }) {
+  // 注意：pngToPdf 内的 nativeImage.createFromBuffer（PNG 解码 + JPEG 编码）是 CPU 密集型
+  // 同步操作，且 nativeImage 是 Electron 主进程专有模块，无法移入 Worker Thread
+  // （Node worker_threads 不能 require('electron')）。此处保持主线程同步执行，
+  // 仅将下方的磁盘 I/O（写盘/stat/校验/隔离）异步化，避免阻塞事件循环。
   const pdfBuffer = pngToPdf(pngBuffer, widthMM, heightMM)
   const tmpDir = TEMP_DIR
   const pdfPath = path.join(tmpDir, `${prefix || 'print'}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.pdf`)
-  fs.writeFileSync(pdfPath, pdfBuffer)
-  const size = fs.statSync(pdfPath).size
+  await fs.promises.writeFile(pdfPath, pdfBuffer)
+  const size = (await fs.promises.stat(pdfPath)).size
   console.log(`[PDF_GENERATOR] Created: ${pdfPath} (${size} bytes, ${widthMM}×${heightMM}mm)`)
 
   // ✅ PDF fingerprint validation — catches corruption early
-  const validation = validatePdfStructure(pdfPath)
+  // 改用异步版 validatePdfStructureAsync（fs.promises 读头/尾，不阻塞主线程）
+  const validation = await validatePdfStructureAsync(pdfPath)
   if (!validation.valid) {
     const errMsg = `[PDF_FINGERPRINT_FAIL] Generated PDF is corrupted: ${validation.issues.join('; ')}`
     console.error(errMsg)
     // Quarantine the file (don't delete — keep for debugging)
     const quarantinePath = pdfPath + '.quarantine'
-    try { fs.renameSync(pdfPath, quarantinePath) } catch {}
+    try { await fs.promises.rename(pdfPath, quarantinePath) } catch {}
     throw new Error(errMsg)
   }
 

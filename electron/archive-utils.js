@@ -123,21 +123,40 @@ function find7zPath() {
 }
 
 /**
+ * 用硬链接代替整文件拷贝：打包前不再把 PDF 数据冗余复制到临时目录（硬链接仅复制元数据，O(1)），
+ * 归档结构（finalName 等）与原拷贝方案完全一致。跨文件系统（EXDEV）或权限不足（EPERM/EACCES）
+ * 时自动回退到 copyFileSync，行为不退化。
+ * @param {string} src - 源文件路径
+ * @param {string} dest - 临时目录中的目标路径（即归档内文件名）
+ */
+function linkOrCopy(src, dest) {
+  try {
+    fs.linkSync(src, dest)
+  } catch (err) {
+    if (err.code === 'EXDEV' || err.code === 'EPERM' || err.code === 'EACCES') {
+      fs.copyFileSync(src, dest) // 回退：跨盘或权限受限时仍拷贝
+    } else {
+      throw err
+    }
+  }
+}
+
+/**
  * 使用 7z 命令行工具创建 7Z 压缩包
  * @param {Array} files - [{ originalPath, targetName }]
  * @param {string} archivePath - 输出路径
  * @param {string} sevenZipPath - 7z 可执行文件路径
  */
 async function createArchiveWith7z(files, archivePath, sevenZipPath) {
-  // 先将文件复制到临时目录，再打包
+  // 先将文件以硬链接方式放入临时目录（零数据拷贝），再打包
   const tempDir = path.join(os.tmpdir(), `mars_pack_${Date.now()}`)
-  fs.mkdirSync(tempDir, { recursive: true })
+  await fs.promises.mkdir(tempDir, { recursive: true })
 
   try {
     const resolved = resolveArchiveFileNames(files)
     for (const file of resolved) {
       const destPath = path.join(tempDir, file.finalName)
-      fs.copyFileSync(file.originalPath, destPath)
+      linkOrCopy(file.originalPath, destPath)
     }
 
     await new Promise((resolve, reject) => {
@@ -156,7 +175,7 @@ async function createArchiveWith7z(files, archivePath, sevenZipPath) {
   } finally {
     // 清理临时目录
     try {
-      fs.rmSync(tempDir, { recursive: true, force: true })
+      await fs.promises.rm(tempDir, { recursive: true, force: true })
     } catch (e) {}
   }
 }
@@ -184,13 +203,13 @@ function findWinRarPath() {
  */
 async function createRarWithWinRAR(files, archivePath, rarPath) {
   const tempDir = path.join(os.tmpdir(), `mars_pack_${Date.now()}`)
-  fs.mkdirSync(tempDir, { recursive: true })
+  await fs.promises.mkdir(tempDir, { recursive: true })
 
   try {
     const resolved = resolveArchiveFileNames(files)
     for (const file of resolved) {
       const destPath = path.join(tempDir, file.finalName)
-      fs.copyFileSync(file.originalPath, destPath)
+      linkOrCopy(file.originalPath, destPath)
     }
 
     await new Promise((resolve, reject) => {
@@ -208,7 +227,7 @@ async function createRarWithWinRAR(files, archivePath, rarPath) {
     })
   } finally {
     try {
-      fs.rmSync(tempDir, { recursive: true, force: true })
+      await fs.promises.rm(tempDir, { recursive: true, force: true })
     } catch (e) {}
   }
 }

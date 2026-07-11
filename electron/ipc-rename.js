@@ -66,6 +66,16 @@ function registerRenameHandlers(ctx) {
       throw lastErr
     }
 
+    // 异步判断路径是否存在（替代已移除的 fs.promises.exists / 同步 fs.existsSync）
+    async function pathExists(p) {
+      try {
+        await fs.promises.access(p)
+        return true
+      } catch {
+        return false
+      }
+    }
+
     for (let i = 0; i < files.length; i++) {
       const file = files[i]
 
@@ -100,15 +110,16 @@ function registerRenameHandlers(ctx) {
         const outputDir = targetFolder || path.dirname(originalPath)
 
         // 确保目标目录存在
-        if (targetFolder && !fs.existsSync(targetFolder)) {
-          fs.mkdirSync(targetFolder, { recursive: true })
+        if (targetFolder) {
+          // recursive:true 在目录已存在时为 no-op，等价于原 existsSync 守卫
+          await fs.promises.mkdir(targetFolder, { recursive: true })
         }
 
         let newPath = path.join(outputDir, newName)
 
         // 处理文件名冲突
         let counter = 1
-        while (fs.existsSync(newPath) && newPath !== originalPath) {
+        while ((await pathExists(newPath)) && newPath !== originalPath) {
           const conflictName = `${newBaseName}_${counter}${ext}`
           newPath = path.join(outputDir, conflictName)
           counter++
@@ -129,13 +140,13 @@ function registerRenameHandlers(ctx) {
 
         if (targetFolder && keepOriginal) {
           // 复制到目标文件夹，保留原件
-          fs.copyFileSync(originalPath, newPath)
+          await fs.promises.copyFile(originalPath, newPath)
         } else if (targetFolder && !keepOriginal) {
           // 剪切到目标文件夹（跨磁盘用 copy+delete）
           if (sameDisk) {
-            fs.renameSync(originalPath, newPath)
+            await fs.promises.rename(originalPath, newPath)
           } else {
-            fs.copyFileSync(originalPath, newPath)
+            await fs.promises.copyFile(originalPath, newPath)
             try {
               await unlinkWithRetry(originalPath)
             } catch (unlinkErr) {
@@ -148,7 +159,7 @@ function registerRenameHandlers(ctx) {
         } else {
           // 没有目标文件夹，就地重命名（同盘不会出问题）
           if (newPath !== originalPath) {
-            fs.renameSync(originalPath, newPath)
+            await fs.promises.rename(originalPath, newPath)
           } else {
             // 文件名与原名相同，无需操作
             console.log('[rename] Skipped (same name):', originalPath)

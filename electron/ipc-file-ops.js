@@ -3,6 +3,7 @@
 const { ipcMain, dialog } = require('electron')
 const path = require('path')
 const fs = require('fs')
+const { Blob } = require('buffer')
 const { FILE_DIALOG_FILTERS, SUPPORTED_EXTENSIONS } = require('./constants')
 
 // 文件扫描配置
@@ -84,13 +85,14 @@ function registerFileOpsHandlers(ctx) {
   // ==========================================
   ipcMain.handle('read-file', async (event, filePath) => {
     try {
-      // 检查文件是否存在
-      if (!fs.existsSync(filePath)) {
-        return { success: false, error: '文件不存在' }
+      // 检查文件是否存在 + 大小（异步，避免主进程同步阻塞）
+      let stat
+      try {
+        stat = await fs.promises.stat(filePath)
+      } catch (e) {
+        if (e.code === 'ENOENT') return { success: false, error: '文件不存在' }
+        throw e
       }
-
-      // 检查文件大小
-      const stat = fs.statSync(filePath)
       if (stat.size > MAX_FILE_SIZE) {
         return {
           success: false,
@@ -98,9 +100,10 @@ function registerFileOpsHandlers(ctx) {
         }
       }
 
-      // 使用异步读取，避免阻塞主进程
-      const buffer = await fs.promises.readFile(filePath)
-      return { success: true, data: buffer }
+      // ✅ 返回 Blob 而非 Buffer：经 Electron blob registry 共享引用，跨进程零拷贝。
+      // 渲染进程用 `await blob.arrayBuffer()` 取字节（拷贝发生在渲染线程，不在主进程）。
+      const blob = new Blob([await fs.promises.readFile(filePath)])
+      return { success: true, data: blob }
     } catch (error) {
       return { success: false, error: error.message }
     }

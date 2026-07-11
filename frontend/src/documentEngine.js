@@ -34,7 +34,10 @@ function fnv1a(str) {
 function normalizeSourceForId(s) {
   return {
     kind: s.kind,
-    doc: s.docId ?? s.path ?? s.url ?? s.bitmap ? 'mem' : null,
+    // 内容寻址 id 必须保留文档真实身份：依次回退到首个存在的来源标识，
+    // 禁止折叠为常量的 'mem'（运算符优先级会让 ?? 链整体成为 ?: 条件，
+    // 一旦存在任意来源即降级为同一值，导致不同文档命中同一缓存槽）。
+    doc: s.docId ?? s.path ?? s.url ?? s.bitmap ?? null,
     page: s.page ?? 0,
     dpi: s.dpi ?? 0,
     rotation: s.rotation ?? 0,
@@ -45,7 +48,11 @@ function normalizeSourceForId(s) {
 
 export function resolveId(source) {
   // Provider.resolve 与 Renderer 必须用同一函数，否则命中不一致。
-  return 'img_' + fnv1a(JSON.stringify(normalizeSourceForId(source)))
+  // 直接拼接归一化字段（固定 7 个字段、数量恒定 → 无分隔歧义、无碰撞），
+  // 避免 JSON.stringify 的序列化开销与临时字符串分配。
+  const n = normalizeSourceForId(source)
+  const key = `${n.kind}|${n.doc}|${n.page}|${n.dpi}|${n.rotation}|${n.paperKey}|${n.isLandscape ? 1 : 0}`
+  return 'img_' + fnv1a(key)
 }
 
 // ───────────────────────────── ImageRef（真 Value Object，frozen） ─────────────────────────────
@@ -121,8 +128,8 @@ export class InMemoryImageRepository {
   // ⚠️ 仅 Renderer 调用（render 内部）
   putRenderedImage(id, pixels, ref) {
     const existing = this._store.get(id)
-    if (existing) { existing.refs += 1; return }
-    this._store.set(id, { ref, pixels, refs: 1 })
+    if (existing) { existing.refs += 1; this._touch(id); return }
+    this._store.set(id, { ref, pixels, refs: 1 })  // 新插入天然位于 Map 末尾（最新）
     if (this._store.size > this._maxSize) this._evictOldest()
   }
   handle(id) {
@@ -135,7 +142,7 @@ export class InMemoryImageRepository {
   }
   acquire(id) {
     const e = this._store.get(id)
-    if (e) e.refs += 1
+    if (e) { e.refs += 1; this._touch(id) }  // LRU：访问即移到末尾，使其成为最新
   }
   release(id) {
     const e = this._store.get(id)
@@ -148,6 +155,14 @@ export class InMemoryImageRepository {
     if (e && e.refs <= 0) this._store.delete(id)
   }
   get size() { return this._store.size }
+  // LRU 核心：将已有条目删除后重新插入 Map 末尾，使其成为「最近使用」。
+  // Map 迭代顺序即插入顺序，故 _evictOldest 删除的 keys().next()（最旧）即最少使用的条目。
+  _touch(id) {
+    const e = this._store.get(id)
+    if (!e) return
+    this._store.delete(id)
+    this._store.set(id, e)
+  }
   _evictOldest() {
     const first = this._store.keys().next().value
     if (first !== undefined) this._store.delete(first)

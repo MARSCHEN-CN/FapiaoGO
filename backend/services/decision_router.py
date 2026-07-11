@@ -9,7 +9,7 @@ import os
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 
 class DecisionRouter:
@@ -168,11 +168,17 @@ class DecisionRouter:
 
     # ── Query API ──────────────────────────────────────────────────────
 
-    def list_review_queue(self, status: str = "pending") -> List[Dict]:
-        """List review queue entries, optionally filtered by status."""
+    def list_review_queue(
+        self, status: str = "pending", limit: Optional[int] = None, offset: int = 0
+    ) -> Tuple[List[Dict], int]:
+        """List review queue entries, optionally filtered by status.
+
+        支持分页：limit/offset 应用于「按时间倒序」之后的结果。
+        返回 (条目列表, 过滤后总数)。
+        """
         dir_path = self.store_dir / "review_queue"
         if not dir_path.exists():
-            return []
+            return [], 0
         results: List[Dict] = []
         for f in sorted(dir_path.glob("*.json"), reverse=True):
             try:
@@ -182,7 +188,10 @@ class DecisionRouter:
             if status and record.get("status") != status:
                 continue
             results.append(record)
-        return results
+        total = len(results)
+        if limit is not None and limit > 0:
+            results = results[offset : offset + limit]
+        return results, total
 
     def _build_file_name_index(self) -> None:
         """构建文件名索引（惰性构建，首次查询时调用）"""
@@ -257,10 +266,17 @@ class DecisionRouter:
             )
         return True
 
-    def list_exception_queue(self, status: str = "pending") -> List[Dict]:
+    def list_exception_queue(
+        self, status: str = "pending", limit: Optional[int] = None, offset: int = 0
+    ) -> Tuple[List[Dict], int]:
+        """List exception queue entries, optionally filtered by status.
+
+        支持分页：limit/offset 应用于「按时间倒序」之后的结果。
+        返回 (条目列表, 过滤后总数)。
+        """
         dir_path = self.store_dir / "exception_queue"
         if not dir_path.exists():
-            return []
+            return [], 0
         results: List[Dict] = []
         for f in sorted(dir_path.glob("*.json"), reverse=True):
             try:
@@ -270,4 +286,7 @@ class DecisionRouter:
             if status and record.get("status") != status:
                 continue
             results.append(record)
-        return results
+        total = len(results)
+        if limit is not None and limit > 0:
+            results = results[offset : offset + limit]
+        return results, total

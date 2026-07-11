@@ -15,7 +15,7 @@ const ExportProgressModal = lazy(() => import('./components/ExportProgressModal'
 
 import { PREVIEW_DPI, SUPPORTED_EXTENSIONS, ZOOM_STEPS } from './config'
 import {
-  getElectronAPI, getFilePath, getFileFormat, isMergeMode, getMergePair,
+  getElectronAPI, getFilePath, getFileFormat, isMergeMode, getMergeGroupStart,
   detectDuplicateInvoices,
 } from './utils'
 import { generateFileKey } from './utils/fileHelpers'
@@ -160,10 +160,20 @@ function AppContent() {
   // ============================
   // 跨 hook 的简单操作
   // ============================
+  // ✅ 用 ref 保存最新 files / previewFile，避免 removeFile 因 files 变化反复重建身份，
+  // 进而避免传给 React.memo(Sidebar) 的 removeFile 频繁变动导致 Sidebar 不必要重渲染（M8）。
+  // removeFile 在调用时读取 ref.current，始终拿到最新值，行为与闭包捕获 files 一致。
+  const filesRef = useRef(files)
+  filesRef.current = files
+  const previewFileRef = useRef(previewFile)
+  previewFileRef.current = previewFile
+
   const removeFile = useCallback((key) => {
-    // 先找到当前预览文件在列表中的位置
-    const currentIndex = previewFile ? files.findIndex(f => f.key === previewFile.key) : -1
-    const isPreviewing = previewFile && previewFile.key === key
+    // 先找到当前预览文件在列表中的位置（读取 ref 中的最新 files / previewFile）
+    const liveFiles = filesRef.current
+    const livePreview = previewFileRef.current
+    const currentIndex = livePreview ? liveFiles.findIndex(f => f.key === livePreview.key) : -1
+    const isPreviewing = livePreview && livePreview.key === key
 
     if (isPreviewing) {
       cleanupPreviewUrl()
@@ -176,9 +186,9 @@ function AppContent() {
     let nextPreviewFile = null
     if (isPreviewing) {
       if (currentIndex > 0) {
-        nextPreviewFile = files[currentIndex - 1]
-      } else if (files.length > 1) {
-        nextPreviewFile = files.find(f => f.key !== key)
+        nextPreviewFile = liveFiles[currentIndex - 1]
+      } else if (liveFiles.length > 1) {
+        nextPreviewFile = liveFiles.find(f => f.key !== key)
       }
     }
 
@@ -190,7 +200,7 @@ function AppContent() {
       skipAutoNavRef.current = true
       handlePreview(nextPreviewFile)
     }
-  }, [previewFile, files, cleanupPreviewUrl, handlePreview, skipAutoNavRef, clearFilePreviewCache])
+  }, [cleanupPreviewUrl, handlePreview, skipAutoNavRef, clearFilePreviewCache])
 
   const clearFiles = useCallback(() => {
     setFiles([])
@@ -247,23 +257,22 @@ function AppContent() {
     return map
   }, [files])
 
-  const isFirstMergeGroup = useMemo(() => {
-    if (!previewFile || !isMergeMode(settings.mergeMode)) return false
+  // ✅ 合并 isFirst/isLast 为单次 useMemo：用 fileIndexMap 做 O(1) 查找 + getMergeGroupStart 直接算组边界，
+  // 避免原实现两次调用 getMergePair（每次 O(n) 遍历 files）。
+  // 语义等价：getMergePair 的 pair[0] 即 files[groupStart]，故 fileIndexMap.get(key) 经 getMergeGroupStart 即为原 firstFileIdx。
+  const { isFirstMergeGroup, isLastMergeGroup } = useMemo(() => {
+    if (!previewFile || !isMergeMode(settings.mergeMode)) {
+      return { isFirstMergeGroup: false, isLastMergeGroup: false }
+    }
     const groupSize = parseInt(settings.mergeMode?.replace('merge', '')) || 2
-    const pair = getMergePair(files, previewFile.key, groupSize)
-    if (!pair || pair.length === 0) return false
-    const firstFileIdx = fileIndexMap.get(pair[0].key) ?? -1
-    return firstFileIdx - groupSize < 0
-  }, [previewFile, files, settings.mergeMode])
-
-  const isLastMergeGroup = useMemo(() => {
-    if (!previewFile || !isMergeMode(settings.mergeMode)) return false
-    const groupSize = parseInt(settings.mergeMode?.replace('merge', '')) || 2
-    const pair = getMergePair(files, previewFile.key, groupSize)
-    if (!pair || pair.length === 0) return false
-    const firstFileIdx = fileIndexMap.get(pair[0].key) ?? -1
-    return firstFileIdx + groupSize >= files.length
-  }, [previewFile, files, settings.mergeMode])
+    const idx = fileIndexMap.get(previewFile.key) ?? -1
+    if (idx === -1) return { isFirstMergeGroup: false, isLastMergeGroup: false }
+    const groupStart = getMergeGroupStart(idx, groupSize)
+    return {
+      isFirstMergeGroup: groupStart - groupSize < 0,
+      isLastMergeGroup: groupStart + groupSize >= files.length,
+    }
+  }, [previewFile, files, settings.mergeMode, fileIndexMap])
 
   const currentIndex = previewFile ? fileIndexMap.get(previewFile.key) ?? -1 : -1
 
@@ -368,32 +377,40 @@ function AppContent() {
       })
 
       const handleProgress = (_event, data) => {
-        printProgressRef.current = { ...printProgressRef.current, [data.key]: data }
-        setPrintProgress((prev) => {
-          const existed = prev[data.key]
-          const wasDone = existed && (existed.status === 'done' || existed.status === 'error')
-          const isDone = data.status === 'done' || data.status === 'error'
-          // ✅ 只有当文件从非完成状态变为完成状态时才递增计数，避免 O(n) 遍历
-          if (!wasDone && isDone) {
-            completedCountRef.current++
-          }
+        // 先取"上一次已提交"的进度快照用于判定 wasDone（更新 ref 镜像前）
+        const prevProgress = printProgressRef.current
+        const existed = prevProgress[data.key]
+        const wasDone = existed && (existed.status === 'done' || existed.status === 'error')
+        const isDone = data.status === 'done' || data.status === 'error'
+        const transitionToDone = !wasDone && isDone
 
-          const newProgress = { ...prev, [data.key]: data }
-          const totalFiles = printFilesRef.current.length
+        // 更新 ref 镜像为最新（供下次事件判定 wasDone；事件处理器内变更 ref 不受 StrictMode 双调用影响）
+        printProgressRef.current = { ...prevProgress, [data.key]: data }
 
-          if (totalFiles > 0 && completedCountRef.current >= totalFiles) {
-            const keys = printFilesRef.current.map((f) => f.key)
-            const allOriginalKeys = new Set()
-            keys.forEach(k => { k.split('+').forEach(part => allOriginalKeys.add(part)) })
+        // ✅ 纯函数 updater：只计算并返回新状态，不修改 ref / 不调度副作用 / 不嵌套 setState
+        // （React 18 StrictMode 会双调用 updater；原实现在 updater 内 ++ref / setTimeout / setFiles
+        //  会导致计数器重复递增、收尾定时器被重复调度）
+        setPrintProgress((prev) => ({ ...prev, [data.key]: data }))
 
-            clearTimeout(printTimeoutRef.current)
-            setTimeout(() => {
-              setPrinting(false); printProgressRef.current = {}; setPrintProgress({})
-              setFiles((prev) => prev.map((f) => allOriginalKeys.has(f.key) ? { ...f, status: 'parsed' } : f))
-            }, 1000)
-          }
-          return newProgress
-        })
+        // ✅ 副作用全部移出 updater —— 每个 IPC 事件只执行一次
+        // （事件处理器本身不会被 StrictMode 双调用，故此处计数/调度均唯一）
+        if (transitionToDone) {
+          completedCountRef.current++
+        }
+
+        if (printFilesRef.current.length > 0 && completedCountRef.current >= printFilesRef.current.length) {
+          const keys = printFilesRef.current.map((f) => f.key)
+          const allOriginalKeys = new Set()
+          keys.forEach(k => k.split('+').forEach(part => allOriginalKeys.add(part)))
+
+          clearTimeout(printTimeoutRef.current)
+          printTimeoutRef.current = setTimeout(() => {
+            setPrinting(false)
+            printProgressRef.current = {}
+            setPrintProgress({})
+            setFiles((prev) => prev.map((f) => allOriginalKeys.has(f.key) ? { ...f, status: 'parsed' } : f))
+          }, 1000)
+        }
       }
       ipc.on('print-progress', handleProgress)
 
