@@ -1,4 +1,4 @@
-import { PAPER_SIZE_MAP } from './config'
+import { PAPER_SIZE_MAP } from './config.js'
 
 /**
  * Layout Engine - 独立的布局计算层（WPS级架构）

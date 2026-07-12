@@ -451,3 +451,5 @@ v16-renderspec-review.md
 v16-architecture-target.md
 frontend/src/previewState.test.js
 frontend/src/stage0-paperlayout-invariant.test.js
+v16-stage1-design.md
+frontend/src/layout/RenderLayoutFactory.test.js

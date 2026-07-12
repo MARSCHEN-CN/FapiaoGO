@@ -8,6 +8,8 @@ import { getForcedLandscape } from '../utils/mergeMode'
 import { buildPreviewCacheKey } from '../utils/previewCacheKey'
 import { getRenderEnginePreviewUrl } from '../utils/previewTarget'
 import { placeholderPaperLayout, emptyContentLayout, initialRenderState, computePaperLayout } from '../previewState'
+import { buildRenderLayout } from '../layout/RenderLayoutFactory.js'
+import { buildRenderSpec, RENDER_SPEC_VERSION, renderSpecSignature } from '../layout/renderSpec.js'
 
 // ✅ 懒加载 PDF 渲染模块，避免首屏加载 1.4 MB 的 pdfjs-dist + react-pdf
 let _renderers = null
@@ -38,6 +40,9 @@ export function usePreview({ files, settings, electronAPIRef }) {
   // ✅ Stage 0.8 — 加载中标记：仅用于 Overlay 显示，绝不参与"可显示态"判定。
   //    切文件/重渲染时置 true，commit 成功后置 false；旧 committed 帧始终保留，绝不清空。
   const [previewLoading, setPreviewLoading] = useState(false)
+  // ✅ RE 预览不可用（doc 未注册且重注册失败 / 渲染错误）时标记该 docId，
+  //    触发 Canvas 容灾回退。切换文件时重置（见下方 effect），保证 registry 恢复后可自愈。
+  const [reBlockedDocId, setReBlockedDocId] = useState(null)
   const [containerSize, setContainerSize] = useState({ width: 0, height: 0 })
   // ✅ 移除多余的 previewRotation state，所有旋转都通过 fileRotations 管理
   const [fileRotations, setFileRotations] = useState({})
@@ -66,9 +71,8 @@ export function usePreview({ files, settings, electronAPIRef }) {
   const pendingBlobUrlsRef = useRef([])
   const lastFilesKeyRef = useRef('')
   const renderCancelledRef = useRef(false)
-  // ✅ <img> 尺寸探测：避免重复探测同一 URL（旋转/缩放不改变尺寸），并防止过期回调覆盖
+  // ✅ <img> 尺寸探测：防止过期回调覆盖（仅最新 token 可提交）
   const imgLoadTokenRef = useRef(0)
-  const previewImgUrlRef = useRef(null)
   // ✅ 保存 zoom menu 关闭动画的 timeout ID，用于清理
   const zoomMenuCloseTimeoutRef = useRef(null)
   // ✅ 保存 handlePreview 最新引用，避免 useEffect 闭包陷阱
@@ -364,6 +368,12 @@ export function usePreview({ files, settings, electronAPIRef }) {
     lastRenderKeyRef.current = ''
   }, [settings.mergeMode])
 
+  // ✅ 切换文件时重置 RE 阻断标记：registry 恢复（如重新打开文件注册）后，
+  //    再次访问该文件会重新尝试 RE，而非永久困在 Canvas 容灾。
+  useEffect(() => {
+    setReBlockedDocId(null)
+  }, [previewFile?.docId])
+
   // ============================
   // 预览渲染
   // ============================
@@ -379,8 +389,33 @@ export function usePreview({ files, settings, electronAPIRef }) {
     // ✅ Render Engine 路径：有 HTTP URL 时允许进入渲染（不在此截断）
     //    统一用纯函数判定，确保 previewUrl 不变式（RE=URL / 其它=null）单一来源，
     //    避免切换到 canvas 路径文件时 previewUrl 残留旧 RE URL（陈旧 <img> bug）。
-    const reUrl = getRenderEnginePreviewUrl(previewFile, USE_RENDER_ENGINE_PREVIEW)
+    // ✅ RenderSpec 永不可缓存（用户审核纪律①）：每次 effect 运行都从最新 renderLayout
+    //    实时派生，经 buildRenderSpec → URL。严禁引入 renderSpecRef / useMemo 缓存。
+    //    任何 paperLayoutVersion / documentState / rotation / margin 变化都会改变 renderLayout，
+    //    进而改变本条 URL —— renderLayout 已列入下方依赖数组以保证这一点。
+    const previewSpec = renderLayoutReady
+      ? buildRenderSpec(renderLayout, {
+          docId: previewFile.docId,
+          page: previewPage,
+          dpi: PREVIEW_DPI,
+          marginsMm: { top: settings.marginTop, right: settings.marginRight, bottom: settings.marginBottom, left: settings.marginLeft },
+        })
+      : null
+    const reUrl = getRenderEnginePreviewUrl(previewFile, USE_RENDER_ENGINE_PREVIEW, previewSpec)
     const hasRenderEngineUrl = !!reUrl
+    // ✅ 用户审核④：DEV 日志打印签名 + 关键几何，Step 4 起可与 RE 回显签名逐字节比对，
+    //    快速定位「Preview 发的」与「RE 实际消费的」是否一致（消除双算/分叉猜测）。
+    if (previewSpec && import.meta.env?.DEV) {
+      console.log(
+        '[RenderSpec %s] sig=%s paper=%dx%d scale=%s ox=%s oy=%s rotation=%s clip=%dx%d',
+        RENDER_SPEC_VERSION, renderSpecSignature(previewSpec),
+        previewSpec.paper.width, previewSpec.paper.height,
+        previewSpec.placement.scale.toFixed(4),
+        previewSpec.placement.offsetX.toFixed(1), previewSpec.placement.offsetY.toFixed(1),
+        previewSpec.rotation,
+        previewSpec.clip.width, previewSpec.clip.height,
+      )
+    }
     if (!isImageOrOfd && !previewFile._pdfData && !mergePair && !hasRenderEngineUrl) {
       clearCommitted(); return
     }
@@ -399,7 +434,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
     const isLandscape = contentOrient !== paperOrient
     // ✅ renderKey 必须包含合并模式、合并组所有文件的旋转值，以确保模式切换和多文件旋转都能触发重渲染
     const mergeRotations = mergePair?.map(m => `${m?.key}:${fileRotations[m?.key] || 0}`).join(',') || ''
-    const renderKey = `${previewFile.key}-${paperSize}-${isLandscape}-${currentRotation}-${settings.mergeMode || ''}-${mergePair?.map(m => m?.key).join(',') || ''}-${mergeRotations}-m${settings.marginLeft}_${settings.marginRight}_${settings.marginTop}_${settings.marginBottom}-c${settings.customPaper?.widthMM}x${settings.customPaper?.heightMM}`
+    const renderKey = `${previewFile.key}-${paperSize}-${isLandscape}-${currentRotation}-${settings.mergeMode || ''}-${mergePair?.map(m => m?.key).join(',') || ''}-${mergeRotations}-m${settings.marginLeft}_${settings.marginRight}_${settings.marginTop}_${settings.marginBottom}-c${settings.customPaper?.widthMM}x${settings.customPaper?.heightMM}-re${reBlockedDocId || ''}`
     if (lastRenderKeyRef.current === renderKey) { return }
     lastRenderKeyRef.current = renderKey
 
@@ -410,53 +445,98 @@ export function usePreview({ files, settings, electronAPIRef }) {
     const mergeModeGroupSize = isMergeMode(settings.mergeMode) ? (parseInt(settings.mergeMode?.replace('merge', '')) || 2) : 1
     const mergeLayoutStrategy = mergeModeGroupSize === 4 ? 'grid' : 'vertical'
 
-    // ✅ Render Engine 路径：跳过 Canvas 管道，直接设置 <img> URL
-    if (hasRenderEngineUrl) {
+    // ── RE 预览：探测 + 自动恢复（doc 未注册 → 重注册 → 重试 → Canvas 容灾）──
+    // 仅当本文件非 RE、或本 doc 已被标记为 RE 不可用（reBlockedDocId）时，才落入下方 canvas。
+    const autoRegister = async (fileObj) => {
+      // ✅ doc_id = sha256(file_bytes + filename)，filename 是 doc_id 的一部分。
+      //    必须传与入库时完全一致的 filename（fObj.name），否则后端算出的 doc_id
+      //    与 fObj.docId 对不上 → /preview/{fObj.docId} 仍 404。
+      let file = fileObj && fileObj.file
+      if (!file && fileObj && fileObj._pdfData) {
+        file = new Blob([fileObj._pdfData])
+      }
+      if (!file) return false
+      try {
+        const fd = new FormData()
+        fd.append('file', file, fileObj.name || 'document')
+        const resp = await fetch(`${BACKEND_URL}/api/documents/open`, { method: 'POST', body: fd })
+        if (!resp.ok) return false
+        const data = await resp.json().catch(() => null)
+        return !!(data && data.success)
+      } catch (e) {
+        return false
+      }
+    }
+    const startREProbe = (probeUrl, fileObj) => {
+      setPreviewLoading(true)
+      const token = ++imgLoadTokenRef.current
+      const probe = new Image()
+      probe.decoding = 'async'
+      // ✅ 原子 commit：url + dims 同批更新，committed 帧从旧直接跳到新，不经过 null
+      const commit = () => {
+        if (token !== imgLoadTokenRef.current) return
+        setPreviewUrl(probeUrl)
+        setPreviewImgDims({ w: probe.naturalWidth, h: probe.naturalHeight })
+        setPreviewLoading(false)
+        committedPreviewRef.current = {
+          url: probeUrl,
+          dims: { w: probe.naturalWidth, h: probe.naturalHeight },
+          canvas: committedPreviewRef.current.canvas,
+          layout: committedPreviewRef.current.layout,
+          timestamp: Date.now(),
+        }
+        previewUrlRef.current = probeUrl
+      }
+      probe.onload = () => {
+        if (token !== imgLoadTokenRef.current) return
+        if (typeof probe.decode === 'function') {
+          probe.decode().then(commit).catch(commit)
+        } else {
+          commit()
+        }
+      }
+      probe.onerror = () => {
+        if (token !== imgLoadTokenRef.current) return
+        setPreviewLoading(false)
+        recoverREPreview(fileObj, probeUrl, token)
+      }
+      probe.src = probeUrl
+    }
+    const recoverREPreview = async (fileObj, probeUrl, token) => {
+      if (token !== imgLoadTokenRef.current) return
+      // 1. 探测失败原因：DOC_NOT_REGISTERED（可恢复）还是已注册但渲染错误（不可恢复）
+      let reason = 'unknown'
+      try {
+        const metaResp = await fetch(`${BACKEND_URL}/metadata/${fileObj.docId}`, { mode: 'cors' })
+        if (metaResp.status === 404) {
+          const body = await metaResp.json().catch(() => ({}))
+          if (body && body.error === 'DOC_NOT_REGISTERED') reason = 'DOC_NOT_REGISTERED'
+        } else if (metaResp.ok) {
+          reason = 'RENDER_ERROR'
+        }
+      } catch (e) { reason = 'unknown' }
+      // 2. doc 未注册 → 自动重注册（用户无感），成功后重试 RE
+      if (reason === 'DOC_NOT_REGISTERED') {
+        const registered = await autoRegister(fileObj)
+        if (registered) {
+          startREProbe(probeUrl, fileObj)  // 重试（新 token）
+          return
+        }
+      }
+      // 3. 容灾：标记 RE 不可用 → 落入下方 canvas 渲染，保证预览不中断
+      setReBlockedDocId(fileObj.docId)
+    }
+    if (hasRenderEngineUrl && reBlockedDocId !== previewFile.docId) {
       const url = reUrl
       renderEngineUrlRef.current = url
-      // ⚠️ Stage 0.8 Commit Buffer：不立即切换显示态。
-      //    保留上一帧 CommittedPreview（url+dims），仅打 loading overlay；
-      //    新图 decode 成功后再原子 commit，绝不经过 null（消灭 A→null→B 白板）。
-      setPreviewLoading(true)
-      // 仅当 URL 变化时才探测自然尺寸（旋转/缩放不改变尺寸，避免重复探测与盒子错位）
-      if (previewImgUrlRef.current !== url) {
-        previewImgUrlRef.current = url
-        const token = ++imgLoadTokenRef.current
-        const probe = new Image()
-        probe.decoding = 'async'
-        // ✅ 原子 commit：url + dims 同批更新，committed 帧从 A 直接跳到 B，不经过 null
-        const commit = () => {
-          if (token !== imgLoadTokenRef.current) return  // 仅采用最新一次探测
-          setPreviewUrl(url)
-          setPreviewImgDims({ w: probe.naturalWidth, h: probe.naturalHeight })
-          setPreviewLoading(false)
-          committedPreviewRef.current = {
-            url,
-            dims: { w: probe.naturalWidth, h: probe.naturalHeight },
-            canvas: committedPreviewRef.current.canvas,
-            layout: committedPreviewRef.current.layout,
-            timestamp: Date.now(),
-          }
-          previewUrlRef.current = url
-        }
-        probe.onload = () => {
-          if (token !== imgLoadTokenRef.current) return
-          // 优先用 decode() 确保像素就绪；某些格式 decode() 会 reject，但 onload 已成功，
-          // 仍用 naturalWidth/Height commit（绝不丢帧）。
-          if (typeof probe.decode === 'function') {
-            probe.decode().then(commit).catch(commit)
-          } else {
-            commit()
-          }
-        }
-        probe.onerror = () => {
-          if (token !== imgLoadTokenRef.current) return
-          // ✅ Never lose last valid frame：decode 失败保持旧 committed，仅停 loading
-          setPreviewLoading(false)
-        }
-        probe.src = url
+      // ✅ Stage 0.8 Commit Buffer（修正版）：以 committedPreviewRef.current.url 判断是否需重新探测，
+      //    保留上一帧直到 decode 完成才原子 commit（消灭 A→null→B 白板）。
+      if (committedPreviewRef.current.url !== url) {
+        startREProbe(url, previewFile)
       } else {
-        // URL 未变（如旋转/缩放引起的重渲染），无需重新探测，仅关闭 loading
+        // 已提交帧即本 url（旋转/缩放重渲染）：确保显示态与之对齐，不重新探测。
+        setPreviewUrl(url)
+        setPreviewImgDims(committedPreviewRef.current.dims)
         setPreviewLoading(false)
       }
       return
@@ -598,7 +678,8 @@ export function usePreview({ files, settings, electronAPIRef }) {
     }
   }, [previewFile, mergePair, settings.paperSize, currentRotation, fileRotations, settings.mergeMode,
       settings.marginLeft, settings.marginRight, settings.marginTop, settings.marginBottom,
-      settings.customPaper?.widthMM, settings.customPaper?.heightMM])
+      settings.customPaper?.widthMM, settings.customPaper?.heightMM, reBlockedDocId,
+      renderLayout, renderLayoutReady])
 
   // ResizeObserver ✅ 使用 requestAnimationFrame 节流，避免频繁重绘
   useEffect(() => {
@@ -626,17 +707,32 @@ export function usePreview({ files, settings, electronAPIRef }) {
   // ✅ previewRotation 必须在 contentLayout memo 之前声明（useMemo 首次渲染立即执行，不能闭包捕获尚未初始化的 const）
   const previewRotation = fileRotations[previewFile?.key] || 0
 
+  // ── Stage 1：RenderLayout 唯一派生点（F3/F5）──
+  // Preview 消费其 placement/rotation/clip，不再自算 fit/scale/swap（消除第二套算法）。
+  // 输入 documentState 合并 previewRotation（documentStateRef 不含 rotation 字段）；
+  // 依赖 paperLayoutVersion(纸张/边距变化) + previewRotation(旋转) + previewFile(切文件→documentState 重建)。
+  const renderLayout = useMemo(
+    () => buildRenderLayout(paperLayoutRef.current, { ...(documentStateRef.current || {}), rotation: previewRotation }),
+    [paperLayoutVersion, previewRotation, previewFile]
+  )
+  // renderLayout 就绪（placement.scale>0）才用 Factory 派生；否则回退旧 bitmap 拟合，行为不变。
+  const renderLayoutReady = !!(renderLayout && renderLayout.placement && renderLayout.placement.scale > 0)
+
   // ── ContentLayout：内容在 PaperLayout.contentRect 内的位置和缩放 + 纸张→窗口 zoom ──
   const computedContentLayout = useMemo(() => {
     const pl = paperLayoutRef.current
     if (!pl || !pl.contentRect?.w) return emptyContentLayout()
 
-    // ── 纸张→窗口缩放基线（与旧版 padding 策略一致） ──
-    // Stage 0 interim：displayRect 现在为纯纸张（computePaperLayout 不再含 doc swap）。
-    // 方向 swap 由 DocumentState 决定，临时在此应用；Stage 1 移入 RenderLayoutFactory.placement.rotation。
+    // ── 纸张→窗口缩放基线（ViewportTransform，Preview 职责，永不进 Factory）──
+    // swap 由 Factory 统一推导（renderLayout.rotation），此处只用于「纸张容器尺寸」的视口计算，
+    // 不再双算 placement（消除第二套算法 / F4）。
     const paperOrient = pl.paperRect.w > pl.paperRect.h ? 'landscape' : 'portrait'
     const docOrient = documentStateRef.current?.pageOrientation
-    const swapped = !!docOrient && docOrient !== paperOrient
+    // 合并模式强制方向由 renderers 内部处理，此处回退旧 orientation 逻辑避免影响合并预览。
+    const isMerge = isMergeMode(settings.mergeMode)
+    const swapped = (renderLayoutReady && !isMerge)
+      ? (renderLayout.rotation % 180 !== 0)
+      : (!!docOrient && docOrient !== paperOrient)
     const effW = swapped ? pl.paperRect.h : pl.paperRect.w
     const effH = swapped ? pl.paperRect.w : pl.paperRect.h
     let paperScaleBase = 1
@@ -659,34 +755,49 @@ export function usePreview({ files, settings, electronAPIRef }) {
     const paperDisplayW = Math.round(effW * paperScale)
     const paperDisplayH = Math.round(effH * paperScale)
 
-    let srcW = 0, srcH = 0
-    if (previewCanvas) {
-      srcW = previewCanvas.width
-      srcH = previewCanvas.height
-    } else if (previewImgDims && previewImgDims.w > 0) {
-      srcW = previewImgDims.w
-      srcH = previewImgDims.h
-    }
-    if (!srcW || !srcH) return emptyContentLayout()
-
-    // 内容→contentRect（纸张内缩放，不变）
-    const boundsW = pl.contentRect.w
-    const boundsH = pl.contentRect.h
-    const fitScale = Math.min(boundsW / srcW, boundsH / srcH)
-    return {
-      ready: true,
-      fitScale,
-      imageRect: {
+    let fitScale, imageRect
+    if (renderLayoutReady) {
+      // ✅ Stage 1：placement 完全来自 Factory（buildRenderLayout）；预览不再自算 fit/居中。
+      //   imageRect = 内容盒在 contentRect 内的投影（offset + pageSize×scale）。
+      fitScale = renderLayout.placement.scale
+      const docW = documentStateRef.current?.pageSize?.w || 0
+      const docH = documentStateRef.current?.pageSize?.h || 0
+      imageRect = {
+        x: renderLayout.placement.offsetX,
+        y: renderLayout.placement.offsetY,
+        w: Math.round(docW * fitScale),
+        h: Math.round(docH * fitScale),
+      }
+    } else {
+      // 回退：documentState 未就绪时仍用旧 bitmap 拟合（行为不变，避免首帧/加载中白板）
+      let srcW = 0, srcH = 0
+      if (previewCanvas) {
+        srcW = previewCanvas.width
+        srcH = previewCanvas.height
+      } else if (previewImgDims && previewImgDims.w > 0) {
+        srcW = previewImgDims.w
+        srcH = previewImgDims.h
+      }
+      if (!srcW || !srcH) return emptyContentLayout()
+      const boundsW = pl.contentRect.w
+      const boundsH = pl.contentRect.h
+      fitScale = Math.min(boundsW / srcW, boundsH / srcH)
+      imageRect = {
         x: Math.round((boundsW - srcW * fitScale) / 2),
         y: Math.round((boundsH - srcH * fitScale) / 2),
         w: Math.round(srcW * fitScale),
         h: Math.round(srcH * fitScale),
-      },
+      }
+    }
+    return {
+      ready: true,
+      fitScale,
+      imageRect,
       rotation: previewRotation || 0,
       paperDisplayScale: paperScale,
       paperDisplayRect: { w: paperDisplayW, h: paperDisplayH },
     }
-  }, [previewCanvas, previewImgDims, previewRotation, containerSize, zoomMode, zoomPercent, paperLayoutVersion])
+  }, [previewCanvas, previewImgDims, previewRotation, containerSize, zoomMode, zoomPercent, paperLayoutVersion, renderLayout, settings.mergeMode])
 
   // 同步到 state，使外部可消费
   useEffect(() => { setContentLayout(computedContentLayout) }, [computedContentLayout])

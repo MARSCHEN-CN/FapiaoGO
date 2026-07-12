@@ -17,15 +17,18 @@ All image endpoints support:
 
 import io
 import logging
+import os
 import time
 
 from flask import Blueprint, request, jsonify, Response
 
 from . import registry, render_cache, render_queue, engine
+from .engine import DocumentNotRegistered
 from .preset import PRESETS
 from .cache import make_cache_headers, make_cache_key, generate_etag
 from .content_index import ContentIndex
 from .prefetch import prefetch_neighbors
+from .render_spec_sig import verify_render_spec, RenderSpecParseError
 
 logger = logging.getLogger(__name__)
 
@@ -78,9 +81,54 @@ def preview(doc_id: str):
     so that If-None-Match negotiation can correct stale orientation responses.
     """
     page = _int_param("page", 1)
+
+    # ── Commit A：先解析 spec（malformed → 400，早于任何渲染工作）──
+    # 完整纪律见 v16-stage1-design.md §Step4 Commit A / §3c。
+    # • 请求未携带 ?spec=（缺失/空串）→ None：Legacy 客户端，不回显、不 400。
+    # • 协议结构非法（版本不支持 / 核心字段缺失 / 数值非数字 / clip 不完整）
+    #   → RenderSpecParseError → 400 INVALID_RENDER_SPEC（fail-fast，与 hash mismatch 严格区分）。
+    # • 合法 spec（含签名不符 verified=False）→ 继续走 Legacy 渲染（400 推迟到 Commit B）。
+    try:
+        spec_info = verify_render_spec(request.args, doc_id, page)
+    except RenderSpecParseError as e:
+        return jsonify({"success": False, "error": "INVALID_RENDER_SPEC", "detail": str(e)}), 400
+
     resp = _render_and_respond(doc_id, "preview", page)
+    # ✅ _render_and_respond 在 doc 未找到 / 渲染失败时返回错误元组 (jsonify(...), status)，
+    #    此时 resp 不是 Response 对象，不能访问 .headers。直接透传错误，避免
+    #    AttributeError: 'tuple' object has no attribute 'headers' 把 404/500 变成 500 HTML，
+    #    进而被浏览器 ORB 拦截（前端 <img> 跨域 no-cors 加载 HTML 会 ERR_BLOCKED_BY_ORB）。
+    if isinstance(resp, tuple):
+        return resp
     resp.headers["Cache-Control"] = "public, max-age=0, must-revalidate"
+
+    # ── Commit A：回显 RenderSpec（仅诊断，零渲染影响）──
+    # 本 Commit 不把 spec 送入任何渲染逻辑（view_state / page 均未变），
+    # 因此渲染输出与改动前字节级一致。
+    if spec_info is not None:
+        resp.headers["X-RenderSpec-Version"] = spec_info["version"]
+        # 回显后端「重算值」而非前端传来值，便于 DevTools 直接比对「后端实际看到什么」
+        resp.headers["X-RenderSpec-Hash"] = spec_info["recomputed"] or spec_info["sig"]
+        resp.headers["X-RenderSpec-Verified"] = "true" if spec_info["verified"] else "false"
+        # Commit A 实际执行路径恒为 Legacy（Commit B 升级为 render-spec）
+        resp.headers["X-Render-Executor"] = "legacy"
+        if _render_spec_log_enabled():
+            logger.info(
+                "RenderSpec echo spec=%s sig=%s verified=%s executor=legacy",
+                spec_info["version"], spec_info["recomputed"], str(spec_info["verified"]).lower(),
+            )
     return resp
+
+
+def _render_spec_log_enabled() -> bool:
+    """Commit A DEV 日志开关：环境变量 RE_DEBUG=1 或 Flask debug 模式开启时记录。"""
+    if os.environ.get("RE_DEBUG") == "1":
+        return True
+    try:
+        from flask import current_app
+        return bool(current_app.debug)
+    except Exception:
+        return False
 
 
 # ── GET /thumbnail/{doc_id} ────────────────────────────────────
@@ -138,7 +186,7 @@ def metadata(doc_id: str):
     """Return document metadata: page count, content hash, size, page dimensions."""
     doc = registry.get(doc_id)
     if doc is None:
-        return jsonify({"success": False, "error": "document not found"}), 404
+        return jsonify({"success": False, "error": "DOC_NOT_REGISTERED", "doc_id": doc_id}), 404
 
     # 获取第一页尺寸和旋转（用于方向检测），单位为 PDF points (1/72 inch)
     # page.rect 不含 /Rotate；需配合 page.rotation 计算显示方向
@@ -202,6 +250,13 @@ def _render_and_respond(doc_id: str, preset_name: str,
             accept_header=request.headers.get("Accept", ""),
             override_params=override_params,
         )
+    except DocumentNotRegistered as e:
+        # ✅ 结构化错误码：前端据此精确触发「自动重注册 + 重试」，而非把所有 404 一刀切。
+        return jsonify({
+            "success": False,
+            "error": "DOC_NOT_REGISTERED",
+            "doc_id": e.doc_id,
+        }), 404
     except ValueError as e:
         return jsonify({"success": False, "error": str(e)}), 404
     except Exception as e:

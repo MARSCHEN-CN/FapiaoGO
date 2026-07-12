@@ -27,7 +27,7 @@ const pdfMargin = require('./print-service/pdf-margin-processor')
 // 新打印管线 — OS Trust Delegation
 // ============================
 const { PrintService } = require('./print-service/PrintService')
-const { OsLauncherBridge } = require('./print-service/OsLauncherBridge')
+const { OsLauncherBridge, preDetectDefaultPrinter } = require('./print-service/OsLauncherBridge')
 const { setPrintService } = require('./print-service/DirectPrintHandler')
 let printService = null
 let osLauncherBridge = null
@@ -55,6 +55,8 @@ function setMainWindowForBridge(window) {
   if (osLauncherBridge) {
     osLauncherBridge.setMainWindow(window)
     console.log('[PIPELINE] Main window set for OsLauncherBridge')
+    preDetectDefaultPrinter(window.webContents)
+    console.log('[PIPELINE] Default printer pre-detection started (non-blocking)')
   }
 }
 
@@ -424,59 +426,90 @@ ipcMain.handle('generate-print-pdf', async (_event, { canvasBuffer, paperSize, o
 const { createBackend } = require('./print-service/print-backend')
 
 ipcMain.handle('print-source-file', async (_event, { target, settings, pipeline }) => {
-  console.log('[print-source-file] printer=%s file=%s format=%s',
-    target?.printer, target?.filePath, target?.fileFormat)
+  const PRINT_TIMEOUT_MS = 180000
 
-  if (!target || !target.filePath) {
-    return { success: false, exitCode: -1, message: 'PrintTarget.filePath is required' }
-  }
+  const timeoutPromise = new Promise((_, reject) => {
+    setTimeout(() => {
+      reject(new Error(`Print operation timed out after ${PRINT_TIMEOUT_MS}ms`))
+    }, PRINT_TIMEOUT_MS)
+  })
 
-  if (!target.printer) {
-    return { success: false, exitCode: -1, message: 'Printer name is required' }
-  }
+  const printPromise = (async () => {
+    console.log('[print-source-file] printer=%s file=%s format=%s',
+      target?.printer, target?.filePath, target?.fileFormat)
 
-  // 日志：完整 settings（含边距字段）
-  console.log('[print-source-file] settings=%j', settings)
+    if (!target || !target.filePath) {
+      return { success: false, exitCode: -1, message: 'PrintTarget.filePath is required' }
+    }
 
-  // 安全边距预处理（仅对 PDF 或图片文件）
-  const imgExts = ['.pdf', '.png', '.jpg', '.jpeg', '.bmp', '.tiff', '.tif']
-  const fileExt = target.filePath ? path.extname(target.filePath).toLowerCase() : ''
-  let printTarget = target
-  const marginL = Number(settings?.marginLeft) || 0
-  const marginR = Number(settings?.marginRight) || 0
-  const marginT = Number(settings?.marginTop) || 0
-  const marginB = Number(settings?.marginBottom) || 0
-  console.log('[print-source-file] margin fields: left=%d right=%d top=%d bottom=%d', marginL, marginR, marginT, marginB)
-  const hasMargins = pdfMargin.hasMargins(settings)
-  console.log('[print-source-file] hasMargins=%s fileExt=%s', hasMargins, fileExt)
-  if (hasMargins && imgExts.includes(fileExt)) {
-    console.log('[print-source-file] Margins WILL be applied')
-    const margins = pdfMargin.extractMargins(settings)
-    const orient = settings.contentOrientation  // 'portrait'|'landscape'|undefined
-    const isImage = fileExt !== '.pdf'
-    const result = await pdfMargin.process(target.filePath, margins, isImage, orient)
-    if (result.path !== target.filePath) {
-      console.log('[print-source-file] Using margin-processed PDF:', result.path,
-        'orientation:', result.orientation || '?')
-      printTarget = { ...target, filePath: result.path }
-      // 如果 Python 检测了方向且和当前 settings 不同，同步更新
-      if (result.orientation && result.orientation !== settings.contentOrientation) {
-        settings.contentOrientation = result.orientation
-        console.log('[print-source-file] Updated contentOrientation to:', result.orientation)
+    if (!target.printer) {
+      return { success: false, exitCode: -1, message: 'Printer name is required' }
+    }
+
+    console.log('[print-source-file] settings=%j', settings)
+
+    const imgExts = ['.pdf', '.png', '.jpg', '.jpeg', '.bmp', '.tiff', '.tif']
+    const fileExt = target.filePath ? path.extname(target.filePath).toLowerCase() : ''
+    let printTarget = target
+    const marginL = Number(settings?.marginLeft) || 0
+    const marginR = Number(settings?.marginRight) || 0
+    const marginT = Number(settings?.marginTop) || 0
+    const marginB = Number(settings?.marginBottom) || 0
+    console.log('[print-source-file] margin fields: left=%d right=%d top=%d bottom=%d', marginL, marginR, marginT, marginB)
+    const hasMargins = pdfMargin.hasMargins(settings)
+    console.log('[print-source-file] hasMargins=%s fileExt=%s', hasMargins, fileExt)
+    if (hasMargins && imgExts.includes(fileExt)) {
+      console.log('[print-source-file] Margins WILL be applied')
+      const margins = pdfMargin.extractMargins(settings)
+      const orient = settings.contentOrientation
+      const isImage = fileExt !== '.pdf'
+
+      const MARGIN_TIMEOUT_MS = 30000
+      const marginTimeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => {
+          reject(new Error(`Margin processing timed out after ${MARGIN_TIMEOUT_MS}ms`))
+        }, MARGIN_TIMEOUT_MS)
+      })
+
+      const marginResult = await Promise.race([
+        pdfMargin.process(target.filePath, margins, isImage, orient),
+        marginTimeoutPromise
+      ])
+
+      if (marginResult.path !== target.filePath) {
+        console.log('[print-source-file] Using margin-processed PDF:', marginResult.path,
+          'orientation:', marginResult.orientation || '?')
+        printTarget = { ...target, filePath: marginResult.path }
+        if (marginResult.orientation && marginResult.orientation !== settings.contentOrientation) {
+          settings.contentOrientation = marginResult.orientation
+          console.log('[print-source-file] Updated contentOrientation to:', marginResult.orientation)
+        }
+      } else {
+        console.log('[print-source-file] Margin processing returned original file (no change or fallback)')
       }
     } else {
-      console.log('[print-source-file] Margin processing returned original file (no change or fallback)')
+      console.log('[print-source-file] No margins to apply (reason: hasMargins=%s, ext=%s)', hasMargins, fileExt)
     }
-  } else {
-    console.log('[print-source-file] No margins to apply (reason: hasMargins=%s, ext=%s)', hasMargins, fileExt)
+
+    const backend = createBackend(pipeline?.backend || 'sumatra')
+    console.log('[print-source-file] Using backend=%s', pipeline?.backend || 'sumatra')
+    const result = await backend.print(printTarget, settings || {})
+    console.log('[print-source-file] result=%j', result)
+
+    return result
+  })()
+
+  try {
+    return await Promise.race([printPromise, timeoutPromise])
+  } catch (e) {
+    console.error('[print-source-file] timed out:', e.message)
+    return {
+      success: false,
+      exitCode: -1,
+      message: e.message.includes('MARGIN') ? '边距处理超时，请检查文件或重试' : '打印超时，请检查打印机连接',
+      stderr: e.message,
+    }
   }
-
-  const backend = createBackend(pipeline?.backend || 'sumatra')
-  console.log('[print-source-file] Using backend=%s', pipeline?.backend || 'sumatra')
-  const result = await backend.print(printTarget, settings || {})
-  console.log('[print-source-file] result=%j', result)
-
-  return result
 })
 
 // ── 打印机能力查询 ──

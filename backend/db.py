@@ -965,20 +965,34 @@ def hard_delete_invoice(invoice_id: str) -> Optional[Dict]:
     索引整体偏移 1，而 by_hash / by_filename / by_number 等索引未同步更新，导致
     后续查找返回错误记录（原实现 L934-947 的 bug）。
 
-    改为统一标记删除：设置 deleted_at 墓碑 + hard_deleted 标记，并仅从 by_id 索引
-    移除该 id（O(1)，不触发数组移位，其余索引位置保持不变）。真正物理移除在
-    _compact_oplog 压缩时统一批量执行并重建索引，避免无限堆积。
+    改为统一标记删除：设置 deleted_at 墓碑 + hard_deleted 标记，并清理所有索引。
+    真正物理移除在 _compact_oplog 压缩时统一批量执行并重建索引，避免无限堆积。
     """
     _ensure_loaded()
     now_str = now().isoformat()
     with _rw_lock.gen_wlock():
         if invoice_id in _invoice_index_by_id:
             idx = _invoice_index_by_id[invoice_id]
+            inv = _invoices[idx]
             _invoices[idx]['deleted_at'] = now_str
             _invoices[idx]['hard_deleted'] = True
             _invoices[idx]['updated_at'] = now_str
-            # 仅从 id 索引移除，使该记录对读路径不可见；其余索引位置不变，无偏移
+
             _invoice_index_by_id.pop(invoice_id, None)
+
+            if inv.get('hash_sha256'):
+                _invoice_index_by_hash.pop(inv['hash_sha256'], None)
+
+            if inv.get('file_name'):
+                _invoice_index_by_filename.pop(str(inv['file_name']).strip().lower(), None)
+
+            if inv.get('number'):
+                num = str(inv['number'])
+                if num in _invoice_index_by_number:
+                    _invoice_index_by_number[num].remove(idx)
+                    if not _invoice_index_by_number[num]:
+                        _invoice_index_by_number.pop(num, None)
+
             _append_oplog("hard_delete", invoice_id)
             _maybe_compact()
             _invalidate_search_cache()
@@ -995,6 +1009,7 @@ def restore_invoice(invoice_id: str) -> Optional[Dict]:
             idx = _invoice_index_by_id[invoice_id]
             _invoices[idx]['deleted_at'] = None
             _invoices[idx]['updated_at'] = now_str
+            _refresh_search_text(_invoices[idx])
             _append_oplog("restore", invoice_id)
             _maybe_compact()
             return {'ok': True}
@@ -1016,8 +1031,8 @@ def update_invoice_fields(invoice_id: str, fields: Dict) -> Optional[Dict]:
                         inv[key] = value
                         updated[key] = value
                 inv['updated_at'] = now_str
+                _refresh_search_text(inv)
                 _append_oplog("update", invoice_id, updated)
-                # 如果更新了 hash 或 filename，需要重建索引
                 if 'hash_sha256' in fields or 'file_name' in fields:
                     _rebuild_indexes()
                 _maybe_compact()
@@ -1123,16 +1138,13 @@ def _refresh_search_text(inv: Dict) -> None:
 
 
 def _search_text_of(inv: Dict) -> str:
-    """取预计算搜索文本；缓存缺失时惰性计算并回填（自愈任意未预热的记录）。"""
+    """取预计算搜索文本；缓存缺失时计算但不写入（保持读路径只读语义）。"""
     inv_id = inv.get('id')
     if inv_id is not None:
         cached = _search_text_cache.get(str(inv_id))
         if cached is not None:
             return cached
-    text = _compute_search_text(inv)
-    if inv_id is not None:
-        _search_text_cache[str(inv_id)] = text
-    return text
+    return _compute_search_text(inv)
 
 
 def search_invoices(

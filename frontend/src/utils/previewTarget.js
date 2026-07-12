@@ -11,6 +11,8 @@
  * 用旧文件的 <img> 覆盖本文件，表现为「切回第一张卡在第二张内容 / 左上角缺失」。
  */
 
+import { appendRenderSpecToUrl } from '../layout/renderSpec.js'
+
 /**
  * @param {string} url - previewFile._previewImageUrl
  * @returns {boolean} 是否为 Render Engine 的 http 预览 URL
@@ -25,10 +27,13 @@ export function isRenderEngineUrl(url) {
  *
  * @param {Object} previewFile
  * @param {boolean} useRenderEnginePreview - 全局开关 USE_RENDER_ENGINE_PREVIEW
+ * @param {object|null} [renderSpec] - 可选 RenderSpec（Stage 1），追加为查询参数；
+ *   仅含后端当前忽略的新字段名，不改变现有渲染输出（Step 4 才消费）。
  * @returns {string|null}
  */
-export function getRenderEnginePreviewUrl(previewFile, useRenderEnginePreview) {
+export function getRenderEnginePreviewUrl(previewFile, useRenderEnginePreview, renderSpec = null) {
   if (!useRenderEnginePreview) return null
   const url = previewFile && previewFile._previewImageUrl
-  return isRenderEngineUrl(url) ? url : null
+  if (!isRenderEngineUrl(url)) return null
+  return renderSpec ? appendRenderSpecToUrl(url, renderSpec) : url
 }

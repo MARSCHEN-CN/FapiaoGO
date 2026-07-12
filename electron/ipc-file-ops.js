@@ -10,7 +10,7 @@ const MAX_SCAN_FILES = 3000
 const MAX_SCAN_DEPTH = 5
 
 // 并发限制配置
-const MAX_STAT_CONCURRENCY = 50
+const MAX_STAT_CONCURRENCY = 10
 
 /**
  * 限制并发的 map 函数
@@ -215,33 +215,35 @@ function registerFileOpsHandlers(ctx) {
       const files = []
       const seenPaths = new Set()
 
-      // 支持的扩展名（不含点）
-      const supportedExts = ['pdf', 'ofd', 'jpg', 'jpeg', 'png', 'bmp', 'tiff', 'tif']
+      const supportedExts = new Set(['pdf', 'ofd', 'jpg', 'jpeg', 'png', 'bmp', 'tiff', 'tif'])
 
       const isInvoiceFile = (filename) => {
-        const ext = filename.toLowerCase().split('.').pop()
-        return supportedExts.includes(ext)
+        const ext = path.extname(filename).toLowerCase().slice(1)
+        return supportedExts.has(ext)
       }
+
+      let processed = 0
+      const total = paths.length
 
       const processPath = async (p) => {
         if (seenPaths.has(p)) return
-        seenPaths.add(p) // 同步登记，避免并发重复处理同一路径
+        seenPaths.add(p)
 
         let stat
         try {
           stat = await fs.promises.stat(p)
         } catch {
-          return // 路径不存在或不可访问
+          return
         }
 
         if (stat.isDirectory()) {
-          // 扫描顶层文件（不递归子文件夹）；readdir withFileTypes 免去逐文件 stat
           let entries
           try {
             entries = await fs.promises.readdir(p, { withFileTypes: true })
           } catch {
-            return // 跳过无法读取的文件夹
+            return
           }
+          let count = 0
           for (const entry of entries) {
             if (entry.isFile() && isInvoiceFile(entry.name)) {
               const fullPath = path.join(p, entry.name)
@@ -250,13 +252,24 @@ function registerFileOpsHandlers(ctx) {
                 files.push({ name: entry.name, path: fullPath })
               }
             }
+            if (++count % 100 === 0) {
+              await new Promise(resolve => setImmediate(resolve))
+            }
           }
         } else if (stat.isFile() && isInvoiceFile(p)) {
           files.push({ name: path.basename(p), path: p })
         }
+
+        processed++
+        if (processed % 10 === 0 || processed === total) {
+          event.sender.send('scan-dropped-paths-progress', {
+            current: processed,
+            total,
+            filesFound: files.length
+          })
+        }
       }
 
-      // 复用本模块已有的并发控制工具，避免主线程同步 I/O 阻塞
       await mapLimit(paths, MAX_STAT_CONCURRENCY, (p) => processPath(p))
 
       return { success: true, files }

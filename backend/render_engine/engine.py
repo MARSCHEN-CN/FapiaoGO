@@ -39,6 +39,19 @@ _FORMAT_MIME = {
 _FORMAT_EXT = {"webp": "webp", "jpeg": "jpg", "png": "png"}
 
 
+class DocumentNotRegistered(Exception):
+    """Raised when a doc_id is not present in the in-memory registry.
+
+    Carries the doc_id so API layers can return a structured, machine-readable
+    error (e.g. ``{"error": "DOC_NOT_REGISTERED", "doc_id": ...}``) instead of a
+    generic 404. Frontends use this code to auto-re-register the document
+    (re-open via /api/documents/open) and retry, rather than masking the failure.
+    """
+    def __init__(self, doc_id: str):
+        self.doc_id = doc_id
+        super().__init__(f"Document not registered: {doc_id[:12]}...")
+
+
 def negotiate_format(accept_header: str, preset_fmt: str) -> str:
     """Resolve output format from Accept header."""
     if preset_fmt != "auto":
@@ -304,7 +317,7 @@ class RenderEngine:
         # --- render ---
         doc = self._registry.get(doc_id)
         if doc is None:
-            raise ValueError(f"Document not registered: {doc_id[:12]}...")
+            raise DocumentNotRegistered(doc_id)
 
         fmt = negotiate_format(accept_header, preset.fmt)
         data, actual_fmt = self._render_page(doc, preset, vs, page, fmt,
@@ -344,7 +357,7 @@ class RenderEngine:
             raise RuntimeError("PyMuPDF (fitz) is not available")
         doc = self._registry.get(doc_id)
         if doc is None:
-            raise ValueError(f"Document not registered: {doc_id[:12]}...")
+            raise DocumentNotRegistered(doc_id)
         # Prefer the caller-supplied isolated handle; fall back to shared doc.
         src = pdf_doc if pdf_doc is not None else doc.pdf
         if src is None:

@@ -20,6 +20,7 @@ import { PAPER_SIZE_MAP, PREVIEW_DPI } from './config.js'
  * @property {number}   pageCount        - 总页数
  * @property {Size}     pageSize         - 文档原始像素尺寸
  * @property {'landscape'|'portrait'} pageOrientation - 文档原始方向
+ * @property {number}   rotation         - 文件级旋转（/Rotate 或预览旋转），°；最终旋转由 RenderLayoutFactory 归一到 {0,90,180,270}
  * @property {'pdf'|'ofd'|'image'} sourceType - 文档类型
  * @property {number}   pageNum          - 当前页码
  */

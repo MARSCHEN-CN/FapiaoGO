@@ -67,11 +67,8 @@ const MAX_PRINT_QUEUE = 50;
  *  - Conversion results are cached per source path, so re-printing the same
  *    file never re-spawns a process.
  */
-function toLongPath(shortPath) {
+async function toLongPath(shortPath) {
   if (!shortPath) return shortPath;
-  // 8.3 短路径组件形如 NAME~1，必然包含 `~`；普通长路径不含。
-  // 启发式：不含 `~` 即视为无需转换（文件名本身含 `~` 的极端情况最多多一次
-  // PowerShell 调用，PowerShell 对其返回自身，无正确性问题）。
   if (!shortPath.includes('~')) {
     return shortPath;
   }
@@ -81,13 +78,18 @@ function toLongPath(shortPath) {
   }
   try {
     const escaped = shortPath.replace(/\\/g, '\\\\');
-    const result = execSync(
-      `powershell -NoProfile -Command "[System.IO.Path]::GetFullPath('${escaped}')"`,
-      { encoding: 'utf8', timeout: 3000, windowsHide: true }
-    );
-    const longPath = result.trim() || shortPath;
-    _longPathCache.set(shortPath, longPath);
-    return longPath;
+    const result = await new Promise((resolve, reject) => {
+      execFile('powershell', [
+        '-NoProfile',
+        '-Command',
+        `[System.IO.Path]::GetFullPath('${escaped}')`
+      ], { encoding: 'utf8', timeout: 3000, windowsHide: true }, (err, stdout) => {
+        if (err) reject(err);
+        else resolve(stdout.trim() || shortPath);
+      });
+    });
+    _longPathCache.set(shortPath, result);
+    return result;
   } catch (e) {
     _longPathCache.set(shortPath, shortPath);
     return shortPath;
@@ -108,7 +110,7 @@ const PRINTER_SKIP_PATTERNS = [
 // The system default printer changes rarely, so cache the detection result
 // to avoid spawning PowerShell / querying Chromium on every print job.
 const _defaultPrinterCache = { value: undefined, expiresAt: 0 };
-const DEFAULT_PRINTER_CACHE_TTL_MS = 60000; // 60s
+const DEFAULT_PRINTER_CACHE_TTL_MS = 300000; // 5 minutes
 
 /**
  * Detect system default printer (async, non-blocking).
@@ -154,6 +156,17 @@ async function detectDefaultPrinter(webContents) {
     _defaultPrinterCache.expiresAt = now + DEFAULT_PRINTER_CACHE_TTL_MS;
   }
   return result;
+}
+
+/**
+ * Pre-detect default printer at app startup (non-blocking, fire-and-forget).
+ * Moves the 500ms-2s PowerShell delay from first print to startup time.
+ * @param {import('electron').WebContents|null} [webContents]
+ */
+function preDetectDefaultPrinter(webContents) {
+  detectDefaultPrinter(webContents).catch((e) => {
+    console.warn('[OsLauncherBridge] Pre-detection failed:', e.message);
+  });
 }
 
 /**
@@ -249,14 +262,6 @@ function decidePrintSpec(job) {
   // 纸张方向由所选纸张的宽高比硬编码决定（如 A4 竖向、凭证纸 240×140 横向）
   const orientation = getPaperOrientation(job.paperSize, job.customPaper);
 
-  // ========== [DEBUG] 链路追踪 ==========
-  console.log(`[DEBUG-OLB] job.paperSize: ${job.paperSize}`)
-  console.log(`[DEBUG-OLB] spec.orientation: ${orientation}`)
-  console.log(`[DEBUG-OLB] spec.paper: ${paperName}`)
-  if (job.paperkind != null) {
-    console.log(`[DEBUG-OLB] spec.paperkind: ${job.paperkind}`)
-  }
-
   return {
     paper: paperName,
     paperkind: job.paperkind != null ? job.paperkind : undefined,
@@ -317,36 +322,25 @@ function toSumatraArgs(spec, job) {
     parts.push(`paper=${spec.paper}`);
   }
 
-  // ========== [DEBUG] 链路追踪 ==========
-  console.log(`[DEBUG-TSA] spec.orientation: ${spec.orientation}`)
-  console.log(`[DEBUG-TSA] spec.scale: ${spec.scale}`)
-
-  // 检测 PDF 方向，基于表格驱动生成正确的 baseFlag 和 rotate
-  // 旧管线没有显式 rotation 字段，desiredRotation 固定为 0
   const filePath = job?.pdfPath || job?.sourcePath;
-  console.log(`[DEBUG-TSA] filePath: ${filePath}`)
 
   if (filePath) {
     const pdfOrientation = detectPdfOrientation(filePath);
-    console.log(`[DEBUG-TSA] pdfOrientation: ${pdfOrientation}`)
 
     if (pdfOrientation) {
       const orientResult = resolveOrientationCommands(
         pdfOrientation,
         spec.orientation || 'portrait',
-        0  // old pipeline: 无显式旋转, 默认为不旋转
+        0
       );
       parts.push(orientResult.baseFlag);
       if (orientResult.rotate !== 0) {
         parts.push(`rotate=${orientResult.rotate}`);
       }
-      console.log(`[DEBUG-TSA] orientation resolved: base=${orientResult.baseFlag}, rotate=${orientResult.rotate}`);
     } else {
-      // 无法检测方向时用 disable-auto-rotation 兜底
       parts.push('disable-auto-rotation');
     }
   } else {
-    console.log(`[DEBUG-TSA] No filePath, defaulting to disable-auto-rotation`);
     parts.push('disable-auto-rotation');
   }
 
@@ -358,7 +352,6 @@ function toSumatraArgs(spec, job) {
     parts.push('monochrome');
   }
 
-  console.log(`[DEBUG-TSA] Final args: ${parts.join(',')}`);
   return ['-print-settings', parts.join(',')];
 }
 
@@ -480,7 +473,7 @@ class OsLauncherBridge extends EventEmitter {
     // Convert 8.3 short path to long path — SumatraPDF cannot parse short paths
     // Support both pdfPath (rendered print) and sourcePath (direct print)
     const filePath = job.pdfPath || job.sourcePath;
-    const pdfPath = toLongPath(filePath);
+    const pdfPath = await toLongPath(filePath);
     console.log(`[OsLauncherBridge] PDF path resolved: ${pdfPath}`);
     const args = [pdfPath]; // file first
 
@@ -647,5 +640,5 @@ class OsLauncherBridge extends EventEmitter {
   }
 }
 
-module.exports = { OsLauncherBridge, decidePrintSpec, toSumatraArgs, getSumatraPath, toLongPath };
+module.exports = { OsLauncherBridge, decidePrintSpec, toSumatraArgs, getSumatraPath, toLongPath, preDetectDefaultPrinter };
 module.exports.default = OsLauncherBridge;
