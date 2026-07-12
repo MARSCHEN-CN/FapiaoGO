@@ -443,9 +443,9 @@ class RenderEngine:
           • paper.width/height  → 画布像素尺寸（已含方向，不读 A4 常量）
           • placement.scale     → 直接作为 get_pixmap(matrix) 缩放（PDF）/ 缩放因子（image）
           • placement.offsetX/Y → 直接作为粘贴左上角（不再居中）
-          • rotation            → B-2.1 **由后端唯一接管**：视觉顺时针角度(0/90/180/270)，
-            经 fitz `prerotate` 查表映射消费（见 `_rotation_to_fitz_arg`）。
-            前端 CSS 旋转在 B-2.2 删除；不读 Legacy 的 vs rotation（⑥⑦ 零共享）。
+          • paper_landscape    → 🆕 V17 **纸随内容方向**：True=横纸/False=竖纸。
+            内容永远自然方向（rotation 字段已废弃=0）；后端据此交换画布尺寸，
+            不再 fitz.prerotate（见 v17-paper-orientation-contract.md）。
           • dpi                 → 信息字段（paper/placement 已是权威像素，渲染不二次使用）。
 
         与 Legacy 树零共享（⑦）：禁止调用 `_render_legacy_page` / `_render_pdf_page` /
@@ -455,30 +455,31 @@ class RenderEngine:
         scale = float(spec["placement"]["scale"])
         ox = int(round(float(spec["placement"]["offsetX"])))
         oy = int(round(float(spec["placement"]["offsetY"])))
-        rotation = int(round(float(spec.get("rotation", 0))))
-        # ── B-2.1 旋转 invariant（防御性最后一道；契约层 verify_render_spec 为前置门）──
-        # rotation 必须是 90 的倍数（本应用只处理 0/90/180/270）；paper 必须为正。
+        # 🆕 V17(paperLandscape)：纸随内容方向，内容永远自然方向（rotation 字段废弃=0）。
+        # 旧 B-2.1 的 fitz.prerotate 整段移除；方向改由 paper_landscape 表达：
+        #   True  → 画布交换宽高（横纸），内容自然绘制（rotation=0）
+        #   False → 竖纸，内容自然绘制
+        rotation = int(round(float(spec.get("rotation", 0))))  # 保留字段（废弃），仅作防御
         if rotation % 360 not in (0, 90, 180, 270):
             raise ValueError(
                 f"RenderSpec rotation must be a multiple of 90 degrees, got {spec.get('rotation')!r}")
+        paper_landscape = bool(spec.get("paper_landscape", False))
         paper_w = int(round(float(spec["paper"]["width"])))
         paper_h = int(round(float(spec["paper"]["height"])))
         if paper_w <= 0 or paper_h <= 0:
             raise ValueError(
                 f"RenderSpec paper dimensions must be positive, got {paper_w}x{paper_h}")
         gray = bool(spec.get("gray", False))
-        fitz_rot = _rotation_to_fitz_arg(rotation)
+        # 画布尺寸：paper_landscape 时交换（纸随内容方向）
+        canvas_w, canvas_h = (paper_h, paper_w) if paper_landscape else (paper_w, paper_h)
 
         if doc.pdf is not None:
             pdf = pdf_doc if pdf_doc is not None else doc.pdf
             if page_idx >= len(pdf):
                 raise ValueError(f"Page {page_idx + 1} out of range ({len(pdf)} pages)")
             page = pdf[page_idx]
-            # B-2.1：placement.scale 缩放 + spec.rotation 由后端唯一接管（prerotate 查表映射）。
-            # 不再依赖前端 CSS 旋转（B-2.2 删除）；不读 Legacy 的 vs rotation（⑥⑦ 零共享）。
+            # 🆕 V17：内容自然方向（rotation=0），缩放仅 placement.scale；不再 prerotate。
             mat = fitz.Matrix(scale, scale)
-            if fitz_rot:
-                mat = mat.prerotate(fitz_rot)
             pix = page.get_pixmap(matrix=mat, alpha=False)
         else:
             # image path：以「dpi 栅格 + placement.scale + spec.rotation」组合矩阵一次性栅格化
@@ -488,19 +489,14 @@ class RenderEngine:
                 dpi = float(spec.get("dpi", preset.dpi))
                 zoom = dpi / 72.0
                 mat = fitz.Matrix(zoom, zoom)
-                if fitz_rot:
-                    mat = mat.prerotate(fitz_rot)
                 if scale != 1.0:
                     mat = fitz.Matrix(mat.a * scale, mat.d * scale)
                 pix = img_doc[0].get_pixmap(matrix=mat, alpha=False)
             finally:
                 img_doc.close()
 
-        # fitz 1.27 兼容：旋转矩阵（prerotate）产出的 pixmap 无法被下方 canvas.copy
-        # 正确合成（静默输出空白，非旋转 pixmap 则正常）。经 tobytes→Pixmap 重开为
-        # 「标准」pixmap 后 copy 恢复正常。仅旋转路径需要，不影响非旋转渲染性能。
-        if fitz_rot:
-            pix = fitz.Pixmap(pix.tobytes("png"))
+        # 🆕 V17：内容不再经 prerotate，fitz 1.27 旋转 pixmap 空白的兼容 hack 已无需
+        # （paper_landscape 仅交换画布尺寸，内容天然正向）。
 
         if gray:
             pix = _apply_grayscale(pix)
@@ -509,10 +505,10 @@ class RenderEngine:
         # 防御：旋转/取整可能让内容 pixmap 比 spec.paper 大 1px（fitz 取整边界），
         # 若 copy 源 IRect 超出画布，fitz 会静默输出空白。故画布以 spec.paper 为基准，
         # 必要时扩展到内容尺寸，保证粘贴不越界（Executor 不因取整差产白图）。
-        paper_w = max(paper_w, ox + pix.width)
-        paper_h = max(paper_h, oy + pix.height)
+        canvas_w = max(canvas_w, ox + pix.width)
+        canvas_h = max(canvas_h, oy + pix.height)
         canvas = fitz.Pixmap(fitz.csRGB if pix.n >= 3 else fitz.csGRAY,
-                             fitz.IRect(0, 0, paper_w, paper_h))
+                             fitz.IRect(0, 0, canvas_w, canvas_h))
         canvas.clear_with(255)
         if pix.n == canvas.n:
             canvas.copy(pix, fitz.IRect(ox, oy, ox + pix.width, oy + pix.height))
@@ -744,7 +740,8 @@ def _make_hl_token(rects: list) -> str:
 
 
 def _rotation_to_fitz_arg(rotation: int) -> int:
-    """视觉顺时针角度(0/90/180/270) → fitz `prerotate` 参数（B-2.1 唯一旋转源）。
+    """🆕 V17 deprecated：paperLandscape 模型已取代 prerotate，本函数不再被调用（Phase 3 删除）。
+    视觉顺时针角度(0/90/180/270) → fitz `prerotate` 参数（B-2.1 唯一旋转源）。
 
     经 fitz 横票实验验证（红顶/蓝左标记，见 B-2.1 提交说明）：
       • prerotate(-90) 产生「视觉顺时针 90°」（= 前端 CSS rotate(90deg)），故 90→-90；

@@ -145,11 +145,15 @@ export function usePreview({ files, settings, electronAPIRef }) {
     if (!previewImgDims || previewImgDims.w <= 0 || previewImgDims.h <= 0) return
     const pl = paperLayoutRef.current
     if (!pl || !pl.paperRect?.w) return
+    // 🆕 V17：图像方向应与「有效纸张方向(paperLandscape)」一致（纸随内容）。
+    // 旧逻辑比的是 paperRect 固定方向，在 paperLandscape 模型下恒错，已改为比 paperLandscape。
+    const paperLandscape = renderLayout?.paperLandscape
+      ?? (documentStateRef.current?.pageOrientation !== (pl.paperRect.w > pl.paperRect.h ? 'landscape' : 'portrait'))
     const imgOrient = previewImgDims.w > previewImgDims.h ? 'landscape' : 'portrait'
-    const paperOrient = pl.paperRect.w > pl.paperRect.h ? 'landscape' : 'portrait'
-    if (imgOrient !== paperOrient) {
-      console.warn('[V16 ASSERT] 图像方向(%s) 与纸张方向(%s) 不一致 dims=%dx%d',
-        imgOrient, paperOrient, previewImgDims.w, previewImgDims.h)
+    const effOrient = paperLandscape ? 'landscape' : 'portrait'
+    if (imgOrient !== effOrient) {
+      console.warn('[V17 ASSERT] 图像方向(%s) 与有效纸张方向(paperLandscape=%s) 不一致 dims=%dx%d',
+        imgOrient, paperLandscape, previewImgDims.w, previewImgDims.h)
     }
   }, [previewImgDims, paperLayoutVersion])
 
@@ -614,7 +618,8 @@ export function usePreview({ files, settings, electronAPIRef }) {
           } else {
             // ✅ 单文件：统一使用全局 Canvas（PDF / 图片 / OFD 都走此路径）
             const { getGlobalPreviewCanvas, switchPreviewFile, switchPreviewImage, getOrLoadPdfDocument } = await getRenderers()
-            const effectiveLandscape = (currentRotation % 180 !== 0) ? !isLandscape : isLandscape
+            // 🆕 V17：canvas 回退按 paperLandscape 绘制（内容自然、横纸），与 RE 对齐
+            const effectiveLandscape = renderLayout?.paperLandscape ?? isLandscape
             const paperKey = paperSize || 'A4'
 
             // 初始化全局 Canvas（配置不变则复用同一 Canvas）
@@ -752,8 +757,9 @@ export function usePreview({ files, settings, electronAPIRef }) {
     const docOrient = documentStateRef.current?.pageOrientation
     // 合并模式强制方向由 renderers 内部处理，此处回退旧 orientation 逻辑避免影响合并预览。
     const isMerge = isMergeMode(settings.mergeMode)
+    // 🆕 V17：容器方向由 paperLandscape 决定（纸随内容），不再读 renderLayout.rotation
     const swapped = (renderLayoutReady && !isMerge)
-      ? (renderLayout.rotation % 180 !== 0)
+      ? !!renderLayout.paperLandscape
       : (!!docOrient && docOrient !== paperOrient)
     const effW = swapped ? pl.paperRect.h : pl.paperRect.w
     const effH = swapped ? pl.paperRect.w : pl.paperRect.h

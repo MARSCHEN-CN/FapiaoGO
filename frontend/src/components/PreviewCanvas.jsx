@@ -64,12 +64,9 @@ export default memo(function PreviewCanvas({ previewFile, previewCanvas, preview
 
   // ── Render Engine <img> 路径 ──
   if (previewUrl && contentReady && containerW > 0) {
-    // 旋转走 CSS transform：容器尺寸从 PaperLayout 取（交换后的宽高），
-    // <img> 以自然显示尺寸绝对居中后 rotate，贴合包围盒
-    const angle = (previewRotation || 0) % 360
-    const swapped = (angle % 180 !== 0)
-    const imgW = swapped ? containerH : containerW
-    const imgH = swapped ? containerW : containerH
+    // 🆕 V17：RE 已按 paperLandscape 输出正确方向图，内容永远 natural，无需 CSS rotate。
+    // 容器方向由 usePreview 依 paperLandscape 计算（containerW/H 已是有效纸张尺寸），
+    // 此处 <img> 直接以容器尺寸 contain 显示，彻底移除 rotate/swap/angle。
     return (
       <div className="paper" style={{
         width: containerW,
@@ -86,12 +83,9 @@ export default memo(function PreviewCanvas({ previewFile, previewCanvas, preview
           loading="eager"
           decoding="async"
           style={{
-            width: `${imgW}px`,
-            height: `${imgH}px`,
-            transform: `rotate(${angle}deg)`,
-            transformOrigin: 'center center',
+            width: '100%',
+            height: '100%',
             objectFit: 'contain',
-            transition: 'transform 0.2s ease',
             filter: grayscale ? 'grayscale(100%)' : 'none',
             flexShrink: 0,
           }}

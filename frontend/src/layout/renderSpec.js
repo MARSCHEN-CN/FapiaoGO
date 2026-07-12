@@ -38,7 +38,8 @@ function wireFieldsOf(spec) {
     scale: spec.placement ? String(spec.placement.scale) : undefined,
     ox: spec.placement ? String(spec.placement.offsetX) : undefined,
     oy: spec.placement ? String(spec.placement.offsetY) : undefined,
-    rotation: String(spec.rotation ?? 0),
+    rotation: String(spec.rotation ?? 0),  // 🆕 V17 deprecated：内容不再旋转，保留字段仅作兼容
+    paper_landscape: spec.paperLandscape ? '1' : '0',  // 🆕 V17：纸随内容方向
     clip_x: spec.clip ? String(spec.clip.x) : undefined,
     clip_y: spec.clip ? String(spec.clip.y) : undefined,
     clip_w: spec.clip ? String(spec.clip.width) : undefined,
@@ -127,7 +128,7 @@ export function renderSpecSignature(spec) {
  */
 export function buildRenderSpec(renderLayout, { docId, page = 1, dpi = PREVIEW_DPI, marginsMm } = {}) {
   if (!renderLayout || !renderLayout.paper || !renderLayout.paper.paperRect) return null
-  const { paper, placement, rotation, clip } = renderLayout
+  const { paper, placement, rotation, clip, paperLandscape } = renderLayout
   const pr = paper.paperRect
   return {
     docId,
@@ -143,8 +144,10 @@ export function buildRenderSpec(renderLayout, { docId, page = 1, dpi = PREVIEW_D
       offsetX: placement?.offsetX ?? 0,
       offsetY: placement?.offsetY ?? 0,
     },
-    // 最终旋转（已合并 swap + 文件级 /Rotate），{0,90,180,270}
+    // 🆕 V17 deprecated：内容不再旋转（纸随内容方向）；保留字段仅作兼容，恒为 0
     rotation: rotation ?? 0,
+    // 🆕 V17：纸随内容方向（True=横纸/False=竖纸）；RE/Canvas/Print 三端统一消费此字段
+    paperLandscape: !!paperLandscape,
     // 完全来自 PaperLayout.clipRect（评审修正④），RE 不得重算
     // 注：buildRenderLayout 已把 clipRect 统一为 {x,y,width,height} 形态
     clip: { x: clip?.x ?? 0, y: clip?.y ?? 0, width: clip?.width ?? 0, height: clip?.height ?? 0 },

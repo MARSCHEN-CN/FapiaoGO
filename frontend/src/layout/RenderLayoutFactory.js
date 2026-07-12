@@ -57,31 +57,34 @@ export function buildRenderLayout(paperLayout, documentState) {
 
   const { contentRect, clipRect, paperRect } = paperLayout
 
-  // 1) doc/paper swap → 有效纸张方向 + 基础旋转（swap 产生 90° 顺时针）
+  // 1) 纸随内容方向（V17 paperLandscape 模型）：
+  //    旧模型用 swapRotation=90 把内容旋转进固定纸；新模型改为「翻转纸张尺寸」，
+  //    内容永远自然方向（rotation=0）。paperLandscape 即有效纸张的横竖。
   const paperOrient = paperRect.w > paperRect.h ? 'landscape' : 'portrait'
   const docOrient = documentState?.pageOrientation
   const swapped = !!docOrient && docOrient !== paperOrient
   const swapRotation = swapped ? 90 : 0
 
-  // 2) 文件级旋转（/Rotate 或预览旋转）→ 归一到 90° 倍数
+  // 2) 文件级旋转（/Rotate 或预览旋转）→ 仅影响纸张方向（横/竖），不再旋转内容
   const fileRotation = normalizeRotation(documentState?.rotation || 0)
+  const totalRot = normalizeRotation(swapRotation + fileRotation)
+  // 🆕 paperLandscape：有效纸张是否横向（内容方向 + 手动旋转共同决定）
+  const paperLandscape = totalRot === 90 || totalRot === 270
 
-  // 3) 最终旋转 = swap + file，归一到 {0,90,180,270}
-  const rotation = normalizeRotation(swapRotation + fileRotation)
-
-  // 4) 内容自然尺寸（与 PaperLayout 同单位=px）；旋转 90/270 时交换用于 fit
+  // 3) 内容自然尺寸（rotation 已废弃为 0，内容不再旋转）
   let natW = documentState?.pageSize?.w || 0
   let natH = documentState?.pageSize?.h || 0
   if (!natW || !natH) return emptyRenderLayout()
-  if (rotation === 90 || rotation === 270) {
-    const t = natW; natW = natH; natH = t
-  }
 
-  // 5) fit（复用 layout.js 纯函数）。
+  // 4) 有效纸张/内容矩形：paperLandscape 时交换宽高（纸随内容）
+  const effContentW = paperLandscape ? contentRect.h : contentRect.w
+  const effContentH = paperLandscape ? contentRect.w : contentRect.h
+
+  // 5) fit（复用 layout.js 纯函数），在有效纸张坐标内居中
   //    注意坐标约定差异：PaperLayout.contentRect 用 {w,h}（无 x/y），
   //    而 layout.js 的 calculateFitScale/calculateCenteredPosition 用 {x,y,width,height}。
   //    此处桥接为统一 slot 形态（contentRect 在纸张坐标内从 (0,0) 起）。
-  const slot = { x: 0, y: 0, width: contentRect.w, height: contentRect.h }
+  const slot = { x: 0, y: 0, width: effContentW, height: effContentH }
   const contentBounds = { width: natW, height: natH }
   const fitScale = calculateFitScale(slot, contentBounds)
   const pos = calculateCenteredPosition(slot, contentBounds, fitScale)
@@ -94,8 +97,15 @@ export function buildRenderLayout(paperLayout, documentState) {
       offsetX: pos.x,
       offsetY: pos.y,
     },
-    rotation,
-    // clip 完全等于 PaperLayout.clipRect（评审修正④），x/y 缺省补 0
-    clip: { x: clipRect?.x ?? 0, y: clipRect?.y ?? 0, width: clipRect?.w ?? 0, height: clipRect?.h ?? 0 },
+    // 🆕 V17 deprecated：内容不再旋转；方向完全由 paperLandscape 表达（RE/Canvas/Print 三端统一）
+    rotation: 0,
+    paperLandscape,
+    // clip 完全等于 PaperLayout.clipRect（评审修正④），paperLandscape 时交换宽高
+    clip: {
+      x: clipRect?.x ?? 0,
+      y: clipRect?.y ?? 0,
+      width: paperLandscape ? clipRect?.h ?? 0 : clipRect?.w ?? 0,
+      height: paperLandscape ? clipRect?.w ?? 0 : clipRect?.h ?? 0,
+    },
   }
 }

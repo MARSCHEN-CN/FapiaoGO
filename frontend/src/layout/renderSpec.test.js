@@ -29,6 +29,16 @@ test('buildRenderSpec → 纯 DTO，含解析后 placement/rotation/clip，不�
   assert.equal('alignment' in spec, false)
 })
 
+test('buildRenderSpec → landscape 文档输出 paperLandscape=true 且 URL 带 paper_landscape=1', () => {
+  const rl = makeLayout({ pageSize: { w: 1754, h: 1240 }, pageOrientation: 'landscape' })
+  assert.equal(rl.paperLandscape, true, 'landscape 内容 → 纸随内容横纸')
+  assert.equal(rl.rotation, 0, 'V17：内容不再旋转')
+  const spec = buildRenderSpec(rl, { docId: 'land', page: 1, dpi: 300 })
+  assert.equal(spec.paperLandscape, true)
+  const url = appendRenderSpecToUrl('http://localhost:5000/preview/land?page=1', spec)
+  assert.equal(new URL(url).searchParams.get('paper_landscape'), '1')
+})
+
 test('buildRenderSpec → renderLayout 未就绪返回 null', () => {
   assert.equal(buildRenderSpec(null, { docId: 'x' }), null)
   assert.equal(buildRenderSpec({}, { docId: 'x' }), null)
