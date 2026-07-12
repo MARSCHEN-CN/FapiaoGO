@@ -35,5 +35,15 @@ export function getRenderEnginePreviewUrl(previewFile, useRenderEnginePreview, r
   if (!useRenderEnginePreview) return null
   const url = previewFile && previewFile._previewImageUrl
   if (!isRenderEngineUrl(url)) return null
-  return renderSpec ? appendRenderSpecToUrl(url, renderSpec) : url
+  const out = renderSpec ? appendRenderSpecToUrl(url, renderSpec) : url
+  if (import.meta.env?.DEV) {
+    console.log('[ROT-DIAG] URL BUILD', {
+      hadSpec: !!renderSpec,
+      specRotation: renderSpec?.rotation,
+      specKeys: renderSpec ? Object.keys(renderSpec) : [],
+      outHasRotation: out.includes('rotation='),
+      out,
+    })
+  }
+  return out
 }

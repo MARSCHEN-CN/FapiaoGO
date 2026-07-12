@@ -1121,7 +1121,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
   // ============================
   // 实际预览加载逻辑（防抖分离）
   // ============================
-  const doLoadPreview = useCallback(async (fileObj) => {
+  const doLoadPreview = useCallback(async (fileObj, source = 'unknown') => {
     lastSwitchTimeRef.current = Date.now()
     if (switchTimeoutRef.current) {
       clearTimeout(switchTimeoutRef.current)
@@ -1130,7 +1130,8 @@ export function usePreview({ files, settings, electronAPIRef }) {
 
     // ✅ 在加载前先递增版本号，确保旧请求被丢弃
     const version = ++previewVersionRef.current
-    console.log('[DIAG] doLoadPreview ENTER key=', fileObj?.key?.slice(0,40), 'v=', version)
+    const _stack = (new Error().stack || '').split('\n').slice(1, 4).join(' | ')
+    console.log('[DIAG] doLoadPreview ENTER key=', fileObj?.key?.slice(0,40), 'v=', version, 'source=', source, 'stack=', _stack)
 
     // ✅ 保存旧的 blob URL，在新预览加载完成后再清理
     const oldBlobUrls = [...pendingBlobUrlsRef.current]
@@ -1217,6 +1218,16 @@ export function usePreview({ files, settings, electronAPIRef }) {
       }
     )
     const cachedCanvas = fullCacheRef.current.get(cacheKey)
+    if (import.meta.env?.DEV) {
+      console.log('[ROT-DIAG] L2 BEFORE', {
+        loadedKey: loadedFile.key,
+        previewFileKey: previewFile?.key,
+        docStateKey: documentStateRef.current?.key,
+        renderLayoutRotation: renderLayout?.rotation,
+        renderLayoutReady,
+        paperLayoutReady: !!paperLayoutRef.current,
+      })
+    }
     if (cachedCanvas) {
       console.log('[DIAG] L2 HIT expected=', loadedFile.key, 'cacheKey=', cacheKey, 'hitKey=', cachedCanvas.__fileKey, 'hitSize=', cachedCanvas.width + 'x' + cachedCanvas.height)
       // 直接设置缓存画布，跳过整个异步渲染管线
@@ -1246,7 +1257,12 @@ export function usePreview({ files, settings, electronAPIRef }) {
       //    此处复用与主渲染路径完全一致的纯函数派生：documentStateRef.current 此时已是 loadedFile 的
       //    DS（L1197 写入），buildRenderLayout 内部由 pageOrientation 推导 rotation，故 rotation=90 进 URL。
       let l2Spec = null
-      if (renderLayoutReady) {
+      // ✅ 修复（B-2.2 调查定案，2026-07-13）：L2 HIT 在 doLoadPreview 同步阶段执行，
+      //    此时 renderLayoutReady（依赖 previewFile state 的 useMemo）仍是上一帧陈旧值=false，
+      //    用它会把本应重建的 l2Spec 门控跳过 → URL 裸奔 → 后端 rotation=0 → 横向内容落竖纸错位。
+      //    改用同步可用且与 L391 memo 输入一致的 paperLayoutRef.current / documentStateRef.current 直接重建，
+      //    不依赖尚未提交的 useMemo。这正是 V16「renderLayout 实时派生、不缓存」的设计意图。
+      if (paperLayoutRef.current) {
         try {
           const l2Layout = buildRenderLayout(paperLayoutRef.current, {
             ...(documentStateRef.current || {}),
@@ -1263,12 +1279,14 @@ export function usePreview({ files, settings, electronAPIRef }) {
           })
         } catch (e) {
           l2Spec = null
+          if (import.meta.env?.DEV) console.log('[ROT-DIAG] L2 buildRenderLayout/buildRenderSpec THREW', e?.message, (e?.stack || '').split('\n')?.[1])
         }
       }
       const l2Url = getRenderEnginePreviewUrl(loadedFile, USE_RENDER_ENGINE_PREVIEW, l2Spec)
       setPreviewUrl(l2Url)
       if (import.meta.env?.DEV) {
-        console.log('[ROT-DIAG] L2 cache-hit set previewUrl WITH spec', {
+        console.log('[ROT-DIAG] L2 cache-hit set previewUrl', {
+          l2SpecIsNull: l2Spec === null,
           docId: loadedFile.docId,
           key: loadedFile.key,
           specRotation: l2Spec?.rotation,
@@ -1339,9 +1357,9 @@ export function usePreview({ files, settings, electronAPIRef }) {
       }
       // 重新设定时器，到期后直接调用加载逻辑（不再递归 handlePreview）
       return new Promise(resolve => {
-        switchTimeoutRef.current = setTimeout(async () => {
+          switchTimeoutRef.current = setTimeout(async () => {
           switchTimeoutRef.current = null
-          const result = await doLoadPreview(fileObj)
+          const result = await doLoadPreview(fileObj, 'handlePreview:timeout')
           resolve(result)
         }, 150)
       })
@@ -1349,7 +1367,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
     lastSwitchTimeRef.current = now
 
     // 3. 间隔足够，立即执行
-    return doLoadPreview(fileObj)
+    return doLoadPreview(fileObj, 'handlePreview:immediate')
   }, [doLoadPreview])
 
   // ============================
