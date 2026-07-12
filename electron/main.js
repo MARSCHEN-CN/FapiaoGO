@@ -785,6 +785,17 @@ ipcMain.on('open-calculator-window', () => {
   createCalculatorWindow()
 })
 
+// --- 主题切换广播：任意窗口切换主题，主进程转发给其他所有窗口 ---
+ipcMain.on('theme-changed', (event, theme) => {
+  const sender = event.sender
+  const targets = [mainWindow, settingsWindow, calculatorWindow].filter(
+    w => w && !w.isDestroyed() && w.webContents !== sender
+  )
+  for (const w of targets) {
+    w.webContents.send('theme-changed', theme)
+  }
+})
+
 // --- 调整设置窗口大小 ---
 ipcMain.handle('resize-settings-window', async (event, { width, height }) => {
   try {

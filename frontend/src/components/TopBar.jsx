@@ -134,14 +134,13 @@ export default memo(function TopBar({
   const toggleTheme = () => {
     const newMode = !isDarkMode
     setIsDarkMode(newMode)
+    const theme = newMode ? 'dark' : 'light'
     // 保存主题设置到 localStorage
-    localStorage.setItem('theme', newMode ? 'dark' : 'light')
+    localStorage.setItem('theme', theme)
     // 应用主题
-    if (newMode) {
-      document.documentElement.setAttribute('data-theme', 'dark')
-    } else {
-      document.documentElement.setAttribute('data-theme', 'light')
-    }
+    document.documentElement.setAttribute('data-theme', theme)
+    // 通知主进程，广播给其他窗口（计算器、设置等）
+    electronAPI?.ipcRenderer?.send?.('theme-changed', theme)
     setShowDropdown(null)
   }
 

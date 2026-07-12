@@ -120,6 +120,10 @@ def preview(doc_id: str):
         # Commit B-1 起 spec 已真正驱动渲染：X-Render-Executor 反映实际执行路径。
         executor = "renderspec" if spec_info is not None else "legacy"
         resp.headers["X-Render-Executor"] = executor
+        # B-2.1：rotation 已收归后端唯一旋转源；前端 CSS 旋转在 B-2.2 删除。
+        # 该头供 UI A/B 对照：backend=后端接管旋转 / 缺省=Legacy（前端 CSS 旋转）。
+        if spec_info is not None and spec_info.get("spec", {}).get("rotation"):
+            resp.headers["X-Render-Rotation"] = "backend"
         if _render_spec_log_enabled():
             logger.info(
                 "RenderSpec echo spec=%s sig=%s verified=%s executor=%s",

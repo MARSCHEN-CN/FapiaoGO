@@ -9,12 +9,14 @@
   justify-content: space-between;
   padding: 0 clamp(14px, 1vw, 28px);
   height: var(--actionbar-height);
-  background: var(--white);
-  border-top: 1px solid var(--border-light);
+  background: rgba(255, 255, 255, 0.75);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-top: 1px solid rgba(0, 0, 0, 0.04);
   flex-shrink: 0;
   z-index: 10;
   gap: 12px;
-  box-shadow: 0 -1px 4px rgba(0, 0, 0, 0.04), var(--highlight-top);
+  box-shadow: 0 -1px 3px rgba(0, 0, 0, 0.02), var(--highlight-top);
 }
 
 /* ---- 左侧金额卡片 ---- */
@@ -29,9 +31,9 @@
   gap: 12px;
   padding: 6px 16px;
   @apply rounded-lg;
-  background: var(--surface);
-  border: 1px solid var(--border-light);
-  box-shadow: var(--highlight-top);
+  background: rgba(255, 255, 255, 0.5);
+  border: 1px solid rgba(0, 0, 0, 0.05);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03), var(--highlight-top);
 }
 
 .abm-amount-label {
@@ -192,19 +194,20 @@
   transform-origin: center;
 }
 
-/* ---- 重命名按??中性辅助操?---- */
+/* ---- 重命名按钮 ?中性辅助操作 ---- */
 .abm-btn-rename {
-  background: var(--surface);
+  background: rgba(255, 255, 255, 0.6);
   color: var(--text-2);
-  border: 1px solid transparent;
-  box-shadow: var(--highlight-top);
+  border: 1px solid rgba(0, 0, 0, 0.07);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04), var(--highlight-top);
 }
 
 .abm-btn-rename:hover:not(:disabled) {
-  background: #e8ecf4;
+  background: rgba(255, 255, 255, 0.9);
   color: var(--text);
+  border-color: rgba(0, 0, 0, 0.1);
   transform: translateY(-1px);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08), var(--highlight-top);
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.07), var(--highlight-top);
 }
 
 .abm-btn-rename:active:not(:disabled) {
@@ -227,19 +230,20 @@
   background: var(--accent);
 }
 
-/* ---- 导出按钮 ?中性辅助操?---- */
+/* ---- 导出按钮 ?中性辅助操作 ---- */
 .abm-btn-export {
-  background: var(--surface);
+  background: rgba(255, 255, 255, 0.6);
   color: var(--text-2);
-  border: 1px solid transparent;
-  box-shadow: var(--highlight-top);
+  border: 1px solid rgba(0, 0, 0, 0.07);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04), var(--highlight-top);
 }
 
 .abm-btn-export:hover:not(:disabled) {
-  background: #e8ecf4;
+  background: rgba(255, 255, 255, 0.9);
   color: var(--text);
+  border-color: rgba(0, 0, 0, 0.1);
   transform: translateY(-1px);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08), var(--highlight-top);
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.07), var(--highlight-top);
 }
 
 .abm-btn-export:active:not(:disabled) {
@@ -330,18 +334,18 @@
 
 /* ---- 打包导出按钮 ?重要操作 ---- */
 .abm-btn-pack {
-  background: linear-gradient(135deg, #f0fdf4 0%, #ecfdf5 100%);
+  background: linear-gradient(135deg, rgba(240, 253, 244, 0.8) 0%, rgba(236, 253, 245, 0.8) 100%);
   color: #059669;
-  border: 1px solid rgba(5, 150, 105, 0.2);
-  box-shadow: var(--highlight-top);
+  border: 1px solid rgba(5, 150, 105, 0.18);
+  box-shadow: 0 1px 3px rgba(5, 150, 105, 0.06), var(--highlight-top);
 }
 
 .abm-btn-pack:hover:not(:disabled) {
   background: linear-gradient(135deg, #d1fae5 0%, #ccfbf1 100%);
   color: #047857;
   transform: translateY(-1px);
-  box-shadow: 0 2px 12px rgba(5, 150, 105, 0.15), var(--highlight-top);
-  border-color: rgba(5, 150, 105, 0.35);
+  box-shadow: 0 3px 14px rgba(5, 150, 105, 0.14), var(--highlight-top);
+  border-color: rgba(5, 150, 105, 0.3);
 }
 
 .abm-btn-pack:active:not(:disabled) {
@@ -364,17 +368,17 @@
   background: #059669;
 }
 
-/* ---- 打印/导出按钮 ?核心主操?---- */
+/* ---- 打印/导出按钮 ?核心主操作 ---- */
 .abm-btn-print {
   background: var(--accent);
   color: #fff;
-  box-shadow: 0 2px 12px rgba(59, 108, 245, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2);
+  box-shadow: 0 2px 8px rgba(59, 108, 245, 0.25), 0 6px 20px rgba(59, 108, 245, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.2);
   padding-right: 16px;
 }
 
 .abm-btn-print:hover:not(:disabled) {
   transform: translateY(-1px);
-  box-shadow: 0 4px 20px rgba(59, 108, 245, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+  box-shadow: 0 3px 12px rgba(59, 108, 245, 0.3), 0 10px 28px rgba(59, 108, 245, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.25);
   background: var(--accent-hover);
 }
 
@@ -414,20 +418,70 @@
 /* ================================================================
    DARK MODE — actionbar · 质感升级
    ================================================================ */
+[data-theme="dark"] .actionbar {
+  background: #1a1d27;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border-top-color: rgba(255, 255, 255, 0.06);
+  box-shadow: 0 -1px 0 rgba(255, 255, 255, 0.03);
+}
+
+[data-theme="dark"] .abm-amount-card {
+  background: #1e2130;
+  border-color: rgba(255, 255, 255, 0.06);
+  box-shadow: none;
+}
+
+[data-theme="dark"] .abm-btn-rename {
+  background: #1e2130;
+  color: #acb0c4;
+  border-color: rgba(255, 255, 255, 0.06);
+  box-shadow: none;
+}
+
+[data-theme="dark"] .abm-btn-rename:hover:not(:disabled) {
+  background: #262a38;
+  color: #e3e5ed;
+  border-color: rgba(255, 255, 255, 0.1);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+[data-theme="dark"] .abm-btn-export {
+  background: #1e2130;
+  color: #acb0c4;
+  border-color: rgba(255, 255, 255, 0.06);
+  box-shadow: none;
+}
+
+[data-theme="dark"] .abm-btn-export:hover:not(:disabled) {
+  background: #262a38;
+  color: #e3e5ed;
+  border-color: rgba(255, 255, 255, 0.1);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+[data-theme="dark"] .abm-btn-pack {
+  background: rgba(74, 222, 128, 0.08);
+  color: #4ade80;
+  border-color: rgba(74, 222, 128, 0.15);
+  box-shadow: none;
+}
+
+[data-theme="dark"] .abm-btn-pack:hover:not(:disabled) {
+  background: rgba(74, 222, 128, 0.14);
+  color: #6ee7a0;
+  border-color: rgba(74, 222, 128, 0.25);
+  box-shadow: 0 2px 12px rgba(74, 222, 128, 0.1);
+}
+
 [data-theme="dark"] .abm-btn-print {
-  background: var(--accent);
-  box-shadow:
-    0 2px 8px rgba(108, 138, 255, 0.25),
-    var(--glow-accent),
-    var(--highlight-top-strong);
+  background: linear-gradient(135deg, #6c8aff, #8b7cf6);
+  box-shadow: 0 2px 12px rgba(108, 138, 255, 0.3);
 }
 
 [data-theme="dark"] .abm-btn-print:hover:not(:disabled) {
-  box-shadow:
-    0 4px 16px rgba(108, 138, 255, 0.35),
-    var(--glow-accent-hover),
-    var(--highlight-top-strong);
-  background: var(--accent-hover);
+  box-shadow: 0 4px 20px rgba(108, 138, 255, 0.4);
+  background: linear-gradient(135deg, #7d9bff, #9a8df8);
 }
 
 [data-theme="dark"] .abm-btn-print:active:not(:disabled) {
@@ -439,65 +493,27 @@
   opacity: 0.75;
 }
 
-[data-theme="dark"] .abm-btn-rename {
-  background: rgba(255, 255, 255, 0.03);
-  color: var(--text-2);
-  box-shadow: var(--highlight-top);
-}
-
-[data-theme="dark"] .abm-btn-rename:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.07);
-  color: var(--text);
-  box-shadow: var(--highlight-top);
-}
-
 [data-theme="dark"] .abm-btn-rename.executing {
-  background: rgba(108, 138, 255, 0.10);
-  color: var(--accent);
+  background: rgba(108, 138, 255, 0.12);
+  color: #8aa3ff;
   border-color: rgba(108, 138, 255, 0.20);
 }
 
-[data-theme="dark"] .abm-btn-export {
-  background: rgba(255, 255, 255, 0.03);
-  color: var(--text-2);
-  box-shadow: var(--highlight-top);
-}
-
-[data-theme="dark"] .abm-btn-export:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.07);
-  color: var(--text);
-  box-shadow: var(--highlight-top);
-}
-
 [data-theme="dark"] .abm-btn-export.executing {
-  background: rgba(108, 138, 255, 0.10);
-  color: var(--accent);
+  background: rgba(108, 138, 255, 0.12);
+  color: #8aa3ff;
   border-color: rgba(108, 138, 255, 0.20);
 }
 
 [data-theme="dark"] .abm-btn-export.open,
 [data-theme="dark"] .abm-btn-export:focus-within {
-  background: rgba(255, 255, 255, 0.06);
-  color: var(--text);
-  box-shadow: var(--highlight-top);
-}
-
-[data-theme="dark"] .abm-btn-pack {
-  background: rgba(74, 222, 128, 0.07);
-  color: #4ade80;
-  border-color: rgba(74, 222, 128, 0.12);
-  box-shadow: var(--highlight-top);
-}
-
-[data-theme="dark"] .abm-btn-pack:hover:not(:disabled) {
-  background: rgba(74, 222, 128, 0.12);
-  color: #6ee7a0;
-  box-shadow: 0 0 12px rgba(74, 222, 128, 0.08), var(--highlight-top);
-  border-color: rgba(74, 222, 128, 0.22);
+  background: #262a38;
+  color: #e3e5ed;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
 }
 
 [data-theme="dark"] .abm-btn-pack.executing {
-  background: rgba(74, 222, 128, 0.07);
+  background: rgba(74, 222, 128, 0.08);
   color: #4ade80;
   border-color: rgba(74, 222, 128, 0.15);
 }

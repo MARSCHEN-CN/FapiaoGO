@@ -2,7 +2,7 @@
 const { contextBridge, ipcRenderer, webUtils } = require('electron')
 
 // IPC 通道白名单（精确匹配 — 仅保留前缀匹配无法覆盖的通道）
-const ALLOWED_SEND = ['open-settings-window', 'close-settings-window', 'open-calculator-window', 'window-minimize', 'window-maximize', 'window-close', 'window-drag-start', 'window-drag-move', 'window-drag-end', 'settings-changed']
+const ALLOWED_SEND = ['open-settings-window', 'close-settings-window', 'open-calculator-window', 'window-minimize', 'window-maximize', 'window-close', 'window-drag-start', 'window-drag-move', 'window-drag-end', 'settings-changed', 'theme-changed']
 const ALLOWED_INVOKE = [
   // 前缀匹配无法覆盖的精确通道写在这里
   // 大部分已被 ALLOWED_INVOKE_PREFIXES 覆盖，无需重复
@@ -29,7 +29,7 @@ const ALLOWED_INVOKE_PREFIXES = [
   'submit-',   // submit-print-job
 ]
 
-const ALLOWED_ON = ['print-progress', 'settings-window-closed', 'context-menu-files', 'rename-progress', 'pack-progress', 'excel-progress', 'settings-changed', 'print-job-completed', 'print-job-failed']
+const ALLOWED_ON = ['print-progress', 'settings-window-closed', 'context-menu-files', 'rename-progress', 'pack-progress', 'excel-progress', 'settings-changed', 'theme-changed', 'print-job-completed', 'print-job-failed']
 
 /** 检查通道是否允许（精确匹配或前缀匹配） */
 // ✅ 按首字母分组前缀：每次 invoke 无需遍历全部 15 个前缀，仅比对同首字母组

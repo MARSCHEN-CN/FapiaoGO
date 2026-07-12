@@ -1398,6 +1398,13 @@ button.pc-btn.outline,
   box-shadow: 0 12px 40px rgba(0,0,0,0.4), 0 2px 12px rgba(0,0,0,0.2);
 }
 
+/* Embedded 模式（独立窗口）：面板透明，由外层壳控制背景，避免半透明叠加色差 */
+[data-theme="dark"] .calc-modal-panel.is-embedded {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+}
+
 [data-theme="dark"] .calc-display-area,
 [data-theme="dark"] .calc-titlebar {
   background: #1e2024;
@@ -1423,6 +1430,20 @@ button.pc-btn.outline,
 
 [data-theme="dark"] .calc-chinese {
   border-bottom-color: transparent;
+}
+
+[data-theme="dark"] .calc-history {
+  color: var(--text-3);
+}
+
+[data-theme="dark"] .calc-hist-expr {
+  color: var(--text-3);
+}
+[data-theme="dark"] .calc-hist-res {
+  color: var(--text-2);
+}
+[data-theme="dark"] .calc-hist-eq {
+  color: var(--text-4);
 }
 
 [data-theme="dark"] .calc-btn-num {
@@ -1454,6 +1475,8 @@ button.pc-btn.outline,
 [data-theme="dark"] .calc-btn-eq:hover {
   background: var(--accent-hover);
 }
+
+/* 响应式暗色适配：小窗口/大窗口媒体查询只改尺寸，颜色由上面的暗色规则兜底 */
 
 /* ══════════════════════════════════════
    Calculator Standalone Window (embedded mode)

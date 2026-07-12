@@ -1267,7 +1267,8 @@ async function _renderToGlobalCanvas(renderFn, signal) {
     const offscreen = _getOffscreenCanvas(width, height)
     const ctx = offscreen.getContext('2d')
 
-    // 清空画布
+    // 清空画布（先 reset 变换矩阵，避免上一文件残留的 rotate/translate/scale 影响 fillRect 覆盖区域）
+    ctx.setTransform(1, 0, 0, 1, 0, 0)
     ctx.fillStyle = 'white'
     ctx.fillRect(0, 0, width, height)
 
@@ -1344,6 +1345,21 @@ export async function switchPreviewFile(pdfDoc, pageNum = 1, signal, rotation = 
     // 仅当尺寸变化时重新分配 backing store；同尺寸（同页切换）时零重分配。
     const tempCanvas = _getPreviewPdfTempCanvas(tw, th)
     const tctx = tempCanvas.getContext('2d')
+    // ✅ DIAG：记录切换文件前 tctx 的变换矩阵，确认是否存在上一文件残留（用户假设：GlobalCanvas transform 未 reset）
+    if (import.meta.env?.DEV) {
+      const m = tctx.getTransform ? tctx.getTransform() : null
+      console.log('[ROT-DIAG] switchPreviewFile tempCanvas transform BEFORE render', {
+        key: __diagDocId(pdfDoc), rotation,
+        w: tempCanvas.width, h: tempCanvas.height,
+        transform: m ? [m.a, m.b, m.c, m.d, m.e, m.f] : 'n/a',
+      })
+    }
+    // ✅ 修复（B-2.2 调查）：复用模块级 tempCanvas 前必须 reset 变换矩阵 + 清空旧像素。
+    //    pdf.js 的 page.render 在复用 ctx 上可能残留/叠加变换（取决于 pdf.js 版本），
+    //    且 pdf.js 不会主动 clearRect，旧文件像素会透出。两者都会造成「第一张正常、后续旋转/错位」。
+    //    仅当 tempCanvas 尺寸变化时 _getPreviewPdfTempCanvas 才会重置，同尺寸（同页/同分辨率切换）不重置 → 必须显式 reset。
+    tctx.setTransform(1, 0, 0, 1, 0, 0)
+    tctx.clearRect(0, 0, tw, th)
     await page.render({ canvasContext: tctx, viewport: renderViewport }).promise
 
     const ref = makeImageRef(`pdf_${pageNum}_${rotation}`, tw, th, dpi || 72, {

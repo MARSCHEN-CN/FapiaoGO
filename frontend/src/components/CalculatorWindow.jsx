@@ -1,14 +1,63 @@
-import { useCallback } from 'react'
+import { useCallback, useEffect } from 'react'
 import { getElectronAPI } from '../utils'
 import CalculatorModal from './CalculatorModal'
+
+/**
+ * 读取当前主题（dark/light）
+ * 优先读 localStorage，否则跟随系统
+ */
+function readTheme() {
+  try {
+    const saved = localStorage.getItem('theme')
+    if (saved === 'dark' || saved === 'light') return saved
+  } catch (_) { /* ignore */ }
+  if (typeof window !== 'undefined' && window.matchMedia) {
+    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+  }
+  return 'light'
+}
+
+function applyTheme(theme) {
+  document.documentElement.setAttribute('data-theme', theme)
+}
 
 /**
  * 计算器独立窗口
  * - 无模态遮罩，直接渲染计算器面板
  * - 带窗口标题栏（最小化/关闭）
+ * - 同步主题（深色/浅色模式）：挂载时读取 + 监听 storage 事件实时同步
  */
 export default function CalculatorWindow() {
   const electronAPI = getElectronAPI()
+
+  // 初始化主题 & 监听主窗口的主题切换
+  useEffect(() => {
+    // 1. 挂载时立即应用主题
+    applyTheme(readTheme())
+
+    // 2. 监听 storage 事件：同源其他窗口（主窗口）切换主题时，localStorage 变动会触发
+    //    Electron 中同源 BrowserWindow 共享 localStorage，storage 事件会跨窗口触发
+    const handleStorage = (e) => {
+      if (e.key === 'theme') {
+        applyTheme(e.newValue === 'dark' ? 'dark' : 'light')
+      }
+    }
+    window.addEventListener('storage', handleStorage)
+
+    // 3. 兜底：IPC 接收主进程转发的主题切换（应对 file:// 下 localStorage 可能不共享的极端情况）
+    const ipc = electronAPI?.ipcRenderer
+    const handleThemeChanged = (_evt, theme) => {
+      if (theme === 'dark' || theme === 'light') applyTheme(theme)
+    }
+    if (ipc) {
+      ipc.on('theme-changed', handleThemeChanged)
+    }
+
+    return () => {
+      window.removeEventListener('storage', handleStorage)
+      if (ipc) ipc.removeListener('theme-changed', handleThemeChanged)
+    }
+  }, [electronAPI])
 
   const handleMinimize = useCallback(() => {
     electronAPI?.window?.minimize?.()

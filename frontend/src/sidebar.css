@@ -363,25 +363,37 @@
 .sb-search-bar {
   flex: 1;
   min-width: 0;
-  height: 32px;
-  background-color: var(--surface);
+  height: 36px;
+  background-color: var(--white);
   border-radius: var(--r-lg);
   display: flex;
   align-items: center;
   padding: 0 12px;
-  transition: background-color 0.2s ease;
+  gap: 8px;
+  border: 1.5px solid var(--border-light);
+  transition: all var(--t-fast) var(--ease);
 }
 
 .sb-search-bar:hover {
-  background-color: var(--surface-hover);
+  border-color: var(--border);
+  background-color: var(--white);
+}
+
+.sb-search-bar:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 .sb-search-icon {
   width: 16px;
   height: 16px;
-  margin-right: 8px;
   color: var(--text-3);
   flex-shrink: 0;
+  transition: color var(--t-fast) var(--ease);
+}
+
+.sb-search-bar:focus-within .sb-search-icon {
+  color: var(--accent);
 }
 
 .sb-search-input {
@@ -405,27 +417,31 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
+  width: 18px;
+  height: 18px;
   padding: 0;
   border: none;
   border-radius: 50%;
-  background: var(--text-3);
+  background: var(--text-4);
   color: white;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: all var(--t-fast) var(--ease);
   flex-shrink: 0;
-  margin-left: 4px;
+  animation: clearAppear 0.2s var(--ease) both;
+}
+
+@keyframes clearAppear {
+  from { opacity: 0; transform: scale(0.7); }
+  to { opacity: 1; transform: scale(1); }
 }
 
 .sb-search-clear:hover {
   background: var(--text-2);
-  transform: scale(1.1);
 }
 
 .sb-search-clear svg {
-  width: 12px;
-  height: 12px;
+  width: 10px;
+  height: 10px;
 }
 
 /* -- Search empty state -- */
@@ -662,15 +678,18 @@
 
 .fc-failed { color: #ef4444 !important; font-size: 11px; opacity: 0.85; }
 
-/* -- Sidebar stats -- */
+/* -- Sidebar stats — 卡片式设计 -- */
 .sb-stats {
   flex-shrink: 0;
   margin: auto clamp(16px, 1.2vw, 24px) clamp(14px, 1vw, 22px);
-  background: transparent;
-  border-radius: 0;
+  background: var(--white);
+  border-radius: var(--r-lg);
+  padding: clamp(12px, 0.8vw, 16px);
   display: flex;
-  justify-content: space-around;
-  align-items: center;
+  align-items: stretch;
+  gap: 0;
+  box-shadow: var(--shadow-sm);
+  border: 1px solid var(--border-light);
 }
 
 .sb-stat {
@@ -679,21 +698,28 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 12px 0;
+  padding: 4px 8px;
+  position: relative;
 }
 
-.sb-stat + .sb-stat {
-  border-left: none;
+.sb-stat + .sb-stat::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 15%;
+  bottom: 15%;
+  width: 1px;
+  background: var(--border-light);
 }
 
 .sb-stat-icon {
-  width: 32px; height: 32px;
-  border-radius: var(--r-md);
+  width: 40px; height: 40px;
+  border-radius: var(--r-lg);
   display: flex; align-items: center; justify-content: center;
-  margin: 0 auto 8px;
+  margin: 0 auto 10px;
 }
 
-.sb-stat-icon svg { width: 16px; height: 16px; }
+.sb-stat-icon svg { width: 20px; height: 20px; }
 .sb-stat-icon.blue { background: var(--accent-soft); color: var(--accent); }
 .sb-stat-icon.blue svg { fill: var(--accent); stroke: none; }
 .sb-stat-icon.green { background: var(--green-soft); color: var(--green); }
@@ -708,21 +734,23 @@
 .sb-stat-val {
   font-family: 'MiSans', 'NotoSansSymbols', 'NotoSansSymbols2', 'PingFang SC', 'Microsoft YaHei', -apple-system, BlinkMacSystemFont, sans-serif;
   font-size: var(--fs-xl);
-  font-weight: 500;
+  font-weight: 700;
   color: var(--text);
   display: block;
   line-height: 1.2;
+  letter-spacing: -0.02em;
 }
 
-.sb-stat-val.pop { animation: countPop 0.4s var(--ease) both; }
+.sb-stat-val.pop { animation: countPop 0.4s var(--ease-spring) both; }
 .sb-stat-val.brand { color: var(--accent); }
-.sb-stat-val.error { color: var(--danger); font-weight: 600; }
-.sb-stat-val.orange { color: var(--orange); font-weight: 600; }
+.sb-stat-val.error { color: var(--danger); font-weight: 700; }
+.sb-stat-val.orange { color: var(--orange); font-weight: 700; }
 
 .sb-stat-label {
-  font-size: 10.5px;
+  font-size: 11px;
   color: var(--text-3);
-  margin-top: 3px;
+  margin-top: 4px;
+  font-weight: 500;
 }
 
 /* -- 失败文件数量显示 -- */
@@ -759,20 +787,21 @@
   flex-direction: column;
   align-items: center;
   gap: 4px;
-  padding: 8px 0;
+  padding: 4px 8px;
 }
 
 .sb-stat-failed-btn {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 32px; height: 32px;
+  width: 40px; height: 40px;
   border: none;
-  border-radius: var(--r-md);
+  border-radius: var(--r-lg);
   background: var(--danger-bg);
   color: var(--danger);
   cursor: pointer;
   transition: all var(--t-fast) var(--ease);
+  margin: 0 auto 2px;
 }
 
 .sb-stat-failed-btn:hover {
@@ -781,7 +810,7 @@
 }
 
 .sb-stat-failed-btn svg {
-  width: 14px; height: 14px;
+  width: 18px; height: 18px;
   stroke: var(--danger); stroke-width: 2;
   stroke-linecap: round; stroke-linejoin: round;
 }
@@ -798,20 +827,21 @@
   flex-direction: column;
   align-items: center;
   gap: 4px;
-  padding: 8px 0;
+  padding: 4px 8px;
 }
 
 .sb-stat-duplicate-btn {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 32px; height: 32px;
+  width: 40px; height: 40px;
   border: none;
-  border-radius: var(--r-md);
+  border-radius: var(--r-lg);
   background: rgba(245, 158, 11, 0.1);
   color: var(--orange);
   cursor: pointer;
   transition: all var(--t-fast) var(--ease);
+  margin: 0 auto 2px;
 }
 
 .sb-stat-duplicate-btn:hover {
@@ -820,18 +850,19 @@
 }
 
 .sb-stat-duplicate-btn svg {
-  width: 14px; height: 14px;
+  width: 18px; height: 18px;
   stroke: var(--orange); stroke-width: 2;
   stroke-linecap: round; stroke-linejoin: round;
 }
 
 .sb-stat-duplicate-count {
   font-family: 'MiSans', 'NotoSansSymbols', 'NotoSansSymbols2', 'PingFang SC', 'Microsoft YaHei', -apple-system, BlinkMacSystemFont, sans-serif;
-  font-size: 16px;
-  font-weight: 600;
+  font-size: var(--fs-xl);
+  font-weight: 700;
   color: var(--orange);
   display: block;
   line-height: 1.2;
+  letter-spacing: -0.02em;
 }
 
 .sb-stat-duplicate-label {
@@ -1174,6 +1205,21 @@
   box-shadow: 0 0 8px rgba(108, 138, 255, 0.35);
 }
 
+[data-theme="dark"] .sb-search-bar {
+  background: var(--surface);
+  border-color: var(--border);
+}
+
+[data-theme="dark"] .sb-search-bar:hover {
+  border-color: rgba(255, 255, 255, 0.12);
+  background: var(--surface);
+}
+
+[data-theme="dark"] .sb-search-bar:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(108, 138, 255, 0.15);
+}
+
 [data-theme="dark"] .sb-search-clear {
   background: var(--text-3);
   color: var(--bg);
@@ -1218,8 +1264,15 @@
   color: var(--danger) !important;
 }
 
-[data-theme="dark"] .sb-stat + .sb-stat {
-  border-left: none;
+/* -- dark: stats 卡片 -- */
+[data-theme="dark"] .sb-stats {
+  background: var(--surface);
+  border-color: var(--border);
+  box-shadow: var(--shadow-sm), var(--highlight-top);
+}
+
+[data-theme="dark"] .sb-stat + .sb-stat::before {
+  background: var(--border);
 }
 
 /* -- dark: 分裂按钮 -- */

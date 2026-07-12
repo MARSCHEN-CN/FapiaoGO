@@ -453,3 +453,9 @@ frontend/src/previewState.test.js
 frontend/src/stage0-paperlayout-invariant.test.js
 v16-stage1-design.md
 frontend/src/layout/RenderLayoutFactory.test.js
+stats-redesign-demo/pages/stats-variants.html
+stats-redesign-demo/stats-redesign-demo.design
+stats-redesign-demo/colors_and_type.css
+stats-redesign-demo/pages/search-variants.html
+stats-redesign-demo/pages/main-variants.html
+frontend/src/rotation_flow_cachekey.test.js

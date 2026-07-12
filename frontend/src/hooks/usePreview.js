@@ -136,18 +136,20 @@ export function usePreview({ files, settings, electronAPIRef }) {
   // 同步 committed.layout（contentLayout 是派生显示态，commit 后随其更新）
   useEffect(() => { committedPreviewRef.current.layout = contentLayout }, [contentLayout])
 
-  // V16 断言：验证 DocumentState（内容真相）方向与实际渲染图像一致（仅 warn，不做修正）
-  // Stage 0：旧的 pl.orientation 已废弃（PaperLayout 不再含方向 swap），
-  // 改为直接比较 DocumentState.pageOrientation vs RE 图自然方向。
-  // 若后端未按 /Rotate 出图，此处仍会触发，作为 Stage 1（RE 消费 RenderLayout）的契约守卫。
+  // ✅ V16 契约守卫（修正）：旋转应用后，显示图像的「纸张方向」应与 PaperLayout.paperRect 方向一致。
+  //    旧版误把 DocumentState.pageOrientation(内容方向) 与图像方向比较 —— 在 rotation=90
+  //    （横向内容放竖纸）下恒假，属 Stage 0.5「grep 确认无 orientation 读取后删字段」未做的残骸，已修正。
+  //    正确不变式：rotation 应用后，图像方向 == 纸张方向（而非内容方向）；
+  //    若后端未按 spec.rotation 出图，此处仍会触发，作为 Stage 1（RE 消费 RenderLayout）的契约守卫。
   useEffect(() => {
     if (!previewImgDims || previewImgDims.w <= 0 || previewImgDims.h <= 0) return
-    const ds = documentStateRef.current
-    if (!ds || !ds.pageSize?.w) return
+    const pl = paperLayoutRef.current
+    if (!pl || !pl.paperRect?.w) return
     const imgOrient = previewImgDims.w > previewImgDims.h ? 'landscape' : 'portrait'
-    if (ds.pageOrientation !== imgOrient) {
-      console.warn('[V16 ASSERT] DocumentState.orientation mismatch: doc=%s img=%s dims=%dx%d',
-        ds.pageOrientation, imgOrient, previewImgDims.w, previewImgDims.h)
+    const paperOrient = pl.paperRect.w > pl.paperRect.h ? 'landscape' : 'portrait'
+    if (imgOrient !== paperOrient) {
+      console.warn('[V16 ASSERT] 图像方向(%s) 与纸张方向(%s) 不一致 dims=%dx%d',
+        imgOrient, paperOrient, previewImgDims.w, previewImgDims.h)
     }
   }, [previewImgDims, paperLayoutVersion])
 
@@ -375,6 +377,25 @@ export function usePreview({ files, settings, electronAPIRef }) {
   }, [previewFile?.docId])
 
   // ============================
+  // RenderLayout 唯一派生点（F3/F5）—— 上移到首个消费它的 effect 之前
+  // 原位置在 contentLayout memo 之前，但其 useMemo 在首次渲染时被 line 380 的预览渲染
+  // effect 依赖数组提前求值，触发 "Cannot access 'renderLayout' before initialization"
+  // （TDZ）。移到此处后，所有消费方（含 preview 渲染 effect）都能拿到已初始化的 const。
+  // ✅ previewRotation 必须在 contentLayout memo 之前声明（useMemo 首次渲染立即执行，不能闭包捕获尚未初始化的 const）
+  const previewRotation = fileRotations[previewFile?.key] || 0
+
+  // ── Stage 1：RenderLayout 唯一派生点（F3/F5）──
+  // Preview 消费其 placement/rotation/clip，不再自算 fit/scale/swap（消除第二套算法）。
+  // 输入 documentState 合并 previewRotation（documentStateRef 不含 rotation 字段）；
+  // 依赖 paperLayoutVersion(纸张/边距变化) + previewRotation(旋转) + previewFile(切文件→documentState 重建)。
+  const renderLayout = useMemo(
+    () => buildRenderLayout(paperLayoutRef.current, { ...(documentStateRef.current || {}), rotation: previewRotation }),
+    [paperLayoutVersion, previewRotation, previewFile]
+  )
+  // renderLayout 就绪（placement.scale>0）才用 Factory 派生；否则回退旧 bitmap 拟合，行为不变。
+  const renderLayoutReady = !!(renderLayout && renderLayout.placement && renderLayout.placement.scale > 0)
+
+  // ============================
   // 预览渲染
   // ============================
   useEffect(() => {
@@ -529,6 +550,21 @@ export function usePreview({ files, settings, electronAPIRef }) {
     if (hasRenderEngineUrl && reBlockedDocId !== previewFile.docId) {
       const url = reUrl
       renderEngineUrlRef.current = url
+      // ⚠️ ROTATION-DIAG：调试"第一张正常后两张旋转"用，待定位后删除。
+      // 打印每张 RE 文件的 rotation 流转链路，确认是否逐文件独立（无缓存/状态污染）。
+      if (import.meta.env?.DEV) {
+        console.log('[ROT-DIAG] RE path', {
+          docId: previewFile.docId,
+          previewFileKey: previewFile.key,
+          previewRotation,
+          specRotation: previewSpec?.rotation,
+          renderLayoutRotation: renderLayout?.rotation,
+          renderKey,
+          reUrl: url,
+          committedUrl: committedPreviewRef.current.url,
+          willReprobe: committedPreviewRef.current.url !== url,
+        })
+      }
       // ✅ Stage 0.8 Commit Buffer（修正版）：以 committedPreviewRef.current.url 判断是否需重新探测，
       //    保留上一帧直到 decode 完成才原子 commit（消灭 A→null→B 白板）。
       if (committedPreviewRef.current.url !== url) {
@@ -703,20 +739,6 @@ export function usePreview({ files, settings, electronAPIRef }) {
   // Display 计算
   // ✅ 直接使用 previewCanvas 显示，无需转换为 img
   // 移除了 Canvas → PNG → IMG 的转换步骤，减少内存开销和渲染延迟
-
-  // ✅ previewRotation 必须在 contentLayout memo 之前声明（useMemo 首次渲染立即执行，不能闭包捕获尚未初始化的 const）
-  const previewRotation = fileRotations[previewFile?.key] || 0
-
-  // ── Stage 1：RenderLayout 唯一派生点（F3/F5）──
-  // Preview 消费其 placement/rotation/clip，不再自算 fit/scale/swap（消除第二套算法）。
-  // 输入 documentState 合并 previewRotation（documentStateRef 不含 rotation 字段）；
-  // 依赖 paperLayoutVersion(纸张/边距变化) + previewRotation(旋转) + previewFile(切文件→documentState 重建)。
-  const renderLayout = useMemo(
-    () => buildRenderLayout(paperLayoutRef.current, { ...(documentStateRef.current || {}), rotation: previewRotation }),
-    [paperLayoutVersion, previewRotation, previewFile]
-  )
-  // renderLayout 就绪（placement.scale>0）才用 Factory 派生；否则回退旧 bitmap 拟合，行为不变。
-  const renderLayoutReady = !!(renderLayout && renderLayout.placement && renderLayout.placement.scale > 0)
 
   // ── ContentLayout：内容在 PaperLayout.contentRect 内的位置和缩放 + 纸张→窗口 zoom ──
   const computedContentLayout = useMemo(() => {
@@ -1219,9 +1241,41 @@ export function usePreview({ files, settings, electronAPIRef }) {
             timestamp: Date.now(),
           }
           // ✅ cachedCanvas 分支会让渲染 effect 在 L290 提前 return（skipRenderRef），
-      //    导致 L333/L361 永不执行。此处必须显式对齐 previewUrl 不变式，否则切换到
-      //    canvas 路径文件时 previewUrl 残留旧 RE URL → 陈旧 <img> 显示错误内容。
-      setPreviewUrl(getRenderEnginePreviewUrl(loadedFile, USE_RENDER_ENGINE_PREVIEW))
+      // ✅ 修复（B-2.2 调查）：L2 命中也必须按当前文件正确旋转构造 RE URL。
+      //    原写法不传 spec → URL 无 ?rotation= → 后端按 rotation=0 出图 → 横向内容落竖纸错位。
+      //    此处复用与主渲染路径完全一致的纯函数派生：documentStateRef.current 此时已是 loadedFile 的
+      //    DS（L1197 写入），buildRenderLayout 内部由 pageOrientation 推导 rotation，故 rotation=90 进 URL。
+      let l2Spec = null
+      if (renderLayoutReady) {
+        try {
+          const l2Layout = buildRenderLayout(paperLayoutRef.current, {
+            ...(documentStateRef.current || {}),
+            rotation: fileRotations[loadedFile.key] || 0,
+          })
+          l2Spec = buildRenderSpec(l2Layout, {
+            docId: loadedFile.docId,
+            page: loadedFile.pageNum || 1,
+            dpi: PREVIEW_DPI,
+            marginsMm: {
+              top: settingsRef.current.marginTop, right: settingsRef.current.marginRight,
+              bottom: settingsRef.current.marginBottom, left: settingsRef.current.marginLeft,
+            },
+          })
+        } catch (e) {
+          l2Spec = null
+        }
+      }
+      const l2Url = getRenderEnginePreviewUrl(loadedFile, USE_RENDER_ENGINE_PREVIEW, l2Spec)
+      setPreviewUrl(l2Url)
+      if (import.meta.env?.DEV) {
+        console.log('[ROT-DIAG] L2 cache-hit set previewUrl WITH spec', {
+          docId: loadedFile.docId,
+          key: loadedFile.key,
+          specRotation: l2Spec?.rotation,
+          url: l2Url,
+          cacheKey,
+        })
+      }
       if (loadedFile._previewImageUrl) {
         previewUrlRef.current = loadedFile._previewImageUrl
       }
