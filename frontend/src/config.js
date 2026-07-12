@@ -21,7 +21,7 @@ export const PRINT_SETTINGS_DEFAULTS = {
   copies: 1,
 }
 
-export const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000'
+export const BACKEND_URL = import.meta.env?.VITE_BACKEND_URL || 'http://localhost:5000'
 
 // ─── Render Engine Preview（Phase 1 Feature Flag）─────────────────
 // true  = usePreview 走 /preview/{doc_id} HTTP 渲染

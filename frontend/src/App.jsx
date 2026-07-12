@@ -84,6 +84,7 @@ function AppContent() {
     previewFile, mergePair, numPages, previewPage, previewCanvas,
     previewUrl,
     previewRenderVersion,
+    previewLoading,
     previewRotation, fileRotations, showLeftArrow, showRightArrow,
     paperLayout, contentLayout,
   } = preview.state
@@ -637,6 +638,7 @@ function AppContent() {
               paperLayout={paperLayout}
               contentLayout={contentLayout}
               previewRotation={previewRotation}
+              previewLoading={previewLoading}
             />
           </div>
 

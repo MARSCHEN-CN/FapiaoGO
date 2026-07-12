@@ -1,6 +1,6 @@
 import { useRef, useCallback, memo, useEffect } from 'react'
 
-export default memo(function PreviewCanvas({ previewFile, previewCanvas, previewUrl, grayscale, previewRenderVersion, paperLayout, contentLayout, previewRotation }) {
+export default memo(function PreviewCanvas({ previewFile, previewCanvas, previewUrl, grayscale, previewRenderVersion, paperLayout, contentLayout, previewRotation, previewLoading }) {
   const canvasRef = useRef(null)
   const imgRef = useRef(null)
 
@@ -96,6 +96,12 @@ export default memo(function PreviewCanvas({ previewFile, previewCanvas, preview
             flexShrink: 0,
           }}
         />
+        {/* ✅ Stage 0.8：加载中 overlay，叠在已提交的旧帧之上，pointer-events:none 不拦截交互 */}
+        {previewLoading && (
+          <div className="preview-loading-overlay" aria-hidden="true">
+            <span className="plo-spinner" />
+          </div>
+        )}
       </div>
     )
   }
@@ -132,6 +138,12 @@ export default memo(function PreviewCanvas({ previewFile, previewCanvas, preview
           imageRendering: 'crisp-edges',
         }}
       />
+      {/* ✅ Stage 0.8：加载中 overlay，叠在已提交的旧帧之上，pointer-events:none 不拦截交互 */}
+      {previewLoading && (
+        <div className="preview-loading-overlay" aria-hidden="true">
+          <span className="plo-spinner" />
+        </div>
+      )}
     </div>
   )
 })

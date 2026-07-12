@@ -79,9 +79,14 @@ function registerRenameHandlers(ctx) {
     for (let i = 0; i < files.length; i++) {
       const file = files[i]
 
-      event.sender.send('rename-progress', { current: i + 1, total })
+      if (i > 0 && i % 5 === 0) {
+        await new Promise(setImmediate)
+      }
 
-      // 调试日志：输出传入的发票字段数据
+      if (i % 3 === 0 || i === files.length - 1) {
+        event.sender.send('rename-progress', { current: i + 1, total })
+      }
+
       console.log(`[rename] file #${i + 1}:`, JSON.stringify({
         originalPath: file.originalPath,
         invoiceFields: file.invoiceFields,

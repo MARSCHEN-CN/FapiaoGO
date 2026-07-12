@@ -35,6 +35,9 @@ export function usePreview({ files, settings, electronAPIRef }) {
   // ✅ 全局 Canvas 渲染版本号：每次 switchPreviewFile 后递增，
   //    用于 PreviewCanvas 的 L1 缓存失效，确保内容更新后重绘
   const [previewRenderVersion, setPreviewRenderVersion] = useState(0)
+  // ✅ Stage 0.8 — 加载中标记：仅用于 Overlay 显示，绝不参与"可显示态"判定。
+  //    切文件/重渲染时置 true，commit 成功后置 false；旧 committed 帧始终保留，绝不清空。
+  const [previewLoading, setPreviewLoading] = useState(false)
   const [containerSize, setContainerSize] = useState({ width: 0, height: 0 })
   // ✅ 移除多余的 previewRotation state，所有旋转都通过 fileRotations 管理
   const [fileRotations, setFileRotations] = useState({})
@@ -112,6 +115,22 @@ export function usePreview({ files, settings, electronAPIRef }) {
   const [paperLayoutVersion, setPaperLayoutVersion] = useState(0)
   const [contentLayout, setContentLayout] = useState(null)
   const [renderState, setRenderState] = useState(initialRenderState())
+
+  // ── V16 Stage 0.8 — CommittedPreview：当前正式显示的内容（Consumer 只消费它）──
+  // 结构 = { url, dims, canvas, layout, timestamp }。
+  // 它是"最后一次成功提交"的镜像：加载候选（probe/render）未完成前绝不写入，
+  // 因此 Consumer 永远看到最后一帧有效画面，而非正在构建的中间态（A→null→B 的 null 被消除）。
+  const committedPreviewRef = useRef({ url: null, dims: null, canvas: null, layout: null, timestamp: 0 })
+  // 清空 committed（切到无预览文件 / 文件无预览数据时调用）
+  const clearCommitted = useCallback(() => {
+    committedPreviewRef.current = { url: null, dims: null, canvas: null, layout: null, timestamp: 0 }
+    setPreviewUrl(null)
+    setPreviewImgDims(null)
+    setPreviewCanvas(null)
+    setPreviewLoading(false)
+  }, [])
+  // 同步 committed.layout（contentLayout 是派生显示态，commit 后随其更新）
+  useEffect(() => { committedPreviewRef.current.layout = contentLayout }, [contentLayout])
 
   // V16 断言：验证 DocumentState（内容真相）方向与实际渲染图像一致（仅 warn，不做修正）
   // Stage 0：旧的 pl.orientation 已废弃（PaperLayout 不再含方向 swap），
@@ -352,7 +371,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
     // ✅ L2 缓存旁路：fullCache 命中时跳过整个渲染流程
     if (skipRenderRef.current) { skipRenderRef.current = false; return }
 
-    if (!previewFile) { setPreviewCanvas(null); setPreviewUrl(null); setPreviewImgDims(null); return }
+    if (!previewFile) { clearCommitted(); return }
 
     const isImageOrOfd =
       previewFile._fileFormat === 'image' || previewFile._fileFormat === 'ofd'
@@ -363,10 +382,10 @@ export function usePreview({ files, settings, electronAPIRef }) {
     const reUrl = getRenderEnginePreviewUrl(previewFile, USE_RENDER_ENGINE_PREVIEW)
     const hasRenderEngineUrl = !!reUrl
     if (!isImageOrOfd && !previewFile._pdfData && !mergePair && !hasRenderEngineUrl) {
-      setPreviewCanvas(null); setPreviewImgDims(null); return
+      clearCommitted(); return
     }
     if (isImageOrOfd && !previewFile._previewImageUrl && !hasRenderEngineUrl) {
-      setPreviewCanvas(null); setPreviewImgDims(null); return
+      clearCommitted(); return
     }
 
     const { paperSize } = settings
@@ -395,32 +414,62 @@ export function usePreview({ files, settings, electronAPIRef }) {
     if (hasRenderEngineUrl) {
       const url = reUrl
       renderEngineUrlRef.current = url
-      setPreviewUrl(url)
-      setPreviewCanvas(null)
+      // ⚠️ Stage 0.8 Commit Buffer：不立即切换显示态。
+      //    保留上一帧 CommittedPreview（url+dims），仅打 loading overlay；
+      //    新图 decode 成功后再原子 commit，绝不经过 null（消灭 A→null→B 白板）。
+      setPreviewLoading(true)
       // 仅当 URL 变化时才探测自然尺寸（旋转/缩放不改变尺寸，避免重复探测与盒子错位）
       if (previewImgUrlRef.current !== url) {
         previewImgUrlRef.current = url
-        setPreviewImgDims(null)
         const token = ++imgLoadTokenRef.current
         const probe = new Image()
-        probe.onload = () => {
+        probe.decoding = 'async'
+        // ✅ 原子 commit：url + dims 同批更新，committed 帧从 A 直接跳到 B，不经过 null
+        const commit = () => {
           if (token !== imgLoadTokenRef.current) return  // 仅采用最新一次探测
+          setPreviewUrl(url)
           setPreviewImgDims({ w: probe.naturalWidth, h: probe.naturalHeight })
+          setPreviewLoading(false)
+          committedPreviewRef.current = {
+            url,
+            dims: { w: probe.naturalWidth, h: probe.naturalHeight },
+            canvas: committedPreviewRef.current.canvas,
+            layout: committedPreviewRef.current.layout,
+            timestamp: Date.now(),
+          }
+          previewUrlRef.current = url
+        }
+        probe.onload = () => {
+          if (token !== imgLoadTokenRef.current) return
+          // 优先用 decode() 确保像素就绪；某些格式 decode() 会 reject，但 onload 已成功，
+          // 仍用 naturalWidth/Height commit（绝不丢帧）。
+          if (typeof probe.decode === 'function') {
+            probe.decode().then(commit).catch(commit)
+          } else {
+            commit()
+          }
         }
         probe.onerror = () => {
           if (token !== imgLoadTokenRef.current) return
-          setPreviewImgDims(null)
+          // ✅ Never lose last valid frame：decode 失败保持旧 committed，仅停 loading
+          setPreviewLoading(false)
         }
         probe.src = url
+      } else {
+        // URL 未变（如旋转/缩放引起的重渲染），无需重新探测，仅关闭 loading
+        setPreviewLoading(false)
       }
       return
     }
-    // 非 <img> 路径：清理可能残留的 img 尺寸
+    // 非 <img> 路径：清理可能残留的 img 尺寸（canvas 帧保留，加载期间继续显示旧图）
     setPreviewImgDims(null)
     // ✅ 不变式：非 RE 路径必须把 previewUrl 复位为 null，否则上一文件的 RE <img> 残留，
     //    被 PreviewCanvas 的 RE 路径误判为有效 Preview → 显示陈旧内容。
     //    （React 对相同值 setPreviewUrl(null) 自动 bail-out，不会额外触发渲染）
     setPreviewUrl(null)
+    // ✅ Stage 0.8：canvas 帧已在 committed，加载期间保持显示 + 打 loading overlay
+    committedPreviewRef.current = { ...committedPreviewRef.current, url: null, dims: null }
+    setPreviewLoading(true)
 
     const renderToCanvas = async (signal) => {
       try {
@@ -512,6 +561,15 @@ export function usePreview({ files, settings, electronAPIRef }) {
           // ✅ 不清空旧 canvas：与 renderResultCache 共享同一对象，clearRect 会污染缓存
           unrotatedCanvasRef.current = canvas
           setPreviewCanvas(canvas)
+          // ✅ Stage 0.8 commit：渲染完成 → 原子提交新帧 + 关闭 loading
+          committedPreviewRef.current = {
+            url: committedPreviewRef.current.url,
+            dims: committedPreviewRef.current.dims,
+            canvas,
+            layout: committedPreviewRef.current.layout,
+            timestamp: Date.now(),
+          }
+          setPreviewLoading(false)
           // ✅ 递增渲染版本，通知 PreviewCanvas 内容已更新（全局 Canvas 对象引用不变时需要此标记）
           setPreviewRenderVersion(v => { const nv = v + 1; console.log('[DIAG] usePreview version bump →', nv, 'key=', previewFile.key); return nv })
         }
@@ -519,6 +577,8 @@ export function usePreview({ files, settings, electronAPIRef }) {
         console.error('Canvas 渲染失败:', e)
         if (!renderCancelledRef.current && currentRenderId === previewVersionRef.current) {
           setPreviewCanvas(null)
+          // ✅ 当前最新渲染失败 → 关闭 loading（旧 committed 帧仍在，无白板）
+          setPreviewLoading(false)
         }
       }
     }
@@ -644,8 +704,9 @@ export function usePreview({ files, settings, electronAPIRef }) {
     setPaperLayoutVersion(v => v + 1)
   }, [])
 
-  // 仅 PaperSpec 字段进入 deps：文件切换不改 PaperSpec → 此 effect 不在切换时运行
-  // （PaperLayout 由 doLoadPreview 在切换时构造一次，此处不会重复重生）。
+  // 仅 PaperSpec 字段进入 deps：文件切换不改 PaperSpec → 此 effect 不在切换时运行。
+  // PaperLayout 现在由本 relayout 链（recomputePaperLayout）独家构造；
+  // doLoadPreview 在文件切换时不再触碰 PaperLayout（v1.1：PaperLayout 与 DocumentState 解耦）。
   useEffect(() => {
     recomputePaperLayout()
   }, [settings.paperSize, settings.marginTop, settings.marginRight, settings.marginBottom, settings.marginLeft,
@@ -1036,8 +1097,17 @@ export function usePreview({ files, settings, electronAPIRef }) {
       lastRenderKeyRef.current = ''
       setPreviewPage(1)
       setNumPages(loadedFile._fileFormat === 'pdf' ? 0 : 1)
-      setPreviewCanvas(cachedCanvas)
-      // ✅ cachedCanvas 分支会让渲染 effect 在 L290 提前 return（skipRenderRef），
+          setPreviewCanvas(cachedCanvas)
+          // ✅ Stage 0.8：缓存命中 = 立即提交，同步 committed + 关闭 loading
+          setPreviewLoading(false)
+          committedPreviewRef.current = {
+            url: committedPreviewRef.current.url,
+            dims: committedPreviewRef.current.dims,
+            canvas: cachedCanvas,
+            layout: committedPreviewRef.current.layout,
+            timestamp: Date.now(),
+          }
+          // ✅ cachedCanvas 分支会让渲染 effect 在 L290 提前 return（skipRenderRef），
       //    导致 L333/L361 永不执行。此处必须显式对齐 previewUrl 不变式，否则切换到
       //    canvas 路径文件时 previewUrl 残留旧 RE URL → 陈旧 <img> 显示错误内容。
       setPreviewUrl(getRenderEnginePreviewUrl(loadedFile, USE_RENDER_ENGINE_PREVIEW))
@@ -1352,6 +1422,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
       previewRenderVersion,
       containerSize,
       previewImgDims,
+      previewLoading,
       previewRotation,
       fileRotations,
       showLeftArrow,

@@ -7,7 +7,7 @@
  * V16 四层 State 类型定义：DocumentState → PaperLayout → ContentLayout → RenderState
  */
 
-import { PAPER_SIZE_MAP, PREVIEW_DPI } from './config'
+import { PAPER_SIZE_MAP, PREVIEW_DPI } from './config.js'
 
 // ── DocumentState ──────────────────────────────────────────────
 // 由 loadFilePreview 确定，与渲染器无关
@@ -92,10 +92,24 @@ export function placeholderPaperLayout() {
  * @property {{top:number,right:number,bottom:number,left:number}} margins - 安全边距，单位 mm
  */
 
+// ── PaperLayout 构造计数（迁移期可观测性，v1.1 F3 单一构造点守卫）──
+// 仅 computePaperLayout（唯一工厂）会使其自增。开发模式观察：
+//   • 初始 mount 后 count=1；
+//   • 连续修改 margin/纸张 → count 随每次 relayout +1（relayout 非 reload）；
+//   • 切换 100 个文件 → count 不变，证明 PaperLayout 已与 DocumentState 解耦；
+//   • 若 count 随文件切换增长 → 有人绕过工厂偷偷 new PaperLayout（违反 F3）。
+// 注：placeholderPaperLayout() 是 Fact 占位（useRef 初始化用），不计入此计数。
+let _paperLayoutBuildCount = 0
+/** @returns {number} 累计通过 Factory 构造 PaperLayout 的次数 */
+export function getPaperLayoutBuildCount() { return _paperLayoutBuildCount }
+/** 重置计数（测试用；运行时不应调用）。 */
+export function resetPaperLayoutBuildCount() { _paperLayoutBuildCount = 0 }
+
 /**
  * 唯一构造点（F3）：从 PaperSpec 推导 PaperLayout。
  * 纯函数（F5）：仅依赖入参，不读 React State / DocumentState / container / zoom。
  * PaperLayout 只含纸张坐标系（I1），不含方向 swap（swap 属于 RenderLayout.placement，Stage 1）。
+ * 禁止被其它 Factory 调用（F6）。
  *
  * @param {PaperSpec} spec
  * @returns {PaperLayout}
@@ -114,6 +128,12 @@ export function computePaperLayout(spec) {
 
   const innerW = Math.max(0, paperW - mLeft - mRight)
   const innerH = Math.max(0, paperH - mTop - mBottom)
+
+  _paperLayoutBuildCount++
+  if (typeof import.meta !== 'undefined' && import.meta.env?.DEV) {
+    // 迁移期轻量日志：确认文件切换不会偷偷重建 PaperLayout
+    console.log(`[V16] PaperLayout #${_paperLayoutBuildCount} built (factory=computePaperLayout)`)
+  }
 
   return {
     paperRect: { w: paperW, h: paperH },

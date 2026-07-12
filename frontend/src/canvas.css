@@ -404,6 +404,43 @@
 }
 
 
+
+/* ======================== Stage 0.8 预览加载 Overlay ======================== */
+/* 叠在已提交的旧帧之上；pointer-events:none → 不拦截画布拖拽/缩放交互 */
+.preview-loading-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.42);
+  backdrop-filter: blur(1.5px);
+  -webkit-backdrop-filter: blur(1.5px);
+  pointer-events: none;
+  z-index: 4;
+  opacity: 1;
+  transition: opacity 0.25s var(--ease);
+}
+
+[data-theme="dark"] .preview-loading-overlay {
+  background: rgba(15, 18, 28, 0.45);
+}
+
+/* 环形 spinner：复用 --brand 主题色，与 .canvas-loading-spinner 同语 */
+.preview-loading-overlay .plo-spinner {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 3px solid rgba(59, 108, 245, 0.18);
+  border-top-color: var(--brand, #3b6cf5);
+  animation: plo-spin 0.8s linear infinite;
+}
+
+@keyframes plo-spin {
+  to { transform: rotate(360deg); }
+}
+
+
 .cz-separator {
   width: 1px;
   height: 20px;
