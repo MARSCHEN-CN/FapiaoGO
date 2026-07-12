@@ -2,7 +2,7 @@
 const { contextBridge, ipcRenderer, webUtils } = require('electron')
 
 // IPC 通道白名单（精确匹配 — 仅保留前缀匹配无法覆盖的通道）
-const ALLOWED_SEND = ['open-settings-window', 'close-settings-window', 'window-minimize', 'window-maximize', 'window-close', 'window-drag-start', 'window-drag-move', 'window-drag-end', 'settings-changed']
+const ALLOWED_SEND = ['open-settings-window', 'close-settings-window', 'open-calculator-window', 'window-minimize', 'window-maximize', 'window-close', 'window-drag-start', 'window-drag-move', 'window-drag-end', 'settings-changed']
 const ALLOWED_INVOKE = [
   // 前缀匹配无法覆盖的精确通道写在这里
   // 大部分已被 ALLOWED_INVOKE_PREFIXES 覆盖，无需重复

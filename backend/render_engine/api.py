@@ -135,10 +135,21 @@ def print_page(doc_id: str):
 
 @render_bp.route("/metadata/<doc_id>", methods=["GET"])
 def metadata(doc_id: str):
-    """Return document metadata: page count, content hash, size."""
+    """Return document metadata: page count, content hash, size, page dimensions."""
     doc = registry.get(doc_id)
     if doc is None:
         return jsonify({"success": False, "error": "document not found"}), 404
+
+    # 获取第一页尺寸和旋转（用于方向检测），单位为 PDF points (1/72 inch)
+    # page.rect 不含 /Rotate；需配合 page.rotation 计算显示方向
+    page_width = 0
+    page_height = 0
+    page_rotation = 0
+    if doc.pdf is not None and doc.page_count > 0:
+        p = doc.pdf[0]
+        page_width = round(p.rect.width, 2)
+        page_height = round(p.rect.height, 2)
+        page_rotation = getattr(p, 'rotation', 0)
 
     return jsonify({
         "success": True,
@@ -147,6 +158,9 @@ def metadata(doc_id: str):
         "content_hash": doc.content_hash,
         "size": doc.size,
         "content_indexed": doc.content_indexed,
+        "page_width": page_width,
+        "page_height": page_height,
+        "page_rotation": page_rotation,
     })
 
 

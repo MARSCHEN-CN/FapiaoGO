@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
-import { PREVIEW_DPI, GLOBAL_PREVIEW_DPI, ZOOM_STEPS, PAPER_SIZE_MAP, USE_RENDER_ENGINE_PREVIEW, buildPreviewUrl } from '../config'
+import { PREVIEW_DPI, GLOBAL_PREVIEW_DPI, ZOOM_STEPS, PAPER_SIZE_MAP, USE_RENDER_ENGINE_PREVIEW, buildPreviewUrl, BACKEND_URL } from '../config'
 import {
   b64toBlob, getFileFormat, getExtension, isMergeMode, getMergePair,
 } from '../utils'
@@ -7,7 +7,7 @@ import { detectDocumentOrientation } from '../utils/detectOrientation'
 import { getForcedLandscape } from '../utils/mergeMode'
 import { buildPreviewCacheKey } from '../utils/previewCacheKey'
 import { getRenderEnginePreviewUrl } from '../utils/previewTarget'
-import { placeholderPaperLayout, emptyContentLayout, initialRenderState } from '../previewState'
+import { placeholderPaperLayout, emptyContentLayout, initialRenderState, computePaperLayout } from '../previewState'
 
 // ✅ 懒加载 PDF 渲染模块，避免首屏加载 1.4 MB 的 pdfjs-dist + react-pdf
 let _renderers = null
@@ -113,15 +113,18 @@ export function usePreview({ files, settings, electronAPIRef }) {
   const [contentLayout, setContentLayout] = useState(null)
   const [renderState, setRenderState] = useState(initialRenderState())
 
-  // V16 断言：验证 DocumentState 方向与实际渲染图像一致（仅 warn，不做修正）
+  // V16 断言：验证 DocumentState（内容真相）方向与实际渲染图像一致（仅 warn，不做修正）
+  // Stage 0：旧的 pl.orientation 已废弃（PaperLayout 不再含方向 swap），
+  // 改为直接比较 DocumentState.pageOrientation vs RE 图自然方向。
+  // 若后端未按 /Rotate 出图，此处仍会触发，作为 Stage 1（RE 消费 RenderLayout）的契约守卫。
   useEffect(() => {
     if (!previewImgDims || previewImgDims.w <= 0 || previewImgDims.h <= 0) return
-    const pl = paperLayoutRef.current
-    if (!pl || !pl.paperRect?.w) return
+    const ds = documentStateRef.current
+    if (!ds || !ds.pageSize?.w) return
     const imgOrient = previewImgDims.w > previewImgDims.h ? 'landscape' : 'portrait'
-    if (pl.orientation !== imgOrient) {
+    if (ds.pageOrientation !== imgOrient) {
       console.warn('[V16 ASSERT] DocumentState.orientation mismatch: doc=%s img=%s dims=%dx%d',
-        pl.orientation, imgOrient, previewImgDims.w, previewImgDims.h)
+        ds.pageOrientation, imgOrient, previewImgDims.w, previewImgDims.h)
     }
   }, [previewImgDims, paperLayoutVersion])
 
@@ -139,25 +142,8 @@ export function usePreview({ files, settings, electronAPIRef }) {
     }
   }
 
-  /** 从 DocumentState + 设置计算 PaperLayout */
-  function computePaperLayout(docState, paperSize, containerW, containerH) {
-    const paperDims = PAPER_SIZE_MAP[paperSize]
-    if (!paperDims) return placeholderPaperLayout()
-    const dpi = PREVIEW_DPI
-    const paperW = Math.round(paperDims.widthMM / 25.4 * dpi)
-    const paperH = Math.round(paperDims.heightMM / 25.4 * dpi)
-    const paperOrient = paperW > paperH ? 'landscape' : 'portrait'
-    const isLandscape = docState.pageOrientation !== paperOrient
-    const dw = paperW; const dh = paperH
-    const displayW = isLandscape ? dh : dw
-    const displayH = isLandscape ? dw : dh
-    return {
-      paperRect: { w: paperW, h: paperH },
-      displayRect: { w: displayW, h: displayH },
-      orientation: isLandscape ? 'landscape' : 'portrait',
-      clipRect: { w: containerW || displayW, h: containerH || displayH },
-    }
-  }
+  // ✅ computePaperLayout 已迁移为 previewState.js 的纯工厂函数（F3+F5），
+  //    仅依赖 PaperSpec，不再读 docState/container，方向 swap 移出 PaperLayout。
   // ──
   // ✅ loadFilePreview 数据缓存：避免每次文件切换都重复 b64toBlob / IPC 读文件
   //    图片缓存 Blob 对象，PDF 缓存 Uint8Array
@@ -205,8 +191,8 @@ export function usePreview({ files, settings, electronAPIRef }) {
     return value
   }
 
-  /** 从图像 URL 提取自然尺寸（带 LRU 缓存）—— image/ofd 路径与 RE pdf 路径共用 */
-  const fetchImageDims = async (url, key) => {
+  /** 从图像 URL 提取自然尺寸（带 LRU 缓存 + 超时回退）—— image/ofd 路径与 RE pdf 路径共用 */
+  const fetchImageDims = async (url, key, timeoutMs = 8000) => {
     const map = previewLoadCacheRef.current
     const dimsKey = 'dims_' + key
     const cached = lruGet(map, dimsKey)
@@ -214,11 +200,12 @@ export function usePreview({ files, settings, electronAPIRef }) {
     try {
       const img = new Image()
       const dims = await new Promise((resolve) => {
-        img.onload = () => resolve({ w: img.naturalWidth, h: img.naturalHeight })
-        img.onerror = () => resolve(null)
+        const timeout = setTimeout(() => resolve(null), timeoutMs)
+        img.onload = () => { clearTimeout(timeout); resolve({ w: img.naturalWidth, h: img.naturalHeight }) }
+        img.onerror = () => { clearTimeout(timeout); resolve(null) }
         img.src = url
       })
-      if (dims) {
+      if (dims && dims.w > 0 && dims.h > 0) {
         lruSet(map, dimsKey, dims)
         return dims
       }
@@ -585,6 +572,13 @@ export function usePreview({ files, settings, electronAPIRef }) {
     if (!pl || !pl.contentRect?.w) return emptyContentLayout()
 
     // ── 纸张→窗口缩放基线（与旧版 padding 策略一致） ──
+    // Stage 0 interim：displayRect 现在为纯纸张（computePaperLayout 不再含 doc swap）。
+    // 方向 swap 由 DocumentState 决定，临时在此应用；Stage 1 移入 RenderLayoutFactory.placement.rotation。
+    const paperOrient = pl.paperRect.w > pl.paperRect.h ? 'landscape' : 'portrait'
+    const docOrient = documentStateRef.current?.pageOrientation
+    const swapped = !!docOrient && docOrient !== paperOrient
+    const effW = swapped ? pl.paperRect.h : pl.paperRect.w
+    const effH = swapped ? pl.paperRect.w : pl.paperRect.h
     let paperScaleBase = 1
     if (containerSize.width && containerSize.height) {
       let PAD = 64, LABEL_H = 36, MIN_MARGIN = 28
@@ -596,14 +590,14 @@ export function usePreview({ files, settings, electronAPIRef }) {
         availH = containerSize.height - PAD - LABEL_H - MIN_MARGIN * 2
       }
       if (availW > 0 && availH > 0) {
-        paperScaleBase = Math.min(availW / pl.displayRect.w, availH / pl.displayRect.h)
+        paperScaleBase = Math.min(availW / effW, availH / effH)
       }
     }
     // 自适应 = 基线；手动 = 基线 × zoomPercent/100
     const paperScale = zoomMode === 'adaptive' ? paperScaleBase : paperScaleBase * (zoomPercent / 100)
 
-    const paperDisplayW = Math.round(pl.displayRect.w * paperScale)
-    const paperDisplayH = Math.round(pl.displayRect.h * paperScale)
+    const paperDisplayW = Math.round(effW * paperScale)
+    const paperDisplayH = Math.round(effH * paperScale)
 
     let srcW = 0, srcH = 0
     if (previewCanvas) {
@@ -636,6 +630,26 @@ export function usePreview({ files, settings, electronAPIRef }) {
 
   // 同步到 state，使外部可消费
   useEffect(() => { setContentLayout(computedContentLayout) }, [computedContentLayout])
+
+  // ── Stage 0: PaperSpec → PaperLayout relayout 链（纯 relayout，不 reload） ──
+  // PaperLayout 仅依赖 PaperSpec；PaperSpec 变化只重算 PaperLayout + bump version，
+  // 不调 loadFilePreview、不 reset previewFile，因此"不改文件时 PaperLayout 不被重建"。
+  const recomputePaperLayout = useCallback(() => {
+    const s = settingsRef.current
+    paperLayoutRef.current = computePaperLayout({
+      paperSize: s.paperSize,
+      customPaper: s.customPaper,
+      margins: { top: s.marginTop, right: s.marginRight, bottom: s.marginBottom, left: s.marginLeft },
+    })
+    setPaperLayoutVersion(v => v + 1)
+  }, [])
+
+  // 仅 PaperSpec 字段进入 deps：文件切换不改 PaperSpec → 此 effect 不在切换时运行
+  // （PaperLayout 由 doLoadPreview 在切换时构造一次，此处不会重复重生）。
+  useEffect(() => {
+    recomputePaperLayout()
+  }, [settings.paperSize, settings.marginTop, settings.marginRight, settings.marginBottom, settings.marginLeft,
+      settings.customPaper?.widthMM, settings.customPaper?.heightMM, recomputePaperLayout])
 
   // 供 zoom 控件消费的 fitScale（来自 contentLayout，只有一条依赖链）
   useEffect(() => {
@@ -806,12 +820,27 @@ export function usePreview({ files, settings, electronAPIRef }) {
         if (USE_RENDER_ENGINE_PREVIEW && fObj.docId) {
           // 多页 PDF 拆页后每个分页项携带真实页码 pageNum；非拆页文件为 null → 回退 1
           _previewImageUrl = buildPreviewUrl(fObj.docId, fObj.pageNum || 1)
-          // 从 RE 预览图提取页面尺寸用于 DocumentState（与 image/ofd 路径共用 fetchImageDims）
-          if (!fObj._imageWidth && !fObj._pdfPageWidth) {
-            const dims = await fetchImageDims(_previewImageUrl, fObj.key)
-            if (dims) {
-              fObj._imageWidth = dims.w
-              fObj._imageHeight = dims.h
+          // 从后端 metadata 获取页面尺寸用于 DocumentState（确定性高，不依赖图片加载）
+          if (!fObj._pdfPageWidth && !fObj._imageWidth) {
+            try {
+              const metaResp = await fetch(`${BACKEND_URL}/metadata/${fObj.docId}`, { signal })
+              if (metaResp.ok) {
+                const meta = await metaResp.json()
+                if (meta.success && meta.page_width > 0) {
+                  // metadata 返回 points (1/72 inch) + page_rotation；应用 /Rotate 得到显示方向
+                  const rot = meta.page_rotation || 0
+                  fObj._pdfPageWidth = (rot % 180 === 0) ? meta.page_width : meta.page_height
+                  fObj._pdfPageHeight = (rot % 180 === 0) ? meta.page_height : meta.page_width
+                }
+              }
+            } catch (_) { /* metadata 不可用，回退 image load */ }
+            // 如果 metadata 失败，回退到图片提取
+            if (!fObj._pdfPageWidth) {
+              const dims = await fetchImageDims(_previewImageUrl, fObj.key)
+              if (dims) {
+                fObj._imageWidth = dims.w
+                fObj._imageHeight = dims.h
+              }
             }
           }
           return { ...fObj, _previewImageUrl, _fileFormat: 'pdf' }
@@ -950,21 +979,18 @@ export function usePreview({ files, settings, electronAPIRef }) {
     const paperOrient = paperDims && paperDims.widthMM > paperDims.heightMM ? 'landscape' : 'portrait'
     const isLandscape = contentOrient !== paperOrient
 
-    // ── 建立 PaperLayout（始终存在，不依赖渲染结果） ──
-    const plPaperW = Math.round((paperDims?.widthMM || 210) / 25.4 * PREVIEW_DPI)
-    const plPaperH = Math.round((paperDims?.heightMM || 297) / 25.4 * PREVIEW_DPI)
-    const plDisplayW = isLandscape ? plPaperH : plPaperW
-    const plDisplayH = isLandscape ? plPaperW : plPaperH
+    // ── PaperLayout 由 relayout 链（recomputePaperLayout）独家构造，此处不再重复 ──
+    // PaperLayout 仅依赖 PaperSpec，与当前文档无关；文件切换不改变 PaperLayout
+    // （满足验收：切换文件 / 导入新文件 不重生 PaperLayout）。
+
+    // DocumentState（文档属性，与纸张无关）— swap 仅用于缓存 key，不污染 PaperLayout
     const docW = loadedFile._pdfPageWidth || loadedFile._imageWidth || 0
     const docH = loadedFile._pdfPageHeight || loadedFile._imageHeight || 0
     const docOrientation = (docW && docH) ? (docW > docH ? 'landscape' : 'portrait') : contentOrient
-    paperLayoutRef.current = {
-      paperRect: { w: plPaperW, h: plPaperH },
-      marginRect: { w: plDisplayW, h: plDisplayH },   // Phase 2A: 安全边距暂用 displayRect
-      contentRect: { w: plDisplayW, h: plDisplayH },   // Phase 2A: = marginRect，预留装订边/水印空间
-      displayRect: { w: plDisplayW, h: plDisplayH },
-      orientation: isLandscape ? 'landscape' : 'portrait',
-      clipRect: { w: containerSize.width || plDisplayW, h: containerSize.height || plDisplayH },
+    if (!docW || !docH) {
+      console.log('[DIAG] DocumentState missing dims key=', loadedFile.key?.slice(0,20),
+        'pdf=', !!loadedFile._pdfPageWidth, 'img=', !!loadedFile._imageWidth,
+        'fallbackOrient=', contentOrient)
     }
     documentStateRef.current = {
       id: loadedFile.key || loadedFile.id || '',
@@ -974,13 +1000,13 @@ export function usePreview({ files, settings, electronAPIRef }) {
       sourceType: loadedFile._fileFormat || 'pdf',
       pageNum: loadedFile.pageNum || 1,
     }
-    setPaperLayoutVersion(v => v + 1)
     // V16 四层快照：DocumentState + PaperLayout（ContentLayout / RenderState 尚未填充，Phase 2）
     const pl = paperLayoutRef.current
     const ds = documentStateRef.current
+    const plOrient = pl.paperRect.width > pl.paperRect.height ? 'landscape' : 'portrait'
     console.log('[DIAG] V16 SNAP key=', loadedFile.key?.slice(0,20),
       '| DS=', ds.pageOrientation, ds.pageSize.w+'x'+ds.pageSize.h,
-      '| PL=', pl.orientation, 'paperRect=', pl.paperRect.w+'x'+pl.paperRect.h, 'dispRect=', pl.displayRect.w+'x'+pl.displayRect.h, 'clipRect=', pl.clipRect.w+'x'+pl.clipRect.h,
+      '| PL=', plOrient, 'paperRect=', pl.paperRect.w+'x'+pl.paperRect.h, 'dispRect=', pl.displayRect.w+'x'+pl.displayRect.h, 'clipRect=', pl.clipRect.w+'x'+pl.clipRect.h,
       '| paper=', settingsRef.current.paperSize, 'isLand=', isLandscape)
 
     const cacheKey = buildPreviewCacheKey(

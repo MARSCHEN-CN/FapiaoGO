@@ -7,6 +7,8 @@
  * V16 四层 State 类型定义：DocumentState → PaperLayout → ContentLayout → RenderState
  */
 
+import { PAPER_SIZE_MAP, PREVIEW_DPI } from './config'
+
 // ── DocumentState ──────────────────────────────────────────────
 // 由 loadFilePreview 确定，与渲染器无关
 
@@ -30,9 +32,9 @@
  * @property {Size}     paperRect        - 纸张物理像素尺寸（如 A5@150dpi = 874x1240）
  * @property {Size}     marginRect       - 安全边距裁切后的区域（含装订边/页码预留）
  * @property {Size}     contentRect      - 内容实际 Fit 区域 ⊆ marginRect（Phase 2A 初期 = marginRect）
- * @property {Size}     displayRect      - 经 orientation 交换后的逻辑尺寸
- * @property {'landscape'|'portrait'} orientation - 最终纸张展示方向（可 ≠ DocumentState.pageOrientation）
- * @property {Size}     clipRect         - 容器裁剪区域
+ * @property {Size}     displayRect      - 纸张逻辑尺寸（纯纸张，不含方向 swap；swap → RenderLayout，Stage 1）
+ * @property {'landscape'|'portrait'} [orientation] - [DEPRECATED Stage 0.5 删除] 历史字段；方向由 paperRect.width > height 推导，不得写入/读取 PaperLayout
+ * @property {Size}     clipRect         - 纸张裁剪区域（纸张坐标，非 viewport）
  */
 
 // ── ContentLayout ──────────────────────────────────────────────
@@ -76,4 +78,49 @@ export function initialRenderState() {
 /** 创建初始 PaperLayout（占位，加载文件后更新） */
 export function placeholderPaperLayout() {
   return { paperRect: { w: 0, h: 0 }, marginRect: { w: 0, h: 0 }, contentRect: { w: 0, h: 0 }, displayRect: { w: 0, h: 0 }, orientation: 'portrait', clipRect: { w: 0, h: 0 } }
+}
+
+// ── PaperSpec（Fact，唯一输入） ──────────────────────────────
+// 仅描述纸张与边距，与文档完全无关。PaperSpec 改变只影响 PaperLayout。
+
+/** @typedef {{widthMM: number, heightMM: number}} PaperDims */
+
+/**
+ * @typedef {Object} PaperSpec
+ * @property {string} paperSize                       - 如 'A4' / 'A5' / 'Letter' / 'custom'
+ * @property {?PaperDims} customPaper                 - 自定义纸张尺寸（paperSize==='custom' 时生效）
+ * @property {{top:number,right:number,bottom:number,left:number}} margins - 安全边距，单位 mm
+ */
+
+/**
+ * 唯一构造点（F3）：从 PaperSpec 推导 PaperLayout。
+ * 纯函数（F5）：仅依赖入参，不读 React State / DocumentState / container / zoom。
+ * PaperLayout 只含纸张坐标系（I1），不含方向 swap（swap 属于 RenderLayout.placement，Stage 1）。
+ *
+ * @param {PaperSpec} spec
+ * @returns {PaperLayout}
+ */
+export function computePaperLayout(spec) {
+  const { paperSize = 'A4', customPaper = null, margins = {} } = spec || {}
+  const paperDims = customPaper || PAPER_SIZE_MAP[paperSize] || PAPER_SIZE_MAP.A4
+  const dpi = PREVIEW_DPI
+  const paperW = Math.round(paperDims.widthMM / 25.4 * dpi)
+  const paperH = Math.round(paperDims.heightMM / 25.4 * dpi)
+
+  const mTop = Math.round((margins.top ?? 3) / 25.4 * dpi)
+  const mBottom = Math.round((margins.bottom ?? 3) / 25.4 * dpi)
+  const mLeft = Math.round((margins.left ?? 3) / 25.4 * dpi)
+  const mRight = Math.round((margins.right ?? 3) / 25.4 * dpi)
+
+  const innerW = Math.max(0, paperW - mLeft - mRight)
+  const innerH = Math.max(0, paperH - mTop - mBottom)
+
+  return {
+    paperRect: { w: paperW, h: paperH },
+    marginRect: { w: innerW, h: innerH },
+    contentRect: { w: innerW, h: innerH },            // Phase 2A: = marginRect（预留装订边/水印扩展空间）
+    displayRect: { w: paperW, h: paperH },            // 纯纸张，无 doc swap（swap → RenderLayout，Stage 1）
+    clipRect: { w: paperW, h: paperH },               // 纸张坐标，非 viewport（I1）
+    // orientation 字段已废弃（Stage 0.5 删除）：由 paperRect.width > height 推导
+  }
 }

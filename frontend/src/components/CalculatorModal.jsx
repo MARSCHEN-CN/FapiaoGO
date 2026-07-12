@@ -4,7 +4,7 @@ import { useState, useRef, useEffect, useCallback, memo } from 'react'
  * CalculatorModal — 计算器弹窗
  * 支持键盘输入、实时预览、中文大写金额、历史记录
  */
-const CalculatorModal = memo(function CalculatorModal({ visible, onClose }) {
+const CalculatorModal = memo(function CalculatorModal({ visible, onClose, embedded = false }) {
   const [expression, setExpression] = useState('')
   const [lastExpr, setLastExpr] = useState('')
   const [lastResult, setLastResult] = useState('')
@@ -17,13 +17,19 @@ const CalculatorModal = memo(function CalculatorModal({ visible, onClose }) {
   const historyElRef = useRef(null)
   const measurerRef = useRef(null)
 
-  // Font size constants (matching fixed row heights in CSS)
-  // expr: 46px base, fits in 56px height; result: 22px base, fits in 28px; chinese: 13px base
-  const EXPR_MAX = 46, EXPR_MIN = 10
-  const RES_MAX = 22, RES_MIN = 10
-  const RES_SMALL_MAX = 15
-  const CHN_MAX = 13, CHN_MIN = 10
-  const CHN_BOLD_MAX = 15
+  // Font size constants — 根据窗口宽度动态缩放，匹配 CSS 媒体查询
+  // 基准：401-499px（2K 默认）；≤400px（1080p 紧凑）；≥500px（4K 大按钮）
+  const getScale = (w) => w >= 500 ? 1.22 : w <= 400 ? 0.83 : 1
+  const [fontScale, setFontScale] = useState(() => getScale(typeof window !== 'undefined' ? window.innerWidth : 420))
+  useEffect(() => {
+    const updateScale = () => setFontScale(getScale(window.innerWidth))
+    window.addEventListener('resize', updateScale)
+    return () => window.removeEventListener('resize', updateScale)
+  }, [])
+  const EXPR_MAX = Math.round(46 * fontScale), EXPR_MIN = 10
+  const RES_MAX = Math.round(24 * fontScale), RES_MIN = 10
+  const CHN_MAX = Math.round(15 * fontScale), CHN_MIN = 10
+  const CHN_BOLD_MAX = Math.round(17 * fontScale)
 
   // ========== Chinese Amount Conversion ==========
   const toChineseAmount = useCallback((amount) => {
@@ -391,7 +397,7 @@ const CalculatorModal = memo(function CalculatorModal({ visible, onClose }) {
       if (next.length > 10) next.shift()
       return next
     })
-    setLastExpr(evalExpr + ' =')
+    setLastExpr(evalExpr)
     setLastResult(resultStr)
     setExpression(resultStr)
     setJustEvaluated(true)
@@ -400,15 +406,17 @@ const CalculatorModal = memo(function CalculatorModal({ visible, onClose }) {
   const reuseHistory = useCallback((index) => {
     const item = history[index]
     if (!item) return
+    // History stores expr as "31+2="; strip trailing "=" for secondary row display
+    const exprOnly = item.expr.replace(/=$/, '')
     setLastResult(item.result)
-    setLastExpr(item.expr)
+    setLastExpr(exprOnly)
     setExpression(item.result)
     setJustEvaluated(true)
   }, [history])
 
   // ========== Keyboard Support ==========
   useEffect(() => {
-    if (!visible) return
+    if (!embedded && !visible) return
     const handleKey = (e) => {
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return
       const key = e.key
@@ -425,7 +433,7 @@ const CalculatorModal = memo(function CalculatorModal({ visible, onClose }) {
     }
     document.addEventListener('keydown', handleKey)
     return () => document.removeEventListener('keydown', handleKey)
-  }, [visible, inputNumber, inputDecimal, inputOperator, inputPercent, calculate, backspace, onClose])
+  }, [embedded, visible, inputNumber, inputDecimal, inputOperator, inputPercent, calculate, backspace, onClose])
 
   // Reset when opened
   useEffect(() => {
@@ -443,26 +451,32 @@ const CalculatorModal = memo(function CalculatorModal({ visible, onClose }) {
 
   if (justEvaluated && !isError && lastExpr) {
     // Result mode (after pressing =):
-    // - Primary row (big): shows the answer number
-    // - Secondary row (small gray): shows "expr =" e.g. "56−6 ="
-    // - Chinese row: shows the amount (slightly bolder)
+    // - Upper row (calc-expr, process position): shows original expression — becomes smaller/lighter
+    // - Lower row (calc-result, answer position): shows answer — becomes large/bold/dark
+    // - Chinese row: shows amount — becomes larger/bolder
     inResultMode = true
-    exprText = formatNumber(lastResult)
-    resultText = lastExpr
+    exprText = lastExpr                                   // "31+2"  过程在上行（变小变浅）
+    resultText = '= ' + formatNumber(lastResult)          // "= 33" 答案在下行（变大加粗）
     const resultNum = parseFloat(lastResult)
     chineseText = (isFinite(resultNum) && Math.abs(resultNum) < 1e20) ? toChineseAmount(resultNum) : ''
   } else {
     // Input mode (typing):
-    // - Primary row (big): shows what user is typing
-    // - Secondary row (small): shows live preview "= result"
-    // - Chinese row: shows live chinese amount
+    // - Upper row (calc-expr): large bold expression being typed
+    // - Lower row (calc-result): smaller "= preview"
+    // - Chinese row: lighter preview
     exprText = expression || '0'
 
+    // Always show live preview whenever there is a valid non-empty expression,
+    // even for a single number (e.g. typing "4" → "= 4", "4+" → keeps showing "= 4").
+    // Don't show preview when expression is just a bare operator (e.g. leading "−").
     let showLive = false, liveResult = null
     if (!isError && expression && expression !== '0') {
-      const val = evaluateExpression(expression)
-      if (!isNaN(val) && /[+\-×÷−]/.test(expression)) {
-        showLive = true; liveResult = val
+      const computable = expression.replace(/[+\-×÷−]+$/, '').replace(/^[−-]/, '')
+      if (computable) {
+        const val = evaluateExpression(expression)
+        if (!isNaN(val)) {
+          showLive = true; liveResult = val
+        }
       }
     }
 
@@ -476,13 +490,15 @@ const CalculatorModal = memo(function CalculatorModal({ visible, onClose }) {
 
   // Apply font sizing after render
   useEffect(() => {
-    if (!visible) return
+    if (!embedded && !visible) return
     requestAnimationFrame(() => {
       if (inResultMode) {
-        fitFontSize(exprElRef.current, exprText, EXPR_MAX, EXPR_MIN, true)
-        fitFontSize(resultElRef.current, resultText, RES_SMALL_MAX, RES_MIN, false)
+        // Result mode: upper row (expr=process) becomes small/light, lower row (result=answer) becomes big/bold
+        fitFontSize(exprElRef.current, exprText, RES_MAX, RES_MIN, false)
+        fitFontSize(resultElRef.current, resultText, EXPR_MAX, EXPR_MIN, true)
         fitFontSize(chineseElRef.current, chineseText, CHN_BOLD_MAX, CHN_MIN, false)
       } else {
+        // Input mode: upper row (expr=process) is big/bold, lower row (result=preview) is small/light
         fitFontSize(exprElRef.current, exprText, EXPR_MAX, EXPR_MIN, true)
         fitFontSize(resultElRef.current, resultText, RES_MAX, RES_MIN, false)
         fitFontSize(chineseElRef.current, chineseText, CHN_MAX, CHN_MIN, false)
@@ -499,7 +515,87 @@ const CalculatorModal = memo(function CalculatorModal({ visible, onClose }) {
     if (e.target === e.currentTarget) onClose?.()
   }
 
-  if (!visible) return null
+  // In embedded mode (standalone window), always visible — no early return
+  if (!embedded && !visible) return null
+
+  const panel = (
+    <div className={`calc-modal-panel ${inResultMode ? 'is-result' : ''} ${embedded ? 'is-embedded' : ''}`}>
+      {/* Display Area */}
+      <div className="calc-display-area">
+        {/* History - always reserve height */}
+        <div
+          ref={historyElRef}
+          className={`calc-history ${history.length > 0 ? 'has-items' : ''}`}
+        >
+          {history.map((h, i) => (
+            <div
+              key={i}
+              className="calc-history-item"
+              onClick={() => reuseHistory(i)}
+            >
+              <span className="calc-hist-expr">{h.expr}</span>
+              <span className="calc-hist-res">{formatNumber(h.result)}</span>
+            </div>
+          ))}
+        </div>
+
+        {/* Primary row: expression (input) or answer (result) */}
+        <div ref={exprElRef} className="calc-expr">{exprText}</div>
+        {/* Secondary row: preview (input) or "expr =" (result) */}
+        <div ref={resultElRef} className="calc-result">{resultText}</div>
+        {/* Chinese amount row */}
+        <div ref={chineseElRef} className="calc-chinese">{chineseText}</div>
+      </div>
+
+      {/* Buttons */}
+      <div className="calc-buttons">
+        <button className="calc-btn calc-btn-func" onClick={clearAll}>C</button>
+        <button className="calc-btn calc-btn-func" onClick={backspace} aria-label="退格">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M21 4H8l-7 8 7 8h13a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2z"></path>
+            <line x1="18" y1="9" x2="12" y2="15"></line>
+            <line x1="12" y1="9" x2="18" y2="15"></line>
+          </svg>
+        </button>
+        <button className="calc-btn calc-btn-func" onClick={inputPercent}>%</button>
+        <button className="calc-btn calc-btn-func" onClick={() => inputOperator('÷')}>÷</button>
+
+        <button className="calc-btn calc-btn-num" onClick={() => inputNumber('7')}>7</button>
+        <button className="calc-btn calc-btn-num" onClick={() => inputNumber('8')}>8</button>
+        <button className="calc-btn calc-btn-num" onClick={() => inputNumber('9')}>9</button>
+        <button className="calc-btn calc-btn-func" onClick={() => inputOperator('×')}>×</button>
+
+        <button className="calc-btn calc-btn-num" onClick={() => inputNumber('4')}>4</button>
+        <button className="calc-btn calc-btn-num" onClick={() => inputNumber('5')}>5</button>
+        <button className="calc-btn calc-btn-num" onClick={() => inputNumber('6')}>6</button>
+        <button className="calc-btn calc-btn-func" onClick={() => inputOperator('−')}>−</button>
+
+        <button className="calc-btn calc-btn-num" onClick={() => inputNumber('1')}>1</button>
+        <button className="calc-btn calc-btn-num" onClick={() => inputNumber('2')}>2</button>
+        <button className="calc-btn calc-btn-num" onClick={() => inputNumber('3')}>3</button>
+        <button className="calc-btn calc-btn-func" onClick={() => inputOperator('+')}>+</button>
+
+        <button className="calc-btn calc-btn-num calc-btn-zero" onClick={() => inputNumber('0')}>0</button>
+        <button className="calc-btn calc-btn-num" onClick={inputDecimal}>.</button>
+        <button className="calc-btn calc-btn-eq" onClick={calculate}>=</button>
+      </div>
+    </div>
+  )
+
+  if (embedded) {
+    return (
+      <>
+        <div
+          ref={measurerRef}
+          style={{
+            position: 'fixed', top: -99999, left: 0, visibility: 'visible',
+            whiteSpace: 'nowrap', pointerEvents: 'none', lineHeight: 'normal', display: 'block',
+          }}
+        />
+        {panel}
+      </>
+    )
+  }
 
   return (
     <>
@@ -513,67 +609,7 @@ const CalculatorModal = memo(function CalculatorModal({ visible, onClose }) {
       />
 
       <div className="modal-overlay calc-modal-overlay" onClick={handleOverlayClick}>
-        <div className={`calc-modal-panel ${inResultMode ? 'is-result' : ''}`}>
-          {/* Display Area */}
-          <div className="calc-display-area">
-            {/* History - always reserve height */}
-            <div
-              ref={historyElRef}
-              className={`calc-history ${history.length > 0 ? 'has-items' : ''}`}
-            >
-              {history.map((h, i) => (
-                <div
-                  key={i}
-                  className="calc-history-item"
-                  onClick={() => reuseHistory(i)}
-                >
-                  <span className="calc-hist-expr">{h.expr}</span>
-                  <span className="calc-hist-res">{formatNumber(h.result)}</span>
-                </div>
-              ))}
-            </div>
-
-            {/* Primary row: expression (input) or answer (result) */}
-            <div ref={exprElRef} className="calc-expr">{exprText}</div>
-            {/* Secondary row: preview (input) or "expr =" (result) */}
-            <div ref={resultElRef} className="calc-result">{resultText}</div>
-            {/* Chinese amount row */}
-            <div ref={chineseElRef} className="calc-chinese">{chineseText}</div>
-          </div>
-
-          {/* Buttons */}
-          <div className="calc-buttons">
-            <button className="calc-btn calc-btn-func" onClick={clearAll}>C</button>
-            <button className="calc-btn calc-btn-func" onClick={backspace} aria-label="退格">
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M21 4H8l-7 8 7 8h13a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2z"></path>
-                <line x1="18" y1="9" x2="12" y2="15"></line>
-                <line x1="12" y1="9" x2="18" y2="15"></line>
-              </svg>
-            </button>
-            <button className="calc-btn calc-btn-func" onClick={inputPercent}>%</button>
-            <button className="calc-btn calc-btn-func" onClick={() => inputOperator('÷')}>÷</button>
-
-            <button className="calc-btn calc-btn-num" onClick={() => inputNumber('7')}>7</button>
-            <button className="calc-btn calc-btn-num" onClick={() => inputNumber('8')}>8</button>
-            <button className="calc-btn calc-btn-num" onClick={() => inputNumber('9')}>9</button>
-            <button className="calc-btn calc-btn-func" onClick={() => inputOperator('×')}>×</button>
-
-            <button className="calc-btn calc-btn-num" onClick={() => inputNumber('4')}>4</button>
-            <button className="calc-btn calc-btn-num" onClick={() => inputNumber('5')}>5</button>
-            <button className="calc-btn calc-btn-num" onClick={() => inputNumber('6')}>6</button>
-            <button className="calc-btn calc-btn-func" onClick={() => inputOperator('−')}>−</button>
-
-            <button className="calc-btn calc-btn-num" onClick={() => inputNumber('1')}>1</button>
-            <button className="calc-btn calc-btn-num" onClick={() => inputNumber('2')}>2</button>
-            <button className="calc-btn calc-btn-num" onClick={() => inputNumber('3')}>3</button>
-            <button className="calc-btn calc-btn-func" onClick={() => inputOperator('+')}>+</button>
-
-            <button className="calc-btn calc-btn-num calc-btn-zero" onClick={() => inputNumber('0')}>0</button>
-            <button className="calc-btn calc-btn-num" onClick={inputDecimal}>.</button>
-            <button className="calc-btn calc-btn-eq" onClick={calculate}>=</button>
-          </div>
-        </div>
+        {panel}
       </div>
     </>
   )

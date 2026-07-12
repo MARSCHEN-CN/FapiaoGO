@@ -12,7 +12,7 @@ const AlertModal = lazy(() => import('./components/AlertModal'))
 const PrintConfirmModal = lazy(() => import('./components/PrintConfirmModal'))
 const ImportProgressModal = lazy(() => import('./components/ImportProgressModal'))
 const ExportProgressModal = lazy(() => import('./components/ExportProgressModal'))
-const CalculatorModal = lazy(() => import('./components/CalculatorModal'))
+const CalculatorWindow = lazy(() => import('./components/CalculatorWindow'))
 
 import { PREVIEW_DPI, SUPPORTED_EXTENSIONS, ZOOM_STEPS } from './config'
 import {
@@ -57,6 +57,7 @@ function App() {
 
 function AppContent() {
   const isSettingsWindow = window.location.hash === '#/settings'
+  const isCalculatorWindow = window.location.hash === '#/calculator'
   const electronAPIRef = useRef(null)
 
   // ============================
@@ -107,10 +108,11 @@ function AppContent() {
   // ── Invoice Detail Edit Modal ──
   const [detailFile, setDetailFile] = useState(null)
 
-  // ── Calculator Modal ──
-  const [calculatorOpen, setCalculatorOpen] = useState(false)
-  const openCalculator = useCallback(() => setCalculatorOpen(true), [])
-  const closeCalculator = useCallback(() => setCalculatorOpen(false), [])
+  // ── Calculator window (opens as separate Electron window) ──
+  const openCalculator = useCallback(() => {
+    const ipc = electronAPIRef.current?.ipcRenderer
+    if (ipc) ipc.send('open-calculator-window')
+  }, [])
 
   const {
     importing, parseFiles, parsing, parseProgress,
@@ -345,16 +347,12 @@ function AppContent() {
       dismissWithCleanup()
       return
     }
-    if (calculatorOpen) {
-      setCalculatorOpen(false)
-      return
-    }
     if (renamePreviewVisible) {
       setRenamePreviewVisible(false)
       return
     }
     // ESC 不再退出预览
-  }, [currentAlert, dismissWithCleanup, calculatorOpen, renamePreviewVisible, setRenamePreviewVisible])
+  }, [currentAlert, dismissWithCleanup, renamePreviewVisible, setRenamePreviewVisible])
 
   useKeyboardShortcuts({
     onPrevFile: handlePrevFile,
@@ -500,6 +498,14 @@ function AppContent() {
     return (
       <Suspense fallback={<div></div>}>
         <SettingsWindow settings={settings} saveSettings={saveSettings} printers={printers} electronAPI={getElectronAPI()} />
+      </Suspense>
+    )
+  }
+
+  if (isCalculatorWindow) {
+    return (
+      <Suspense fallback={<div></div>}>
+        <CalculatorWindow />
       </Suspense>
     )
   }
@@ -819,13 +825,6 @@ function AppContent() {
           onClose={() => setDetailFile(null)}
         />
       )}
-
-      <Suspense fallback={<ModalFallback />}>
-        <CalculatorModal
-          visible={calculatorOpen}
-          onClose={closeCalculator}
-        />
-      </Suspense>
 
     </div>
   )

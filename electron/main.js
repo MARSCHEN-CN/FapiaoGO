@@ -63,6 +63,7 @@ function setMainWindowForBridge(window) {
 // ============================
 let mainWindow
 let settingsWindow
+let calculatorWindow
 // ✅ 使用 app.getPath('userData') 构建配置路径，避免依赖工作目录
 const settingsPath = path.join(app.getPath('userData'), 'Settings.json')
 
@@ -272,6 +273,86 @@ function createSettingsWindow() {
     if (mainWindow) {
       mainWindow.webContents.send('settings-window-closed')
     }
+  })
+}
+
+function createCalculatorWindow() {
+  if (calculatorWindow) {
+    calculatorWindow.focus()
+    return
+  }
+
+  // 根据屏幕分辨率自适应窗口尺寸（2K 基准 420×680）
+  const { width: screenWidth, height: screenHeight } = screen.getPrimaryDisplay().workAreaSize
+
+  let width, height, minWidth, minHeight
+  if (screenWidth >= 3840) {
+    // 4K：放大 ~1.3×，按钮字号保持不变，显示区更宽敞
+    width = 540
+    height = 860
+    minWidth = 480
+    minHeight = 720
+  } else if (screenWidth >= 2560) {
+    // 2K：用户校准的基准尺寸
+    width = 420
+    height = 680
+    minWidth = 400
+    minHeight = 640
+  } else {
+    // 1080p 及以下：更紧凑，按钮通过 CSS 媒体查询自动缩小
+    width = 360
+    height = 580
+    minWidth = 320
+    minHeight = 520
+  }
+
+  calculatorWindow = new BrowserWindow({
+    width,
+    height,
+    modal: false,
+    resizable: true,
+    minimizable: true,
+    maximizable: false,
+    minWidth,
+    minHeight,
+    show: false,
+    frame: false,
+    backgroundColor: '#ffffff',
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true,
+      preload: path.join(__dirname, 'preload.js')
+    }
+  })
+
+  calculatorWindow.setMenuBarVisibility(false)
+
+  // 根据运行模式加载不同的资源
+  if (isDev) {
+    calculatorWindow.loadURL('http://localhost:5173/#/calculator')
+  } else {
+    calculatorWindow.loadFile(path.join(__dirname, '../dist/index.html'), { hash: 'calculator' })
+  }
+
+  calculatorWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+
+  // URL 白名单导航控制
+  const allowedOrigins = ['http://localhost:5173', 'file://']
+  calculatorWindow.webContents.on('will-navigate', (event, url) => {
+    const allowed = allowedOrigins.some(origin => url.startsWith(origin))
+    if (!allowed) {
+      console.log(`[main.js] 计算器窗口阻止导航到未授权 URL: ${url}`)
+      event.preventDefault()
+    }
+  })
+
+  calculatorWindow.on('ready-to-show', () => {
+    calculatorWindow.show()
+  })
+
+  calculatorWindow.on('closed', () => {
+    calculatorWindow = null
   })
 }
 
@@ -664,6 +745,11 @@ ipcMain.on('close-settings-window', () => {
     settingsWindow.close()
     settingsWindow = null
   }
+})
+
+// --- 打开计算器窗口 ---
+ipcMain.on('open-calculator-window', () => {
+  createCalculatorWindow()
 })
 
 // --- 调整设置窗口大小 ---
