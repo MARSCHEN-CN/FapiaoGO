@@ -93,7 +93,13 @@ def preview(doc_id: str):
     except RenderSpecParseError as e:
         return jsonify({"success": False, "error": "INVALID_RENDER_SPEC", "detail": str(e)}), 400
 
-    resp = _render_and_respond(doc_id, "preview", page)
+    # ── Commit B-0：把已解析的 RenderSpec 送入渲染链 ──
+    # spec_info 为 None 表示 Legacy 客户端（请求未携带 ?spec=）；
+    # 否则取 verify_render_spec 重建的 placement/paper/rotation/clip。
+    # B-0 shadow mode：engine 收到 render_spec 但仍执行 Legacy（零像素变化），
+    # X-Render-Executor 保持 legacy（见下方回显块）。
+    render_spec = spec_info["spec"] if spec_info else None
+    resp = _render_and_respond(doc_id, "preview", page, render_spec=render_spec)
     # ✅ _render_and_respond 在 doc 未找到 / 渲染失败时返回错误元组 (jsonify(...), status)，
     #    此时 resp 不是 Response 对象，不能访问 .headers。直接透传错误，避免
     #    AttributeError: 'tuple' object has no attribute 'headers' 把 404/500 变成 500 HTML，
@@ -102,20 +108,23 @@ def preview(doc_id: str):
         return resp
     resp.headers["Cache-Control"] = "public, max-age=0, must-revalidate"
 
-    # ── Commit A：回显 RenderSpec（仅诊断，零渲染影响）──
-    # 本 Commit 不把 spec 送入任何渲染逻辑（view_state / page 均未变），
-    # 因此渲染输出与改动前字节级一致。
+    # ── Commit A/B：回显 RenderSpec（诊断）──
+    # Commit A：spec 仅诊断、零渲染影响；Legacy 客户端（无 ?spec=）输出不变。
+    # Commit B-1：携带合法 spec 的请求已交由 _render_spec_page 执行（RenderEngine = Executor）；
+    #   渲染输出由 placement/paper 决定，Legacy 树作为 Frozen Baseline 仅服务无 spec 的请求。
     if spec_info is not None:
         resp.headers["X-RenderSpec-Version"] = spec_info["version"]
         # 回显后端「重算值」而非前端传来值，便于 DevTools 直接比对「后端实际看到什么」
         resp.headers["X-RenderSpec-Hash"] = spec_info["recomputed"] or spec_info["sig"]
         resp.headers["X-RenderSpec-Verified"] = "true" if spec_info["verified"] else "false"
-        # Commit A 实际执行路径恒为 Legacy（Commit B 升级为 render-spec）
-        resp.headers["X-Render-Executor"] = "legacy"
+        # Commit B-1 起 spec 已真正驱动渲染：X-Render-Executor 反映实际执行路径。
+        executor = "renderspec" if spec_info is not None else "legacy"
+        resp.headers["X-Render-Executor"] = executor
         if _render_spec_log_enabled():
             logger.info(
-                "RenderSpec echo spec=%s sig=%s verified=%s executor=legacy",
+                "RenderSpec echo spec=%s sig=%s verified=%s executor=%s",
                 spec_info["version"], spec_info["recomputed"], str(spec_info["verified"]).lower(),
+                executor,
             )
     return resp
 
@@ -233,8 +242,14 @@ def search():
 def _render_and_respond(doc_id: str, preset_name: str,
                         page: int = 1, vs: dict = None,
                         hl_token: str = None,
-                        override_params: dict = None):
-    """Shared rendering path: build, render, cache, respond."""
+                        override_params: dict = None,
+                        render_spec: dict = None):
+    """Shared rendering path: build, render, cache, respond.
+
+    render_spec: Resolved Layout from Commit A/B verify_render_spec.
+                 None → Legacy; not-None → wired into engine.render (Commit B-0
+                 shadow mode: engine still executes Legacy).
+    """
     vs = vs or {}
 
     if preset_name not in PRESETS:
@@ -246,6 +261,7 @@ def _render_and_respond(doc_id: str, preset_name: str,
             preset_name=preset_name,
             view_state=vs,
             page=page,
+            render_spec=render_spec,
             hl_token=hl_token,
             accept_header=request.headers.get("Accept", ""),
             override_params=override_params,

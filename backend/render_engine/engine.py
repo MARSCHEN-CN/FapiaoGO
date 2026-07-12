@@ -280,6 +280,7 @@ class RenderEngine:
 
     def render(self, doc_id: str, preset_name: str = "preview",
                view_state: dict = None, page: int = 1,
+               render_spec: dict = None,
                highlights: list = None, hl_token: str = None,
                accept_header: str = "",
                override_params: dict = None,
@@ -290,8 +291,12 @@ class RenderEngine:
         Args:
             doc_id:     opaque document id from Registry
             preset_name: "preview" | "print" | "export" | "thumbnail"
-            view_state: {rotation, gray, paper, margin_mm, mirror}
+            view_state: {rotation, gray, paper, margin_mm, mirror} — Legacy Intent
             page:       1-based page number
+            render_spec: Resolved Layout from RenderSpec (Commit B). None → Legacy.
+                         B-0 shadow mode: passed through to `_render_page` but the
+                         renderer still executes Legacy (zero pixel change); B-1 wires
+                         it into the real RenderSpec renderer.
             highlights: list of BBox dicts for highlight (Phase 2)
             hl_token:   opaque highlight token for cache-key (Phase 2)
             accept_header: HTTP Accept header for format negotiation
@@ -309,6 +314,9 @@ class RenderEngine:
         vs_hash = _hash_view_state(vs)
         cache_key = make_cache_key(doc_id, preset.name, page,
                                    vs_hash + override_tag, hl_token or "")
+        # B-1: 当 spec 真正驱动渲染时，需把 render_spec 纳入 cache_key，
+        # 否则不同 spec 会命中同一缓存位（输出字节不同却共用 key）。
+        # B-0 shadow mode 下 spec 不参与计算，故暂不纳入，保持字节级一致。
         cached = self._cache.get(cache_key)
         if cached is not None:
             logger.debug("cache hit: %s", cache_key[:32])
@@ -321,7 +329,8 @@ class RenderEngine:
 
         fmt = negotiate_format(accept_header, preset.fmt)
         data, actual_fmt = self._render_page(doc, preset, vs, page, fmt,
-                                             highlights, pdf_doc=pdf_doc)
+                                             highlights, pdf_doc=pdf_doc,
+                                             render_spec=render_spec)
 
         # --- cache write ---
         etag = generate_etag(
@@ -377,13 +386,39 @@ class RenderEngine:
 
     def _render_page(self, doc, preset: RenderPreset, vs: dict,
                      page: int, fmt: str, highlights: list = None,
-                     pdf_doc: Optional["fitz.Document"] = None) -> bytes:
-        """Render a single page to image bytes via PyMuPDF."""
+                     pdf_doc: Optional["fitz.Document"] = None,
+                     render_spec: dict = None) -> bytes:
+        """Dispatch a single page render to the active renderer.
+
+        Commit B dispatch (B-1 起生效):
+          • render_spec is None     → Legacy renderer (`_render_legacy_page`) — Frozen Baseline
+          • render_spec is not None → RenderSpec renderer (`_render_spec_page`)，
+            消费 placement/paper 直接执行，零重算（见 v16-stage1-design.md ⑤⑦）。
+        B-0 阶段两分支都走 Legacy（shadow mode）；B-1 起 spec 分支为真实 RenderSpec 渲染。
+        """
         if fitz is None:
             raise RuntimeError("PyMuPDF (fitz) is not available")
 
         page_idx = max(0, page - 1)
 
+        # ── Commit B dispatch ──
+        # 两棵树完全独立、互不调用（⑥⑦）：Legacy 仅服务无 spec 的请求（Frozen Baseline），
+        # RenderSpec 树独立消费 placement/paper。rotation 在 B-1 仍由前端 CSS 负责，本路径不 prerotate。
+        if render_spec is None:
+            return self._render_legacy_page(doc, preset, vs, page_idx, fmt,
+                                            highlights, pdf_doc)
+        # RenderSpec 分支（B-1 起真实渲染；B-0 曾 shadow 走 Legacy）。
+        return self._render_spec_page(doc, preset, render_spec, page_idx, fmt,
+                                      highlights, pdf_doc)
+
+    def _render_legacy_page(self, doc, preset: RenderPreset, vs: dict,
+                            page_idx: int, fmt: str, highlights: list = None,
+                            pdf_doc: Optional["fitz.Document"] = None) -> bytes:
+        """Legacy render path (Frozen Baseline — Commit B 期间禁止修改算法)。
+
+        仅被 `_render_page` 在 render_spec is None 或 B-0 shadow mode 下调用。
+        任何 Legacy 算法修复须独立 commit（见 v16-stage1-design.md ⑥）。
+        """
         if doc.pdf is not None:
             data = self._render_pdf_page(doc, preset, vs, page_idx, fmt,
                                          pdf_doc=pdf_doc)
@@ -398,6 +433,72 @@ class RenderEngine:
                          len(highlights))
 
         return data
+
+    def _render_spec_page(self, doc, preset: RenderPreset, spec: dict,
+                          page_idx: int, fmt: str, highlights: list = None,
+                          pdf_doc: Optional["fitz.Document"] = None) -> bytes:
+        """RenderSpec render path (Commit B-1 落地).
+
+        消费 RenderSpec 的 placement/paper，**逐字使用，不重算**（见 v16-stage1-design.md ⑤⑦）：
+          • paper.width/height  → 画布像素尺寸（已含方向，不读 A4 常量）
+          • placement.scale     → 直接作为 get_pixmap(matrix) 缩放（PDF）/ 缩放因子（image）
+          • placement.offsetX/Y → 直接作为粘贴左上角（不再居中）
+          • rotation            → B-1 **忽略**（不 prerotate）；rotation ownership 留 B-2。
+          • dpi                 → 信息字段（paper/placement 已是权威像素，渲染不二次使用）。
+
+        与 Legacy 树零共享（⑦）：禁止调用 `_render_legacy_page` / `_render_pdf_page` /
+        `_apply_margins` / `_apply_rotation`。本函数是 RenderEngine 作为 Executor 的体现——
+        只执行 Factory 已解析好的事实（Resolved Layout），绝不重新推导布局。
+        """
+        scale = float(spec["placement"]["scale"])
+        ox = int(round(float(spec["placement"]["offsetX"])))
+        oy = int(round(float(spec["placement"]["offsetY"])))
+        paper_w = int(round(float(spec["paper"]["width"])))
+        paper_h = int(round(float(spec["paper"]["height"])))
+        gray = bool(spec.get("gray", False))
+
+        if doc.pdf is not None:
+            pdf = pdf_doc if pdf_doc is not None else doc.pdf
+            if page_idx >= len(pdf):
+                raise ValueError(f"Page {page_idx + 1} out of range ({len(pdf)} pages)")
+            page = pdf[page_idx]
+            # B-1：直接以 placement.scale 作为矩阵缩放；rotation 留 B-2（不 prerotate）。
+            mat = fitz.Matrix(scale, scale)
+            pix = page.get_pixmap(matrix=mat, alpha=False)
+        else:
+            # image path：先在 spec.dpi 下栅格化，再按 placement.scale 缩放
+            # （对应 Legacy 的 dpi 栅格 + _apply_margins fit；此处同样零重算）。
+            img_doc = _open_image_doc(doc)
+            try:
+                base = img_doc[0].get_pixmap(dpi=int(spec.get("dpi", preset.dpi)),
+                                             alpha=False)
+            finally:
+                img_doc.close()
+            if scale != 1.0:
+                w = max(1, int(base.width * scale))
+                h = max(1, int(base.height * scale))
+                pix = fitz.Pixmap(base, w, h)
+            else:
+                pix = base
+
+        if gray:
+            pix = _apply_grayscale(pix)
+
+        # 白画布 + 直接粘贴（无 fit / 无 center；offset 已是最终位置）
+        canvas = fitz.Pixmap(fitz.csRGB if pix.n >= 3 else fitz.csGRAY,
+                             fitz.IRect(0, 0, paper_w, paper_h))
+        canvas.clear_with(255)
+        if pix.n == canvas.n:
+            canvas.copy(pix, fitz.IRect(ox, oy, ox + pix.width, oy + pix.height))
+        else:
+            canvas = pix
+
+        # ---- highlight overlay (Phase 2 stub) ----
+        if highlights:
+            logger.debug("highlight rendering not yet implemented (%d rects)",
+                         len(highlights))
+
+        return _encode_pixmap(canvas, fmt, preset.quality, preset.chroma)
 
     def _render_pdf_page(self, doc, preset: RenderPreset, vs: dict,
                          page_idx: int, fmt: str,
@@ -492,6 +593,22 @@ def _apply_grayscale(pix) -> "fitz.Pixmap":
     if pix.n >= 3:
         pix = fitz.Pixmap(fitz.csGRAY, pix)
     return pix
+
+
+def _open_image_doc(doc) -> "fitz.Document":
+    """Open an image document for rendering (Commit B-1 spec path; additive).
+
+    新增 helper，供 `_render_spec_page` 的 image 分支使用；**不修改** Legacy 的
+    `_render_image_page`（⑥ Frozen Baseline）。打开逻辑与其等价，但集中为一处。
+    """
+    filetype = doc.path.split(".")[-1] if getattr(doc, "path", None) else "png"
+    img_bytes = doc.get("file_bytes") if hasattr(doc, "get") else None
+    if img_bytes is None:
+        img_bytes = b""
+    try:
+        return fitz.open(stream=img_bytes, filetype=filetype)
+    except Exception as e:
+        raise ValueError(f"Cannot open image document: {getattr(doc, 'path', '?')}") from e
 
 
 def _apply_margins(pix, preset: RenderPreset, vs: dict,
