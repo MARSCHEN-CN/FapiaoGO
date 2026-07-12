@@ -361,6 +361,7 @@ function AppContent() {
     onPrint: onCtrlP,
     onDelete: handleDeleteCurrent,
     onEscape: handleEscape,
+    onOpenCalculator: openCalculator,
   })
 
   // ============================

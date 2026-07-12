@@ -120,6 +120,7 @@ export default function TopBarMenu({
           <div className="tb-shortcuts-grid">
             {[
               { label: '打印', key: 'Ctrl+P' },
+              { label: '计算器', key: 'F2' },
               { label: '删除', key: 'Delete' },
               { label: '上一个', key: '\u2190' },
               { label: '下一个', key: '\u2192' },

@@ -8,6 +8,7 @@ import { useEffect, useRef } from 'react'
  * @param {Function} options.onPrint - 批量打印
  * @param {Function} options.onDelete - 删除选中文件
  * @param {Function} options.onEscape - 取消选择/关闭弹窗
+ * @param {Function} options.onOpenCalculator - 打开计算器
  * @param {boolean} options.enabled - 是否启用快捷键
  * @param {boolean} options.allowInInput - 是否允许在输入框中触发
  */
@@ -17,6 +18,7 @@ export function useKeyboardShortcuts({
   onPrint,
   onDelete,
   onEscape,
+  onOpenCalculator,
   enabled = true,
   allowInInput = false,
 }) {
@@ -27,6 +29,7 @@ export function useKeyboardShortcuts({
     onPrint,
     onDelete,
     onEscape,
+    onOpenCalculator,
   })
 
   // 每次渲染时更新 ref，确保读取到最新回调
@@ -36,6 +39,7 @@ export function useKeyboardShortcuts({
     onPrint,
     onDelete,
     onEscape,
+    onOpenCalculator,
   }
 
   // 仅在 enabled 或 allowInInput 变化时重新注册监听器
@@ -54,12 +58,19 @@ export function useKeyboardShortcuts({
       }
 
       // 从 ref 获取最新回调
-      const { onPrevFile, onNextFile, onPrint, onDelete, onEscape } = callbacksRef.current
+      const { onPrevFile, onNextFile, onPrint, onDelete, onEscape, onOpenCalculator } = callbacksRef.current
 
       // Ctrl+P: 打印
       if (e.ctrlKey && e.key === 'p') {
         e.preventDefault()
         onPrint?.()
+        return
+      }
+
+      // F2: 打开计算器（即使在输入框内也允许触发，因为 F2 是功能键不输入字符）
+      if (e.key === 'F2') {
+        e.preventDefault()
+        onOpenCalculator?.()
         return
       }
 
@@ -111,6 +122,7 @@ export function useKeyboardShortcuts({
  * │ 功能         │ 快捷键     │ 说明                            │
  * ├──────────────┼────────────┼─────────────────────────────────┤
  * │ 打印         │ Ctrl+P    │ 批量打印选中文件                 │
+ * │ 计算器       │ F2        │ 呼出/聚焦计算器窗口              │
  * │ 删除         │ Delete    │ 删除选中的文件                   │
  * │ 上一个       │ ← 左箭头  │ 切换到上一个文件                 │
  * │ 下一个       │ → 右箭头  │ 切换到下一个文件                 │
