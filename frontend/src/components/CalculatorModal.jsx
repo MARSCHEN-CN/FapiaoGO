@@ -107,15 +107,21 @@ const CalculatorModal = memo(function CalculatorModal({ visible, onClose, embedd
         return false
       }
 
-      // parseNumber: read a numeric literal (integer or decimal)
+      // parseNumber: read a numeric literal (integer or decimal), optionally followed by %
       function parseNumber() {
         skipSpaces()
         const start = pos
-        if (peek() === '-') { pos++; skipSpaces() } // handle leading minus (shouldn't happen at top-level, but safe)
+        if (peek() === '-') { pos++; skipSpaces() } // handle leading minus
         while (pos < len && /[0-9.]/.test(src[pos])) pos++
         const numStr = src.slice(start, pos)
         const n = parseFloat(numStr)
         if (isNaN(n)) throw new Error('bad number: ' + numStr)
+        // Percent suffix: n% → n/100
+        skipSpaces()
+        if (pos < len && src[pos] === '%') {
+          pos++
+          return n / 100
+        }
         return n
       }
 
@@ -253,6 +259,10 @@ const CalculatorModal = memo(function CalculatorModal({ visible, onClose, embedd
         setExpression(newExpr)
         return
       }
+      // 当前数字已以 % 结尾 → 开始新数字（如 "5%" 后按 3 → "5%×3"）
+      if (currentNum.endsWith('%')) {
+        newExpr = newExpr + '×'
+      }
     }
     setExpression(newExpr + num)
   }, [expression, justEvaluated])
@@ -268,6 +278,10 @@ const CalculatorModal = memo(function CalculatorModal({ visible, onClose, embedd
       const currentNum = newExpr.match(/[^+\-×÷−]*$/)?.[0] || ''
       if (currentNum === '') { setExpression(newExpr + '0.'); return }
       if (currentNum.includes('.')) return
+      // 当前数字已以 % 结尾 → 开始新小数（如 "5%" 后按 . → "5%×0."）
+      if (currentNum.endsWith('%')) {
+        newExpr = newExpr + '×0'
+      }
     }
     setExpression(newExpr + '.')
   }, [expression, justEvaluated])
@@ -292,21 +306,16 @@ const CalculatorModal = memo(function CalculatorModal({ visible, onClose, embedd
 
   const inputPercent = useCallback(() => {
     if (expression === '') return
-    const currentNum = expression.match(/[^+\-×÷−]*$/)?.[0] || ''
+    // 找到当前正在输入的数字（最后一个运算符之后的部分）
+    const match = expression.match(/([^+\-×÷−]*)$/)
+    const currentNum = match?.[0] || ''
     if (currentNum === '' || currentNum === '-' || currentNum === '−') return
-    const num = parseFloat(currentNum.replace(/−/g, '-'))
-    if (isNaN(num)) return
-    const res = num / 100
-    const resStr = String(res)
-    const lastOpIdx = Math.max(
-      expression.lastIndexOf('+'), expression.lastIndexOf('-'),
-      expression.lastIndexOf('×'), expression.lastIndexOf('÷'), expression.lastIndexOf('−')
-    )
-    let newExpr
-    if (lastOpIdx === -1) newExpr = resStr
-    else newExpr = expression.slice(0, lastOpIdx + 1) + resStr
+    // 已经以 % 结尾则不重复添加
+    if (currentNum.endsWith('%')) return
+    // 如果当前数字已经包含 . 或数字（合法数字），追加 %
+    if (!/[0-9]/.test(currentNum)) return
     if (justEvaluated) { setLastExpr(''); setLastResult(''); setJustEvaluated(false) }
-    setExpression(newExpr)
+    setExpression(expression + '%')
   }, [expression, justEvaluated])
 
   const backspace = useCallback(() => {
