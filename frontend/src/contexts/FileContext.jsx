@@ -1,6 +1,6 @@
-import { createContext, useContext, useReducer, useCallback, useState, useMemo, useEffect } from 'react'
+import { createContext, useContext, useReducer, useCallback, useState, useMemo } from 'react'
 import { filterFiles, isFailedFile, isMergeMode } from '../utils'
-import { BACKEND_URL } from '../config'
+import { amountToChinese } from '../utils/amountConverter'
 
 // ── Reducer ──────────────────────────────────────────────────
 
@@ -86,24 +86,9 @@ export function FileProvider({ children }) {
   const totalAmountInt = totalAmountStr.split('.')[0]
   const totalAmountDecimal = totalAmountStr.split('.')[1]
 
-  // 中文大写金额
-  const [chineseAmount, setChineseAmount] = useState('零元整')
-
-  useEffect(() => {
-    if (totalAmount === 0) {
-      setChineseAmount('零元整')
-      return
-    }
-    let cancelled = false
-    fetch(`${BACKEND_URL}/api/to_chinese_amount`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ amount: totalAmount }),
-    })
-      .then((r) => r.json())
-      .then((data) => { if (!cancelled && data.success) setChineseAmount(data.chinese) })
-      .catch(() => {})
-    return () => { cancelled = true }
+  // 中文大写金额（本地计算，无需 HTTP 请求）
+  const chineseAmount = useMemo(() => {
+    return amountToChinese(totalAmount)
   }, [totalAmount])
 
   // ── Context value ──
