@@ -1587,3 +1587,354 @@ button.pc-btn.outline,
   flex-direction: column;
 }
 
+/* ══════════════════════════════════════
+   Import Progress Modal (ipm)
+   方案2：紫粉横幅 + wait.svg 水印 + 进度条 + 步骤列表
+   ══════════════════════════════════════ */
+.ipm-overlay {
+  z-index: 1000;
+}
+
+.ipm-panel {
+  width: 420px;
+  max-width: calc(100vw - 40px);
+  background: var(--white);
+  border-radius: 16px;
+  box-shadow: var(--shadow-2xl);
+  border: 1px solid var(--border-light);
+  overflow: hidden;
+  animation: ipmIn 0.35s cubic-bezier(0.34, 1.2, 0.64, 1);
+}
+
+@keyframes ipmIn {
+  from { opacity: 0; transform: translateY(16px) scale(0.96); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* ── 横幅区 ── */
+.ipm-banner {
+  position: relative;
+  height: 140px;
+  background: linear-gradient(135deg, #ede9ff 0%, #fdf2f4 100%);
+  overflow: hidden;
+}
+
+.ipm-banner-svg {
+  position: absolute;
+  right: 140px;
+  bottom: 5px;
+  height: 130px;
+  width: auto;
+  opacity: 0.75;
+  pointer-events: none;
+  filter: saturate(0.75);
+  z-index: 1;
+  animation: ipmFloat 5s ease-in-out infinite;
+}
+
+@keyframes ipmFloat {
+  0%, 100% { transform: translateY(0) rotate(-0.5deg); }
+  50%      { transform: translateY(-4px) rotate(0.5deg); }
+}
+
+.ipm-banner::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(237,233,255,0.6) 0%, transparent 50%, var(--white) 100%),
+              linear-gradient(90deg, var(--white) 0%, transparent 25%, transparent 60%, rgba(253,242,244,0.3) 100%);
+  z-index: 2;
+}
+
+.ipm-banner-fade {
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  height: 30px;
+  background: linear-gradient(to bottom, transparent, var(--white));
+  z-index: 3;
+  pointer-events: none;
+}
+
+.ipm-banner-bottom {
+  position: absolute;
+  left: 24px; right: 24px; bottom: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  z-index: 4;
+}
+
+.ipm-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ipm-title-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #6c63ff 0%, #4f7cff 100%);
+  color: #fff;
+  flex-shrink: 0;
+  box-shadow: 0 4px 12px rgba(108, 99, 255, 0.3);
+}
+
+.ipm-title-icon svg { display: block; }
+
+.ipm-title-text {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: 0.2px;
+  display: inline-flex;
+  align-items: center;
+}
+
+.ipm-dots {
+  display: inline-block;
+  width: 16px;
+  text-align: left;
+  overflow: hidden;
+}
+.ipm-dots::after {
+  content: '';
+  display: inline-block;
+  animation: ipmDots 1.4s steps(4, end) infinite;
+}
+@keyframes ipmDots {
+  0%   { content: ''; }
+  25%  { content: '.'; }
+  50%  { content: '..'; }
+  75%  { content: '...'; }
+  100% { content: ''; }
+}
+
+.ipm-pct {
+  font-size: 20px;
+  font-weight: 700;
+  background: linear-gradient(135deg, #7c3aed 0%, #4f7cff 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  line-height: 1;
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── 进度条 ── */
+.ipm-progress-wrap {
+  position: relative;
+  padding: 4px 24px 0;
+  z-index: 5;
+}
+
+.ipm-bar-track {
+  position: relative;
+  height: 6px;
+  background: var(--border-light);
+  border-radius: 999px;
+  overflow: visible;
+  margin-bottom: 16px;
+}
+
+.ipm-bar-fill {
+  position: relative;
+  height: 100%;
+  background: linear-gradient(90deg, #7c3aed 0%, #4f7cff 100%);
+  border-radius: 999px;
+  transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.ipm-bar-fill::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  top: -2px;
+  width: 10px;
+  height: 10px;
+  background: #4f7cff;
+  border-radius: 50%;
+  box-shadow: 0 0 6px #4f7cff, 0 0 12px rgba(79, 124, 255, 0.3);
+}
+
+.ipm-bar-dot {
+  display: none;
+}
+
+.ipm-bar-filename {
+  display: none;
+}
+
+/* ── 步骤列表 ── */
+.ipm-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0 24px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  position: relative;
+  z-index: 5;
+}
+
+.ipm-step {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--text-3);
+  transition: color 0.3s ease;
+}
+
+.ipm-step-icon {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  background: var(--border-light);
+  color: var(--text-3);
+  font-size: 10px;
+  transition: all 0.3s ease;
+}
+
+/* 已完成 */
+.ipm-step--done .ipm-step-icon {
+  background: var(--success);
+  color: #fff;
+}
+.ipm-step--done .ipm-step-icon svg {
+  width: 11px;
+  height: 11px;
+}
+.ipm-step--done .ipm-step-label {
+  color: var(--text-2);
+}
+
+/* 进行中 */
+.ipm-step--active .ipm-step-icon {
+  background: var(--accent);
+  color: #fff;
+  animation: ipmStepPulse 1.2s ease-in-out infinite;
+}
+.ipm-step--active .ipm-step-label {
+  color: var(--text);
+  font-weight: 500;
+}
+
+@keyframes ipmStepPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(79, 124, 255, 0.4); }
+  50%      { box-shadow: 0 0 0 6px rgba(79, 124, 255, 0); }
+}
+
+.ipm-step-spinner {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 2px solid rgba(255,255,255,0.3);
+  border-top-color: #fff;
+  animation: ipmSpin 0.8s linear infinite;
+}
+
+@keyframes ipmSpin {
+  to { transform: rotate(360deg); }
+}
+
+/* 等待 */
+.ipm-step--pending .ipm-step-icon {
+  background: var(--border-light);
+  color: var(--text-3);
+}
+.ipm-step--pending .ipm-step-label {
+  color: var(--text-3);
+}
+
+/* ── 底部按钮 ── */
+.ipm-footer {
+  padding: 0 24px 20px;
+  display: flex;
+  justify-content: flex-end;
+  position: relative;
+  z-index: 5;
+}
+
+.ipm-cancel-btn {
+  min-width: 80px;
+  font-size: 13px;
+}
+
+/* ══════════════════════════════════════
+   暗色模式适配
+   ══════════════════════════════════════ */
+[data-theme="dark"] .ipm-panel {
+  background: var(--surface);
+  border-color: var(--border);
+}
+
+[data-theme="dark"] .ipm-banner {
+  background: linear-gradient(135deg, #1e1c2e 0%, #2a1d28 100%);
+}
+
+[data-theme="dark"] .ipm-banner-svg {
+  opacity: 0.75;
+  filter: none;
+}
+
+[data-theme="dark"] .ipm-banner::before {
+  background: linear-gradient(180deg, rgba(30,28,46,0.5) 0%, transparent 50%, var(--surface) 100%),
+              linear-gradient(90deg, var(--surface) 0%, transparent 25%, transparent 60%, rgba(42,29,40,0.3) 100%);
+}
+
+[data-theme="dark"] .ipm-banner-fade {
+  background: linear-gradient(to bottom, transparent, var(--surface));
+}
+
+[data-theme="dark"] .ipm-title-icon {
+  background: linear-gradient(135deg, #8b85ff 0%, #6c8aff 100%);
+  box-shadow: 0 4px 12px rgba(108, 138, 255, 0.25);
+}
+
+[data-theme="dark"] .ipm-pct {
+  background: linear-gradient(135deg, #a78bfa 0%, #6c8aff 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+[data-theme="dark"] .ipm-bar-track {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+[data-theme="dark"] .ipm-bar-fill {
+  background: linear-gradient(90deg, #a78bfa 0%, #6c8aff 100%);
+}
+
+[data-theme="dark"] .ipm-bar-fill::after {
+  background: #6c8aff;
+  box-shadow: 0 0 6px #6c8aff, 0 0 12px rgba(108, 138, 255, 0.3);
+}
+
+[data-theme="dark"] .ipm-step--pending .ipm-step-icon {
+  background: rgba(255,255,255,0.06);
+  color: var(--text-4);
+}
+
+/* 响应式 */
+@media (max-width: 480px) {
+  .ipm-panel {
+    width: calc(100vw - 32px);
+  }
+  .ipm-banner {
+    height: 120px;
+  }
+  .ipm-pct {
+    font-size: 24px;
+  }
+}
+
