@@ -1,4 +1,4 @@
-import { resolvePaper } from './layout/resolvePaper.js'
+import { PAPER_SIZE_MAP } from './config.js'
 
 /**
  * Layout Engine - 独立的布局计算层（WPS级架构）
@@ -19,9 +19,12 @@ import { resolvePaper } from './layout/resolvePaper.js'
  */
 
 export function getPaperPixels(paperKey, dpi, isLandscape = false, customPaper = null) {
-  // ✅ 统一经 resolvePaper（Read Boundary）解析，禁止本地判断 paperKey==='Custom'
-  const resolved = resolvePaper(paperKey, customPaper)
-  const paper = { widthMM: resolved.widthMM, heightMM: resolved.heightMM }
+  let paper
+  if (paperKey === 'Custom' && customPaper?.widthMM > 0 && customPaper?.heightMM > 0) {
+    paper = { widthMM: customPaper.widthMM, heightMM: customPaper.heightMM }
+  } else {
+    paper = PAPER_SIZE_MAP[paperKey] || PAPER_SIZE_MAP.A4
+  }
   let w = paper.widthMM
   let h = paper.heightMM
   if (isLandscape) {

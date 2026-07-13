@@ -1,5 +1,14 @@
 /**
- * resolvePaper — 纸张模型「唯一事实来源」（Read Boundary）
+ * ============================================================================
+ *  resolvePaper — 纸张选择「唯一事实来源 / Single Source of Truth」
+ * ============================================================================
+ *
+ *  ⛔ CONTRACT — 消费者 MUST NOT 直接由 paperSize / customPaper 推导纸张尺寸。
+ *     所有纸张规则（Custom 生效条件、默认值回退、未来新增的 VirtualPaper /
+ *     PrinterProfile Paper / Template Paper / 自动宽高交换 等）都 ONLY 属于本文件。
+ *     任何模块需要「有效纸张尺寸」，都必须消费 resolvePaper() 的结果（Value Object），
+ *     不得重新解释输入、不得各自写 `if (paperSize === 'Custom')` 守卫。
+ *     重新解释输入 = 制造第二个决策点 = 本次 Bug 的根因（guard 漂移）。
  *
  * 设计原则：非法状态不可表示（Illegal states should be unrepresentable）。
  * settings 本不应表达 `paperSize !== 'Custom'` 却带 `customPaper` 的非法组合；
@@ -8,9 +17,12 @@
  *     （有效 = widthMM / heightMM 均为 > 0 的数字）
  *   • 其它情况 → 回退 PAPER_SIZE_MAP[paperSize]，再回退 A4
  *
- * 所有读取纸张的地方（computePaperLayout / previewCacheKey / renderKey /
- * renderers 多图 key / getPaperPixels / Print）都必须经本函数，禁止各自判断
- * `paperSize==='Custom'`，否则会出现 guard 漂移（本次 Bug 的 L3 根因）。
+ * 适用边界：仅 Preview 链路（computePaperLayout / previewCacheKey / renderKey）。
+ *   打印链路（usePrint / usePrintIntent / Sumatra）不在此范围内，保持独立守卫，
+ *   不共享本 Read Boundary —— Preview 修 Preview，不借机扩大改动范围。
+ *
+ * 纯函数纪律：resolvePaper 只读入参、返回新对象，绝不修改 paperSize /
+ *   customPaper / settings（无副作用），调用方不得依赖任何隐式写入。
  *
  * @param {string} paperSize  如 'A4' / 'A5' / 'Letter' / 'Custom'
  * @param {?{widthMM:number, heightMM:number}} customPaper
@@ -35,7 +47,11 @@ export function resolvePaper(paperSize, customPaper) {
     customPaper &&
     (customPaper.widthMM > 0 || customPaper.heightMM > 0)
   ) {
-    console.warn('[PaperInvariant] non-Custom paper contains customPaper', { paperSize, customPaper })
+    console.warn('[PaperInvariant]', {
+      reason: 'customPaper present while paperSize != Custom',
+      paperSize,
+      customPaper,
+    })
   }
 
   return { widthMM: dims.widthMM, heightMM: dims.heightMM, isCustom }

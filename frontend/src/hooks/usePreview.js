@@ -429,19 +429,6 @@ export function usePreview({ files, settings, electronAPIRef }) {
       : null
     const reUrl = getRenderEnginePreviewUrl(previewFile, USE_RENDER_ENGINE_PREVIEW, previewSpec)
     const hasRenderEngineUrl = !!reUrl
-    // ✅ 用户审核④：DEV 日志打印签名 + 关键几何，Step 4 起可与 RE 回显签名逐字节比对，
-    //    快速定位「Preview 发的」与「RE 实际消费的」是否一致（消除双算/分叉猜测）。
-    if (previewSpec && import.meta.env?.DEV) {
-      console.log(
-        '[RenderSpec %s] sig=%s paper=%dx%d scale=%s ox=%s oy=%s rotation=%s clip=%dx%d',
-        RENDER_SPEC_VERSION, renderSpecSignature(previewSpec),
-        previewSpec.paper.width, previewSpec.paper.height,
-        previewSpec.placement.scale.toFixed(4),
-        previewSpec.placement.offsetX.toFixed(1), previewSpec.placement.offsetY.toFixed(1),
-        previewSpec.rotation,
-        previewSpec.clip.width, previewSpec.clip.height,
-      )
-    }
     if (!isImageOrOfd && !previewFile._pdfData && !mergePair && !hasRenderEngineUrl) {
       clearCommitted(); return
     }
@@ -556,21 +543,6 @@ export function usePreview({ files, settings, electronAPIRef }) {
     if (hasRenderEngineUrl && reBlockedDocId !== previewFile.docId) {
       const url = reUrl
       renderEngineUrlRef.current = url
-      // ⚠️ ROTATION-DIAG：调试"第一张正常后两张旋转"用，待定位后删除。
-      // 打印每张 RE 文件的 rotation 流转链路，确认是否逐文件独立（无缓存/状态污染）。
-      if (import.meta.env?.DEV) {
-        console.log('[ROT-DIAG] RE path', {
-          docId: previewFile.docId,
-          previewFileKey: previewFile.key,
-          previewRotation,
-          specRotation: previewSpec?.rotation,
-          renderLayoutRotation: renderLayout?.rotation,
-          renderKey,
-          reUrl: url,
-          committedUrl: committedPreviewRef.current.url,
-          willReprobe: committedPreviewRef.current.url !== url,
-        })
-      }
       // ✅ Stage 0.8 Commit Buffer（修正版）：以 committedPreviewRef.current.url 判断是否需重新探测，
       //    保留上一帧直到 decode 完成才原子 commit（消灭 A→null→B 白板）。
       if (committedPreviewRef.current.url !== url) {
@@ -694,7 +666,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
           }
           setPreviewLoading(false)
           // ✅ 递增渲染版本，通知 PreviewCanvas 内容已更新（全局 Canvas 对象引用不变时需要此标记）
-          setPreviewRenderVersion(v => { const nv = v + 1; console.log('[DIAG] usePreview version bump →', nv, 'key=', previewFile.key); return nv })
+          setPreviewRenderVersion(v => v + 1)
         }
       } catch (e) {
         console.error('Canvas 渲染失败:', e)
@@ -1017,7 +989,6 @@ export function usePreview({ files, settings, electronAPIRef }) {
       }
 
       if (fmt === 'pdf') {
-        console.log('[DIAG] LOAD PDF ENTER key=', fObj.key?.slice(0,20), 'cachedPdf=', !!lruGet(previewLoadCacheRef.current, 'pdf_' + fObj.key), 'hasFile=', !!fObj.file, 'hasPrintPath=', !!fObj.printPath, 'hasIpc=', !!electronAPIRef.current?.ipcRenderer, 'docId=', fObj.docId, 'RE=', USE_RENDER_ENGINE_PREVIEW)
         // ✅ Render Engine Preview：优先走后端渲染 URL，绕过 pdfjs + Canvas
         if (USE_RENDER_ENGINE_PREVIEW && fObj.docId) {
           // 多页 PDF 拆页后每个分页项携带真实页码 pageNum；非拆页文件为 null → 回退 1
@@ -1055,15 +1026,11 @@ export function usePreview({ files, settings, electronAPIRef }) {
         if (cachedPdfData) {
           _pdfData = cachedPdfData
         } else {
-          console.log('[DIAG] LOAD BRANCH key=', fObj.key?.slice(0,20), 'hasFile=', !!fObj.file, 'hasPath=', !!fObj.printPath, 'hasIpc=', !!electronAPIRef.current?.ipcRenderer)
           if (fObj.file) {
             buffer = await fObj.file.arrayBuffer()
-            console.log('[DIAG] LOAD FILE ARRAYBUF key=', fObj.key?.slice(0,20), 'bufSize=', buffer?.byteLength)
             if (signal?.aborted) return fObj
           } else if (electronAPIRef.current?.ipcRenderer && fObj.printPath) {
-            console.log('[DIAG] LOAD IPC START key=', fObj.key?.slice(0,40))
             const fd = await electronAPIRef.current.ipcRenderer.invoke('read-file', fObj.printPath)
-            console.log('[DIAG] LOAD IPC DONE key=', fObj.key?.slice(0,40), 'succ=', fd?.success)
             if (signal?.aborted) return fObj
             if (fd.success) {
               buffer = await fd.data.arrayBuffer()
@@ -1138,8 +1105,6 @@ export function usePreview({ files, settings, electronAPIRef }) {
 
     // ✅ 在加载前先递增版本号，确保旧请求被丢弃
     const version = ++previewVersionRef.current
-    const _stack = (new Error().stack || '').split('\n').slice(1, 4).join(' | ')
-    console.log('[DIAG] doLoadPreview ENTER key=', fileObj?.key?.slice(0,40), 'v=', version, 'source=', source, 'stack=', _stack)
 
     // ✅ 保存旧的 blob URL，在新预览加载完成后再清理
     const oldBlobUrls = [...pendingBlobUrlsRef.current]
@@ -1173,7 +1138,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
     // key 必须包含所有影响 Canvas 的布局参数，且读写两侧用同一份 settings（settingsRef.current），
     // 否则命中陈旧缓存 + skipRenderRef 跳过纠正渲染 → 显示错误预览（正确性 Bug）。
     const loadedFile = await loadFilePreview(fileObj)
-    if (version !== previewVersionRef.current) { console.log('[DIAG] doLoadPreview BAIL v=', version, 'cur=', previewVersionRef.current, 'key=', loadedFile?.key?.slice(0,40)); return }
+    if (version !== previewVersionRef.current) { return }
 
     const rotation = (fileRotations[loadedFile.key] || 0)
     // 与 render effect（L306-309）保持一致的 isLandscape 计算，确保读写 key 同源
@@ -1190,10 +1155,13 @@ export function usePreview({ files, settings, electronAPIRef }) {
     const docW = loadedFile._pdfPageWidth || loadedFile._imageWidth || 0
     const docH = loadedFile._pdfPageHeight || loadedFile._imageHeight || 0
     const docOrientation = (docW && docH) ? (docW > docH ? 'landscape' : 'portrait') : contentOrient
-    if (!docW || !docH) {
-      console.log('[DIAG] DocumentState missing dims key=', loadedFile.key?.slice(0,20),
-        'pdf=', !!loadedFile._pdfPageWidth, 'img=', !!loadedFile._imageWidth,
-        'fallbackOrient=', contentOrient)
+    documentStateRef.current = {
+      id: loadedFile.key || loadedFile.id || '',
+      pageCount: loadedFile._pdfPageCount || 1,
+      pageSize: { w: docW, h: docH },
+      pageOrientation: docOrientation,
+      sourceType: loadedFile._fileFormat || 'pdf',
+      pageNum: loadedFile.pageNum || 1,
     }
     documentStateRef.current = {
       id: loadedFile.key || loadedFile.id || '',
@@ -1203,15 +1171,6 @@ export function usePreview({ files, settings, electronAPIRef }) {
       sourceType: loadedFile._fileFormat || 'pdf',
       pageNum: loadedFile.pageNum || 1,
     }
-    // V16 四层快照：DocumentState + PaperLayout（ContentLayout / RenderState 尚未填充，Phase 2）
-    const pl = paperLayoutRef.current
-    const ds = documentStateRef.current
-    const plOrient = pl.paperRect.width > pl.paperRect.height ? 'landscape' : 'portrait'
-    console.log('[DIAG] V16 SNAP key=', loadedFile.key?.slice(0,20),
-      '| DS=', ds.pageOrientation, ds.pageSize.w+'x'+ds.pageSize.h,
-      '| PL=', plOrient, 'paperRect=', pl.paperRect.w+'x'+pl.paperRect.h, 'dispRect=', pl.displayRect.w+'x'+pl.displayRect.h, 'clipRect=', pl.clipRect.w+'x'+pl.clipRect.h,
-      '| paper=', settingsRef.current.paperSize, 'isLand=', isLandscape)
-
     const cacheKey = buildPreviewCacheKey(
       { fileKey: loadedFile.key, rotation },
       {
@@ -1226,18 +1185,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
       }
     )
     const cachedCanvas = fullCacheRef.current.get(cacheKey)
-    if (import.meta.env?.DEV) {
-      console.log('[ROT-DIAG] L2 BEFORE', {
-        loadedKey: loadedFile.key,
-        previewFileKey: previewFile?.key,
-        docStateKey: documentStateRef.current?.key,
-        renderLayoutRotation: renderLayout?.rotation,
-        renderLayoutReady,
-        paperLayoutReady: !!paperLayoutRef.current,
-      })
-    }
     if (cachedCanvas) {
-      console.log('[DIAG] L2 HIT expected=', loadedFile.key, 'cacheKey=', cacheKey, 'hitKey=', cachedCanvas.__fileKey, 'hitSize=', cachedCanvas.width + 'x' + cachedCanvas.height)
       // 直接设置缓存画布，跳过整个异步渲染管线
       skipRenderRef.current = true
       previewFileRef.current = loadedFile
@@ -1287,21 +1235,10 @@ export function usePreview({ files, settings, electronAPIRef }) {
           })
         } catch (e) {
           l2Spec = null
-          if (import.meta.env?.DEV) console.log('[ROT-DIAG] L2 buildRenderLayout/buildRenderSpec THREW', e?.message, (e?.stack || '').split('\n')?.[1])
         }
       }
       const l2Url = getRenderEnginePreviewUrl(loadedFile, USE_RENDER_ENGINE_PREVIEW, l2Spec)
       setPreviewUrl(l2Url)
-      if (import.meta.env?.DEV) {
-        console.log('[ROT-DIAG] L2 cache-hit set previewUrl', {
-          l2SpecIsNull: l2Spec === null,
-          docId: loadedFile.docId,
-          key: loadedFile.key,
-          specRotation: l2Spec?.rotation,
-          url: l2Url,
-          cacheKey,
-        })
-      }
       if (loadedFile._previewImageUrl) {
         previewUrlRef.current = loadedFile._previewImageUrl
       }

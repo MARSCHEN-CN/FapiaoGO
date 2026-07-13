@@ -6,7 +6,6 @@ import pdfjsWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import { PREVIEW_DPI } from './config'
 import { rotateContentOnPaper } from './utils/canvasUtils'
 import { createLayout, normalizeLayoutItem, normalizeLayoutItems, getPaperPixels, PRINT_SAFE_MARGIN_MM, PRINTER_PROFILES, getPrintableArea } from './layout'
-import { resolvePaper, paperKeyFragment } from './layout/resolvePaper.js'
 import { isDocumentEngineEnabled, makeImageRef, ConcreteImageHandle, MemoryPixelHandle } from './documentEngine.js'  // P2C 统一入口门面（v12 契约 JS 实现；路线见 v14 §6/§13）+ ②b 桥接用 ImageHandle 值类型（facade 单向依赖，Law #2 允许）
 // ✅ renderModel.js 为死代码，renderMultipleItemsToCanvas 直接做 transform，不经过 RenderModel
 // import { createRenderModels, applyTransformToContext, restoreContext } from './renderModel'
@@ -900,7 +899,7 @@ function buildCacheKey(items, paperKey, dpi, isLandscape, rotations, slotCount, 
   const _marginKey = layoutOptions.userMargins
     ? `m${layoutOptions.userMargins.left || 0}_${layoutOptions.userMargins.right || 0}_${layoutOptions.userMargins.top || 0}_${layoutOptions.userMargins.bottom || 0}`
     : 'm0'
-  const _customKey = paperKeyFragment(resolvePaper(paperKey, layoutOptions.customPaper))
+  const _customKey = layoutOptions.customPaper?.widthMM ? `c${layoutOptions.customPaper.widthMM}x${layoutOptions.customPaper.heightMM}` : ''
   return `multi_${paperKey}_${dpi}_${isLandscape ? 'L' : 'P'}_${slotCount || items.length}_${layoutOptions.strategy || 'vertical'}_${_rotKeys}_${_marginKey}_${_customKey}_${items.map(i => i.key || i.id).join(',')}`
 }
 
@@ -1197,14 +1196,6 @@ let _offscreenPreviewCanvas = null
 let _globalPreviewVersion = 0
 let _globalPreviewLock = Promise.resolve()  // 串行化渲染锁
 
-// [DIAG] 临时诊断：给 pdfDoc 一个稳定序号，排查"切文件预览不刷新"
-let __diagDocSeq = 0
-const __diagDocMap = new WeakMap()
-function __diagDocId(pdfDoc) {
-  if (!__diagDocMap.has(pdfDoc)) __diagDocMap.set(pdfDoc, ++__diagDocSeq)
-  return __diagDocMap.get(pdfDoc)
-}
-
 function _getOffscreenCanvas(width, height) {
   if (!_offscreenPreviewCanvas) {
     _offscreenPreviewCanvas = document.createElement('canvas')
@@ -1242,8 +1233,6 @@ export function getGlobalPreviewCanvas(paperKey, dpi, isLandscape = false, margi
 
   // 离屏 Canvas 也需要重建（尺寸变了）
   _offscreenPreviewCanvas = null
-
-  console.log(`[GlobalCanvas] Created: ${paperKey}@${dpi}dpi ${isLandscape ? 'L' : 'P'} = ${pixels.width}x${pixels.height}`)
   return _globalPreviewCanvas
 }
 
@@ -1258,7 +1247,7 @@ async function _renderToGlobalCanvas(renderFn, signal) {
   }
 
   await _globalPreviewLock
-  if (signal?.aborted) { console.log('[DIAG] ABORT before render'); return }
+  if (signal?.aborted) { return }
 
   let unlock
   _globalPreviewLock = new Promise(r => { unlock = r })
@@ -1287,7 +1276,7 @@ async function _renderToGlobalCanvas(renderFn, signal) {
     await renderFn(ctx, contentW, contentH, marginL, marginT)
 
     // 原子 swap 到显示 Canvas
-    if (signal?.aborted) { console.log('[DIAG] ABORT before swap'); return }
+    if (signal?.aborted) { return }
     const displayCtx = _globalPreviewCanvas.getContext('2d')
     displayCtx.drawImage(offscreen, 0, 0)
 
@@ -1325,8 +1314,6 @@ export async function switchPreviewFile(pdfDoc, pageNum = 1, signal, rotation = 
   // 像素仍由旧 Renderer(pdf.js) 产生；documentEngine 仅提供 ImageHandle 值类型，
   // 不参与编排（不调用 getImage / 不引入 P4 pdf.js 耦合 / Engine 不知 Canvas）。
   const { dpi } = _globalPreviewCanvasConfig || {}
-  const __docId = __diagDocId(pdfDoc)
-  console.log(`[DIAG] switchPreviewFile ENTER doc=${__docId} page=${pageNum} rot=${rotation}`)
   const v = await _renderToGlobalCanvas(async (ctx, contentW, contentH, marginL, marginT) => {
     if (signal?.aborted) return
     const page = await pdfDoc.getPage(pageNum)
@@ -1346,15 +1333,6 @@ export async function switchPreviewFile(pdfDoc, pageNum = 1, signal, rotation = 
     // 仅当尺寸变化时重新分配 backing store；同尺寸（同页切换）时零重分配。
     const tempCanvas = _getPreviewPdfTempCanvas(tw, th)
     const tctx = tempCanvas.getContext('2d')
-    // ✅ DIAG：记录切换文件前 tctx 的变换矩阵，确认是否存在上一文件残留（用户假设：GlobalCanvas transform 未 reset）
-    if (import.meta.env?.DEV) {
-      const m = tctx.getTransform ? tctx.getTransform() : null
-      console.log('[ROT-DIAG] switchPreviewFile tempCanvas transform BEFORE render', {
-        key: __diagDocId(pdfDoc), rotation,
-        w: tempCanvas.width, h: tempCanvas.height,
-        transform: m ? [m.a, m.b, m.c, m.d, m.e, m.f] : 'n/a',
-      })
-    }
     // ✅ 修复（B-2.2 调查）：复用模块级 tempCanvas 前必须 reset 变换矩阵 + 清空旧像素。
     //    pdf.js 的 page.render 在复用 ctx 上可能残留/叠加变换（取决于 pdf.js 版本），
     //    且 pdf.js 不会主动 clearRect，旧文件像素会透出。两者都会造成「第一张正常、后续旋转/错位」。
@@ -1376,7 +1354,6 @@ export async function switchPreviewFile(pdfDoc, pageNum = 1, signal, rotation = 
 
     await page.cleanup()
   }, signal)
-  console.log(`[DIAG] switchPreviewFile EXIT doc=${__docId} page=${pageNum} rot=${rotation} → globalVersion=${v}`)
   return v
 }
 

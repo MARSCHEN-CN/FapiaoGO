@@ -467,7 +467,11 @@ function AppContent() {
         clearTimeout(printTimeoutRef.current)
       }
     }
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  // 空依赖数组是安全的：所有 handler 内部只使用 ref（printProgressRef、completedCountRef 等，引用稳定）
+  // 和 setState 函数式更新（setSettings(prev=>...)、setFiles(prev=>...) 等，引用稳定），
+  // 不存在过期闭包风险。IPC 监听器应仅在挂载时注册一次。
+  }, [])
 
   // ============================
   // 设置窗口模式
