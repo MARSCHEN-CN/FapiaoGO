@@ -7,7 +7,8 @@
  * V16 四层 State 类型定义：DocumentState → PaperLayout → ContentLayout → RenderState
  */
 
-import { PAPER_SIZE_MAP, PREVIEW_DPI } from './config.js'
+import { PREVIEW_DPI } from './config.js'
+import { resolvePaper } from './layout/resolvePaper.js'
 
 // ── DocumentState ──────────────────────────────────────────────
 // 由 loadFilePreview 确定，与渲染器无关
@@ -117,10 +118,10 @@ export function resetPaperLayoutBuildCount() { _paperLayoutBuildCount = 0 }
  */
 export function computePaperLayout(spec) {
   const { paperSize = 'A4', customPaper = null, margins = {} } = spec || {}
-  const paperDims = customPaper || PAPER_SIZE_MAP[paperSize] || PAPER_SIZE_MAP.A4
+  const paper = resolvePaper(paperSize, customPaper)
   const dpi = PREVIEW_DPI
-  const paperW = Math.round(paperDims.widthMM / 25.4 * dpi)
-  const paperH = Math.round(paperDims.heightMM / 25.4 * dpi)
+  const paperW = Math.round(paper.widthMM / 25.4 * dpi)
+  const paperH = Math.round(paper.heightMM / 25.4 * dpi)
 
   const mTop = Math.round((margins.top ?? 3) / 25.4 * dpi)
   const mBottom = Math.round((margins.bottom ?? 3) / 25.4 * dpi)

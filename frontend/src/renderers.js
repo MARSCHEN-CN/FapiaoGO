@@ -6,6 +6,7 @@ import pdfjsWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import { PREVIEW_DPI } from './config'
 import { rotateContentOnPaper } from './utils/canvasUtils'
 import { createLayout, normalizeLayoutItem, normalizeLayoutItems, getPaperPixels, PRINT_SAFE_MARGIN_MM, PRINTER_PROFILES, getPrintableArea } from './layout'
+import { resolvePaper, paperKeyFragment } from './layout/resolvePaper.js'
 import { isDocumentEngineEnabled, makeImageRef, ConcreteImageHandle, MemoryPixelHandle } from './documentEngine.js'  // P2C 统一入口门面（v12 契约 JS 实现；路线见 v14 §6/§13）+ ②b 桥接用 ImageHandle 值类型（facade 单向依赖，Law #2 允许）
 // ✅ renderModel.js 为死代码，renderMultipleItemsToCanvas 直接做 transform，不经过 RenderModel
 // import { createRenderModels, applyTransformToContext, restoreContext } from './renderModel'
@@ -899,7 +900,7 @@ function buildCacheKey(items, paperKey, dpi, isLandscape, rotations, slotCount, 
   const _marginKey = layoutOptions.userMargins
     ? `m${layoutOptions.userMargins.left || 0}_${layoutOptions.userMargins.right || 0}_${layoutOptions.userMargins.top || 0}_${layoutOptions.userMargins.bottom || 0}`
     : 'm0'
-  const _customKey = layoutOptions.customPaper?.widthMM ? `c${layoutOptions.customPaper.widthMM}x${layoutOptions.customPaper.heightMM}` : ''
+  const _customKey = paperKeyFragment(resolvePaper(paperKey, layoutOptions.customPaper))
   return `multi_${paperKey}_${dpi}_${isLandscape ? 'L' : 'P'}_${slotCount || items.length}_${layoutOptions.strategy || 'vertical'}_${_rotKeys}_${_marginKey}_${_customKey}_${items.map(i => i.key || i.id).join(',')}`
 }
 

@@ -462,3 +462,7 @@ frontend/src/rotation_flow_cachekey.test.js
 _check.txt
 _dl_py312.tar.gz
 backend/start.bat
+frontend/src/layout/resolvePaper.test.js
+preview-aspect-ratio-diagnosis.md
+preview-strange-review.md
+preview-v16-v17-architecture-review.md

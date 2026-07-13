@@ -10,6 +10,7 @@ import { getRenderEnginePreviewUrl } from '../utils/previewTarget'
 import { placeholderPaperLayout, emptyContentLayout, initialRenderState, computePaperLayout } from '../previewState'
 import { buildRenderLayout } from '../layout/RenderLayoutFactory.js'
 import { buildRenderSpec, RENDER_SPEC_VERSION, renderSpecSignature } from '../layout/renderSpec.js'
+import { resolvePaper, paperKeyFragment } from '../layout/resolvePaper.js'
 
 // ✅ 懒加载 PDF 渲染模块，避免首屏加载 1.4 MB 的 pdfjs-dist + react-pdf
 let _renderers = null
@@ -454,12 +455,13 @@ export function usePreview({ files, settings, electronAPIRef }) {
     //   横向内容+横向纸 → isLandscape=false（纸保持横向，内容不旋转直接铺）
     //   竖向内容+横向纸 → isLandscape=true （纸 swap 成竖向，内容旋转 90° 铺）
     const contentOrient = detectDocumentOrientation(previewFile)
-    const paperDims = PAPER_SIZE_MAP[paperSize]
-    const paperOrient = paperDims && paperDims.widthMM > paperDims.heightMM ? 'landscape' : 'portrait'
+    const paper = resolvePaper(paperSize, settings.customPaper)
+    const paperOrient = paper.widthMM > paper.heightMM ? 'landscape' : 'portrait'
     const isLandscape = contentOrient !== paperOrient
     // ✅ renderKey 必须包含合并模式、合并组所有文件的旋转值，以确保模式切换和多文件旋转都能触发重渲染
     const mergeRotations = mergePair?.map(m => `${m?.key}:${fileRotations[m?.key] || 0}`).join(',') || ''
-    const renderKey = `${previewFile.key}-${paperSize}-${isLandscape}-${currentRotation}-${settings.mergeMode || ''}-${mergePair?.map(m => m?.key).join(',') || ''}-${mergeRotations}-m${settings.marginLeft}_${settings.marginRight}_${settings.marginTop}_${settings.marginBottom}-c${settings.customPaper?.widthMM}x${settings.customPaper?.heightMM}-re${reBlockedDocId || ''}`
+    const paperFrag = paperKeyFragment(paper)
+    const renderKey = `${previewFile.key}-${paperSize}-${isLandscape}-${currentRotation}-${settings.mergeMode || ''}-${mergePair?.map(m => m?.key).join(',') || ''}-${mergeRotations}-m${settings.marginLeft}_${settings.marginRight}_${settings.marginTop}_${settings.marginBottom}-${paperFrag}-re${reBlockedDocId || ''}`
     if (lastRenderKeyRef.current === renderKey) { return }
     lastRenderKeyRef.current = renderKey
 

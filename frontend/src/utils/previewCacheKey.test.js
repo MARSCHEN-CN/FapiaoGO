@@ -47,17 +47,27 @@ test('different mergeMode => different key', () => {
   assert.notEqual(none, merge2)
 })
 
-test('different customPaper => different key', () => {
-  const base = { paperSize: 'A4', isLandscape: false, mergeMode: 'none',
+// 🔴 回归护栏（L3 收口）：customPaper 仅在 paperSize==='Custom' 时生效。
+// 非 Custom 时即使携带残留 customPaper，也必须被忽略 → key 与无 customPaper 一致。
+test('customPaper ignored unless paperSize===Custom', () => {
+  const base = { isLandscape: false, mergeMode: 'none',
     margins: { left: 3, right: 3, top: 3, bottom: 3 } }
-  const a4 = buildPreviewCacheKey(doc, { ...base, customPaper: { widthMM: 210, heightMM: 297 } })
-  const custom = buildPreviewCacheKey(doc, { ...base, customPaper: { widthMM: 200, heightMM: 300 } })
-  assert.notEqual(a4, custom)
+  const a4Plain = buildPreviewCacheKey(doc, { ...base, paperSize: 'A4', customPaper: null })
+  const a4WithCustom = buildPreviewCacheKey(doc, { ...base, paperSize: 'A4', customPaper: { widthMM: 210, heightMM: 297 } })
+  assert.equal(a4Plain, a4WithCustom)  // 非 Custom 时 customPaper 必须被忽略
 })
 
-// 布局字段缺失也不应抛错（兜底 0_0_0_0 / 空 customStr）
+test('different customPaper (Custom) => different key', () => {
+  const base = { isLandscape: false, mergeMode: 'none',
+    margins: { left: 3, right: 3, top: 3, bottom: 3 } }
+  const c1 = buildPreviewCacheKey(doc, { ...base, paperSize: 'Custom', customPaper: { widthMM: 210, heightMM: 297 } })
+  const c2 = buildPreviewCacheKey(doc, { ...base, paperSize: 'Custom', customPaper: { widthMM: 200, heightMM: 300 } })
+  assert.notEqual(c1, c2)
+})
+
+// 布局字段缺失也不应抛错，且非 Custom 时不产生 customPaper 片段（L3 收口）
 test('tolerates missing optional layout fields', () => {
   const key = buildPreviewCacheKey(doc, { paperSize: 'A4', isLandscape: false, mergeMode: 'none' })
   assert.match(key, /mg0_0_0_0/)
-  assert.match(key, /c_/)
+  assert.doesNotMatch(key, /c\d+x\d+/)  // 非 Custom → 不应出现 c{w}x{h} 片段
 })

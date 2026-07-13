@@ -20,6 +20,9 @@
  *          margins?: {left:number, right:number, top:number, bottom:number}}} layoutState
  * @returns {string}
  */
+
+import { resolvePaper, paperKeyFragment } from '../layout/resolvePaper.js'
+
 export function buildPreviewCacheKey(documentState, layoutState) {
   const { fileKey, rotation } = documentState
   const {
@@ -35,8 +38,8 @@ export function buildPreviewCacheKey(documentState, layoutState) {
   const marginStr = margins
     ? `${margins.left}_${margins.right}_${margins.top}_${margins.bottom}`
     : '0_0_0_0'
-  const customStr = customPaper ? `${customPaper.widthMM}x${customPaper.heightMM}` : ''
-  const layoutKey = `p${paperSize}_l${isLandscape ? 1 : 0}_m${mergeMode || 'none'}_c${customStr}_mg${marginStr}`
+  const customStr = paperKeyFragment(resolvePaper(paperSize, customPaper))
+  const layoutKey = `p${paperSize}_l${isLandscape ? 1 : 0}_m${mergeMode || 'none'}_${customStr}_mg${marginStr}`
 
   return `${documentKey}@${layoutKey}`
 }

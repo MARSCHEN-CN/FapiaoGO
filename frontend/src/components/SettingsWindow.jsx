@@ -318,11 +318,13 @@ export default function SettingsWindow({ settings, saveSettings, printers, elect
                     value={settings.paperSize}
                     onChange={(e) => {
                       const newSize = e.target.value
-                      const updates = { paperSize: newSize, paperkind: undefined }
+                      // ✅ 写边界：确保非 Custom 时 customPaper 真正被移除，
+                      //    禁止产生 { paperSize:'A5', customPaper:{...} } 非法组合（L2/L3 收口）
+                      const next = { ...settings, paperSize: newSize, paperkind: undefined }
                       if (newSize !== 'Custom') {
-                        delete updates.customPaper
+                        delete next.customPaper
                       }
-                      saveSettingsWithToast({ ...settings, ...updates })
+                      saveSettingsWithToast(next)
                     }}
                   >
                     {mergedPaperOptions.map(p => {
