@@ -1,7 +1,9 @@
 /**
  * TopBarMenu — 顶栏下拉菜单（懒加载）
- * 包含：菜单下拉、主题卡片、快捷键卡片、关于弹窗
+ * 包含：菜单下拉、主题卡片、快捷键卡片、关于弹窗（via Portal 到 document.body）
  */
+import { createPortal } from 'react-dom'
+
 export default function TopBarMenu({
   showDropdown,
   showThemeSubmenu,
@@ -135,8 +137,8 @@ export default function TopBarMenu({
         </div>
       )}
 
-      {/* 关于弹窗 */}
-      {aboutModalOpen && (
+      {/* 关于弹窗 — 用 Portal 挂到 document.body，脱离布局树，避免 position: fixed 受祖先包含块影响 */}
+      {aboutModalOpen && createPortal(
         <div className="tb-about-overlay" onClick={() => setAboutModalOpen(false)}>
           <div className="tb-about-modal" onClick={e => e.stopPropagation()}>
             <button className="tb-about-close" onClick={() => setAboutModalOpen(false)}>
@@ -155,7 +157,8 @@ export default function TopBarMenu({
             <p className="tb-about-version">版本 1.0.0</p>
             <p className="tb-about-desc">基于 Electron + React 构建</p>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </>
   )
