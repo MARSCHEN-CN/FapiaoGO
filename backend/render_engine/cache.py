@@ -46,15 +46,20 @@ class RenderCache:
             entry = self._store.get(cache_key)
             if entry is None:
                 return None
-            if time.time() - entry.created_at > self._ttl:
+            now = time.time()
+            if now - entry.created_at > self._ttl:
                 del self._store[cache_key]
                 return None
+            entry.created_at = now
             return entry
 
     def put(self, cache_key: str, data: bytes, fmt: str, etag: str):
         with self._lock:
-            if len(self._store) >= self._max:
+            is_new = cache_key not in self._store
+            if is_new and len(self._store) >= self._max:
                 self._evict_expired()
+                while len(self._store) >= self._max:
+                    self._evict_oldest()
             self._store[cache_key] = CacheEntry(
                 data=data, fmt=fmt, etag=etag, size=len(data),
             )

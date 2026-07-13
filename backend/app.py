@@ -44,17 +44,30 @@ _page_cache: dict = {}  # {page_id: {"bytes": bytes, "created_at": ts, "last_use
 _page_cache_lock = threading.Lock()
 _page_cache_ttl = 3600  # 缓存有效期（秒），默认 1 小时
 _page_cache_max = 500   # LRU 硬上限：超限时按 last_used 驱逐，杜绝无限增长
+_page_cache_cleanup_interval = 300  # 后台清理间隔（秒），5分钟
 
 # Document Pipeline 映射：page_id → {doc_id, page}（轻量，替代 _page_cache 直接引用）
 _page_registry: dict = {}  # {page_id: {"doc_id": "...", "page": int}}
 _page_registry_lock = threading.Lock()
+_page_cache_stop_event = threading.Event()
 
 
-def _page_cache_evict():
+def _page_cache_periodic_cleanup():
+    """后台线程：定期清理过期缓存条目"""
+    while not _page_cache_stop_event.is_set():
+        try:
+            _page_cache_evict(force_expired=True)
+        except Exception:
+            logger.debug("[page_cache] 定期清理异常", exc_info=True)
+        _page_cache_stop_event.wait(_page_cache_cleanup_interval)
+
+
+def _page_cache_evict(force_expired: bool = False):
     """
     单页缓存惰性清理 + LRU 硬上限。
 
-    - 仅当 len(_page_cache) > _page_cache_max 时触发（保持惰性，避免每次请求全表扫描）。
+    - force_expired=True 时：即使未超容量也清理过期项（供后台线程调用）。
+    - 仅当 len(_page_cache) > _page_cache_max 时触发 LRU 驱逐（保持惰性）。
     - 触发后：先清过期项（created_at 超过 TTL），若仍超限，再按 last_used 升序
       驱逐最久未用项，直到 len 回到 _page_cache_max（真正的硬上限，杜绝无限增长）。
     - 任何被驱逐的 key，联动从 _page_registry 删除，避免 registry 悬空 / 无限增长。
@@ -64,13 +77,13 @@ def _page_cache_evict():
     cutoff = time.time() - _page_cache_ttl
     evicted = []
     with _page_cache_lock:
-        if len(_page_cache) > _page_cache_max:
-            # 1) 过期项优先清理
+        need_check = force_expired or len(_page_cache) > _page_cache_max
+        if need_check:
             for k in [k for k, v in _page_cache.items()
                       if v.get("created_at", 0) < cutoff]:
                 _page_cache.pop(k, None)
                 evicted.append(k)
-            # 2) 仍超限 → 按 LRU（last_used 升序）驱逐至硬上限
+        if len(_page_cache) > _page_cache_max:
             over = len(_page_cache) - _page_cache_max
             if over > 0:
                 lru = sorted(
@@ -503,21 +516,53 @@ def _amount_to_chinese(amount: float) -> str:
     if amount == 0:
         return "零元整"
     digits = "零壹贰叁肆伍陆柒捌玖"
-    units = ["", "拾", "佰", "仟", "万", "拾", "佰", "仟", "亿"]
-    decimal_units = ["角", "分", "厘"]
     integer_part = int(amount)
     decimal_part = round(amount - integer_part, 2)
+    
+    def _convert_section(n, has_wan=False):
+        if n == 0:
+            return ""
+        section_units = ["", "拾", "佰", "仟"]
+        s = ""
+        zero_flag = False
+        for i in range(4):
+            d = n % 10
+            if d == 0:
+                if zero_flag and s and not s.startswith("零"):
+                    s = "零" + s
+                zero_flag = True
+            else:
+                s = digits[d] + section_units[i] + s
+                zero_flag = False
+            n //= 10
+            if n == 0:
+                break
+        return s
     
     def _convert_integer(n):
         if n == 0:
             return "零"
-        s = ""
-        i = 0
-        while n > 0:
-            s = digits[n % 10] + units[i] + s if n % 10 != 0 else digits[n % 10] + s
-            n //= 10
-            i += 1
-        return s
+        sections = []
+        yi = n // 100000000
+        wan = (n // 10000) % 10000
+        ge = n % 10000
+        zero_pending = False
+        if yi > 0:
+            sections.append(_convert_section(yi) + "亿")
+        if wan > 0:
+            if yi > 0 and wan < 1000:
+                sections.append("零")
+            sections.append(_convert_section(wan) + "万")
+        elif yi > 0 and ge > 0:
+            sections.append("零")
+        if ge > 0:
+            if (yi > 0 or wan > 0) and ge < 1000:
+                sections.append("零")
+            sections.append(_convert_section(ge))
+        result = "".join(sections)
+        while "零零" in result:
+            result = result.replace("零零", "零")
+        return result.rstrip("零")
     
     result = _convert_integer(integer_part) + "元"
     dec = int(round(decimal_part * 100))
@@ -528,6 +573,8 @@ def _amount_to_chinese(amount: float) -> str:
         fen = dec % 10
         if jiao > 0:
             result += digits[jiao] + "角"
+        elif fen > 0:
+            result += "零"
         if fen > 0:
             result += digits[fen] + "分"
     return result
@@ -1195,10 +1242,18 @@ if __name__ == '__main__':
     if ttl_cleaned > 0:
         logger.info("[Cache] TTL 清理: %d 个过期文件", ttl_cleaned)
     db_module.cleanup_expired_invoices()
+    _page_cache_cleanup_thread = threading.Thread(
+        target=_page_cache_periodic_cleanup, daemon=True, name="page-cache-cleanup"
+    )
+    _page_cache_cleanup_thread.start()
+    logger.info("[App] 页面缓存后台清理线程已启动")
     import atexit
     @atexit.register
     def shutdown_job_manager():
         logger.info("[App] 正在关闭任务队列管理器...")
         get_job_manager().shutdown()
         logger.info("[App] 任务队列管理器已关闭")
+    @atexit.register
+    def stop_page_cache_cleanup():
+        _page_cache_stop_event.set()
     app.run(port=5000, debug=True, threaded=True)

@@ -345,9 +345,9 @@ class CacheManager:
 
         now_str = now().isoformat()
 
-        # 构建元数据包（v10 新增版本元数据）
-        serialized = _json_dumps(value) if not isinstance(value, str) else value
-        data_size = len(serialized.encode('utf-8')) if isinstance(serialized, str) else len(serialized)
+        # 预先序列化 value 计算大小（避免后续重复序列化）
+        value_serialized = _json_dumps(value) if not isinstance(value, str) else value
+        data_size = len(value_serialized.encode('utf-8')) if isinstance(value_serialized, str) else len(value_serialized)
 
         meta = {
             'namespace': namespace,
@@ -359,7 +359,6 @@ class CacheManager:
             'created_at': now_str,
             'accessed_at': now_str,
             'hit_count': 0,
-            # v10 新增：版本元数据，便于调试和追踪
             'schema_version': CACHE_SCHEMA_VERSION,
             'engine_version': ENGINE_VERSION,
             'extractor_version': EXTRACTOR_VERSION,
@@ -375,9 +374,9 @@ class CacheManager:
         }
 
         try:
-            # 容量检查
             self._enforce_capacity()
 
+            entry_serialized = _json_dumps(entry)
             with self._lock:
                 pre_existed = os.path.exists(path)
                 prev_size = os.path.getsize(path) if pre_existed else 0
@@ -385,7 +384,7 @@ class CacheManager:
                     mode='w', suffix='.json', dir=ns_dir,
                     encoding='utf-8', delete=False
                 ) as f:
-                    f.write(_json_dumps(entry))
+                    f.write(entry_serialized)
                     temp_path = f.name
                 os.replace(temp_path, path)
                 new_size = os.path.getsize(path)

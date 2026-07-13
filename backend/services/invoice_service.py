@@ -47,15 +47,21 @@ def safe_float(v, default=0.0):
     if v is None:
         return default
     try:
-        return float(
-            str(v)
+        s = str(v).strip()
+        s = (s
             .replace(',', '')
             .replace('¥', '')
             .replace('￥', '')
             .replace('*', '')
-            .replace('-', '')
+            .replace(' ', '')
             .strip()
         )
+        negative = '-' in s
+        s = s.replace('-', '')
+        if not s:
+            return default
+        result = float(s)
+        return -result if negative else result
     except (ValueError, TypeError):
         return default
 
@@ -153,10 +159,18 @@ def parse_invoice_service(file_bytes, filename, auto_orient=True, force_ocr=Fals
     # 直接使用传入的 bytes；构造 BytesIO 供向下兼容的解析器使用
     raw_bytes = file_bytes
     file = io.BytesIO(raw_bytes)
-    # 文件内容标识：前 1KB + 文件长度的 SHA-256，降低大文件全量哈希开销
-    # 缓存 key 不需要加密级防碰撞，截断哈希足以区分不同文件
-    _head = raw_bytes[:1024]
-    hash_sha256 = hashlib.sha256(_head + str(len(raw_bytes)).encode()).hexdigest()
+    # 文件内容标识：小文件全量哈希；大文件采用头、中、尾多点采样 + 文件长度
+    # 相比仅取前 1KB，大幅降低不同文件哈希碰撞概率
+    file_len = len(raw_bytes)
+    if file_len <= 4 * 1024 * 1024:
+        hash_input = raw_bytes
+    else:
+        _head = raw_bytes[:1024]
+        _mid_offset = file_len // 2
+        _mid = raw_bytes[_mid_offset:_mid_offset + 1024]
+        _tail = raw_bytes[-1024:]
+        hash_input = _head + _mid + _tail + str(file_len).encode()
+    hash_sha256 = hashlib.sha256(hash_input).hexdigest()
     bbox_data = []
     from_cache = False
 

@@ -123,24 +123,20 @@ async function checkPythonEnv() {
 }
 
 async function _doCheckPythonEnv() {
-  // 第一步：找 Python（永久缓存，但 checkPythonEnv 本身有 TTL 兜底）
-  const candidates = ['python3', 'python', 'py']
+  const isDev = !process.resourcesPath || process.resourcesPath.includes('app.asar') === false
+  
   let pythonCmd = null
-  for (const cmd of candidates) {
-    try {
-      const { stdout } = await execPromise(cmd, ['-c', 'print("ok")'], { timeout: 5000 })
-      if (stdout.trim() === 'ok') {
-        pythonCmd = cmd
-        console.log('[PDF_MARGIN] Using python command:', cmd)
-        break
-      }
-    } catch {
-      // 继续尝试下一个候选
-    }
+  
+  if (isDev) {
+    pythonCmd = path.join(__dirname, '../backend/venv/Scripts/python.exe')
+    console.log('[PDF_MARGIN] Development mode: using venv Python:', pythonCmd)
+  } else {
+    pythonCmd = path.join(process.resourcesPath, 'backend/venv/Scripts/python.exe')
+    console.log('[PDF_MARGIN] Production mode: using venv Python:', pythonCmd)
   }
 
-  if (!pythonCmd) {
-    console.warn('[PDF_MARGIN] No Python executable found in PATH')
+  if (!fs.existsSync(pythonCmd)) {
+    console.warn('[PDF_MARGIN] Python executable not found at:', pythonCmd)
     const result = { ok: false, cmd: null }
     _envCheckResult = result
     _envCheckTime = Date.now()
