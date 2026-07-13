@@ -11,7 +11,13 @@
   flex-direction: column;
   height: 100vh;
   min-width: 0;
-  animation: fadeInUp 0.4s var(--ease) 0.1s both;
+  animation: mainFadeIn 0.4s var(--ease) 0.1s both;
+}
+
+/* 纯 opacity 渐入动画，不包含 transform，避免破坏内部 position: fixed 的包含块（Chrome 行为） */
+@keyframes mainFadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }
 
 /* ======================== Top Toolbar ======================== */
