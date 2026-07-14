@@ -7,7 +7,7 @@ import { detectDocumentOrientation } from '../utils/detectOrientation'
 import { getForcedLandscape } from '../utils/mergeMode'
 import { buildPreviewCacheKey } from '../utils/previewCacheKey'
 import { getRenderEnginePreviewUrl } from '../utils/previewTarget'
-import { placeholderPaperLayout, emptyContentLayout, initialRenderState, computePaperLayout } from '../previewState'
+import { emptyContentLayout, initialRenderState, computePaperLayout } from '../previewState'
 import { buildRenderLayout } from '../layout/RenderLayoutFactory.js'
 import { buildRenderSpec, RENDER_SPEC_VERSION, renderSpecSignature } from '../layout/renderSpec.js'
 import { resolvePaper, paperKeyFragment } from '../layout/resolvePaper.js'
@@ -116,8 +116,21 @@ export function usePreview({ files, settings, electronAPIRef }) {
   settingsRef.current = settings
   // ── V16 Preview State Model ──
   const documentStateRef = useRef(null)
-  const paperLayoutRef = useRef(placeholderPaperLayout())
-  const [paperLayoutVersion, setPaperLayoutVersion] = useState(0)
+  // ✅ PaperLayout 是纯派生状态（V16 模型）：settings → computePaperLayout(useMemo)。
+  //    不再用 ref + useEffect 间接层维护（消除 ref/effect 双状态 + margin 一拍滞后）。
+  //    deps 仅含 PaperSpec 字段（纸张/边距/custom），不含 previewFile → 切文件不重建（Stage 0 验收）。
+  const paperLayout = useMemo(
+    () => computePaperLayout({
+      paperSize: settings.paperSize,
+      customPaper: settings.customPaper,
+      margins: {
+        top: settings.marginTop, right: settings.marginRight,
+        bottom: settings.marginBottom, left: settings.marginLeft,
+      },
+    }),
+    [settings.paperSize, settings.customPaper?.widthMM, settings.customPaper?.heightMM,
+     settings.marginTop, settings.marginRight, settings.marginBottom, settings.marginLeft]
+  )
   const [contentLayout, setContentLayout] = useState(null)
   const [renderState, setRenderState] = useState(initialRenderState())
 
@@ -144,7 +157,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
   //    若后端未按 spec.rotation 出图，此处仍会触发，作为 Stage 1（RE 消费 RenderLayout）的契约守卫。
   useEffect(() => {
     if (!previewImgDims || previewImgDims.w <= 0 || previewImgDims.h <= 0) return
-    const pl = paperLayoutRef.current
+    const pl = paperLayout
     if (!pl || !pl.paperRect?.w) return
     // 🆕 V17：图像方向应与「有效纸张方向(paperLandscape)」一致（纸随内容）。
     // 旧逻辑比的是 paperRect 固定方向，在 paperLandscape 模型下恒错，已改为比 paperLandscape。
@@ -156,7 +169,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
       console.warn('[V17 ASSERT] 图像方向(%s) 与有效纸张方向(paperLandscape=%s) 不一致 dims=%dx%d',
         imgOrient, paperLandscape, previewImgDims.w, previewImgDims.h)
     }
-  }, [previewImgDims, paperLayoutVersion])
+  }, [previewImgDims, paperLayout])
 
   /** 从 loadedFile 提取 DocumentState */
   function computeDocumentState(loadedFile) {
@@ -392,12 +405,13 @@ export function usePreview({ files, settings, electronAPIRef }) {
   // ── Stage 1：RenderLayout 唯一派生点（F3/F5）──
   // Preview 消费其 placement/rotation/clip，不再自算 fit/scale/swap（消除第二套算法）。
   // 输入 documentState 合并 previewRotation（documentStateRef 不含 rotation 字段）；
-  // 依赖 paperLayoutVersion(纸张/边距变化) + previewRotation(旋转) + previewFile(切文件→documentState 重建)。
+  // 依赖 paperLayout(纸张/边距派生，useMemo) + previewRotation(旋转) + previewFile(切文件→documentState 重建)。
+  // paperLayout 在 Render 阶段随 settings 同步派生 → margin 修改当帧即生效，无 effect 滞后。
   const renderLayout = useMemo(
     () => {
-      return buildRenderLayout(paperLayoutRef.current, { ...(documentStateRef.current || {}), rotation: previewRotation })
+      return buildRenderLayout(paperLayout, { ...(documentStateRef.current || {}), rotation: previewRotation })
     },
-    [paperLayoutVersion, previewRotation, previewFile]
+    [paperLayout, previewRotation, previewFile]
   )
   // renderLayout 就绪（placement.scale>0）才用 Factory 派生；否则回退旧 bitmap 拟合，行为不变。
   const renderLayoutReady = !!(renderLayout && renderLayout.placement && renderLayout.placement.scale > 0)
@@ -726,7 +740,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
 
   // ── ContentLayout：内容在 PaperLayout.contentRect 内的位置和缩放 + 纸张→窗口 zoom ──
   const computedContentLayout = useMemo(() => {
-    const pl = paperLayoutRef.current
+    const pl = paperLayout
     if (!pl || !pl.contentRect?.w) return emptyContentLayout()
 
     // ── 纸张→窗口缩放基线（ViewportTransform，Preview 职责，永不进 Factory）──
@@ -804,31 +818,10 @@ export function usePreview({ files, settings, electronAPIRef }) {
       paperDisplayScale: paperScale,
       paperDisplayRect: { w: paperDisplayW, h: paperDisplayH },
     }
-  }, [previewCanvas, previewImgDims, previewRotation, containerSize, zoomMode, zoomPercent, paperLayoutVersion, renderLayout, settings.mergeMode])
+  }, [previewCanvas, previewImgDims, previewRotation, containerSize, zoomMode, zoomPercent, paperLayout, renderLayout, settings.mergeMode])
 
   // 同步到 state，使外部可消费
   useEffect(() => { setContentLayout(computedContentLayout) }, [computedContentLayout])
-
-  // ── Stage 0: PaperSpec → PaperLayout relayout 链（纯 relayout，不 reload） ──
-  // PaperLayout 仅依赖 PaperSpec；PaperSpec 变化只重算 PaperLayout + bump version，
-  // 不调 loadFilePreview、不 reset previewFile，因此"不改文件时 PaperLayout 不被重建"。
-  const recomputePaperLayout = useCallback(() => {
-    const s = settingsRef.current
-    paperLayoutRef.current = computePaperLayout({
-      paperSize: s.paperSize,
-      customPaper: s.customPaper,
-      margins: { top: s.marginTop, right: s.marginRight, bottom: s.marginBottom, left: s.marginLeft },
-    })
-    setPaperLayoutVersion(v => v + 1)
-  }, [])
-
-  // 仅 PaperSpec 字段进入 deps：文件切换不改 PaperSpec → 此 effect 不在切换时运行。
-  // PaperLayout 现在由本 relayout 链（recomputePaperLayout）独家构造；
-  // doLoadPreview 在文件切换时不再触碰 PaperLayout（v1.1：PaperLayout 与 DocumentState 解耦）。
-  useEffect(() => {
-    recomputePaperLayout()
-  }, [settings.paperSize, settings.marginTop, settings.marginRight, settings.marginBottom, settings.marginLeft,
-      settings.customPaper?.widthMM, settings.customPaper?.heightMM, recomputePaperLayout])
 
   // 供 zoom 控件消费的 fitScale（来自 contentLayout，只有一条依赖链）
   useEffect(() => {
@@ -1154,7 +1147,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
     const paperOrient = paper.widthMM > paper.heightMM ? 'landscape' : 'portrait'
     const isLandscape = contentOrient !== paperOrient
 
-    // ── PaperLayout 由 relayout 链（recomputePaperLayout）独家构造，此处不再重复 ──
+    // ── PaperLayout 现在由 useMemo 纯派生（settings → computePaperLayout），此处不再重复 ──
     // PaperLayout 仅依赖 PaperSpec，与当前文档无关；文件切换不改变 PaperLayout
     // （满足验收：切换文件 / 导入新文件 不重生 PaperLayout）。
 
@@ -1223,11 +1216,11 @@ export function usePreview({ files, settings, electronAPIRef }) {
       // ✅ 修复（B-2.2 调查定案，2026-07-13）：L2 HIT 在 doLoadPreview 同步阶段执行，
       //    此时 renderLayoutReady（依赖 previewFile state 的 useMemo）仍是上一帧陈旧值=false，
       //    用它会把本应重建的 l2Spec 门控跳过 → URL 裸奔 → 后端 rotation=0 → 横向内容落竖纸错位。
-      //    改用同步可用且与 L391 memo 输入一致的 paperLayoutRef.current / documentStateRef.current 直接重建，
+      //    改用同步可用且与 renderLayout memo 输入一致的 paperLayout / documentStateRef.current 直接重建，
       //    不依赖尚未提交的 useMemo。这正是 V16「renderLayout 实时派生、不缓存」的设计意图。
-      if (paperLayoutRef.current) {
+      if (paperLayout) {
         try {
-          const l2Layout = buildRenderLayout(paperLayoutRef.current, {
+          const l2Layout = buildRenderLayout(paperLayout, {
             ...(documentStateRef.current || {}),
             rotation: fileRotations[loadedFile.key] || 0,
           })
@@ -1289,7 +1282,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
         } catch (e) { /* ignore already revoked */ }
       }
     }
-  }, [settings.mergeMode, loadPairItemForPreview, loadFilePreview, fullCacheRef, skipRenderRef, previewFileRef, previewVersionRef, previewUrlRef, pendingBlobUrlsRef, fileRotations])
+  }, [settings.mergeMode, loadPairItemForPreview, loadFilePreview, fullCacheRef, skipRenderRef, previewFileRef, previewVersionRef, previewUrlRef, pendingBlobUrlsRef, fileRotations, paperLayout])
 
   // ============================
   // 预览文件（带防抖）
@@ -1584,8 +1577,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
       showRightArrow,
       // V16 Preview State Model
       documentState: documentStateRef.current,
-      paperLayout: paperLayoutRef.current,
-      paperLayoutVersion,
+      paperLayout,
       contentLayout,
       renderState,
     },
