@@ -86,9 +86,10 @@ export function buildRenderLayout(paperLayout, documentState) {
   //    使四边距在横竖向均生效。calculateCenteredPosition 用 slot.x/y 作居中基准，
   //    故图永远落在安全区内，而非绕纸张中心。
   const usableRect = paperLayout.usableRect || { x: 0, y: 0, w: contentRect.w, h: contentRect.h }
-  const slot = paperLandscape
-    ? { x: usableRect.y, y: usableRect.x, width: effContentW, height: effContentH }
-    : { x: usableRect.x, y: usableRect.y, width: effContentW, height: effContentH }
+  // 可见坐标系（WYSIWYG）：slot 原点 = usableRect 原点（mLeft→屏幕左、mTop→屏幕上），
+  // 不随纸张方向交换。纸张「尺寸」交换（effContentW/H）保留——可见纸横向下内容盒本就是 contentRect.h×contentRect.w。
+  // 物理纸坐标变换（visible→physical）不在 Layout 层做，留待 RenderSpec / RE Adapter（架构决策，见 commit 备注）。
+  const slot = { x: usableRect.x, y: usableRect.y, width: effContentW, height: effContentH }
   const contentBounds = { width: natW, height: natH }
   const fitScale = calculateFitScale(slot, contentBounds)
   const pos = calculateCenteredPosition(slot, contentBounds, fitScale)
@@ -104,12 +105,12 @@ export function buildRenderLayout(paperLayout, documentState) {
     // 🆕 V17 deprecated：内容不再旋转；方向完全由 paperLandscape 表达（RE/Canvas/Print 三端统一）
     rotation: 0,
     paperLandscape,
-    // clip 完全等于 PaperLayout.clipRect（评审修正④），paperLandscape 时交换宽高
+    // clip 与 placement 同帧（可见坐标），不随纸张方向交换（同 slot 原点修复）
     clip: {
       x: clipRect?.x ?? 0,
       y: clipRect?.y ?? 0,
-      width: paperLandscape ? clipRect?.h ?? 0 : clipRect?.w ?? 0,
-      height: paperLandscape ? clipRect?.w ?? 0 : clipRect?.h ?? 0,
+      width: clipRect?.w ?? 0,
+      height: clipRect?.h ?? 0,
     },
   }
 }
