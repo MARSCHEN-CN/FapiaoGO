@@ -754,7 +754,7 @@ function AppContent() {
         />
       </main>
 
-      {/* 弹窗组件 - 懒加载优化 */}
+      {/* 弹窗组件 - 单一 Suspense 边界包裹所有懒加载弹窗，减少 fallback 重复渲染 */}
       <Suspense fallback={<ModalFallback />}>
         <ImportProgressModal
           importing={importing}
@@ -767,9 +767,6 @@ function AppContent() {
           printProgress={printProgress}
           onClose={handlePrintClose}
         />
-      </Suspense>
-
-      <Suspense fallback={<ModalFallback />}>
         {renamePreviewVisible && (
           <RenamePreviewModal
             visible
@@ -781,9 +778,6 @@ function AppContent() {
             onCloseResult={handleRenameCloseResult}
           />
         )}
-      </Suspense>
-
-      <Suspense fallback={<ModalFallback />}>
         <PackProgressModal
           visible={packing || packResult !== null}
           progress={packProgress}
@@ -791,9 +785,6 @@ function AppContent() {
           onCancel={() => { setPacking(false); setPackResult(null) }}
           onClose={() => { setPacking(false); setPackResult(null) }}
         />
-      </Suspense>
-
-      <Suspense fallback={<ModalFallback />}>
         <ExportProgressModal
           visible={exporting || exportResult !== null}
           progress={exportProgress}
@@ -801,9 +792,6 @@ function AppContent() {
           onCancel={() => { setExporting(false); setExportResult(null); setExportProgress({ current: 0, total: 0, stage: '' }) }}
           onClose={() => { setExporting(false); setExportResult(null); setExportProgress({ current: 0, total: 0, stage: '' }) }}
         />
-      </Suspense>
-
-      <Suspense fallback={<ModalFallback />}>
         <AlertModal
           visible={!!currentAlert}
           title={currentAlert?.title || '提示'}
@@ -811,20 +799,19 @@ function AppContent() {
           type={currentAlert?.type || 'warning'}
           onClose={dismissWithCleanup}
         />
+        <PrintConfirmModal
+          visible={!!printConfirmModal}
+          settings={settings}
+          saveSettings={saveSettings}
+          printers={printers}
+          totalFiles={printableCount}
+          mergeMode={isMergeMode(settings.mergeMode)}
+          isOneNormalTwoSpecial={settings.extraSpecial || false}
+          onConfirm={onPrintConfirm}
+          onCancel={handlePrintCancel}
+          onSettingsChange={updateSettings}
+        />
       </Suspense>
-
-      <PrintConfirmModal
-        visible={!!printConfirmModal}
-        settings={settings}
-        saveSettings={saveSettings}
-        printers={printers}
-        totalFiles={printableCount}
-        mergeMode={isMergeMode(settings.mergeMode)}
-        isOneNormalTwoSpecial={settings.extraSpecial || false}
-        onConfirm={onPrintConfirm}
-        onCancel={handlePrintCancel}
-        onSettingsChange={updateSettings}
-      />
 
       {detailFile && (
         <InvoiceDetail

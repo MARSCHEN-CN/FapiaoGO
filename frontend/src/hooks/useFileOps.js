@@ -52,7 +52,7 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
           const ext = getExtension(fileObj.name)
           const mimeType = getMimeType(ext)
 
-          const blob = new Blob([fileData.data], { type: mimeType })
+          const blob = new Blob([new Uint8Array(fileData.data)], { type: mimeType })
           preparedFiles.push(new File([blob], fileObj.name, { type: mimeType }))
         } else {
           preparedFiles.push(null)
@@ -287,7 +287,7 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
                 const ext = getExtension(fileObj.name)
                 const mimeType = getMimeType(ext)
 
-                const blob = new Blob([fileData.data], { type: mimeType })
+                const blob = new Blob([new Uint8Array(fileData.data)], { type: mimeType })
                 const file = new File([blob], fileObj.name, { type: mimeType })
                 const formData = new FormData()
                 formData.append('file', file)
@@ -428,8 +428,10 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
         if (result.success) {
           const ext = getExtension(f.name)
           const mimeType = getMimeType(ext)
-          const blob = new Blob([result.data], { type: mimeType })
+          const blob = new Blob([new Uint8Array(result.data)], { type: mimeType })
           fileData = new File([blob], f.name, { type: mimeType })
+        } else {
+          console.error('[processFilesForAddition] IPC read-file failed:', f.path, result.error)
         }
       }
 
@@ -522,21 +524,32 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
           const f = fileObj
           let resp
 
+          console.log('[parseWorker] Processing:', f.name, 'file:', !!f.file, 'printPath:', !!f.printPath, 'path:', !!f.path)
+
           if (f.file) {
+            console.log('[parseWorker] Using f.file branch')
             const fd = new FormData()
             fd.append('file', f.file)
             fd.append('autoOrient', autoOrient ? '1' : '0')
             fd.append('mode', 'batch')
 
-            resp = await fetch(`${BACKEND_URL}/parse_invoice`, {
-              method: 'POST', body: fd,
-            })
-          } else if (f.printPath && ipc) {
-            const fileData = await ipc.invoke('read-file', f.printPath)
+            try {
+              resp = await fetch(`${BACKEND_URL}/parse_invoice`, {
+                method: 'POST', body: fd,
+              })
+              console.log('[parseWorker] Fetch response:', resp.status, resp.statusText)
+            } catch (fetchErr) {
+              console.error('[parseWorker] Fetch failed:', fetchErr.message, fetchErr)
+              throw fetchErr
+            }
+          } else if ((f.printPath || f.path) && ipc) {
+            console.log('[parseWorker] Using printPath/path branch')
+            const filePath = f.printPath || f.path
+            const fileData = await ipc.invoke('read-file', filePath)
             if (fileData.success) {
               const ext = getExtension(f.name)
               const mimeType = getMimeType(ext)
-              const blob = new Blob([fileData.data], { type: mimeType })
+              const blob = new Blob([new Uint8Array(fileData.data)], { type: mimeType })
               const file = new File([blob], f.name, { type: mimeType })
               const fd = new FormData()
               fd.append('file', file)
@@ -554,6 +567,14 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
 
           if (resp.ok) {
             const data = await resp.json()
+            console.log('[parseWorker] Response data:', {
+              type: data.invoice_type,
+              number: data.invoice_number,
+              amount: data.amount,
+              date: data.invoice_date,
+              failed_fields: data.failed_fields,
+              parse_method: data.parse_method
+            })
             const fields = data.invoice_fields || data.invoiceFields || {}
             safeUpdate(f.key, 'parsed', {
               invoiceType: data.invoice_type || data.invoiceType || '',
@@ -789,7 +810,7 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
         try {
           const fileData = await ipc.invoke('read-file', file.path)
           if (fileData.success) {
-            const blob = new Blob([fileData.data], { type: 'application/pdf' })
+            const blob = new Blob([new Uint8Array(fileData.data)], { type: 'application/pdf' })
             const pdfFile = new File([blob], file.name, { type: 'application/pdf' })
             filesToAdd.push({
               file: pdfFile,
@@ -832,7 +853,7 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
         try {
           const fileData = await ipc.invoke('read-file', file.path)
           if (fileData.success) {
-            const blob = new Blob([fileData.data], { type: 'application/pdf' })
+            const blob = new Blob([new Uint8Array(fileData.data)], { type: 'application/pdf' })
             const pdfFile = new File([blob], file.name, { type: 'application/pdf' })
             filesToAdd.push({
               file: pdfFile,

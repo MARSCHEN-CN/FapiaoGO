@@ -356,12 +356,9 @@ def merge_ocr_boxes_by_row(ocr_result, y_tol=4, x_gap_tol=15, min_lines=10):
     # 按 y_center 排序
     boxes.sort(key=lambda b: b['y_center'])
 
-    # 聚类成行：按实际水平间隙判断（与行内整体 x 跨度的间隙，等价于"与任一框间隙"，
-    # 因为 min_i max(0, b.x0-item.x1, item.x0-b.x1) ≡ max(0, b.x0-max_x1, min_x0-b.x1) 对任意
-    # item 集合精确成立，故无需逐 item 遍历即可判定）。
+    # 聚类成行：按实际水平间隙判断（与行内每个 item 的间隙取最小值）。
     # rows 按 y_center 升序维护，box 亦按 y_center 升序处理，故用双指针 lo 维护
-    # "首个仍可能落入 y 窗口的 row"，使整体由 O(N×R) 摊还降至 O(N)，且语义与原实现完全一致：
-    # 对每个 box 取"按 y 接近且水平间隙达标"的首个 row 合并。
+    # "首个仍可能落入 y 窗口的 row"，使整体由 O(N×R) 摊还降至 O(N)。
     rows = []
     lo = 0  # 窗口左界：rows[lo:] 才可能满足 |b.y - row.y| <= y_tol
     for b in boxes:
@@ -375,22 +372,18 @@ def merge_ocr_boxes_by_row(ocr_result, y_tol=4, x_gap_tol=15, min_lines=10):
             if abs(b_y - row['y_center']) > y_tol:
                 # rows 按 y 升序，后续 row 更远，不可能再匹配
                 break
-            # 与行内整体 x 跨度的水平间隙（等价于原"逐 item 检查"）
-            gap = max(0, b['x0'] - row['x1_ext'], row['x0_ext'] - b['x1'])
-            if gap <= x_gap_tol:
+            # 检查新框与行内任一框的实际水平间隙（取最小值）
+            min_gap = float('inf')
+            for item in row['items']:
+                gap = max(0, b['x0'] - item['x1'], item['x0'] - b['x1'])
+                min_gap = min(min_gap, gap)
+            if min_gap <= x_gap_tol:
                 row['items'].append(b)
                 row['y_center'] = sum(it['y_center'] for it in row['items']) / len(row['items'])
-                row['x0_ext'] = min(row['x0_ext'], b['x0'])
-                row['x1_ext'] = max(row['x1_ext'], b['x1'])
                 merged = True
                 break
         if not merged:
-            rows.append({
-                'y_center': b['y_center'],
-                'items': [b],
-                'x0_ext': b['x0'],
-                'x1_ext': b['x1'],
-            })
+            rows.append({'y_center': b['y_center'], 'items': [b]})
 
     # 每行内按 x 排序，合并文本和外包框
     merged_result = []

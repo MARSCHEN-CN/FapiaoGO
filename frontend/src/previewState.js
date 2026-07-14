@@ -123,6 +123,10 @@ export function computePaperLayout(spec) {
     paperRect: { w: paperW, h: paperH },
     marginRect: { w: innerW, h: innerH },
     contentRect: { w: innerW, h: innerH },            // Phase 2A: = marginRect（预留装订边/水印扩展空间）
+    // usableRect：允许摆放的安全区（带原点）。contentRect 仅描述尺寸（无 x/y），
+    // 摆放原点由 usableRect 承担 —— 见 RenderLayoutFactory 的 slot 桥接
+    // （修复「图绕纸张中心而非安全区居中」：offset 必须 = mLeft + (innerW-drawW)/2）。
+    usableRect: { x: mLeft, y: mTop, w: innerW, h: innerH },
     displayRect: { w: paperW, h: paperH },            // 纯纸张，无 doc swap（swap → RenderLayout，Stage 1）
     clipRect: { w: paperW, h: paperH },               // 纸张坐标，非 viewport（I1）
     // orientation 字段已废弃（Stage 0.5 删除）：由 paperRect.width > height 推导

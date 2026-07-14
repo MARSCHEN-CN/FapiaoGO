@@ -10,6 +10,7 @@ from typing import List, Optional, Tuple
 
 from .preset import RenderPreset, PRESETS
 from .cache import RenderCache, generate_etag, make_cache_key
+from .render_spec_sig import render_spec_signature
 from .types import BBox, TextSpan
 
 logger = logging.getLogger(__name__)
@@ -312,11 +313,13 @@ class RenderEngine:
 
         # --- cache lookup ---
         vs_hash = _hash_view_state(vs)
+        # B-1: spec 真正驱动渲染时，必须把 render_spec 纳入 cache_key 与 etag。
+        # 否则不同 spec（如 paperLandscape 不同）会命中同一缓存位，输出字节
+        # 不同却共用 key → 返回修复前的陈旧图。spec 为 None（Legacy）时不加，
+        # 保持旧客户端字节级一致。
+        spec_tag = f"|spec:{render_spec_signature(render_spec)}" if render_spec else ""
         cache_key = make_cache_key(doc_id, preset.name, page,
-                                   vs_hash + override_tag, hl_token or "")
-        # B-1: 当 spec 真正驱动渲染时，需把 render_spec 纳入 cache_key，
-        # 否则不同 spec 会命中同一缓存位（输出字节不同却共用 key）。
-        # B-0 shadow mode 下 spec 不参与计算，故暂不纳入，保持字节级一致。
+                                   vs_hash + override_tag + spec_tag, hl_token or "")
         cached = self._cache.get(cache_key)
         if cached is not None:
             logger.debug("cache hit: %s", cache_key[:32])
@@ -336,7 +339,7 @@ class RenderEngine:
         etag = generate_etag(
             content_hash=doc.content_hash,
             preset_name=preset.name,
-            view_state_hash=vs_hash,
+            view_state_hash=vs_hash + override_tag + spec_tag,
             hl_token=hl_token or "",
         )
         self._cache.put(cache_key, data, actual_fmt, etag)
@@ -463,7 +466,10 @@ class RenderEngine:
         if rotation % 360 not in (0, 90, 180, 270):
             raise ValueError(
                 f"RenderSpec rotation must be a multiple of 90 degrees, got {spec.get('rotation')!r}")
-        paper_landscape = bool(spec.get("paper_landscape", False))
+        # 读 camelCase paperLandscape（与 rebuild_spec_from_args / 前端 buildRenderSpec 结构一致）。
+        # ⚠️ 历史 bug：此前读 snake_case "paper_landscape"，而 rebuild 重建的 spec 用
+        #    camelCase，导致该字段永远取默认 False → 横纸变竖纸（见 repro_landscape_bug.py）。
+        paper_landscape = bool(spec.get("paperLandscape", False))
         paper_w = int(round(float(spec["paper"]["width"])))
         paper_h = int(round(float(spec["paper"]["height"])))
         if paper_w <= 0 or paper_h <= 0:

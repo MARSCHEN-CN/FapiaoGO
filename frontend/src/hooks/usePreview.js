@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
-import { PREVIEW_DPI, GLOBAL_PREVIEW_DPI, ZOOM_STEPS, PAPER_SIZE_MAP, USE_RENDER_ENGINE_PREVIEW, buildPreviewUrl, BACKEND_URL } from '../config'
+import { PREVIEW_DPI, GLOBAL_PREVIEW_DPI, ZOOM_STEPS, USE_RENDER_ENGINE_PREVIEW, buildPreviewUrl, BACKEND_URL } from '../config'
 import {
   b64toBlob, getFileFormat, getExtension, isMergeMode, getMergePair,
 } from '../utils'
@@ -404,21 +404,13 @@ export function usePreview({ files, settings, electronAPIRef }) {
   // 预览渲染
   // ============================
   useEffect(() => {
-    // ✅ L2 缓存旁路：fullCache 命中时跳过整个渲染流程
-    if (skipRenderRef.current) { skipRenderRef.current = false; return }
-
     if (!previewFile) { clearCommitted(); return }
 
-    const isImageOrOfd =
-      previewFile._fileFormat === 'image' || previewFile._fileFormat === 'ofd'
-
-    // ✅ Render Engine 路径：有 HTTP URL 时允许进入渲染（不在此截断）
-    //    统一用纯函数判定，确保 previewUrl 不变式（RE=URL / 其它=null）单一来源，
-    //    避免切换到 canvas 路径文件时 previewUrl 残留旧 RE URL（陈旧 <img> bug）。
-    // ✅ RenderSpec 永不可缓存（用户审核纪律①）：每次 effect 运行都从最新 renderLayout
-    //    实时派生，经 buildRenderSpec → URL。严禁引入 renderSpecRef / useMemo 缓存。
-    //    任何 paperLayoutVersion / documentState / rotation / margin 变化都会改变 renderLayout，
-    //    进而改变本条 URL —— renderLayout 已列入下方依赖数组以保证这一点。
+    // NOTE: Render dispatch must always execute before any cache bypass.
+    //       Cache may provide render results, but must not choose the renderer.
+    //       skipRenderRef only skips the Canvas pipeline; it does not skip
+    //       the render strategy decision. (V6 — Engineering Discipline Law #8)
+    // ── Render Dispatcher：独立于 L2 缓存，始终评估 RE 可用性 ──
     const previewSpec = renderLayoutReady
       ? buildRenderSpec(renderLayout, {
           docId: previewFile.docId,
@@ -428,6 +420,17 @@ export function usePreview({ files, settings, electronAPIRef }) {
         })
       : null
     const reUrl = getRenderEnginePreviewUrl(previewFile, USE_RENDER_ENGINE_PREVIEW, previewSpec)
+
+    // ✅ L2 缓存旁路：有缓存 Canvas 时跳过 Canvas 渲染，但不阻止 Render Dispatcher 决策
+    if (skipRenderRef.current) {
+      skipRenderRef.current = false
+      if (reUrl) { setPreviewUrl(reUrl) }  // RE 可用 → 优先使用（不受缓存影响）
+      return  // 不执行 Canvas 渲染（缓存内容已就绪或 RE 已设）
+    }
+
+    const isImageOrOfd =
+      previewFile._fileFormat === 'image' || previewFile._fileFormat === 'ofd'
+
     const hasRenderEngineUrl = !!reUrl
     if (!isImageOrOfd && !previewFile._pdfData && !mergePair && !hasRenderEngineUrl) {
       clearCommitted(); return
@@ -1141,10 +1144,12 @@ export function usePreview({ files, settings, electronAPIRef }) {
     if (version !== previewVersionRef.current) { return }
 
     const rotation = (fileRotations[loadedFile.key] || 0)
-    // 与 render effect（L306-309）保持一致的 isLandscape 计算，确保读写 key 同源
+    // 与 render effect 保持一致的 isLandscape 计算：统一走 resolvePaper（Single Decision Point）。
+    // 否则 Custom 纸型下 PAPER_SIZE_MAP 与 resolvePaper 结果不一致 → L2 缓存键与渲染键漂移 →
+    // 点击命中陈旧 Canvas，与自动预览（RE）视觉不一致。
     const contentOrient = detectDocumentOrientation(loadedFile)
-    const paperDims = PAPER_SIZE_MAP[settingsRef.current.paperSize || 'A4']
-    const paperOrient = paperDims && paperDims.widthMM > paperDims.heightMM ? 'landscape' : 'portrait'
+    const paper = resolvePaper(settingsRef.current.paperSize, settingsRef.current.customPaper)
+    const paperOrient = paper.widthMM > paper.heightMM ? 'landscape' : 'portrait'
     const isLandscape = contentOrient !== paperOrient
 
     // ── PaperLayout 由 relayout 链（recomputePaperLayout）独家构造，此处不再重复 ──
@@ -1339,8 +1344,8 @@ export function usePreview({ files, settings, electronAPIRef }) {
 
       // 计算渲染参数（与 render effect 中单文件逻辑保持一致）
       const contentOrient = detectDocumentOrientation(loadedFile)
-      const paperDims = PAPER_SIZE_MAP[settings.paperSize || 'A4']
-      const paperOrient = paperDims && paperDims.widthMM > paperDims.heightMM ? 'landscape' : 'portrait'
+      const paper = resolvePaper(settings.paperSize, settings.customPaper)
+      const paperOrient = paper.widthMM > paper.heightMM ? 'landscape' : 'portrait'
       const isLandscape = contentOrient !== paperOrient
       const rotation = fileRotations[fileObj.key] || 0
       const effectiveLandscape = (rotation % 180 !== 0) ? !isLandscape : isLandscape
@@ -1441,6 +1446,26 @@ export function usePreview({ files, settings, electronAPIRef }) {
       handlePreviewRef.current?.(previewFile)
     }
   }, [filesKeyStr, filesKeySet, previewFile, files, handlePreview, cleanupAllBlobUrls])
+
+  // ── docId 异步就绪 → 重预览（修复「自动预览 vs 点击同文件」视觉不一致）──
+  // 根因：自动预览在 files.length 增加时触发，此时预览文件还是解析中占位（docId=null），
+  //       loadFilePreview 无 RE URL → 走 pdf.js Canvas；点击同文件时 docId 已就绪 → 走 RE <img>。
+  //       两个后端（Canvas 按纸张 fit vs RE 默认 A4）渲染结果差异巨大（字体/缩放/边距都不同），
+  //       且原代码没有任何 effect 监听 docId 变化 → 自动预览永远停留在 Canvas，直到点击才切 RE。
+  // 修复：监听当前预览文件在 files 中的实时 docId，一旦就绪（且与原 previewFile.docId 不同）
+  //       重走 doLoadPreview，统一到 RE 路径，使自动预览与点击渲染一致。
+  const livePreviewDocId = useMemo(
+    () => files.find(f => f.key === previewFile?.key)?.docId ?? null,
+    [files, previewFile?.key]
+  )
+  useEffect(() => {
+    const pf = previewFileRef.current
+    if (!pf) return
+    const live = filesRef.current.find(f => f.key === pf.key)
+    if (live && live.docId && live.docId !== pf.docId) {
+      handlePreviewRef.current?.(live)
+    }
+  }, [livePreviewDocId])
 
   // ── Canvas 导航箭头 ──
   const handleCanvasMouseMove = useCallback((e) => {

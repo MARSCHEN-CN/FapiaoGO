@@ -160,7 +160,13 @@ def rebuild_spec_from_args(args, doc_id, page) -> dict:
                 f"non-numeric RenderSpec field {name}={v!r} (expected a number)"
             )
 
-    return {
+    # 🆕 V17：paper_landscape 随 URL 发来（wireFieldsOf），必须带进重建的 spec，
+    # 否则引擎 spec.get("paper_landscape", False) 永远 False → 横纸变竖纸
+    # （repro_landscape_bug.py 复现：3438×3508 竖图 vs 期望 3508×2480 横图）。
+    # 用 camelCase「paperLandscape」与前端 buildRenderSpec 输出结构一致，
+    # 使 render_spec_signature 重算签名能与前端 spec_sig 对齐（verified=True）。
+    paper_landscape_val = args.get("paper_landscape", "0") == "1"
+    spec = {
         "docId": doc_id,
         "page": page,
         "dpi": f("dpi", 300.0),
@@ -173,6 +179,7 @@ def rebuild_spec_from_args(args, doc_id, page) -> dict:
         },
         "placement": {"scale": f("scale"), "offsetX": f("ox"), "offsetY": f("oy")},
         "rotation": int(f("rotation", 0.0)),
+        "paperLandscape": paper_landscape_val,
         "clip": {
             "x": f("clip_x"),
             "y": f("clip_y"),
@@ -180,6 +187,7 @@ def rebuild_spec_from_args(args, doc_id, page) -> dict:
             "height": f("clip_h"),
         },
     }
+    return spec
 
 
 def verify_render_spec(args, doc_id, page):

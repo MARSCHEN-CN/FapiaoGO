@@ -80,11 +80,15 @@ export function buildRenderLayout(paperLayout, documentState) {
   const effContentW = paperLandscape ? contentRect.h : contentRect.w
   const effContentH = paperLandscape ? contentRect.w : contentRect.h
 
-  // 5) fit（复用 layout.js 纯函数），在有效纸张坐标内居中
-  //    注意坐标约定差异：PaperLayout.contentRect 用 {w,h}（无 x/y），
-  //    而 layout.js 的 calculateFitScale/calculateCenteredPosition 用 {x,y,width,height}。
-  //    此处桥接为统一 slot 形态（contentRect 在纸张坐标内从 (0,0) 起）。
-  const slot = { x: 0, y: 0, width: effContentW, height: effContentH }
+  // 5) fit（复用 layout.js 纯函数），在 usableRect 内居中。
+  //    usableRect 已含边距原点（x=mLeft, y=mTop），paperLandscape 时交换 x/y 与 w/h
+  //    （90° CW：物理 top 边 → 有效 left 边，物理 left 边 → 有效 top 边），
+  //    使四边距在横竖向均生效。calculateCenteredPosition 用 slot.x/y 作居中基准，
+  //    故图永远落在安全区内，而非绕纸张中心。
+  const usableRect = paperLayout.usableRect || { x: 0, y: 0, w: contentRect.w, h: contentRect.h }
+  const slot = paperLandscape
+    ? { x: usableRect.y, y: usableRect.x, width: effContentW, height: effContentH }
+    : { x: usableRect.x, y: usableRect.y, width: effContentW, height: effContentH }
   const contentBounds = { width: natW, height: natH }
   const fitScale = calculateFitScale(slot, contentBounds)
   const pos = calculateCenteredPosition(slot, contentBounds, fitScale)
