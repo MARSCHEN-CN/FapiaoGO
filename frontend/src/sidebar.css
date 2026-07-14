@@ -604,7 +604,7 @@
   position: absolute;
   left: 0; top: 10px; bottom: 10px;
   width: 3px;
-  background: linear-gradient(180deg, var(--accent), var(--purple));
+  background: var(--accent);
   border-radius: 0 3px 3px 0;
 }
 
