@@ -548,7 +548,7 @@
 
 .file-card:hover {
   background: var(--surface-hover);
-  box-shadow: var(--shadow-sm);
+  box-shadow: inset 0 0 0 1px var(--accent-medium), var(--shadow-sm);
 }
 
 .file-card:hover .file-card-close,
@@ -1164,17 +1164,7 @@
 
 [data-theme="dark"] .file-card:hover {
   background: var(--surface);
-  transform: translateY(-2px);
-  box-shadow: var(--shadow-md), var(--highlight-top);
-}
-
-[data-theme="dark"] .file-card:hover::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: rgba(255, 255, 255, 0.05);
-  border-radius: inherit;
-  pointer-events: none;
+  box-shadow: inset 0 0 0 1px var(--accent-medium), var(--shadow-md), var(--highlight-top);
 }
 
 [data-theme="dark"] .file-card.active {
