@@ -7,7 +7,7 @@ import { detectDocumentOrientation } from '../utils/detectOrientation'
 import { getForcedLandscape } from '../utils/mergeMode'
 import { buildPreviewCacheKey } from '../utils/previewCacheKey'
 import { getRenderEnginePreviewUrl } from '../utils/previewTarget'
-import { placeholderPaperLayout, emptyContentLayout, initialRenderState, computePaperLayout, resolvePhysicalMargins } from '../previewState'
+import { placeholderPaperLayout, emptyContentLayout, initialRenderState, computePaperLayout } from '../previewState'
 import { buildRenderLayout } from '../layout/RenderLayoutFactory.js'
 import { buildRenderSpec, RENDER_SPEC_VERSION, renderSpecSignature } from '../layout/renderSpec.js'
 import { resolvePaper, paperKeyFragment } from '../layout/resolvePaper.js'
@@ -824,31 +824,21 @@ export function usePreview({ files, settings, electronAPIRef }) {
   // 不调 loadFilePreview、不 reset previewFile，因此"不改文件时 PaperLayout 不被重建"。
   const recomputePaperLayout = useCallback(() => {
     const s = settingsRef.current
-    // 计算 paperLandscape：用于 visual→physical 边距转换
-    const ds = documentStateRef.current
-    const paper = resolvePaper(s.paperSize, s.customPaper)
-    const paperOrient = paper.widthMM > paper.heightMM ? 'landscape' : 'portrait'
-    const docOrient = ds?.pageOrientation
-    const swapped = !!docOrient && docOrient !== paperOrient
-    const rot = ((ds?.rotation || 0) % 360 + 360) % 360
-    const totalRot = ((swapped ? 90 : 0) + rot) % 360
-    const paperLandscape = totalRot === 90 || totalRot === 270
-    const visualMargins = { top: s.marginTop, right: s.marginRight, bottom: s.marginBottom, left: s.marginLeft }
-    const physicalMargins = resolvePhysicalMargins(visualMargins, paperLandscape)
     paperLayoutRef.current = computePaperLayout({
       paperSize: s.paperSize,
       customPaper: s.customPaper,
-      margins: physicalMargins,
+      margins: { top: s.marginTop, right: s.marginRight, bottom: s.marginBottom, left: s.marginLeft },
     })
     setPaperLayoutVersion(v => v + 1)
   }, [])
 
-  // PaperSpec + Document 字段进入 deps：文件切换会改变 documentState.pageOrientation，
-  // 从而改变 paperLandscape → visual→physical 边距映射可能变化 → 需重算 PaperLayout。
+  // 仅 PaperSpec 字段进入 deps：文件切换不改 PaperSpec → 此 effect 不在切换时运行。
+  // PaperLayout 现在由本 relayout 链（recomputePaperLayout）独家构造；
+  // doLoadPreview 在文件切换时不再触碰 PaperLayout（v1.1：PaperLayout 与 DocumentState 解耦）。
   useEffect(() => {
     recomputePaperLayout()
   }, [settings.paperSize, settings.marginTop, settings.marginRight, settings.marginBottom, settings.marginLeft,
-      settings.customPaper?.widthMM, settings.customPaper?.heightMM, recomputePaperLayout, previewFile])
+      settings.customPaper?.widthMM, settings.customPaper?.heightMM, recomputePaperLayout])
 
   // 供 zoom 控件消费的 fitScale（来自 contentLayout，只有一条依赖链）
   useEffect(() => {
