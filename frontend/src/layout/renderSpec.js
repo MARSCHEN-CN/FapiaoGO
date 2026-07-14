@@ -130,7 +130,7 @@ export function buildRenderSpec(renderLayout, { docId, page = 1, dpi = PREVIEW_D
   if (!renderLayout || !renderLayout.paper || !renderLayout.paper.paperRect) return null
   const { paper, placement, rotation, clip, paperLandscape } = renderLayout
   const pr = paper.paperRect
-  return {
+  const spec = {
     docId,
     page,
     dpi,
@@ -152,6 +152,13 @@ export function buildRenderSpec(renderLayout, { docId, page = 1, dpi = PREVIEW_D
     // 注：buildRenderLayout 已把 clipRect 统一为 {x,y,width,height} 形态
     clip: { x: clip?.x ?? 0, y: clip?.y ?? 0, width: clip?.width ?? 0, height: clip?.height ?? 0 },
   }
+  // ── [DIAG] 法医入口：所有调用者自动留下完整证据 ──
+  window.__specId = (window.__specId || 0) + 1
+  console.group(`[BUILD SPEC #${window.__specId}]`)
+  console.log(spec)
+  console.trace()
+  console.groupEnd()
+  return spec
 }
 
 /**

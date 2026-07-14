@@ -321,6 +321,10 @@ class RenderEngine:
         cache_key = make_cache_key(doc_id, preset.name, page,
                                    vs_hash + override_tag + spec_tag, hl_token or "")
         cached = self._cache.get(cache_key)
+        # ── [DIAG] Layer 1.5: 缓存层 — HIT 时不进 _render_spec_page ──
+        ox = render_spec.get("placement", {}).get("offsetX", "-") if render_spec else "-"
+        oy = render_spec.get("placement", {}).get("offsetY", "-") if render_spec else "-"
+        print(f"[CACHE] {'HIT' if cached else 'MISS'} ox={ox} oy={oy} sig={spec_tag[:20] if spec_tag else 'legacy'}", flush=True)
         if cached is not None:
             logger.debug("cache hit: %s", cache_key[:32])
             return cached.data, cached.fmt, cached.etag
@@ -458,6 +462,8 @@ class RenderEngine:
         scale = float(spec["placement"]["scale"])
         ox = int(round(float(spec["placement"]["offsetX"])))
         oy = int(round(float(spec["placement"]["offsetY"])))
+        # ── [DIAG] Layer 2: 真正进入渲染（只有 cache MISS 才会走到这里）──
+        print(f"[RENDER] ox={ox} oy={oy} scale={scale}", flush=True)
         # 🆕 V17(paperLandscape)：纸随内容方向，内容永远自然方向（rotation 字段废弃=0）。
         # 旧 B-2.1 的 fitz.prerotate 整段移除；方向改由 paper_landscape 表达：
         #   True  → 画布交换宽高（横纸），内容自然绘制（rotation=0）
@@ -507,17 +513,31 @@ class RenderEngine:
         if gray:
             pix = _apply_grayscale(pix)
 
-        # 白画布 + 直接粘贴（无 fit / 无 center；offset 已是最终位置）。
+        # 白画布 + 偏移粘贴（无 fit / 无 center；offset 已是最终位置）。
         # 防御：旋转/取整可能让内容 pixmap 比 spec.paper 大 1px（fitz 取整边界），
-        # 若 copy 源 IRect 超出画布，fitz 会静默输出空白。故画布以 spec.paper 为基准，
+        # 若粘贴越界，fitz 会静默输出空白。故画布以 spec.paper 为基准，
         # 必要时扩展到内容尺寸，保证粘贴不越界（Executor 不因取整差产白图）。
+        #
+        # ⚠️  PyMuPDF Pixmap.copy(canvas, pix, irect) 把 irect 同时作为源矩形和目标矩形。
+        #     直接传 IRect(ox, oy, ox+w, oy+h) 会从源 pix 的 (ox,oy) 开始复制，
+        #     切掉左上角 (ox,oy) 像素（见 scripts/test_fitz_copy.py 实证）。
+        #     修复：手动逐行 memoryview 拷贝，把 pix 完整像素写入 canvas 的 (ox,oy) 位置。
         canvas_w = max(canvas_w, ox + pix.width)
         canvas_h = max(canvas_h, oy + pix.height)
         canvas = fitz.Pixmap(fitz.csRGB if pix.n >= 3 else fitz.csGRAY,
                              fitz.IRect(0, 0, canvas_w, canvas_h))
         canvas.clear_with(255)
         if pix.n == canvas.n:
-            canvas.copy(pix, fitz.IRect(ox, oy, ox + pix.width, oy + pix.height))
+            pix_mv = pix.samples_mv
+            canvas_mv = canvas.samples_mv
+            pix_stride = pix.stride
+            canvas_stride = canvas.stride
+            row_bytes = pix.width * pix.n
+            for y in range(pix.height):
+                src_start = y * pix_stride
+                # 目标行从 ox/oy 偏移开始
+                dst_start = (oy + y) * canvas_stride + ox * pix.n
+                canvas_mv[dst_start:dst_start + row_bytes] = pix_mv[src_start:src_start + row_bytes]
         else:
             canvas = pix
 

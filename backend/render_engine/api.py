@@ -82,6 +82,9 @@ def preview(doc_id: str):
     """
     page = _int_param("page", 1)
 
+    # ── [DIAG] Layer 1: HTTP 入口 — 每次请求都打印，用于证明浏览器是否真的发了请求 ──
+    print(f"[HTTP] sig={request.args.get('spec_sig','-')[:8]} ox={request.args.get('ox','-')} oy={request.args.get('oy','-')} margin_l={request.args.get('margin_l','-')}", flush=True)
+
     # ── Commit A：先解析 spec（malformed → 400，早于任何渲染工作）──
     # 完整纪律见 v16-stage1-design.md §Step4 Commit A / §3c。
     # • 请求未携带 ?spec=（缺失/空串）→ None：Legacy 客户端，不回显、不 400。

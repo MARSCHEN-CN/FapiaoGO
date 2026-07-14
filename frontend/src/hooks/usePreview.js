@@ -487,11 +487,21 @@ export function usePreview({ files, settings, electronAPIRef }) {
     const startREProbe = (probeUrl, fileObj) => {
       setPreviewLoading(true)
       const token = ++imgLoadTokenRef.current
+      // ── [DIAG] Layer 3: RE 探针启动 — 含 caller stack 用于区分渲染链来源 ──
+      console.log('[RE PROBE]', {
+        token, ox: probeUrl.match(/ox=([^&]+)/)?.[1], specSig: probeUrl.match(/spec_sig=([^&]+)/)?.[1],
+        marginLeft: settings.marginLeft,
+        paperLayoutVersion,
+        renderKey: renderKey.slice(renderKey.indexOf('-m')),
+        caller: new Error().stack.split('\n').slice(1, 3).map(s => s.trim()),
+      })
       const probe = new Image()
       probe.decoding = 'async'
       // ✅ 原子 commit：url + dims 同批更新，committed 帧从旧直接跳到新，不经过 null
       const commit = () => {
         if (token !== imgLoadTokenRef.current) return
+        // ── [DIAG] Layer 4: commit — 只有 token 匹配的 probe 会走到这 ──
+        console.log('[RE COMMIT]', { token, currentToken: imgLoadTokenRef.current, ox: probeUrl.match(/ox=([^&]+)/)?.[1] })
         setPreviewUrl(probeUrl)
         setPreviewImgDims({ w: probe.naturalWidth, h: probe.naturalHeight })
         setPreviewLoading(false)
@@ -505,6 +515,8 @@ export function usePreview({ files, settings, electronAPIRef }) {
         previewUrlRef.current = probeUrl
       }
       probe.onload = () => {
+        // ── [DIAG] Layer 3.5: onload 触发 — 即使 token 不匹配也会打印（用于证明图片确实加载了）──
+        console.log('[RE ONLOAD]', { token, currentToken: imgLoadTokenRef.current, ox: probeUrl.match(/ox=([^&]+)/)?.[1], ok: token === imgLoadTokenRef.current })
         if (token !== imgLoadTokenRef.current) return
         if (typeof probe.decode === 'function') {
           probe.decode().then(commit).catch(commit)

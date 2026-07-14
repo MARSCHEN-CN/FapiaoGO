@@ -227,9 +227,16 @@ def parse_invoice_service(file_bytes, filename, auto_orient=True, force_ocr=Fals
     elif file_format == 'image':
         parse_method = 'OCR 解析'
         source_type = 'image'
+        # 完整文件 SHA256（始终全量），供 parse_image_ocr 复用为 OCR 缓存键，
+        # 避免重复哈希；与 parse_image_ocr 内部 sha256(raw) 完全一致，
+        # 故不改变 OCR 缓存命中行为（仅 image 路径需要，pdf/xml/ofd 不付出该成本）。
+        content_sha256 = hashlib.sha256(raw_bytes).hexdigest()
         try:
             with metrics.timer('image_ocr'):
-                result = parse_image_ocr(file, auto_orient=auto_orient)
+                result = parse_image_ocr(
+                    file, auto_orient=auto_orient,
+                    content_sha256=content_sha256, content_bytes=raw_bytes,
+                )
             if result:
                 invoice_type = result.get("invoice_type", "其他")
                 invoice_number = result.get("invoice_number", "未知号码")
