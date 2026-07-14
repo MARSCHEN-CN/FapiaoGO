@@ -94,28 +94,6 @@ export function placeholderPaperLayout() {
  * @property {{top:number,right:number,bottom:number,left:number}} margins - 安全边距，单位 mm
  */
 
-/**
- * 视觉边距 → 物理边距转换。
- * 用户 UI 上的"左边距"始终表示"用户看到的纸的左边缘距离"。
- * 当纸为 landscape（物理纸旋转了 90° CW）时，视觉边与物理边的映射为：
- *   视觉左 → 物理底, 视觉上 → 物理左, 视觉右 → 物理上, 视觉下 → 物理右。
- * 此后所有代码（usableRect / placement / backend / render）全部只认物理坐标。
- *
- * @param {{top:number,right:number,bottom:number,left:number}} visualMargins
- * @param {boolean} paperLandscape
- * @returns {{top:number,right:number,bottom:number,left:number}}
- */
-export function resolvePhysicalMargins(visualMargins, paperLandscape) {
-  if (!paperLandscape) return { ...visualMargins }
-  const l = visualMargins.left ?? 3, r = visualMargins.right ?? 3
-  const t = visualMargins.top ?? 3, b = visualMargins.bottom ?? 3
-  return {
-    left: t,          // 视觉上 → 物理左
-    top: r,           // 视觉右 → 物理上
-    right: b,         // 视觉下 → 物理右
-    bottom: l,        // 视觉左 → 物理底
-  }
-}
 
 /**
  * 唯一构造点（F3）：从 PaperSpec 推导 PaperLayout。

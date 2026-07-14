@@ -464,6 +464,7 @@ class RenderEngine:
         oy = int(round(float(spec["placement"]["offsetY"])))
         # ── [DIAG] Layer 2: 真正进入渲染（只有 cache MISS 才会走到这里）──
         print(f"[RENDER] ox={ox} oy={oy} scale={scale}", flush=True)
+        print(f"[SPEC] margin={spec.get('margin',{})} placement={{scale:{scale}, ox:{ox}, oy:{oy}}} paperLandscape={spec.get('paperLandscape')}", flush=True)
         # 🆕 V17(paperLandscape)：纸随内容方向，内容永远自然方向（rotation 字段废弃=0）。
         # 旧 B-2.1 的 fitz.prerotate 整段移除；方向改由 paper_landscape 表达：
         #   True  → 画布交换宽高（横纸），内容自然绘制（rotation=0）
