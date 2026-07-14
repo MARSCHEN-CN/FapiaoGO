@@ -1614,7 +1614,7 @@ button.pc-btn.outline,
 /* ── 横幅区 ── */
 .ipm-banner {
   position: relative;
-  height: 140px;
+  height: 170px;
   background: linear-gradient(135deg, #ede9ff 0%, #fdf2f4 100%);
   overflow: hidden;
 }
