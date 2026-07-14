@@ -41,7 +41,7 @@
   width: 36px;
   height: 44px;
   border: 0.5px solid var(--canvas-float-border);
-  border-radius: var(--r-sm);
+  border-radius: var(--r-md);
   background: var(--canvas-float-bg);
   color: var(--text-2);
   cursor: pointer;

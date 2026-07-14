@@ -15,7 +15,7 @@
 
 .invoice-detail-panel {
   background: var(--white);
-  @apply rounded-xl;
+  @apply rounded-lg;
   width: var(--modal-width-2xl);
   max-width: 90vw;
   max-height: 85vh;
@@ -101,7 +101,7 @@
   color: var(--danger);
   padding: 4px;
   cursor: pointer;
-  border-radius: var(--r-sm);
+  border-radius: var(--r-md);
 }
 .id-btn-danger-small:hover { background: var(--danger-bg); }
 
@@ -146,7 +146,7 @@
   flex: 1;
   padding: 4px 8px;
   border: 1px solid var(--border);
-  border-radius: var(--r-sm);
+  border-radius: var(--r-md);
   font-size: 13px;
   outline: none;
   transition: border-color var(--t-fast), box-shadow var(--t-fast);
@@ -220,7 +220,7 @@
   width: 100%;
   padding: 2px 4px;
   border: 1px solid var(--border);
-  border-radius: var(--r-sm);
+  border-radius: var(--r-md);
   font-size: 12px;
   outline: none;
   background: var(--surface);

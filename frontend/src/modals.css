@@ -145,7 +145,7 @@
 .print-modal-close {
   width: 100%;
   padding: 10px;
-  @apply rounded-lg;
+  @apply rounded-md;
   border: 1px solid var(--border);
   background: var(--white);
   color: var(--text-2);
@@ -170,7 +170,7 @@
   background: var(--canvas-float-bg);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
-  @apply rounded-2xl;
+  @apply rounded-xl;
   @apply shadow-2xl;
   border: 1px solid var(--canvas-float-border);
   animation: modalScaleIn 0.3s var(--ease-spring);
@@ -666,7 +666,7 @@ button.pc-btn.outline,
   background: var(--canvas-float-bg);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
-  @apply rounded-2xl;
+  @apply rounded-xl;
   @apply shadow-2xl;
   border: 1px solid var(--canvas-float-border);
   animation: modalScaleIn 0.3s var(--ease-spring);
@@ -1599,7 +1599,7 @@ button.pc-btn.outline,
   width: 420px;
   max-width: calc(100vw - 40px);
   background: var(--white);
-  border-radius: 16px;
+  border-radius: var(--r-xl);
   box-shadow: var(--shadow-2xl);
   border: 1px solid var(--border-light);
   overflow: hidden;

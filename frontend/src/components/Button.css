@@ -29,7 +29,7 @@
 }
 
 /* ── Sizes ── */
-.btn--sm  { height: 28px; padding: 0 10px; font-size: 12px; border-radius: var(--r-sm); }
+.btn--sm  { height: 28px; padding: 0 10px; font-size: 12px; border-radius: var(--r-md); }
 .btn--md  { height: 34px; padding: 0 14px; font-size: 13px; border-radius: var(--r-md); }
 .btn--lg  { height: 40px; padding: 0 20px; font-size: 14px; border-radius: var(--r-md); }
 
