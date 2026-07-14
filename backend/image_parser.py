@@ -12,7 +12,7 @@ from ocr_engine import (
     ocr_call, ocr_result_to_items,
     ENABLE_PREPROCESS, ENABLE_ROW_MERGE,
 )
-from field_extractor import extract_fields_legacy
+
 
 logger = logging.getLogger(__name__)
 
@@ -38,13 +38,24 @@ def _resize_image(img, max_width, max_height):
     return img.resize((new_width, new_height), PILImage.Resampling.LANCZOS)
 
 
-def parse_image_ocr(file, auto_orient=True):
-    """使用OCR解析发票图片（自动纠正方向，支持缓存）"""
-    file.seek(0)
-    raw = file.read()
+def parse_image_ocr(file, auto_orient=True, content_sha256=None, content_bytes=None):
+    """使用OCR解析发票图片（自动纠正方向，支持缓存）
+
+    content_sha256 / content_bytes 为可选参数：由调用方（parse_invoice_service）
+    透传已计算的完整 SHA256 与原始字节，避免对 ≤4MB 文件重复哈希、并避免
+    从 BytesIO 拷贝第二份全量字节。未提供时回退到从 file 读取（向下兼容）。
+    """
+    if content_bytes is not None:
+        raw = content_bytes
+    else:
+        file.seek(0)
+        raw = file.read()
 
     # 缓存键：SHA256 哈希 + 显式后缀，与 pdf_utils.parse_invoice_unified 风格一致
-    sha = hashlib.sha256(raw).hexdigest()
+    if content_sha256 is not None:
+        sha = content_sha256
+    else:
+        sha = hashlib.sha256(raw).hexdigest()
     cache_key = sha + ('_orient' if auto_orient else '_no_orient')
     from config import CACHE_DEBUG
     if not CACHE_DEBUG:
@@ -108,12 +119,6 @@ def parse_image_ocr(file, auto_orient=True):
 
             if rotation_angle != 0:
                 logger.info("图片已自动旋转 %d°", rotation_angle)
-
-            inv_type, inv_number, amt, inv_date = extract_fields_legacy(full_text)
-            result["invoice_type"] = inv_type
-            result["invoice_number"] = inv_number
-            result["amount"] = amt
-            result["invoice_date"] = inv_date
 
             # 生成预览图（只在旋转后或需要时）
             if rotated_img is not None:
