@@ -7,7 +7,6 @@
 from .base import BaseParser, ParserRegistry, ParseResult
 from .pdf_text import PdfTextParser
 from .pdf_ocr import PdfOcrParser
-from .image import ImageOcrParser
 from .ofd import OfdParser
 from .xml import XmlParser
 
@@ -19,7 +18,6 @@ registry.register(XmlParser())        # XML 优先级最高（结构化数据）
 registry.register(OfdParser())        # OFD 次之（结构化数据）
 registry.register(PdfTextParser())    # 文本型 PDF
 registry.register(PdfOcrParser())     # 扫描型 PDF（OCR）
-registry.register(ImageOcrParser())   # 图片（OCR）
 
 __all__ = [
     'BaseParser',
@@ -27,7 +25,6 @@ __all__ = [
     'ParseResult',
     'PdfTextParser',
     'PdfOcrParser',
-    'ImageOcrParser',
     'OfdParser',
     'XmlParser',
     'registry',
