@@ -476,3 +476,6 @@ progress-demo/fc-type-demo.html
 test_export_full.xlsx
 frontend/src/canvas.css.bak
 frontend/src/canvas.css.edits.rollback.bat
+frontend/src/modals.css.bak
+frontend/src/modal-easing.rollback.bat
+frontend/src/invoice-detail.css.bak

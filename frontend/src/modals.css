@@ -29,7 +29,7 @@
   width: var(--modal-width-md);
   max-width: 90vw;
   border: 1px solid var(--canvas-float-border);
-  animation: modalScaleIn 0.3s var(--ease-spring);
+  animation: modalScaleIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .print-modal h3 {
@@ -173,7 +173,7 @@
   @apply rounded-xl;
   @apply shadow-2xl;
   border: 1px solid var(--canvas-float-border);
-  animation: modalScaleIn 0.3s var(--ease-spring);
+  animation: modalScaleIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -229,7 +229,7 @@ button.pc-btn.outline,
   @apply rounded-2xl;
   @apply shadow-2xl;
   border: 1px solid var(--canvas-float-border);
-  animation: modalScaleIn 0.3s var(--ease-spring);
+  animation: modalScaleIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -669,7 +669,7 @@ button.pc-btn.outline,
   @apply rounded-xl;
   @apply shadow-2xl;
   border: 1px solid var(--canvas-float-border);
-  animation: modalScaleIn 0.3s var(--ease-spring);
+  animation: modalScaleIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
   display: flex;
   flex-direction: column;
   overflow: hidden;

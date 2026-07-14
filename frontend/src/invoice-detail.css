@@ -23,7 +23,7 @@
   flex-direction: column;
   @apply shadow-2xl;
   overflow: hidden;
-  animation: modalScaleIn 0.25s var(--ease);
+  animation: modalScaleIn 0.25s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .invoice-detail-header {
