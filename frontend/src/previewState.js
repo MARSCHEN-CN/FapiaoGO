@@ -94,6 +94,20 @@ export function placeholderPaperLayout() {
  * @property {{top:number,right:number,bottom:number,left:number}} margins - 安全边距，单位 mm
  */
 
+// ── PaperLayout 构造计数（v1.1 F3 单一构造点守卫）──
+// 仅 computePaperLayout（唯一工厂）会使其自增。语义（2026-07-14 重定义）：
+//   count = PaperLayout「生成次数」= 对 computePaperLayout 的调用次数。
+//   此前（useEffect 时代）误等于「recompute 次数」；改为 useMemo 派生后，
+//   同语义仍为「生成次数」，与渲染时机（effect / render）解耦。
+//   • mount 后 count=1；
+//   • 连续修改 margin/纸张 → count 随每次 relayout +1（relayout 非 reload）；
+//   • 切换 100 个文件 → count 不变（deps 不含 previewFile，memo 不重算），证明已与 DocumentState 解耦。
+// 注：placeholderPaperLayout() 是 Fact 占位（useRef 初始化用），不计入此计数。
+let _paperLayoutBuildCount = 0
+/** @returns {number} 累计通过 Factory 构造 PaperLayout 的次数 */
+export function getPaperLayoutBuildCount() { return _paperLayoutBuildCount }
+/** 重置计数（测试用；运行时不应调用）。 */
+export function resetPaperLayoutBuildCount() { _paperLayoutBuildCount = 0 }
 
 /**
  * 唯一构造点（F3）：从 PaperSpec 推导 PaperLayout。
@@ -118,6 +132,8 @@ export function computePaperLayout(spec) {
 
   const innerW = Math.max(0, paperW - mLeft - mRight)
   const innerH = Math.max(0, paperH - mTop - mBottom)
+
+  _paperLayoutBuildCount++
 
   return {
     paperRect: { w: paperW, h: paperH },
