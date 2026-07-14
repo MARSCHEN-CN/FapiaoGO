@@ -74,6 +74,10 @@ export function usePreview({ files, settings, electronAPIRef }) {
   const renderCancelledRef = useRef(false)
   // ✅ <img> 尺寸探测：防止过期回调覆盖（仅最新 token 可提交）
   const imgLoadTokenRef = useRef(0)
+  // ── [PREVIEW FLOW] 生命周期 token：连接 doLoadPreview 与 render effect 的统一追踪 ID ──
+  //    导入在 doLoadPreview START 写入 PRV-xxx，render effect 读取它，使一次导入的全链路
+  //    （load → render effect → RE probe / canvas → commit）共用同一 token，便于复现卡 Loading 时定位最后节点。
+  const flowTokenRef = useRef(null)
   // ✅ 保存 zoom menu 关闭动画的 timeout ID，用于清理
   const zoomMenuCloseTimeoutRef = useRef(null)
   // ✅ 保存 handlePreview 最新引用，避免 useEffect 闭包陷阱
@@ -146,6 +150,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
     setPreviewImgDims(null)
     setPreviewCanvas(null)
     setPreviewLoading(false)
+    console.log(`[PREVIEW FLOW ${flowTokenRef.current ?? 'init'}] LOADING_OFF | source=clearCommitted`)
   }, [])
   // 同步 committed.layout（contentLayout 是派生显示态，commit 后随其更新）
   useEffect(() => { committedPreviewRef.current.layout = contentLayout }, [contentLayout])
@@ -422,6 +427,12 @@ export function usePreview({ files, settings, electronAPIRef }) {
   useEffect(() => {
     if (!previewFile) { clearCommitted(); return }
 
+    // ✅ 渲染生命周期 token
+    const renderToken = `RND-${Date.now()}-${++renderVersionRef.current}`
+    // ✅ 统一生命周期 token：优先用 doLoadPreview 写入的 PRV-xxx，使一次导入全链路共用同一 ID
+    const flowToken = flowTokenRef.current ?? renderToken
+    console.log(`[PREVIEW FLOW ${renderToken}] START | file=${previewFile.key?.slice(0,20)} | page=${previewPage}`)
+
     // NOTE: Render dispatch must always execute before any cache bypass.
     //       Cache may provide render results, but must not choose the renderer.
     //       skipRenderRef only skips the Canvas pipeline; it does not skip
@@ -441,6 +452,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
     if (skipRenderRef.current) {
       skipRenderRef.current = false
       if (reUrl) { setPreviewUrl(reUrl) }  // RE 可用 → 优先使用（不受缓存影响）
+      console.log(`[PREVIEW FLOW ${renderToken}] FINALLY | skipped (L2 cache hit)`)
       return  // 不执行 Canvas 渲染（缓存内容已就绪或 RE 已设）
     }
 
@@ -500,8 +512,9 @@ export function usePreview({ files, settings, electronAPIRef }) {
         return false
       }
     }
-    const startREProbe = (probeUrl, fileObj) => {
+    const startREProbe = (probeUrl, fileObj, renderToken) => {
       setPreviewLoading(true)
+      console.log(`[PREVIEW FLOW ${renderToken}] LOADING_ON | source=RE probe`)
       const token = ++imgLoadTokenRef.current
       const probe = new Image()
       probe.decoding = 'async'
@@ -511,6 +524,8 @@ export function usePreview({ files, settings, electronAPIRef }) {
         setPreviewUrl(probeUrl)
         setPreviewImgDims({ w: probe.naturalWidth, h: probe.naturalHeight })
         setPreviewLoading(false)
+        console.log(`[PREVIEW FLOW ${renderToken}] LOADING_OFF | source=RE commit`)
+        console.log(`[PREVIEW FLOW ${renderToken}] RE_PROBE_COMMIT | url=${probeUrl?.slice(0,50)} | dims=${probe.naturalWidth}x${probe.naturalHeight}`)
         committedPreviewRef.current = {
           url: probeUrl,
           dims: { w: probe.naturalWidth, h: probe.naturalHeight },
@@ -521,22 +536,37 @@ export function usePreview({ files, settings, electronAPIRef }) {
         previewUrlRef.current = probeUrl
       }
       probe.onload = () => {
-        if (token !== imgLoadTokenRef.current) return
+        if (token !== imgLoadTokenRef.current) {
+          console.log(`[PREVIEW FLOW ${renderToken}] RE_PROBE_SKIP | token expired`)
+          return
+        }
         if (typeof probe.decode === 'function') {
-          probe.decode().then(commit).catch(commit)
+          probe.decode().then(() => {
+            console.log(`[PREVIEW FLOW ${renderToken}] DECODE_OK | url=${probeUrl?.slice(0,50)}`)
+            commit()
+          }).catch(commit)
         } else {
+          console.log(`[PREVIEW FLOW ${renderToken}] DECODE_OK | url=${probeUrl?.slice(0,50)} | sync`)
           commit()
         }
       }
       probe.onerror = () => {
-        if (token !== imgLoadTokenRef.current) return
+        if (token !== imgLoadTokenRef.current) {
+          console.log(`[PREVIEW FLOW ${renderToken}] RE_PROBE_SKIP | token expired`)
+          return
+        }
         setPreviewLoading(false)
-        recoverREPreview(fileObj, probeUrl, token)
+        console.log(`[PREVIEW FLOW ${renderToken}] RE_PROBE_ERROR | url=${probeUrl?.slice(0,50)}`)
+        recoverREPreview(fileObj, probeUrl, token, renderToken)
       }
       probe.src = probeUrl
     }
-    const recoverREPreview = async (fileObj, probeUrl, token) => {
-      if (token !== imgLoadTokenRef.current) return
+    const recoverREPreview = async (fileObj, probeUrl, token, renderToken) => {
+      if (token !== imgLoadTokenRef.current) {
+        console.log(`[PREVIEW FLOW ${renderToken}] RECOVER_SKIP | token expired`)
+        return
+      }
+      console.log(`[PREVIEW FLOW ${renderToken}] RECOVER_START | docId=${fileObj.docId?.slice(0,20)}`)
       // 1. 探测失败原因：DOC_NOT_REGISTERED（可恢复）还是已注册但渲染错误（不可恢复）
       let reason = 'unknown'
       try {
@@ -548,16 +578,19 @@ export function usePreview({ files, settings, electronAPIRef }) {
           reason = 'RENDER_ERROR'
         }
       } catch (e) { reason = 'unknown' }
+      console.log(`[PREVIEW FLOW ${renderToken}] RECOVER_REASON | reason=${reason}`)
       // 2. doc 未注册 → 自动重注册（用户无感），成功后重试 RE
       if (reason === 'DOC_NOT_REGISTERED') {
         const registered = await autoRegister(fileObj)
         if (registered) {
-          startREProbe(probeUrl, fileObj)  // 重试（新 token）
+          console.log(`[PREVIEW FLOW ${renderToken}] RECOVER_RETRY | re-registered successfully`)
+          startREProbe(probeUrl, fileObj, flowToken)  // 重试（新 token）
           return
         }
       }
       // 3. 容灾：标记 RE 不可用 → 落入下方 canvas 渲染，保证预览不中断
       setReBlockedDocId(fileObj.docId)
+      console.log(`[PREVIEW FLOW ${renderToken}] RECOVER_FALLBACK | marked RE blocked, falling back to canvas`)
     }
     if (hasRenderEngineUrl && reBlockedDocId !== previewFile.docId) {
       const url = reUrl
@@ -565,12 +598,14 @@ export function usePreview({ files, settings, electronAPIRef }) {
       // ✅ Stage 0.8 Commit Buffer（修正版）：以 committedPreviewRef.current.url 判断是否需重新探测，
       //    保留上一帧直到 decode 完成才原子 commit（消灭 A→null→B 白板）。
       if (committedPreviewRef.current.url !== url) {
-        startREProbe(url, previewFile)
+        console.log(`[PREVIEW FLOW ${renderToken}] RE_PROBE_START | url=${url?.slice(0,50)}`)
+        startREProbe(url, previewFile, flowToken)
       } else {
         // 已提交帧即本 url（旋转/缩放重渲染）：确保显示态与之对齐，不重新探测。
         setPreviewUrl(url)
         setPreviewImgDims(committedPreviewRef.current.dims)
         setPreviewLoading(false)
+        console.log(`[PREVIEW FLOW ${renderToken}] FINALLY | RE url already committed`)
       }
       return
     }
@@ -583,9 +618,11 @@ export function usePreview({ files, settings, electronAPIRef }) {
     // ✅ Stage 0.8：canvas 帧已在 committed，加载期间保持显示 + 打 loading overlay
     committedPreviewRef.current = { ...committedPreviewRef.current, url: null, dims: null }
     setPreviewLoading(true)
+    console.log(`[PREVIEW FLOW ${renderToken}] LOADING_ON | source=canvas path`)
 
     const renderToCanvas = async (signal) => {
       try {
+        console.log(`[PREVIEW FLOW ${renderToken}] CANVAS_START | isMerge=${isMergeMode(settings.mergeMode)}`)
         let canvas
         const isMerge = isMergeMode(settings.mergeMode) && mergePair?.some(Boolean)
 
@@ -684,16 +721,20 @@ export function usePreview({ files, settings, electronAPIRef }) {
             timestamp: Date.now(),
           }
           setPreviewLoading(false)
+          console.log(`[PREVIEW FLOW ${renderToken}] CANVAS_COMMIT | canvas=${canvas.width}x${canvas.height}`)
           // ✅ 递增渲染版本，通知 PreviewCanvas 内容已更新（全局 Canvas 对象引用不变时需要此标记）
           setPreviewRenderVersion(v => v + 1)
         }
       } catch (e) {
-        console.error('Canvas 渲染失败:', e)
+        console.error(`[PREVIEW FLOW ${renderToken}] CANVAS_ERROR | error=${e.message}`)
         if (!renderCancelledRef.current && currentRenderId === previewVersionRef.current) {
           setPreviewCanvas(null)
           // ✅ 当前最新渲染失败 → 关闭 loading（旧 committed 帧仍在，无白板）
           setPreviewLoading(false)
+          console.log(`[PREVIEW FLOW ${renderToken}] LOADING_OFF | source=canvas error`)
         }
+      } finally {
+        console.log(`[PREVIEW FLOW ${renderToken}] CANVAS_FINALLY | cancelled=${renderCancelledRef.current}`)
       }
     }
     const abortController = new AbortController()
@@ -701,6 +742,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
     return () => {
       renderCancelledRef.current = true
       abortController.abort()
+      console.log(`[PREVIEW FLOW ${renderToken}] CLEANUP | effect unmounted`)
 
       // 清理 React DevTools 注入的 PerformanceMeasure，防止开发模式下内存无限累积
       if (typeof performance.clearMeasures === 'function') {
@@ -1103,6 +1145,11 @@ export function usePreview({ files, settings, electronAPIRef }) {
 
     // ✅ 在加载前先递增版本号，确保旧请求被丢弃
     const version = ++previewVersionRef.current
+    
+    // ✅ 预览生命周期 token：用于追踪竞争条件
+    const previewToken = `PRV-${Date.now()}-${version}`
+    flowTokenRef.current = previewToken
+    console.log(`[PREVIEW FLOW ${previewToken}] START | source=${source} | file=${fileObj.key?.slice(0,20)} | version=${version}`)
 
     // ✅ 保存旧的 blob URL，在新预览加载完成后再清理
     const oldBlobUrls = [...pendingBlobUrlsRef.current]
@@ -1110,6 +1157,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
 
     // ── 合并模式预览 ──
     if (isMergeMode(settings.mergeMode)) {
+      console.log(`[PREVIEW FLOW ${previewToken}] REQUEST | merge mode | groupSize=${settings.mergeMode}`)
       const groupSize = parseInt(settings.mergeMode?.replace('merge', '')) || 2
       const pair = getMergePair(filesRef.current, fileObj.key, groupSize)
       if (pair && pair.length >= 1) {
@@ -1118,6 +1166,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
             loadPairItemForPreview(item, idx === 0 ? fileObj.key : null, idx === 0 ? null : null)
           )
         )
+        console.log(`[PREVIEW FLOW ${previewToken}] RESPONSE | merge load complete | loaded=${loaded.length}`)
         const validLoaded = loaded.filter(Boolean)
         // ✅ 检查版本号，确保只处理最新请求
         if (validLoaded.length > 0 && version === previewVersionRef.current) {
@@ -1126,7 +1175,10 @@ export function usePreview({ files, settings, electronAPIRef }) {
           setPreviewFile(validLoaded[0])
           setPreviewPage(1)
           setNumPages(1)
+        } else if (version !== previewVersionRef.current) {
+          console.log(`[PREVIEW FLOW ${previewToken}] FINALLY | aborted (version mismatch) | current=${previewVersionRef.current}`)
         }
+        console.log(`[PREVIEW FLOW ${previewToken}] FINALLY | merge mode complete`)
         return
       }
     }
@@ -1135,8 +1187,13 @@ export function usePreview({ files, settings, electronAPIRef }) {
     // 先加载文件数据（含方向检测所需的页面尺寸），再用"当前"布局参数生成缓存 key。
     // key 必须包含所有影响 Canvas 的布局参数，且读写两侧用同一份 settings（settingsRef.current），
     // 否则命中陈旧缓存 + skipRenderRef 跳过纠正渲染 → 显示错误预览（正确性 Bug）。
+    console.log(`[PREVIEW FLOW ${previewToken}] REQUEST | loadFilePreview | file=${fileObj.key?.slice(0,20)}`)
     const loadedFile = await loadFilePreview(fileObj)
-    if (version !== previewVersionRef.current) { return }
+    console.log(`[PREVIEW FLOW ${previewToken}] RESPONSE | loadFilePreview complete | loadedFile=${loadedFile?.key?.slice(0,20)}`)
+    if (version !== previewVersionRef.current) {
+      console.log(`[PREVIEW FLOW ${previewToken}] FINALLY | aborted (version mismatch) | current=${previewVersionRef.current}`)
+      return
+    }
 
     const rotation = (fileRotations[loadedFile.key] || 0)
     // 与 render effect 保持一致的 isLandscape 计算：统一走 resolvePaper（Single Decision Point）。
@@ -1200,6 +1257,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
           setPreviewCanvas(cachedCanvas)
           // ✅ Stage 0.8：缓存命中 = 立即提交，同步 committed + 关闭 loading
           setPreviewLoading(false)
+          console.log(`[PREVIEW FLOW ${previewToken}] LOADING_OFF | source=L2 cache hit`)
           committedPreviewRef.current = {
             url: committedPreviewRef.current.url,
             dims: committedPreviewRef.current.dims,
@@ -1282,6 +1340,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
         } catch (e) { /* ignore already revoked */ }
       }
     }
+    console.log(`[PREVIEW FLOW ${previewToken}] FINALLY | doLoadPreview complete | version=${version}`)
   }, [settings.mergeMode, loadPairItemForPreview, loadFilePreview, fullCacheRef, skipRenderRef, previewFileRef, previewVersionRef, previewUrlRef, pendingBlobUrlsRef, fileRotations, paperLayout])
 
   // ============================

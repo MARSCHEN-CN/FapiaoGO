@@ -479,3 +479,7 @@ frontend/src/canvas.css.edits.rollback.bat
 frontend/src/modals.css.bak
 frontend/src/modal-easing.rollback.bat
 frontend/src/invoice-detail.css.bak
+frontend/src/sidebar.css.bak
+frontend/src/sidebar-active-bar.rollback.bat
+progress-demo/color-scheme-demo.html
+progress-demo/sb-stats-demo.html
