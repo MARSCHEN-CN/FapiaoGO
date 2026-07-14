@@ -25,6 +25,7 @@
     "windowSize": {
       "width": 780,
       "height": 600
-    }
+    },
+    "showEdge": true
   }
 }
