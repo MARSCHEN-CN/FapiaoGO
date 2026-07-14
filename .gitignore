@@ -474,3 +474,5 @@ progress-demo/wait.svg
 progress-demo/index.html
 progress-demo/fc-type-demo.html
 test_export_full.xlsx
+frontend/src/canvas.css.bak
+frontend/src/canvas.css.edits.rollback.bat
