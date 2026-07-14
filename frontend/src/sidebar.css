@@ -687,7 +687,7 @@
   padding: clamp(12px, 0.8vw, 16px);
   display: flex;
   align-items: stretch;
-  gap: 0;
+  gap: clamp(8px, 0.5vw, 12px);
   box-shadow: var(--shadow-sm);
   border: 1px solid var(--border-light);
 }
@@ -699,17 +699,6 @@
   align-items: center;
   justify-content: center;
   padding: 4px 8px;
-  position: relative;
-}
-
-.sb-stat + .sb-stat::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 15%;
-  bottom: 15%;
-  width: 1px;
-  background: var(--border-light);
 }
 
 .sb-stat-icon {

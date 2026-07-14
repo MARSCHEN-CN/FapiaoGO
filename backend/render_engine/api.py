@@ -110,6 +110,8 @@ def preview(doc_id: str):
     if isinstance(resp, tuple):
         return resp
     resp.headers["Cache-Control"] = "public, max-age=0, must-revalidate"
+    # ── [DIAG] 响应元数据：ETag + Content-Length，用于判断"拖边距后 JPEG 是否真的变了" ──
+    print(f"[RESPONSE] etag={resp.headers.get('ETag','-')[:16]} len={resp.headers.get('Content-Length','-')}", flush=True)
 
     # ── Commit A/B：回显 RenderSpec（诊断）──
     # Commit A：spec 仅诊断、零渲染影响；Legacy 客户端（无 ?spec=）输出不变。
