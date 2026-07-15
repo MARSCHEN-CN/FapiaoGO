@@ -82,6 +82,20 @@ export function placeholderPaperLayout() {
   return { paperRect: { w: 0, h: 0 }, marginRect: { w: 0, h: 0 }, contentRect: { w: 0, h: 0 }, displayRect: { w: 0, h: 0 }, orientation: 'portrait', clipRect: { w: 0, h: 0 } }
 }
 
+/** 创建非法 PaperLayout：边距非法导致 contentRect 坍缩。Derived 层不修正 Fact，仅标记无效，交由上层恢复（重置默认/提示用户）。 */
+export function invalidPaperLayout(reason) {
+  return {
+    valid: false,
+    reason: reason || 'Invalid PaperSpec',
+    paperRect: { w: 0, h: 0 },
+    marginRect: { w: 0, h: 0 },
+    contentRect: { w: 0, h: 0 },
+    usableRect: { x: 0, y: 0, w: 0, h: 0 },
+    displayRect: { w: 0, h: 0 },
+    clipRect: { w: 0, h: 0 },
+  }
+}
+
 // ── PaperSpec（Fact，唯一输入） ──────────────────────────────
 // 仅描述纸张与边距，与文档完全无关。PaperSpec 改变只影响 PaperLayout。
 
@@ -125,35 +139,34 @@ export function computePaperLayout(spec) {
   const paperW = Math.round(paper.widthMM / 25.4 * dpi)
   const paperH = Math.round(paper.heightMM / 25.4 * dpi)
 
-  // 🆕 防御性夹取（2026-07-15）：非法边距（如 marginLeft=210mm > A5 纸宽 148mm）
-  // 曾导致 innerW 被 Math.max(0, ...) 静默夹为 0 → contentRect.w=0 →
-  // buildRenderLayout 静默返 empty(scale=0) → previewSpec=null → 裸 URL → 预览卡死。
-  // 夹取保证每条边距不超过 (纸张维度 - 最小内容区)/2，
-  // 从而 mLeft+mRight <= paperW-MIN_CONTENT → innerW >= MIN_CONTENT > 0（永不为 0）。
-  const MIN_CONTENT_MM = 5
-  const minContentPx = Math.round(MIN_CONTENT_MM / 25.4 * dpi)
-  const halfW = Math.max(0, paperW - minContentPx) / 2
-  const halfH = Math.max(0, paperH - minContentPx) / 2
-  const clampMarginMm = (v, maxPx, label) => {
-    const mm = typeof v === 'number' && isFinite(v) ? v : 3
-    const px = Math.round(mm / 25.4 * dpi)
-    if (px > maxPx) {
-      console.warn(`[V16 WARN] Invalid margin ${label}=${mm}mm exceeds allowed ${(maxPx / dpi * 25.4).toFixed(1)}mm (paper=${paper.widthMM}x${paper.heightMM}mm, min content ${MIN_CONTENT_MM}mm). Clamped.`)
-      return maxPx
-    }
-    return px
+  // 边距 → 像素：仅做「缺失/非法数值 → 默认值 3mm」归一化。
+  // 注意：此处**不按纸张夹取**——修正非法 Fact 是配置层（margin-sanitizer）的职责，
+  // computePaperLayout 作为 Fact→Derived 的 Derived 层，禁止修改 Fact（V16 F1）。
+  // 若入参本身非法（边距之和超过纸宽），下方检测后返回 invalidPaperLayout，交由上层恢复。
+  const toPx = (v) => {
+    const mm = (typeof v === 'number' && isFinite(v) && v >= 0) ? v : 3
+    return Math.round(mm / 25.4 * dpi)
   }
-  const mLeft = clampMarginMm(margins.left, halfW, 'left')
-  const mRight = clampMarginMm(margins.right, halfW, 'right')
-  const mTop = clampMarginMm(margins.top, halfH, 'top')
-  const mBottom = clampMarginMm(margins.bottom, halfH, 'bottom')
+  const mLeft = toPx(margins.left)
+  const mRight = toPx(margins.right)
+  const mTop = toPx(margins.top)
+  const mBottom = toPx(margins.bottom)
 
-  const innerW = Math.max(0, paperW - mLeft - mRight)
-  const innerH = Math.max(0, paperH - mTop - mBottom)
+  const innerW = paperW - mLeft - mRight
+  const innerH = paperH - mTop - mBottom
+
+  // Derived 层守卫：非法 Fact 不应被静默修正，而是显式标记无效（F1）。
+  // 配置层正常已夹取，此路径为防御性兜底——正常不会触发；一旦触发说明 Fact 在边界外泄漏。
+  if (innerW <= 0 || innerH <= 0) {
+    console.warn(`[V16 WARN] PaperSpec margins exceed paper size (paper=${paper.widthMM}x${paper.heightMM}mm, margins L=${margins.left} R=${margins.right} T=${margins.top} B=${margins.bottom}mm). contentRect would collapse; PaperLayout marked invalid — caller must recover (reset to defaults / prompt user).`)
+    _paperLayoutBuildCount++
+    return invalidPaperLayout(`Margins exceed paper size (paper=${paper.widthMM}x${paper.heightMM}mm)`)
+  }
 
   _paperLayoutBuildCount++
 
   return {
+    valid: true,
     paperRect: { w: paperW, h: paperH },
     marginRect: { w: innerW, h: innerH },
     contentRect: { w: innerW, h: innerH },            // Phase 2A: = marginRect（预留装订边/水印扩展空间）

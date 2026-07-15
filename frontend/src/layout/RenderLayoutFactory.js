@@ -51,6 +51,14 @@ export function emptyRenderLayout() {
  * @returns {ReturnType<typeof emptyRenderLayout>}
  */
 export function buildRenderLayout(paperLayout, documentState) {
+  // V16 F1/F2 守卫：非法 PaperLayout（valid:false，来自 Fact 越界/配置层未拦截）不应进入 Render 派生层。
+  // 若出现，说明配置层 sanitize 未生效或非法 Fact 在边界外泄漏 —— 直接 ASSERT（console.error，
+  // 开发期一眼可见），让「裸 URL / 预览卡死」类问题从根因起步，而非追到后端 sig=- 才发现。
+  // 用 === false 严格判断：placeholderPaperLayout 无 valid 字段（undefined），初始化阶段不触发。
+  if (paperLayout && paperLayout.valid === false) {
+    console.error(`[V16 ASSERT] Invalid PaperLayout reached RenderLayoutFactory — ${paperLayout.reason || 'unknown reason'}. Caller must recover (reset to defaults / prompt user) before layout.`)
+    return emptyRenderLayout()
+  }
   if (!paperLayout || !paperLayout.contentRect || !paperLayout.contentRect.w) {
     console.warn(`[V16 WARN] buildRenderLayout: paperLayout.contentRect.w is 0/undefined — returning empty (scale=0). Check PaperLayout derivation (margins may still be invalid).`)
     return emptyRenderLayout()

@@ -816,14 +816,18 @@ ipcMain.handle('resize-settings-window', async (event, { width, height }) => {
   }
 })
 
+// 配置落盘：save-print-settings 与 load 时修复写回共用同一路径，保证写入格式一致
+async function writeSettingsFile(settings) {
+  const settingsDir = path.dirname(settingsPath)
+  await fs.promises.mkdir(settingsDir, { recursive: true })
+  await fs.promises.writeFile(settingsPath, JSON.stringify(settings, null, 2), 'utf-8')
+}
+
 // --- 打印设置加载与保存 ---
 ipcMain.handle('save-print-settings', async (event, settings) => {
   try {
     console.log('保存打印设置:', settings)
-    // 确保目录存在（mkdir recursive 在目录已存在时为 no-op，等价于原 existsSync 守卫）
-    const settingsDir = path.dirname(settingsPath)
-    await fs.promises.mkdir(settingsDir, { recursive: true })
-    await fs.promises.writeFile(settingsPath, JSON.stringify(settings, null, 2), 'utf-8')
+    await writeSettingsFile(settings)
     // ✅ 立即通知主窗口设置已变化（尤其是 mergeMode）
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('settings-changed', settings)
@@ -834,21 +838,37 @@ ipcMain.handle('save-print-settings', async (event, settings) => {
   }
 })
 
+// 配置层边界校验（V16 架构职责）：PaperSpec 是 Fact，进入 Render DAG 前必须合法。
+// 非法边距（如 marginLeft=210mm > A5 纸宽 148mm）曾导致 contentRect.w=0 → 预览静默卡死。
+// 修正 Fact 属于配置层（margin-sanitizer），Derived 层 computePaperLayout 只标记无效、不修正。
+const { sanitizeMargins, resolvePaperDims } = require('./shared/margin-sanitizer')
+let _warnedInvalidMargins = false
 ipcMain.handle('load-print-settings', async () => {
   try {
     const data = await fs.promises.readFile(settingsPath, 'utf-8')
     const parsed = JSON.parse(data)
-    // 🆕 配置层边界校验（2026-07-15）：脏配置（如 marginLeft=210mm > 纸宽）
-    // 曾导致预览静默崩。此处先做数值净化（paper 相关的精确夹取在 computePaperLayout）。
-    const sanitizeMargin = (v) => {
-      const n = typeof v === 'number' && isFinite(v) ? v : 3
-      return Math.min(1000, Math.max(0, n))
-    }
     if (parsed && typeof parsed === 'object') {
-      parsed.marginLeft = sanitizeMargin(parsed.marginLeft)
-      parsed.marginRight = sanitizeMargin(parsed.marginRight)
-      parsed.marginTop = sanitizeMargin(parsed.marginTop)
-      parsed.marginBottom = sanitizeMargin(parsed.marginBottom)
+      const { settings, changed, original } = sanitizeMargins(parsed)
+      if (changed) {
+        // 配置迁移：把修复后的合法 Fact 永久写回磁盘，避免每次启动重复 sanitize/warn。
+        // 写回后下次启动读取到的就是合法文件，changed=false，warn 自然不再出现（写一次、warn 一次）。
+        try {
+          await writeSettingsFile(settings)
+        } catch (e) {
+          console.error('[V16] Failed to persist recovered print settings:', e)
+        }
+        if (!_warnedInvalidMargins) {
+          _warnedInvalidMargins = true
+          const dims = resolvePaperDims(settings)
+          console.warn(
+            '[V16 WARN] Recovered invalid margins in Settings.json (paper=' + dims.widthMM + 'x' + dims.heightMM + 'mm) and rewrote file with sanitized values.\n' +
+            '  Original:  left=' + original.marginLeft + ' right=' + original.marginRight + ' top=' + original.marginTop + ' bottom=' + original.marginBottom + '\n' +
+            '  Sanitized: left=' + settings.marginLeft + ' right=' + settings.marginRight + ' top=' + settings.marginTop + ' bottom=' + settings.marginBottom + '\n' +
+            '  This warning should not reappear on next launch.'
+          )
+        }
+      }
+      return settings
     }
     return parsed
   } catch (error) {
