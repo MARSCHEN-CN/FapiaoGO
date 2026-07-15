@@ -15,6 +15,7 @@
  */
 
 import { calculateFitScale, calculateCenteredPosition } from '../layout.js'
+import { isPaperLayoutInvalid } from '../previewState.js'
 
 /**
  * 归一化旋转角到 {0,90,180,270}（顺时针）。
@@ -51,12 +52,24 @@ export function emptyRenderLayout() {
  * @returns {ReturnType<typeof emptyRenderLayout>}
  */
 export function buildRenderLayout(paperLayout, documentState) {
-  // V16 F1/F2 守卫：非法 PaperLayout（valid:false，来自 Fact 越界/配置层未拦截）不应进入 Render 派生层。
-  // 若出现，说明配置层 sanitize 未生效或非法 Fact 在边界外泄漏 —— 直接 ASSERT（console.error，
-  // 开发期一眼可见），让「裸 URL / 预览卡死」类问题从根因起步，而非追到后端 sig=- 才发现。
-  // 用 === false 严格判断：placeholderPaperLayout 无 valid 字段（undefined），初始化阶段不触发。
-  if (paperLayout && paperLayout.valid === false) {
-    console.error(`[V16 ASSERT] Invalid PaperLayout reached RenderLayoutFactory — ${paperLayout.reason || 'unknown reason'}. Caller must recover (reset to defaults / prompt user) before layout.`)
+  // V16 F1/F2 守卫：非法/坍缩的 PaperLayout 不应进入 Render 派生层。
+  // 不变量校验收口到 isPaperLayoutInvalid（previewState.js 单一来源）：
+  //   • 信任 Layout 不变量（contentRect.w/h>0）而非一个可能过期的 valid 字段；
+  //   • 即便将来有人写出 {valid:true, contentRect:{w:0}}，仍会被判 invalid；
+  //   • placeholder（valid===undefined）属「未就绪」而非「非法」，由该函数豁免，走下方 WARN 守卫返 empty。
+  if (isPaperLayoutInvalid(paperLayout)) {
+    const c = paperLayout.contentRect || { w: 0, h: 0 }
+    const reason = paperLayout.reason
+      || (paperLayout.valid === false ? 'valid:false' : 'contentRect collapsed (w/h<=0)')
+    const fmt = (n) => (typeof n === 'number' ? n : '?')
+    console.error(
+      '[V16 ASSERT] PaperLayout invariant violated\n' +
+      `  valid=${paperLayout.valid}\n` +
+      `  paper=${fmt(paperLayout.paperRect?.w)}x${fmt(paperLayout.paperRect?.h)}\n` +
+      `  content=${fmt(c.w)}x${fmt(c.h)}\n` +
+      `  reason=${reason}\n` +
+      '  Caller must recover (reset to defaults / prompt user) before layout.'
+    )
     return emptyRenderLayout()
   }
   if (!paperLayout || !paperLayout.contentRect || !paperLayout.contentRect.w) {

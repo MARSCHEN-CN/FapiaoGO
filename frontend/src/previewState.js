@@ -96,6 +96,31 @@ export function invalidPaperLayout(reason) {
   }
 }
 
+/**
+ * 单一收口：PaperLayout 不变量校验（V16「用不变量守住架构」）。
+ * 把原本散落在 buildRenderLayout 顶部的 ASSERT 条件收敛到一处，
+ * 未来新增不变量（如 usableRect.w<=0 / paperRect.w<=0）只改这一函数，不让 Factory 越堆越臃肿。
+ *
+ * 三状态模型（与 V16 一致）：
+ *   valid === undefined → placeholder（Not Ready，合法）→ 返回 false（豁免）。
+ *   valid === false     → 显式非法 → 返回 true。
+ *   valid === true      → 若 contentRect 坍缩（w/h<=0）属严重 bug → 同样 true（不变量兜底，防漏维护 valid）。
+ *
+ * 注意：本函数不信任 valid 字段本身，而是信任 Layout 不变量——
+ * 即便将来有人写出 {valid:true, contentRect:{w:0}} 这种矛盾对象，仍会被判为 invalid。
+ *
+ * @param {PaperLayout|null|undefined} layout
+ * @returns {boolean} true = 非法/坍缩（应通过 ASSERT 拦截）；false = 合法或 placeholder(未就绪)
+ */
+export function isPaperLayoutInvalid(layout) {
+  // placeholder（valid === undefined）不是非法，只是「还没就绪」→ 豁免。
+  if (!layout || layout.valid === undefined) return false
+  if (layout.valid === false) return true
+  const c = layout.contentRect
+  if (!c || c.w <= 0 || c.h <= 0) return true
+  return false
+}
+
 // ── PaperSpec（Fact，唯一输入） ──────────────────────────────
 // 仅描述纸张与边距，与文档完全无关。PaperSpec 改变只影响 PaperLayout。
 
