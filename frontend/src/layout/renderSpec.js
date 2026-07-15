@@ -7,11 +7,14 @@
  *  • 坐标系：与 PaperLayout / RenderLayout 同一坐标系（当前 px@PREVIEW_DPI），禁止 px/mm 混用。
  *  • RE 末端仅做一次 坐标→设备像素(dpi) 换算（Step 4 消费）。
  *
- * 阶段约束（Step 2）：本模块产出的 URL 参数一律使用「后端当前不识别的新字段名」
- * （paper_w / scale / ox / oy / clip_* / dpi），因此不改变现有 RE 渲染输出；
- * 后端在 Step 4 才会消费这些字段并移除 A4 硬编码 / fitMode switch。
- * 切勿在 Step 2 发送后端已识别的 rotation / paper(key) / margin(key)，
- * 否则会与 PreviewCanvas 的 CSS 旋转 / 既有 A4 默认产生双重作用导致渲染异常。
+ * 阶段约束（已落地 Commit B-1 / Step 4）：
+ * 后端 api.py:95 经 verify_render_spec 校验签名后，engine.py:_render_spec_page
+ * 已真实消费 placement（scale / ox / oy / clip）—— 非 shadow / 非 legacy。
+ * 修改本模块产出的 spec 会直接改变 RE 渲染输出，前端与后端几何需对照排查
+ * （本次审查前半段即因误信"后端不识别"而走弯路）。
+ * margin_* / rotation / paper_landscape 等字段当前仅用于签名回显比对，
+ * 不参与几何定位（placement 已含 offset）。
+ * 余下 Step 4 项：移除 PreviewCanvas CSS 旋转、删除 A4 硬编码 —— 尚未完成。
  */
 
 import { PREVIEW_DPI } from '../config.js'

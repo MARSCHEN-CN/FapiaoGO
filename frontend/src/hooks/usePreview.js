@@ -1225,14 +1225,6 @@ export function usePreview({ files, settings, electronAPIRef }) {
       sourceType: loadedFile._fileFormat || 'pdf',
       pageNum: loadedFile.pageNum || 1,
     }
-    documentStateRef.current = {
-      id: loadedFile.key || loadedFile.id || '',
-      pageCount: loadedFile._pdfPageCount || 1,
-      pageSize: { w: docW, h: docH },
-      pageOrientation: docOrientation,
-      sourceType: loadedFile._fileFormat || 'pdf',
-      pageNum: loadedFile.pageNum || 1,
-    }
     const cacheKey = buildPreviewCacheKey(
       { fileKey: loadedFile.key, rotation },
       {
