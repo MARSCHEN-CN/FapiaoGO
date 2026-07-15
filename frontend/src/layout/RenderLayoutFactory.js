@@ -52,6 +52,7 @@ export function emptyRenderLayout() {
  */
 export function buildRenderLayout(paperLayout, documentState) {
   if (!paperLayout || !paperLayout.contentRect || !paperLayout.contentRect.w) {
+    console.warn(`[V16 WARN] buildRenderLayout: paperLayout.contentRect.w is 0/undefined — returning empty (scale=0). Check PaperLayout derivation (margins may still be invalid).`)
     return emptyRenderLayout()
   }
 
@@ -74,7 +75,10 @@ export function buildRenderLayout(paperLayout, documentState) {
   // 3) 内容自然尺寸（rotation 已废弃为 0，内容不再旋转）
   let natW = documentState?.pageSize?.w || 0
   let natH = documentState?.pageSize?.h || 0
-  if (!natW || !natH) return emptyRenderLayout()
+  if (!natW || !natH) {
+    console.warn(`[V16 WARN] buildRenderLayout: documentState pageSize missing/zero (natW=${natW}, natH=${natH}) — returning empty (scale=0).`)
+    return emptyRenderLayout()
+  }
 
   // 4) 有效纸张/内容矩形：paperLandscape 时交换宽高（纸随内容）
   const effContentW = paperLandscape ? contentRect.h : contentRect.w

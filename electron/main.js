@@ -837,7 +837,20 @@ ipcMain.handle('save-print-settings', async (event, settings) => {
 ipcMain.handle('load-print-settings', async () => {
   try {
     const data = await fs.promises.readFile(settingsPath, 'utf-8')
-    return JSON.parse(data)
+    const parsed = JSON.parse(data)
+    // 🆕 配置层边界校验（2026-07-15）：脏配置（如 marginLeft=210mm > 纸宽）
+    // 曾导致预览静默崩。此处先做数值净化（paper 相关的精确夹取在 computePaperLayout）。
+    const sanitizeMargin = (v) => {
+      const n = typeof v === 'number' && isFinite(v) ? v : 3
+      return Math.min(1000, Math.max(0, n))
+    }
+    if (parsed && typeof parsed === 'object') {
+      parsed.marginLeft = sanitizeMargin(parsed.marginLeft)
+      parsed.marginRight = sanitizeMargin(parsed.marginRight)
+      parsed.marginTop = sanitizeMargin(parsed.marginTop)
+      parsed.marginBottom = sanitizeMargin(parsed.marginBottom)
+    }
+    return parsed
   } catch (error) {
     return {}
   }

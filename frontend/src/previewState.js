@@ -125,10 +125,28 @@ export function computePaperLayout(spec) {
   const paperW = Math.round(paper.widthMM / 25.4 * dpi)
   const paperH = Math.round(paper.heightMM / 25.4 * dpi)
 
-  const mTop = Math.round((margins.top ?? 3) / 25.4 * dpi)
-  const mBottom = Math.round((margins.bottom ?? 3) / 25.4 * dpi)
-  const mLeft = Math.round((margins.left ?? 3) / 25.4 * dpi)
-  const mRight = Math.round((margins.right ?? 3) / 25.4 * dpi)
+  // 🆕 防御性夹取（2026-07-15）：非法边距（如 marginLeft=210mm > A5 纸宽 148mm）
+  // 曾导致 innerW 被 Math.max(0, ...) 静默夹为 0 → contentRect.w=0 →
+  // buildRenderLayout 静默返 empty(scale=0) → previewSpec=null → 裸 URL → 预览卡死。
+  // 夹取保证每条边距不超过 (纸张维度 - 最小内容区)/2，
+  // 从而 mLeft+mRight <= paperW-MIN_CONTENT → innerW >= MIN_CONTENT > 0（永不为 0）。
+  const MIN_CONTENT_MM = 5
+  const minContentPx = Math.round(MIN_CONTENT_MM / 25.4 * dpi)
+  const halfW = Math.max(0, paperW - minContentPx) / 2
+  const halfH = Math.max(0, paperH - minContentPx) / 2
+  const clampMarginMm = (v, maxPx, label) => {
+    const mm = typeof v === 'number' && isFinite(v) ? v : 3
+    const px = Math.round(mm / 25.4 * dpi)
+    if (px > maxPx) {
+      console.warn(`[V16 WARN] Invalid margin ${label}=${mm}mm exceeds allowed ${(maxPx / dpi * 25.4).toFixed(1)}mm (paper=${paper.widthMM}x${paper.heightMM}mm, min content ${MIN_CONTENT_MM}mm). Clamped.`)
+      return maxPx
+    }
+    return px
+  }
+  const mLeft = clampMarginMm(margins.left, halfW, 'left')
+  const mRight = clampMarginMm(margins.right, halfW, 'right')
+  const mTop = clampMarginMm(margins.top, halfH, 'top')
+  const mBottom = clampMarginMm(margins.bottom, halfH, 'bottom')
 
   const innerW = Math.max(0, paperW - mLeft - mRight)
   const innerH = Math.max(0, paperH - mTop - mBottom)

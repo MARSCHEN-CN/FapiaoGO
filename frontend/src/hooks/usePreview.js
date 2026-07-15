@@ -62,6 +62,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
   const renderEngineUrlRef = useRef(null)      // Render Engine HTTP URL (no revoke needed)
   const previewVersionRef = useRef(0)
   const renderVersionRef = useRef(0)  // 专供 render effect 使用，与 handlePreview 隔离
+  const renderLogIdRef = useRef(0)    // 仅用于日志 token，与 renderVersionRef 解耦（避免一处自增干扰另一处）
   const previewContainerRef = useRef(null)
   const unrotatedCanvasRef = useRef(null)
   const lastRenderKeyRef = useRef('')
@@ -428,7 +429,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
     if (!previewFile) { clearCommitted(); return }
 
     // ✅ 渲染生命周期 token
-    const renderToken = `RND-${Date.now()}-${++renderVersionRef.current}`
+    const renderToken = `RND-${Date.now()}-${++renderLogIdRef.current}`
     // ✅ 统一生命周期 token：优先用 doLoadPreview 写入的 PRV-xxx，使一次导入全链路共用同一 ID
     const flowToken = flowTokenRef.current ?? renderToken
     console.log(`[PREVIEW FLOW ${renderToken}] START | file=${previewFile.key?.slice(0,20)} | page=${previewPage}`)
@@ -480,9 +481,10 @@ export function usePreview({ files, settings, electronAPIRef }) {
     const mergeRotations = mergePair?.map(m => `${m?.key}:${fileRotations[m?.key] || 0}`).join(',') || ''
     const paperFrag = paperKeyFragment(paper)
     const renderKey = `${previewFile.key}-${paperSize}-${isLandscape}-${currentRotation}-${settings.mergeMode || ''}-${mergePair?.map(m => m?.key).join(',') || ''}-${mergeRotations}-m${settings.marginLeft}_${settings.marginRight}_${settings.marginTop}_${settings.marginBottom}-${paperFrag}-re${reBlockedDocId || ''}`
-    if (lastRenderKeyRef.current === renderKey) { return }
-    lastRenderKeyRef.current = renderKey
-
+    // ⚡ Commit B：移除 Effect 层的 renderKey 守卫。此守卫曾阻塞整个 Effect
+    // （RE/Canvas/probe/Loading 生命周期全部被阻断），导致导入后卡 Loading。
+    // renderKey 的去重职责应下沉到 Canvas 渲染内部（renderToCanvas），
+    // RE 路径永远不受 renderKey 影响。
     renderCancelledRef.current = false
     const currentRenderId = ++renderVersionRef.current
 
@@ -742,7 +744,10 @@ export function usePreview({ files, settings, electronAPIRef }) {
     return () => {
       renderCancelledRef.current = true
       abortController.abort()
-      console.log(`[PREVIEW FLOW ${renderToken}] CLEANUP | effect unmounted`)
+      console.log(`[PREVIEW FLOW ${renderToken}] CLEANUP | effect unmounted | reset renderKey`)
+      // ✅ Commit A：effect cleanup 时重置 renderKey，防止跨 effect 状态污染
+      // （RND-1 设了 key=A；RND-3 因 unmount→remount 触发且 renderKey=A，因 last===current 被阻塞）
+      lastRenderKeyRef.current = null
 
       // 清理 React DevTools 注入的 PerformanceMeasure，防止开发模式下内存无限累积
       if (typeof performance.clearMeasures === 'function') {
