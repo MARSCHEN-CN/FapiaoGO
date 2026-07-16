@@ -487,3 +487,7 @@ progress-demo/sb-stats-demo.html
 preview-code-review-2026-07-16.md
 progress-demo/layout-redesign-demo.html
 backend/test_render_spec_sig.py
+backend/test_render_spec_page_rotation.py
+backend/test_render_golden.py
+frontend/src/layout/renderCommand.test.js
+frontend/src/layout/dualTrack.test.js

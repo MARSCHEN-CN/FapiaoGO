@@ -60,13 +60,18 @@ def _resolve_db_dir() -> str:
     """按优先级解析数据库目录"""
     env_path = os.environ.get('MARSPRINT_DB_PATH', '').strip()
     if env_path:
-        if os.path.isfile(env_path):
-            return os.path.dirname(env_path)
-        if os.path.isdir(env_path):
-            return env_path
-        parent = os.path.dirname(env_path)
-        if parent:
-            return parent
+        try:
+            normalized = os.path.normpath(env_path)
+            abs_path = os.path.abspath(normalized)
+            if os.path.isfile(abs_path):
+                return os.path.dirname(abs_path)
+            if os.path.isdir(abs_path):
+                return abs_path
+            parent = os.path.dirname(abs_path)
+            if parent:
+                return parent
+        except (OSError, ValueError):
+            logger.warning("环境变量 MARSPRINT_DB_PATH 路径无效，使用默认路径")
 
     dev_path = Path(__file__).resolve().parent.parent / 'database'
     if dev_path.exists():

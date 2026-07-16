@@ -8,7 +8,7 @@ import { getForcedLandscape } from '../utils/mergeMode'
 import { buildPreviewCacheKey } from '../utils/previewCacheKey'
 import { getRenderEnginePreviewUrl } from '../utils/previewTarget'
 import { emptyContentLayout, initialRenderState, computePaperLayout, getDocNaturalOrientation } from '../previewState'
-import { buildRenderLayout } from '../layout/RenderLayoutFactory.js'
+import { buildRenderCommand } from '../layout/RenderLayoutFactory.js'
 import { buildRenderSpec, RENDER_SPEC_VERSION, renderSpecSignature } from '../layout/renderSpec.js'
 import { resolvePaper, paperKeyFragment } from '../layout/resolvePaper.js'
 
@@ -160,14 +160,14 @@ export function usePreview({ files, settings, electronAPIRef }) {
   //    旧版误把 DocumentState.pageOrientation(内容方向) 与图像方向比较 —— 在 rotation=90
   //    （横向内容放竖纸）下恒假，属 Stage 0.5「grep 确认无 orientation 读取后删字段」未做的残骸，已修正。
   //    正确不变式：rotation 应用后，图像方向 == 纸张方向（而非内容方向）；
-  //    若后端未按 spec.rotation 出图，此处仍会触发，作为 Stage 1（RE 消费 RenderLayout）的契约守卫。
+  //    若后端未按 spec.rotation 出图，此处仍会触发，作为 Stage 1（RE 消费 RenderCommand）的契约守卫。
   useEffect(() => {
     if (!previewImgDims || previewImgDims.w <= 0 || previewImgDims.h <= 0) return
     const pl = paperLayout
     if (!pl || !pl.paperRect?.w) return
     // 🆕 V17：图像方向应与「有效纸张方向(paperLandscape)」一致（纸随内容）。
     // 旧逻辑比的是 paperRect 固定方向，在 paperLandscape 模型下恒错，已改为比 paperLandscape。
-    const paperLandscape = renderLayout?.paperLandscape
+    const paperLandscape = renderCommand?.paperLandscape
       ?? (documentStateRef.current?.pageOrientation !== (pl.paperRect.w > pl.paperRect.h ? 'landscape' : 'portrait'))
     const imgOrient = previewImgDims.w > previewImgDims.h ? 'landscape' : 'portrait'
     const effOrient = paperLandscape ? 'landscape' : 'portrait'
@@ -401,26 +401,26 @@ export function usePreview({ files, settings, electronAPIRef }) {
   }, [previewFile?.docId])
 
   // ============================
-  // RenderLayout 唯一派生点（F3/F5）—— 上移到首个消费它的 effect 之前
+  // RenderCommand 唯一派生点（F3/F5）—— 上移到首个消费它的 effect 之前
   // 原位置在 contentLayout memo 之前，但其 useMemo 在首次渲染时被 line 380 的预览渲染
-  // effect 依赖数组提前求值，触发 "Cannot access 'renderLayout' before initialization"
+  // effect 依赖数组提前求值，触发 "Cannot access 'renderCommand' before initialization"
   // （TDZ）。移到此处后，所有消费方（含 preview 渲染 effect）都能拿到已初始化的 const。
   // ✅ previewRotation 必须在 contentLayout memo 之前声明（useMemo 首次渲染立即执行，不能闭包捕获尚未初始化的 const）
   const previewRotation = fileRotations[previewFile?.key] || 0
 
-  // ── Stage 1：RenderLayout 唯一派生点（F3/F5）──
+  // ── Stage 1：RenderCommand 唯一派生点（F3/F5）──
   // Preview 消费其 placement/rotation/clip，不再自算 fit/scale/swap（消除第二套算法）。
   // 输入 documentState 合并 previewRotation（documentStateRef 不含 rotation 字段）；
   // 依赖 paperLayout(纸张/边距派生，useMemo) + previewRotation(旋转) + previewFile(切文件→documentState 重建)。
   // paperLayout 在 Render 阶段随 settings 同步派生 → margin 修改当帧即生效，无 effect 滞后。
-  const renderLayout = useMemo(
+  const renderCommand = useMemo(
     () => {
-      return buildRenderLayout(paperLayout, { ...(documentStateRef.current || {}), contentRotation: previewRotation })
+      return buildRenderCommand(paperLayout, { ...(documentStateRef.current || {}), contentRotation: previewRotation })
     },
     [paperLayout, previewRotation, previewFile]
   )
-  // renderLayout 就绪（placement.scale>0）才用 Factory 派生；否则回退旧 bitmap 拟合，行为不变。
-  const renderLayoutReady = !!(renderLayout && renderLayout.placement && renderLayout.placement.scale > 0)
+  // renderCommand 就绪（placement.scale>0）才用 Factory 派生；否则回退旧 bitmap 拟合，行为不变。
+  const renderCommandReady = !!(renderCommand && renderCommand.placement && renderCommand.placement.scale > 0)
 
   // ============================
   // 预览渲染
@@ -439,8 +439,8 @@ export function usePreview({ files, settings, electronAPIRef }) {
     //       skipRenderRef only skips the Canvas pipeline; it does not skip
     //       the render strategy decision. (V6 — Engineering Discipline Law #8)
     // ── Render Dispatcher：独立于 L2 缓存，始终评估 RE 可用性 ──
-    const previewSpec = renderLayoutReady
-      ? buildRenderSpec(renderLayout, {
+    const previewSpec = renderCommandReady
+      ? buildRenderSpec(renderCommand, {
           docId: previewFile.docId,
           page: previewPage,
           dpi: PREVIEW_DPI,
@@ -651,7 +651,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
             // ✅ 单文件：统一使用全局 Canvas（PDF / 图片 / OFD 都走此路径）
             const { getGlobalPreviewCanvas, switchPreviewFile, switchPreviewImage, getOrLoadPdfDocument } = await getRenderers()
             // 🆕 V17：canvas 回退按 paperLandscape 绘制（内容自然、横纸），与 RE 对齐
-            const effectiveLandscape = renderLayout?.paperLandscape ?? isLandscape
+            const effectiveLandscape = renderCommand?.paperLandscape ?? isLandscape
             const paperKey = paperSize || 'A4'
 
             // 初始化全局 Canvas（配置不变则复用同一 Canvas）
@@ -668,7 +668,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
               // PDF：通过 pdfDocCache 加载 + page.render
               const pdfDoc = await getOrLoadPdfDocument(previewFile._pdfData)
               if (pdfDoc) {
-                await switchPreviewFile(pdfDoc, 1, signal, currentRotation)
+                await switchPreviewFile(pdfDoc, 1, signal, currentRotation, renderCommand)
               }
             } else if (previewFile._previewImageUrl) {
               // 图片/OFD：加载图片后 drawImage 到全局 Canvas
@@ -679,7 +679,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
                 image.src = previewFile._previewImageUrl
               })
               if (img) {
-                await switchPreviewImage(img, signal, currentRotation)
+                await switchPreviewImage(img, signal, currentRotation, renderCommand)
               }
             }
           }
@@ -760,7 +760,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
   }, [previewFile, mergePair, settings.paperSize, currentRotation, fileRotations, settings.mergeMode,
       settings.marginLeft, settings.marginRight, settings.marginTop, settings.marginBottom,
       settings.customPaper?.widthMM, settings.customPaper?.heightMM, reBlockedDocId,
-      renderLayout, renderLayoutReady])
+      renderCommand, renderCommandReady])
 
   // ResizeObserver ✅ 使用 requestAnimationFrame 节流，避免频繁重绘
   useEffect(() => {
@@ -791,15 +791,15 @@ export function usePreview({ files, settings, electronAPIRef }) {
     if (!pl || !pl.contentRect?.w) return emptyContentLayout()
 
     // ── 纸张→窗口缩放基线（ViewportTransform，Preview 职责，永不进 Factory）──
-    // swap 由 Factory 统一推导（renderLayout.rotation），此处只用于「纸张容器尺寸」的视口计算，
+    // swap 由 Factory 统一推导（renderCommand.rotation），此处只用于「纸张容器尺寸」的视口计算，
     // 不再双算 placement（消除第二套算法 / F4）。
     const paperOrient = pl.paperRect.w > pl.paperRect.h ? 'landscape' : 'portrait'
     const docOrient = documentStateRef.current?.pageOrientation
     // 合并模式强制方向由 renderers 内部处理，此处回退旧 orientation 逻辑避免影响合并预览。
     const isMerge = isMergeMode(settings.mergeMode)
-    // 🆕 V17：容器方向由 paperLandscape 决定（纸随内容），不再读 renderLayout.rotation
-    const swapped = (renderLayoutReady && !isMerge)
-      ? !!renderLayout.paperLandscape
+    // 🆕 V17：容器方向由 paperLandscape 决定（纸随内容），不再读 renderCommand.rotation
+    const swapped = (renderCommandReady && !isMerge)
+      ? !!renderCommand.paperLandscape
       : (!!docOrient && docOrient !== paperOrient)
     const effW = swapped ? pl.paperRect.h : pl.paperRect.w
     const effH = swapped ? pl.paperRect.w : pl.paperRect.h
@@ -824,15 +824,15 @@ export function usePreview({ files, settings, electronAPIRef }) {
     const paperDisplayH = Math.round(effH * paperScale)
 
     let fitScale, imageRect
-    if (renderLayoutReady) {
-      // ✅ Stage 1：placement 完全来自 Factory（buildRenderLayout）；预览不再自算 fit/居中。
+    if (renderCommandReady) {
+      // ✅ Stage 1：placement 完全来自 Factory（buildRenderCommand）；预览不再自算 fit/居中。
       //   imageRect = 内容盒在 contentRect 内的投影（offset + pageSize×scale）。
-      fitScale = renderLayout.placement.scale
+      fitScale = renderCommand.placement.scale
       const docW = documentStateRef.current?.pageSize?.w || 0
       const docH = documentStateRef.current?.pageSize?.h || 0
       imageRect = {
-        x: renderLayout.placement.offsetX,
-        y: renderLayout.placement.offsetY,
+        x: renderCommand.placement.offsetX,
+        y: renderCommand.placement.offsetY,
         w: Math.round(docW * fitScale),
         h: Math.round(docH * fitScale),
       }
@@ -865,7 +865,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
       paperDisplayScale: paperScale,
       paperDisplayRect: { w: paperDisplayW, h: paperDisplayH },
     }
-  }, [previewCanvas, previewImgDims, previewRotation, containerSize, zoomMode, zoomPercent, paperLayout, renderLayout, settings.mergeMode])
+  }, [previewCanvas, previewImgDims, previewRotation, containerSize, zoomMode, zoomPercent, paperLayout, renderCommand, settings.mergeMode])
 
   // 同步到 state，使外部可消费
   useEffect(() => { setContentLayout(computedContentLayout) }, [computedContentLayout])
@@ -1273,20 +1273,20 @@ export function usePreview({ files, settings, electronAPIRef }) {
       // ✅ 修复（B-2.2 调查）：L2 命中也必须按当前文件正确旋转构造 RE URL。
       //    原写法不传 spec → URL 无 ?rotation= → 后端按 rotation=0 出图 → 横向内容落竖纸错位。
       //    此处复用与主渲染路径完全一致的纯函数派生：documentStateRef.current 此时已是 loadedFile 的
-      //    DS（L1197 写入），buildRenderLayout 内部由 pageOrientation 推导 rotation，故 rotation=90 进 URL。
+      //    DS（L1197 写入），buildRenderCommand 内部由 pageOrientation 推导 rotation，故 rotation=90 进 URL。
       let l2Spec = null
       // ✅ 修复（B-2.2 调查定案，2026-07-13）：L2 HIT 在 doLoadPreview 同步阶段执行，
-      //    此时 renderLayoutReady（依赖 previewFile state 的 useMemo）仍是上一帧陈旧值=false，
+      //    此时 renderCommandReady（依赖 previewFile state 的 useMemo）仍是上一帧陈旧值=false，
       //    用它会把本应重建的 l2Spec 门控跳过 → URL 裸奔 → 后端 rotation=0 → 横向内容落竖纸错位。
-      //    改用同步可用且与 renderLayout memo 输入一致的 paperLayout / documentStateRef.current 直接重建，
-      //    不依赖尚未提交的 useMemo。这正是 V16「renderLayout 实时派生、不缓存」的设计意图。
+      //    改用同步可用且与 renderCommand memo 输入一致的 paperLayout / documentStateRef.current 直接重建，
+      //    不依赖尚未提交的 useMemo。这正是 V16「renderCommand 实时派生、不缓存」的设计意图。
       if (paperLayout) {
         try {
-          const l2Layout = buildRenderLayout(paperLayout, {
+          const l2Command = buildRenderCommand(paperLayout, {
             ...(documentStateRef.current || {}),
             contentRotation: fileRotations[loadedFile.key] || 0,
           })
-          l2Spec = buildRenderSpec(l2Layout, {
+          l2Spec = buildRenderSpec(l2Command, {
             docId: loadedFile.docId,
             page: loadedFile.pageNum || 1,
             dpi: PREVIEW_DPI,

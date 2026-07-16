@@ -4,7 +4,7 @@
  * 设计纪律（与 v16-stage1-design.md / v16-architecture-target.md 对齐）：
  *  • RenderSpec 是 Factory 输出的投影，只含「解析后的值」，不携带 fitMode/alignment 等意图。
  *  • Plain Object（非 class）：它只是前端→RE 的请求载荷，可测试性最高。
- *  • 坐标系：与 PaperLayout / RenderLayout 同一坐标系（当前 px@PREVIEW_DPI），禁止 px/mm 混用。
+ *  • 坐标系：与 PaperLayout / RenderCommand 同一坐标系（当前 px@PREVIEW_DPI），禁止 px/mm 混用。
  *  • RE 末端仅做一次 坐标→设备像素(dpi) 换算（Step 4 消费）。
  *
  * 阶段约束（已落地 Commit B-1 / Step 4）：
@@ -50,6 +50,9 @@ function wireFieldsOf(spec) {
     clip_w: spec.clip ? String(spec.clip.width) : undefined,
     clip_h: spec.clip ? String(spec.clip.height) : undefined,
     dpi: String(spec.dpi ?? PREVIEW_DPI),
+    // 🆕 RenderCommand 契约版本（用户收尾建议）：随 URL 发来，后端 rebuild 带进 spec，
+    // validate_render_command 据此拒绝未知版本（缺省视为 1，兼容未发版本的老前端）。
+    version: spec.version != null ? String(spec.version) : undefined,
   }
 }
 
@@ -125,20 +128,23 @@ export function renderSpecSignature(spec) {
 }
 
 /**
- * 将 RenderLayout（Derived）投影为 RenderSpec（前端→RE 请求载荷，Plain Object）。
+ * 将 RenderCommand（Derived）投影为 RenderSpec（前端→RE 请求载荷，Plain Object）。
  *
- * @param {ReturnType<import('./RenderLayoutFactory.js').buildRenderLayout>} renderLayout
+ * @param {ReturnType<import('./RenderLayoutFactory.js').buildRenderCommand>} renderCommand
  * @param {{ docId?: string, page?: number, dpi?: number, marginsMm?: {top:number,right:number,bottom:number,left:number} }} opts
- * @returns {object|null} 渲染规格 DTO；renderLayout 未就绪时返回 null
+ * @returns {object|null} 渲染规格 DTO；renderCommand 未就绪时返回 null
  */
-export function buildRenderSpec(renderLayout, { docId, page = 1, dpi = PREVIEW_DPI, marginsMm } = {}) {
-  if (!renderLayout || !renderLayout.paper || !renderLayout.paper.paperRect) return null
-  const { paper, placement, rotation, clip, paperLandscape, contentRotation } = renderLayout
+export function buildRenderSpec(renderCommand, { docId, page = 1, dpi = PREVIEW_DPI, marginsMm } = {}) {
+  if (!renderCommand || !renderCommand.paper || !renderCommand.paper.paperRect) return null
+  const { paper, placement, rotation, clip, paperLandscape, contentRotation, version } = renderCommand
   const pr = paper.paperRect
   const spec = {
     docId,
     page,
     dpi,
+    // 🆕 RenderCommand 契约版本（用户收尾建议）：投影进 DTO，随签名一起锁定；
+    // 后端 validate_render_command 拒绝 version != 1，防止"前端升级 / 后端老版本"静默兼容。
+    version: version ?? 1,
     // 纸张物理尺寸（显式 w/h，不依赖后端纸型查表；Step 4 后端据此渲染任意纸型）
     paper: { width: pr.w ?? 0, height: pr.h ?? 0 },
     // 边距（mm）：来自 PaperLayout 的 margins，Step 4 后端据此替换 A4 硬编码默认 0
@@ -159,7 +165,7 @@ export function buildRenderSpec(renderLayout, { docId, page = 1, dpi = PREVIEW_D
     // 由 RenderLayoutFactory 单一决策点产出；本切片仅进签名/缓存键、不改渲染，RE 于 1.2B 才消费。
     contentRotation: contentRotation ?? 0,
     // 完全来自 PaperLayout.clipRect（评审修正④），RE 不得重算
-    // 注：buildRenderLayout 已把 clipRect 统一为 {x,y,width,height} 形态
+    // 注：buildRenderCommand 已把 clipRect 统一为 {x,y,width,height} 形态
     clip: { x: clip?.x ?? 0, y: clip?.y ?? 0, width: clip?.width ?? 0, height: clip?.height ?? 0 },
   }
   return spec

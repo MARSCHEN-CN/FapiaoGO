@@ -171,10 +171,15 @@ def rebuild_spec_from_args(args, doc_id, page) -> dict:
     # （静默 Bug，与 paper_landscape 漏字段同源：契约字段丢失 = 签名不符）。值 = 内容旋转角(0/90/180/270)。
     # legacy rotation 字段保留兼容（恒 0），contentRotation 才是真实内容旋转 Fact。
     content_rotation_val = int(f("content_rotation", 0.0))
+    # 🆕 RenderCommand 契约版本（用户收尾建议）：随 URL 发来（wireFieldsOf version），
+    # 缺省视为 1（兼容未发版本的老前端）。validate_render_command 据此拒绝未知版本，
+    # 防止"前端升级 / 后端老版本"静默兼容（最难的排查问题）。
+    version_val = int(args.get("version", "1"))
     spec = {
         "docId": doc_id,
         "page": page,
         "dpi": f("dpi", 300.0),
+        "version": version_val,
         "paper": {"width": f("paper_w"), "height": f("paper_h")},
         "margin": {
             "top": f("margin_t"),

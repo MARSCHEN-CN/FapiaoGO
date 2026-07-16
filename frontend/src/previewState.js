@@ -52,7 +52,7 @@ export function getDocNaturalOrientation(size) {
  * @property {Size}     paperRect        - 纸张物理像素尺寸（如 A5@150dpi = 874x1240）
  * @property {Size}     marginRect       - 安全边距裁切后的区域（含装订边/页码预留）
  * @property {Size}     contentRect      - 内容实际 Fit 区域 ⊆ marginRect（Phase 2A 初期 = marginRect）
- * @property {Size}     displayRect      - 纸张逻辑尺寸（纯纸张，不含方向 swap；swap → RenderLayout，Stage 1）
+ * @property {Size}     displayRect      - 纸张逻辑尺寸（纯纸张，不含方向 swap；swap → RenderCommand，Stage 1）
  * @property {'landscape'|'portrait'} [orientation] - [DEPRECATED Stage 0.5 删除] 历史字段；方向由 paperRect.width > height 推导，不得写入/读取 PaperLayout
  * @property {Size}     clipRect         - 纸张裁剪区域（纸张坐标，非 viewport）
  */
@@ -116,7 +116,7 @@ export function invalidPaperLayout(reason) {
 
 /**
  * 单一收口：PaperLayout 不变量校验（V16「用不变量守住架构」）。
- * 把原本散落在 buildRenderLayout 顶部的 ASSERT 条件收敛到一处，
+ * 把原本散落在 buildRenderCommand 顶部的 ASSERT 条件收敛到一处，
  * 未来新增不变量（如 usableRect.w<=0 / paperRect.w<=0）只改这一函数，不让 Factory 越堆越臃肿。
  *
  * 三状态模型（与 V16 一致）：
@@ -169,7 +169,7 @@ export function resetPaperLayoutBuildCount() { _paperLayoutBuildCount = 0 }
 /**
  * 唯一构造点（F3）：从 PaperSpec 推导 PaperLayout。
  * 纯函数（F5）：仅依赖入参，不读 React State / DocumentState / container / zoom。
- * PaperLayout 只含纸张坐标系（I1），不含方向 swap（swap 属于 RenderLayout.placement，Stage 1）。
+ * PaperLayout 只含纸张坐标系（I1），不含方向 swap（swap 属于 RenderCommand.placement，Stage 1）。
  * 禁止被其它 Factory 调用（F6）。
  *
  * @param {PaperSpec} spec
@@ -217,7 +217,7 @@ export function computePaperLayout(spec) {
     // 摆放原点由 usableRect 承担 —— 见 RenderLayoutFactory 的 slot 桥接
     // （修复「图绕纸张中心而非安全区居中」：offset 必须 = mLeft + (innerW-drawW)/2）。
     usableRect: { x: mLeft, y: mTop, w: innerW, h: innerH },
-    displayRect: { w: paperW, h: paperH },            // 纯纸张，无 doc swap（swap → RenderLayout，Stage 1）
+    displayRect: { w: paperW, h: paperH },            // 纯纸张，无 doc swap（swap → RenderCommand，Stage 1）
     clipRect: { w: paperW, h: paperH },               // 纸张坐标，非 viewport（I1）
     // orientation 字段已废弃（Stage 0.5 删除）：由 paperRect.width > height 推导
   }

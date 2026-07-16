@@ -5,6 +5,7 @@ import * as pdfjs from 'pdfjs-dist'
 import pdfjsWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import { PREVIEW_DPI } from './config'
 import { rotateContentOnPaper } from './utils/canvasUtils'
+import { dualTrackAssertGeometry } from './layout/dualTrack.js'
 import { createLayout, normalizeLayoutItem, normalizeLayoutItems, getPaperPixels, PRINT_SAFE_MARGIN_MM, PRINTER_PROFILES, getPrintableArea } from './layout'
 import { isDocumentEngineEnabled, makeImageRef, ConcreteImageHandle, MemoryPixelHandle } from './documentEngine.js'  // P2C 统一入口门面（v12 契约 JS 实现；路线见 v14 §6/§13）+ ②b 桥接用 ImageHandle 值类型（facade 单向依赖，Law #2 允许）
 // ✅ renderModel.js 为死代码，renderMultipleItemsToCanvas 直接做 transform，不经过 RenderModel
@@ -1309,7 +1310,7 @@ function _getPreviewPdfTempCanvas(w, h) {
 /**
  * 切换 PDF 文件到全局 Canvas（双缓冲，防闪烁）
  */
-export async function switchPreviewFile(pdfDoc, pageNum = 1, signal, rotation = 0) {
+export async function switchPreviewFile(pdfDoc, pageNum = 1, signal, rotation = 0, renderCommand = null) {
   // ②b：像素来源从 pdf.js 直绘改为「ImageHandle → drawImage」桥接。
   // 像素仍由旧 Renderer(pdf.js) 产生；documentEngine 仅提供 ImageHandle 值类型，
   // 不参与编排（不调用 getImage / 不引入 P4 pdf.js 耦合 / Engine 不知 Canvas）。
@@ -1324,6 +1325,22 @@ export async function switchPreviewFile(pdfDoc, pageNum = 1, signal, rotation = 
     const renderViewport = page.getViewport({ scale, rotation })
     const offsetX = marginL + (contentW - renderViewport.width) / 2
     const offsetY = marginT + (contentH - renderViewport.height) / 2
+
+    // ── [1.2C Commit A] 双轨验证：比较旧算法最终绘制几何 vs RenderCommand.placement（仅日志，不切换）──
+    // 全局 Canvas 以 GLOBAL_PREVIEW_DPI(150) 渲染，RenderCommand 以 PREVIEW_DPI(300) 计算，差 2×；
+    // 故把 RenderCommand 几何按 (dpi/PREVIEW_DPI) 缩放到全局 Canvas 空间再比。
+    // 旧算法 scale 含 points→px 因子，与 RenderCommand.placement.scale 单位不同，故只比最终 draw 几何。
+    if (renderCommand && renderCommand.placement && renderCommand.rotatedBounds) {
+      const ratio = (dpi || PREVIEW_DPI) / PREVIEW_DPI
+      dualTrackAssertGeometry('pdf',
+        { offsetX, offsetY, drawW: renderViewport.width, drawH: renderViewport.height },
+        {
+          offsetX: renderCommand.placement.offsetX * ratio,
+          offsetY: renderCommand.placement.offsetY * ratio,
+          drawW: renderCommand.rotatedBounds.width * renderCommand.placement.scale * ratio,
+          drawH: renderCommand.rotatedBounds.height * renderCommand.placement.scale * ratio,
+        })
+    }
 
     // —— ②b 桥接：pdf.js 光栅到临时 canvas，包成 ImageHandle，再 drawImage 到全局 canvas ——
     // 复用上面完全相同的 scale / offset，确保输出像素级不变。
@@ -1361,7 +1378,8 @@ export async function switchPreviewFile(pdfDoc, pageNum = 1, signal, rotation = 
  * 切换图片/OFD 到全局 Canvas（双缓冲，防闪烁）
  * @param {HTMLImageElement|HTMLCanvasElement} image - 已加载的图片元素
  */
-export async function switchPreviewImage(image, signal, rotation = 0) {
+export async function switchPreviewImage(image, signal, rotation = 0, renderCommand = null) {
+  const { dpi } = _globalPreviewCanvasConfig || {}
   return _renderToGlobalCanvas(async (ctx, contentW, contentH, marginL, marginT) => {
     if (signal?.aborted) return
 
@@ -1379,6 +1397,19 @@ export async function switchPreviewImage(image, signal, rotation = 0) {
 
     const offsetX = marginL + (contentW - drawW) / 2
     const offsetY = marginT + (contentH - drawH) / 2
+
+    // ── [1.2C Commit A] 双轨验证（图片路径无 points→px 因子，仍按 DPI 比例对齐）──
+    if (renderCommand && renderCommand.placement && renderCommand.rotatedBounds) {
+      const ratio = (dpi || PREVIEW_DPI) / PREVIEW_DPI
+      dualTrackAssertGeometry('image',
+        { offsetX, offsetY, drawW, drawH },
+        {
+          offsetX: renderCommand.placement.offsetX * ratio,
+          offsetY: renderCommand.placement.offsetY * ratio,
+          drawW: renderCommand.rotatedBounds.width * renderCommand.placement.scale * ratio,
+          drawH: renderCommand.rotatedBounds.height * renderCommand.placement.scale * ratio,
+        })
+    }
 
     if (rotation === 0) {
       ctx.drawImage(image, offsetX, offsetY, drawW, drawH)

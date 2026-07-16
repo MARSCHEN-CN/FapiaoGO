@@ -26,6 +26,7 @@
 """
 
 import os
+import re
 import hashlib
 import json
 import time
@@ -223,6 +224,17 @@ class CacheManager:
             return os.path.join(self.base_dir, namespace)
         return os.path.join(self.base_dir, self.LEGACY_DIR)
 
+    def _sanitize_filename(self, filename: str) -> str:
+        """清理文件名，防止路径遍历攻击"""
+        if not filename:
+            return 'unknown'
+        sanitized = re.sub(r'[\\/:*?"<>|\0]', '_', filename)
+        sanitized = sanitized.strip('.')
+        if sanitized.startswith('..'):
+            sanitized = sanitized[2:].lstrip('.')
+        return sanitized or 'unknown'
+
+
     def _build_filename(self, key: str, params: Optional[Dict] = None) -> str:
         """
         构建缓存文件名。
@@ -230,18 +242,16 @@ class CacheManager:
         
         v10 新增：文件名包含版本 key，确保解析规则变更时缓存自动失效。
         """
-        # 添加版本 key 到文件名前缀
         version_key = get_version_key()
-        base_name = f"{key}_{version_key}"
+        safe_key = self._sanitize_filename(key)
+        base_name = f"{safe_key}_{version_key}"
         
         if params:
-            # 按固定顺序拼接参数后缀，保证相同参数生成相同文件名
             suffix_parts = []
             if params.get('auto_orient') is False:
                 suffix_parts.append('_no_orient')
             if params.get('force_ocr'):
                 suffix_parts.append('_force_ocr')
-            # 其他参数用简短哈希
             extra = {k: v for k, v in sorted(params.items())
                      if k not in ('auto_orient', 'force_ocr')}
             if extra:

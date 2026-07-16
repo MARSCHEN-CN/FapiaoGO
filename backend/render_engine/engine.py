@@ -410,7 +410,8 @@ class RenderEngine:
 
         # ── Commit B dispatch ──
         # 两棵树完全独立、互不调用（⑥⑦）：Legacy 仅服务无 spec 的请求（Frozen Baseline），
-        # RenderSpec 树独立消费 placement/paper。rotation 在 B-1 仍由前端 CSS 负责，本路径不 prerotate。
+        # RenderSpec 树独立消费 placement/paper/contentRotation（RenderCommand 纯执行）。
+        # Slice 1.2B 起本路径消费 contentRotation 经 prerotate 旋转内容；Legacy 不消费 spec。
         if render_spec is None:
             return self._render_legacy_page(doc, preset, vs, page_idx, fmt,
                                             highlights, pdf_doc)
@@ -444,35 +445,62 @@ class RenderEngine:
     def _render_spec_page(self, doc, preset: RenderPreset, spec: dict,
                           page_idx: int, fmt: str, highlights: list = None,
                           pdf_doc: Optional["fitz.Document"] = None) -> bytes:
-        """RenderSpec render path (Commit B-1 落地).
+        """RenderSpec render path — **RenderCommand Executor**（Slice 1.2B 落地）。
 
-        消费 RenderSpec 的 placement/paper，**逐字使用，不重算**（见 v16-stage1-design.md ⑤⑦）：
+        消费 RenderCommand（spec 中的 placement + contentRotation），**逐字使用，绝不重算**
+        （见 v16-stage1-design.md ⑤⑦ 与 Page Placement Pipeline 模型）：
           • paper.width/height  → 画布像素尺寸（已含方向，不读 A4 常量）
           • placement.scale     → 直接作为 get_pixmap(matrix) 缩放（PDF）/ 缩放因子（image）
           • placement.offsetX/Y → 直接作为粘贴左上角（不再居中）
-          • paper_landscape    → 🆕 V17 **纸随内容方向**：True=横纸/False=竖纸。
-            内容永远自然方向（rotation 字段已废弃=0）；后端据此交换画布尺寸，
-            不再 fitz.prerotate（见 v17-paper-orientation-contract.md）。
+          • contentRotation     → 🆕 Slice 1.2B **真实内容旋转 Fact**（0/90/180/270）；
+            唯一来源 = RenderLayoutFactory 单一决策点。本函数仅把它翻译成 fitz.prerotate 角度，
+            绝不由此推导 fit / center / landscape。
+          • paperLandscape      → 纸方向（True=横纸/False=竖纸），**只决定画布尺寸交换**，
+            与内容旋转(contentRotation)解耦（见 v17-paper-orientation-contract.md）。
           • dpi                 → 信息字段（paper/placement 已是权威像素，渲染不二次使用）。
+          • rotation            → [LEGACY] 已退役字段（恒 0），被 contentRotation 取代；本路径不读它。
 
         与 Legacy 树零共享（⑦）：禁止调用 `_render_legacy_page` / `_render_pdf_page` /
         `_apply_margins` / `_apply_rotation`。本函数是 RenderEngine 作为 Executor 的体现——
         只执行 Factory 已解析好的事实（Resolved Layout），绝不重新推导布局。
         """
+        # ── [Slice 1.2B 收口] RenderCommand 契约入口校验（用户建议④）──
+        # 字段缺失 → ValueError（api.py 映射 400），杜绝 offset=None 类静默 Runtime Bug。
+        validate_render_command(spec)
+
         scale = float(spec["placement"]["scale"])
         ox = int(round(float(spec["placement"]["offsetX"])))
         oy = int(round(float(spec["placement"]["offsetY"])))
         # ── [DIAG] Layer 2: 真正进入渲染（只有 cache MISS 才会走到这里）──
         print(f"[RENDER] ox={ox} oy={oy} scale={scale}", flush=True)
-        print(f"[SPEC] margin={spec.get('margin',{})} placement={{scale:{scale}, ox:{ox}, oy:{oy}}} paperLandscape={spec.get('paperLandscape')}", flush=True)
-        # 🆕 V17(paperLandscape)：纸随内容方向，内容永远自然方向（rotation 字段废弃=0）。
-        # 旧 B-2.1 的 fitz.prerotate 整段移除；方向改由 paper_landscape 表达：
-        #   True  → 画布交换宽高（横纸），内容自然绘制（rotation=0）
-        #   False → 竖纸，内容自然绘制
-        rotation = int(round(float(spec.get("rotation", 0))))  # 保留字段（废弃），仅作防御
-        if rotation % 360 not in (0, 90, 180, 270):
+        print(f"[SPEC] margin={spec.get('margin',{})} placement={{scale:{scale}, ox:{ox}, oy:{oy}}} "
+              f"paperLandscape={spec.get('paperLandscape')} contentRotation={spec.get('contentRotation')}", flush=True)
+        # ── [Slice 1.2B] RenderCommand 纯执行契约 ──
+        # Renderer 只消费 spec 中的 placement(scale/offset) 与 contentRotation，**绝不重算**
+        # fit / center / landscape，也绝不把内容旋转「推导」自 paperLandscape 或 legacy rotation。
+        # 内容旋转的唯一事实来源 = contentRotation（由 RenderLayoutFactory 单一决策点产出）；
+        # 本函数仅把它翻译成 fitz 旋转角度，不引入任何布局决策。Single Decision Point 在这里被守住：
+        # 若有人想「智能」重算，必须先回 RenderLayoutFactory，而不是在 Renderer 里私算。
+        # ⚠️ 若 contentRotation 非法（非枚举值）→ 视为 malformed 协议 → 抛错（api.py 映射 400）。
+        # 枚举 Rotation（Page Placement Pipeline 设计前提）：contentRotation 仅允许这 4 个离散值，
+        # 任何非 90 倍数的角度（如 13°、89.99999°）都禁止进入 Matrix.prerotate，避免静默混入。
+        ALLOWED_CONTENT_ROTATIONS = (0, 90, 180, 270)
+        cr = int(round(float(spec.get("contentRotation", 0)))) % 360
+        if cr not in ALLOWED_CONTENT_ROTATIONS:
             raise ValueError(
-                f"RenderSpec rotation must be a multiple of 90 degrees, got {spec.get('rotation')!r}")
+                f"[1.2B] contentRotation must be one of {ALLOWED_CONTENT_ROTATIONS}, got {cr} "
+                f"(Renderer 不重算布局；内容旋转必须来自 RenderCommand)")
+        # fitz.prerotate 角度映射（⚠️ 经 Slice 1.2B 实测校准，fitz 1.28）：
+        #   fitz 的 prerotate(+θ) = 视觉顺时针 θ（屏幕 y 向下坐标），与前端 CSS rotate(θ) 一致：
+        #     contentRotation=90  → 视觉顺时针90°（CSS rotate(90deg)）→ prerotate(+90)
+        #     contentRotation=270 → 视觉顺时针270°（CSS rotate(270deg)）→ prerotate(-90)
+        #     contentRotation=180 → prerotate(180)
+        #     contentRotation=0   → 不旋转
+        #   （注：v17-paper-orientation-contract.md 旧 helper 注释写 prerotate(-90)=CW90，
+        #    在本 fitz 版本实测相反——已用红块方位测试校准，见 test_render_spec_page_rotation.py。）
+        # ⚠️ 避坑：prerotate(-270) 在 fitz 实测给出镜像结果，故 270 映射 -90（=+270 等价但安全），
+        #    绝不写 prerotate(-contentRotation)。
+        _pre = {0: 0, 90: 90, 180: 180, 270: -90}[cr]
         # 读 camelCase paperLandscape（与 rebuild_spec_from_args / 前端 buildRenderSpec 结构一致）。
         # ⚠️ 历史 bug：此前读 snake_case "paper_landscape"，而 rebuild 重建的 spec 用
         #    camelCase，导致该字段永远取默认 False → 横纸变竖纸（见 repro_landscape_bug.py）。
@@ -491,12 +519,15 @@ class RenderEngine:
             if page_idx >= len(pdf):
                 raise ValueError(f"Page {page_idx + 1} out of range ({len(pdf)} pages)")
             page = pdf[page_idx]
-            # 🆕 V17：内容自然方向（rotation=0），缩放仅 placement.scale；不再 prerotate。
+            # 🆕 Slice 1.2B：内容按 contentRotation 经 prerotate 旋转（RenderCommand 消费），
+            # 缩放仅 placement.scale，不重算 fit。placement 已在 rotatedBounds 上算好（见 Factory）。
             mat = fitz.Matrix(scale, scale)
+            if _pre:
+                mat.prerotate(_pre)
             pix = page.get_pixmap(matrix=mat, alpha=False)
         else:
-            # image path：以「dpi 栅格 + placement.scale + spec.rotation」组合矩阵一次性栅格化
-            # （与 PDF 路径统一——rotation 由后端唯一接管，不调用任何 Legacy helper（⑦）；零重算）。
+            # image path：以「dpi 栅格 + placement.scale + contentRotation」组合矩阵一次性栅格化
+            # （与 PDF 路径统一——旋转由后端唯一接管，不调用任何 Legacy helper（⑦）；零重算）。
             img_doc = _open_image_doc(doc)
             try:
                 dpi = float(spec.get("dpi", preset.dpi))
@@ -504,12 +535,14 @@ class RenderEngine:
                 mat = fitz.Matrix(zoom, zoom)
                 if scale != 1.0:
                     mat = fitz.Matrix(mat.a * scale, mat.d * scale)
+                if _pre:
+                    mat.prerotate(_pre)
                 pix = img_doc[0].get_pixmap(matrix=mat, alpha=False)
             finally:
                 img_doc.close()
 
-        # 🆕 V17：内容不再经 prerotate，fitz 1.27 旋转 pixmap 空白的兼容 hack 已无需
-        # （paper_landscape 仅交换画布尺寸，内容天然正向）。
+        # 🆕 Slice 1.2B：内容按 contentRotation 经 prerotate 旋转（矩阵旋转，非 pixmap 后处理）；
+        # 旧 fitz 1.27「旋转 pixmap 空白」兼容 hack 仍无需——fitz 自动处理旋转后包围盒。
 
         if gray:
             pix = _apply_grayscale(pix)
@@ -787,3 +820,53 @@ def _rotation_to_fitz_arg(rotation: int) -> int:
     if r == 270:
         return 90
     raise ValueError(f"unsupported rotation {rotation!r} (must be multiple of 90)")
+
+
+def validate_render_command(spec: dict) -> None:
+    """Slice 1.2B 收口 — RenderCommand 契约校验（用户收尾建议④）。
+
+    RenderCommand 是 Renderer 的唯一输入契约（见 frontend RenderLayoutFactory.js
+    的 RenderCommand typedef）。本函数把「字段缺失」在入口拦截为 ValueError
+    （api.py 映射 400），而非让 placement/offset 成为 None 后静默穿透到
+    get_pixmap / paste 产生空白图这类 Runtime Bug。
+
+    校验字段（= RenderCommand 契约，由 RenderLayoutFactory 单一决策点产出；Renderer 不重算）：
+      • placement: {scale, offsetX, offsetY}  必填，Renderer 直接消费
+      • contentRotation: 0/90/180/270          内容旋转 Fact（新模型；legacy `rotation` 已退役，不校验）
+      • paperLandscape: bool                   纸方向（仅决定画布交换）
+      • paper: {width, height}                 画布像素尺寸（>0）
+    """
+    if not isinstance(spec, dict):
+        raise ValueError("[1.2B] RenderCommand spec 必须是 dict")
+    # ── RenderCommand 契约版本（用户收尾建议）──
+    # 缺失 / 非 1 → 拒绝（400），杜绝"前端升 v2 / 后端仍 v1"的静默兼容。
+    # 与 ?spec=v1（RenderSpec DTO 信封版本，verify_render_spec 校验）是两回事：
+    #   • ?spec=v1  = 线路信封格式版本（前端→后端 DTO 序列化格式）
+    #   • version   = RenderCommand 契约版本（Factory 产出对象的语义版本）
+    # 两者都拦"静默兼容"，但作用在不同层。
+    CURRENT_RENDER_COMMAND_VERSION = 1
+    ver = spec.get("version")
+    if ver != CURRENT_RENDER_COMMAND_VERSION:
+        raise ValueError(
+            f"[1.2B] RenderCommand.version 必须为 {CURRENT_RENDER_COMMAND_VERSION}，"
+            f"收到 {ver!r}（未知版本 → 拒绝，杜绝前后端静默兼容；"
+            f"若需升级请同步 RenderLayoutFactory + engine + rebuild_spec_from_args）")
+    missing = []
+    placement = spec.get("placement")
+    if not isinstance(placement, dict):
+        missing.append("placement")
+    else:
+        for fld in ("scale", "offsetX", "offsetY"):
+            if fld not in placement:
+                missing.append(f"placement.{fld}")
+    if "contentRotation" not in spec:
+        missing.append("contentRotation")
+    if "paperLandscape" not in spec:
+        missing.append("paperLandscape")
+    paper = spec.get("paper")
+    if not isinstance(paper, dict) or "width" not in paper or "height" not in paper:
+        missing.append("paper{width,height}")
+    if missing:
+        raise ValueError(
+            f"[1.2B] RenderCommand 缺失必填字段: {missing} "
+            f"(这些必须由 RenderLayoutFactory 单一决策点产出；Renderer 不重算布局)")

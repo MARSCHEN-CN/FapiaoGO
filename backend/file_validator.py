@@ -3,6 +3,7 @@
 """
 
 import io
+import os
 import logging
 
 logger = logging.getLogger(__name__)
@@ -293,3 +294,78 @@ def validate_file(raw_bytes, filename):
         result['error'] = '不支持的文件格式'
     
     return result
+
+
+# =========================
+# 路径安全检查
+# =========================
+
+def is_path_traversal(path: str) -> bool:
+    """检测路径遍历攻击（如 ../ 或 ..\\）"""
+    if not path:
+        return False
+    
+    path_lower = path.lower()
+    
+    if '..' in path:
+        if path.startswith('..'):
+            return True
+        if path.startswith('/..') or path.startswith('\\..'):
+            return True
+        if '/../' in path or '\\..\\' in path:
+            return True
+        if '/..' == path[-3:] or '\\..' == path[-3:]:
+            return True
+    
+    normalized = os.path.normpath(path)
+    parts = normalized.split(os.sep)
+    for part in parts:
+        if part == '..':
+            return True
+    
+    return False
+
+
+def is_path_inside_base(path: str, base_dir: str) -> bool:
+    """验证路径是否在指定的基础目录内"""
+    try:
+        abs_path = os.path.abspath(os.path.normpath(path))
+        abs_base = os.path.abspath(os.path.normpath(base_dir))
+        if not abs_base.endswith(os.sep):
+            abs_base += os.sep
+        return abs_path.startswith(abs_base)
+    except (OSError, ValueError):
+        return False
+
+
+def validate_safe_path(file_path: str, allowed_bases: list = None) -> tuple:
+    """
+    验证文件路径的安全性
+    
+    Args:
+        file_path: 待验证的文件路径
+        allowed_bases: 允许的基础目录列表（可选）
+    
+    Returns:
+        tuple: (is_safe, normalized_path, error_message)
+    """
+    if not isinstance(file_path, str) or not file_path.strip():
+        return False, None, '路径不能为空'
+    
+    normalized = os.path.normpath(file_path.strip())
+    
+    if is_path_traversal(normalized):
+        return False, None, '检测到路径遍历攻击'
+    
+    abs_path = os.path.abspath(normalized)
+    
+    if not os.path.isabs(abs_path):
+        return False, None, '路径必须是绝对路径'
+    
+    if allowed_bases:
+        for base in allowed_bases:
+            if is_path_inside_base(abs_path, base):
+                return True, abs_path, None
+        return False, abs_path, f'路径不在允许的目录内: {", ".join(allowed_bases)}'
+    
+    return True, abs_path, None

@@ -1,63 +1,63 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { computePaperLayout } from '../previewState.js'
-import { buildRenderLayout } from './RenderLayoutFactory.js'
+import { buildRenderCommand } from './RenderLayoutFactory.js'
 import { buildRenderSpec, appendRenderSpecToUrl, renderSpecSignature, normalizeRenderSpec } from './renderSpec.js'
 import { getRenderEnginePreviewUrl } from '../utils/previewTarget.js'
 
-function makeLayout({ paperSize = 'A4', margins = { top: 0, right: 0, bottom: 0, left: 0 }, pageSize = { w: 1240, h: 1754 }, pageOrientation = 'portrait', rotation = 0 } = {}) {
+function makeCommand({ paperSize = 'A4', margins = { top: 0, right: 0, bottom: 0, left: 0 }, pageSize = { w: 1240, h: 1754 }, pageOrientation = 'portrait', rotation = 0 } = {}) {
   const paperLayout = computePaperLayout({ paperSize, customPaper: null, margins })
   const documentState = { pageSize, pageOrientation, rotation }
-  return buildRenderLayout(paperLayout, documentState)
+  return buildRenderCommand(paperLayout, documentState)
 }
 
 test('buildRenderSpec → 纯 DTO，含解析后 placement/rotation/clip，不含 fitMode 等意图', () => {
-  const rl = makeLayout()
-  const spec = buildRenderSpec(rl, { docId: 'abc123', page: 2, dpi: 300, marginsMm: { top: 5, right: 5, bottom: 5, left: 5 } })
+  const cmd = makeCommand()
+  const spec = buildRenderSpec(cmd, { docId: 'abc123', page: 2, dpi: 300, marginsMm: { top: 5, right: 5, bottom: 5, left: 5 } })
   assert.ok(spec)
   assert.equal(spec.docId, 'abc123')
   assert.equal(spec.page, 2)
   assert.equal(spec.dpi, 300)
-  assert.equal(spec.paper.width, rl.paper.paperRect.w)
-  assert.equal(spec.paper.height, rl.paper.paperRect.h)
+  assert.equal(spec.paper.width, cmd.paper.paperRect.w)
+  assert.equal(spec.paper.height, cmd.paper.paperRect.h)
   assert.ok('scale' in spec.placement && 'offsetX' in spec.placement && 'offsetY' in spec.placement)
   assert.equal(spec.rotation, 0)
   assert.deepEqual(spec.margin, { top: 5, right: 5, bottom: 5, left: 5 })
-  assert.deepEqual(spec.clip, { x: rl.clip.x, y: rl.clip.y, width: rl.clip.width, height: rl.clip.height })
+  assert.deepEqual(spec.clip, { x: cmd.clip.x, y: cmd.clip.y, width: cmd.clip.width, height: cmd.clip.height })
   // 关键：不携带 fitMode / alignment / paperKey 等推导意图
   assert.equal('fitMode' in spec, false)
   assert.equal('alignment' in spec, false)
 })
 
 test('buildRenderSpec → landscape 文档输出 paperLandscape=true 且 URL 带 paper_landscape=1', () => {
-  const rl = makeLayout({ pageSize: { w: 1754, h: 1240 }, pageOrientation: 'landscape' })
-  assert.equal(rl.paperLandscape, true, 'landscape 内容 → 纸随内容横纸')
-  assert.equal(rl.rotation, 0, 'V17：内容不再旋转')
-  const spec = buildRenderSpec(rl, { docId: 'land', page: 1, dpi: 300 })
+  const cmd = makeCommand({ pageSize: { w: 1754, h: 1240 }, pageOrientation: 'landscape' })
+  assert.equal(cmd.paperLandscape, true, 'landscape 内容 → 纸随内容横纸')
+  assert.equal(cmd.rotation, 0, 'V17：内容不再旋转')
+  const spec = buildRenderSpec(cmd, { docId: 'land', page: 1, dpi: 300 })
   assert.equal(spec.paperLandscape, true)
   const url = appendRenderSpecToUrl('http://localhost:5000/preview/land?page=1', spec)
   assert.equal(new URL(url).searchParams.get('paper_landscape'), '1')
 })
 
-test('buildRenderSpec → renderLayout 未就绪返回 null', () => {
+test('buildRenderSpec → renderCommand 未就绪返回 null', () => {
   assert.equal(buildRenderSpec(null, { docId: 'x' }), null)
   assert.equal(buildRenderSpec({}, { docId: 'x' }), null)
 })
 
 test('appendRenderSpecToUrl → 保留 base 的 ?page=1，追加后端忽略的新字段', () => {
   const base = 'http://localhost:5000/preview/abc123?page=1'
-  const rl = makeLayout({ pageSize: { w: 1240, h: 1754 } })
-  const spec = buildRenderSpec(rl, { docId: 'abc123', page: 1, dpi: 300, marginsMm: { top: 3, right: 3, bottom: 3, left: 3 } })
+  const cmd = makeCommand({ pageSize: { w: 1240, h: 1754 } })
+  const spec = buildRenderSpec(cmd, { docId: 'abc123', page: 1, dpi: 300, marginsMm: { top: 3, right: 3, bottom: 3, left: 3 } })
   const url = appendRenderSpecToUrl(base, spec)
   assert.ok(url.startsWith(base + '&'), `应追加到 base 之后，实得 ${url}`)
   const u = new URL(url)
   assert.equal(u.searchParams.get('page'), '1')          // 原参数保留
-  assert.equal(u.searchParams.get('paper_w'), String(rl.paper.paperRect.w))
-  assert.equal(u.searchParams.get('paper_h'), String(rl.paper.paperRect.h))
-  assert.equal(u.searchParams.get('scale'), String(rl.placement.scale))
-  assert.equal(u.searchParams.get('ox'), String(rl.placement.offsetX))
-  assert.equal(u.searchParams.get('oy'), String(rl.placement.offsetY))
-  assert.equal(u.searchParams.get('clip_w'), String(rl.clip.width))
+  assert.equal(u.searchParams.get('paper_w'), String(cmd.paper.paperRect.w))
+  assert.equal(u.searchParams.get('paper_h'), String(cmd.paper.paperRect.h))
+  assert.equal(u.searchParams.get('scale'), String(cmd.placement.scale))
+  assert.equal(u.searchParams.get('ox'), String(cmd.placement.offsetX))
+  assert.equal(u.searchParams.get('oy'), String(cmd.placement.offsetY))
+  assert.equal(u.searchParams.get('clip_w'), String(cmd.clip.width))
   assert.equal(u.searchParams.get('dpi'), '300')
   // 用户审核②：线路版本号随 RenderSpec 一起发送
   assert.equal(u.searchParams.get('spec'), 'v1')
@@ -75,8 +75,8 @@ test('appendRenderSpecToUrl → spec 为 null 原样返回', () => {
 })
 
 test('getRenderEnginePreviewUrl → 带 spec 追加参数；非 http 返回 null；2 参时行为不变', () => {
-  const rl = makeLayout()
-  const spec = buildRenderSpec(rl, { docId: 'abc123', page: 1, dpi: 300 })
+  const cmd = makeCommand()
+  const spec = buildRenderSpec(cmd, { docId: 'abc123', page: 1, dpi: 300 })
   const httpFile = { _previewImageUrl: 'http://localhost:5000/preview/abc123?page=1' }
   const withSpec = getRenderEnginePreviewUrl(httpFile, true, spec)
   assert.ok(withSpec.includes('paper_w='), '应追加 spec 参数')

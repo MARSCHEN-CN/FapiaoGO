@@ -13,6 +13,7 @@ import re
 import os
 import csv
 import logging
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -24,10 +25,56 @@ _PATTERN_WHITESPACE = re.compile(r'\s+')
 EXCEL_FORMULA_PREFIXES = ('=', '+', '-', '@')
 EXPORT_ALLOWED_EXTENSIONS = {'xlsx', 'csv'}
 
+EXPORT_ALLOWED_BASE_DIRS = [
+    str(Path.home()),
+    str(Path.home() / 'Desktop'),
+    str(Path.home() / 'Documents'),
+    str(Path.home() / 'Downloads'),
+]
+
 
 # ═══════════════════════════════════════════════════════════
 #  路径校验
 # ═══════════════════════════════════════════════════════════
+
+def _is_path_traversal(path: str) -> bool:
+    """检测路径遍历攻击"""
+    if not path:
+        return False
+    
+    if '..' in path:
+        if path.startswith('..'):
+            return True
+        if path.startswith('/..') or path.startswith('\\..'):
+            return True
+        if '/../' in path or '\\..\\' in path:
+            return True
+        if '/..' == path[-3:] or '\\..' == path[-3:]:
+            return True
+    
+    normalized = os.path.normpath(path)
+    parts = normalized.split(os.sep)
+    for part in parts:
+        if part == '..':
+            return True
+    
+    return False
+
+
+def _is_path_inside_bases(path: str, bases: list) -> bool:
+    """验证路径是否在允许的基础目录列表内"""
+    try:
+        abs_path = os.path.abspath(os.path.normpath(path))
+        for base in bases:
+            abs_base = os.path.abspath(os.path.normpath(base))
+            if not abs_base.endswith(os.sep):
+                abs_base += os.sep
+            if abs_path.startswith(abs_base):
+                return True
+        return False
+    except (OSError, ValueError):
+        return False
+
 
 def validate_export_path(file_path, fmt):
     """校验导出路径和格式，避免错误扩展名与明显危险路径。"""
@@ -35,10 +82,18 @@ def validate_export_path(file_path, fmt):
         raise ValueError("缺少 filePath 参数")
 
     raw_path = os.path.expanduser(file_path.strip())
+    
+    if _is_path_traversal(raw_path):
+        raise ValueError("检测到路径遍历攻击")
+
     if not os.path.isabs(raw_path):
         raise ValueError("导出路径必须是绝对路径")
 
     normalized_path = os.path.abspath(raw_path)
+    
+    if not _is_path_inside_bases(normalized_path, EXPORT_ALLOWED_BASE_DIRS):
+        raise ValueError(f"导出路径必须在以下目录内: {', '.join(EXPORT_ALLOWED_BASE_DIRS)}")
+
     requested_ext = str(fmt).lower().lstrip('.')
     actual_ext = os.path.splitext(normalized_path)[1].lower().lstrip('.')
 

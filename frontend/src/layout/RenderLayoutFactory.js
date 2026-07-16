@@ -4,14 +4,14 @@
  * 设计纪律（与 v16-stage1-design.md / v16-architecture-target.md 对齐）：
  *  • 纯函数（F5）：仅依赖入参，不读 React state / container / zoom / settingsRef。
  *  • 唯一构造点（F3）：Preview/Print/Export/RE 共用，禁止各端自算 fit/scale/placement。
- *  • 不反向持有 Facts（评审修正①）：输出 RenderLayout 只含解析后几何
+ *  • 不反向持有 Facts（评审修正①）：输出 RenderCommand 只含解析后几何
  *    （paper/placement/rotation/clip），不挂 DocumentState 引用。
  *  • 单位一致性（评审修正②）：与 PaperLayout 同一坐标系（当前 px@PREVIEW_DPI），
  *    禁止 px/mm 混用；RE 末端仅做一次 坐标→设备像素(dpi) 换算。
  *  • rotation ∈ {0,90,180,270} 顺时针（评审修正③）；clip ≡ PaperLayout.clipRect（修正④）。
  *
  * 视口变换（paper→window fit、zoomPercent）属于 Preview 的 ViewportTransform 层，
- * 永不进本工厂（I1：RenderLayout 永远描述纸张，不描述屏幕）。
+ * 永不进本工厂（I1：RenderCommand 永远描述纸张，不描述屏幕）。
  */
 
 import { calculateFitScale, calculateCenteredPosition } from '../layout.js'
@@ -29,6 +29,7 @@ import { isPaperLayoutInvalid } from '../previewState.js'
  * @property {number}  scale          - fit 缩放（基于 rotatedBounds）
  * @property {{x:number,y:number}} offset - 居中偏移（rotatedBounds 在 usableRect 内）
  * @property {boolean} paperLandscape - 有效纸张是否横向（= PaperOrientation Fact 派生）
+ * @property {1}       version       - RenderCommand 契约版本（当前 1；未来 v2 引入 nupLayout/colorTransform 等升级时升版本，后端 validate_render_command 拒绝未知版本，杜绝前后端静默兼容）
  */
 
 /**
@@ -44,10 +45,11 @@ function normalizeRotation(deg) {
 }
 
 /**
- * 空 RenderLayout（输入非法时返回，scale=0 表示未就绪）。
+ * 空 RenderCommand（输入非法时返回，scale=0 表示未就绪）。
  */
-export function emptyRenderLayout() {
+export function emptyRenderCommand() {
   return {
+    version: 1,
     paper: null,
     paperRect: { w: 0, h: 0 },
     usableRect: { x: 0, y: 0, w: 0, h: 0 },
@@ -67,9 +69,9 @@ export function emptyRenderLayout() {
  * @param {import('../previewState.js').DocumentState} documentState
  *   仅作输入：工厂内读取 pageOrientation / pageSize / rotation 等事实意图，
  *   **输出不得反向持有该对象**（评审修正①）。
- * @returns {ReturnType<typeof emptyRenderLayout>}
+ * @returns {ReturnType<typeof emptyRenderCommand>}
  */
-export function buildRenderLayout(paperLayout, documentState) {
+export function buildRenderCommand(paperLayout, documentState) {
   // V16 F1/F2 守卫：非法/坍缩的 PaperLayout 不应进入 Render 派生层。
   // 不变量校验收口到 isPaperLayoutInvalid（previewState.js 单一来源）：
   //   • 信任 Layout 不变量（contentRect.w/h>0）而非一个可能过期的 valid 字段；
@@ -88,11 +90,11 @@ export function buildRenderLayout(paperLayout, documentState) {
       `  reason=${reason}\n` +
       '  Caller must recover (reset to defaults / prompt user) before layout.'
     )
-    return emptyRenderLayout()
+    return emptyRenderCommand()
   }
   if (!paperLayout || !paperLayout.contentRect || !paperLayout.contentRect.w) {
-    console.warn(`[V16 WARN] buildRenderLayout: paperLayout.contentRect.w is 0/undefined — returning empty (scale=0). Check PaperLayout derivation (margins may still be invalid).`)
-    return emptyRenderLayout()
+    console.warn(`[V16 WARN] buildRenderCommand: paperLayout.contentRect.w is 0/undefined — returning empty (scale=0). Check PaperLayout derivation (margins may still be invalid).`)
+    return emptyRenderCommand()
   }
 
   const { contentRect, clipRect, paperRect } = paperLayout
@@ -113,8 +115,8 @@ export function buildRenderLayout(paperLayout, documentState) {
   const natW = documentState?.pageSize?.w || 0
   const natH = documentState?.pageSize?.h || 0
   if (!natW || !natH) {
-    console.warn(`[V16 WARN] buildRenderLayout: documentState pageSize missing/zero (natW=${natW}, natH=${natH}) — returning empty (scale=0).`)
-    return emptyRenderLayout()
+    console.warn(`[V16 WARN] buildRenderCommand: documentState pageSize missing/zero (natW=${natW}, natH=${natH}) — returning empty (scale=0).`)
+    return emptyRenderCommand()
   }
 
   // 旋转后的内容包围盒（90/270 交换 natW/natH；0/180 不交换）。Renderer 不再旋转内容。
@@ -145,6 +147,7 @@ export function buildRenderLayout(paperLayout, documentState) {
     : { w: paperRect.w, h: paperRect.h }
 
   return {
+    version: 1,
     // PaperLayout 是 Derived（非 Facts），可持有引用（自然纸坐标；有效纸见 paperRect）
     paper: paperLayout,
     paperRect: effPaperRect,
