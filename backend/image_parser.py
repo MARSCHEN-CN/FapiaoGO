@@ -120,17 +120,6 @@ def parse_image_ocr(file, auto_orient=True, content_sha256=None, content_bytes=N
             if rotation_angle != 0:
                 logger.info("图片已自动旋转 %d°", rotation_angle)
 
-            # 生成预览图（只在旋转后或需要时）
-            if rotated_img is not None:
-                preview_img = PILImage.fromarray(rotated_img).convert('RGB')
-                preview_img = _resize_image(preview_img, MAX_PREVIEW_WIDTH, MAX_PREVIEW_HEIGHT)
-                buf = io.BytesIO()
-                preview_img.save(buf, format='JPEG', quality=PREVIEW_QUALITY, optimize=True)
-                result['preview_image'] = base64.b64encode(buf.getvalue()).decode('ascii')
-                logger.debug("已生成预览图: %d bytes", len(buf.getvalue()))
-                # 释放预览图内存
-                del preview_img
-
             set_ocr_cache(cache_key, result)
         else:
             logger.warning("OCR未识别到文本")
