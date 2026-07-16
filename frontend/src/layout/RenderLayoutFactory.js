@@ -18,6 +18,20 @@ import { calculateFitScale, calculateCenteredPosition } from '../layout.js'
 import { isPaperLayoutInvalid } from '../previewState.js'
 
 /**
+ * @typedef {Object} RenderCommand
+ * Page Placement Pipeline 的最终产出（Renderer 纯执行契约，2026-07-16 锁定）。
+ * 所有消费方（Canvas / Render Engine / Print）只消费本结构，绝不重算 Fit/Center/Landscape/换宽高。
+ * @property {Size}    paperRect      - 有效纸张像素尺寸（paperLandscape 时已是横/竖交换后）
+ * @property {Size}    usableRect     - 安全区（含原点 mLeft/mTop，已按 paperLandscape 重生）
+ * @property {Size}    rotatedBounds  - 内容旋转后的包围盒（90/270 交换 natW/natH）
+ * @property {0|90|180|270} contentRotation - 【Slice 1.1 契约】内容旋转角（= ContentRotation Fact）；Factory 单一决策点产出，Renderer/RE 在 Slice 1.2+ 才消费
+ * @property {0}       rotation       - [LEGACY Wire] 兼容字段，Slice 1.1 恒为 0（避免提前改协议：rotation 暂不发给 RE）；Slice 1.2 起 = contentRotation
+ * @property {number}  scale          - fit 缩放（基于 rotatedBounds）
+ * @property {{x:number,y:number}} offset - 居中偏移（rotatedBounds 在 usableRect 内）
+ * @property {boolean} paperLandscape - 有效纸张是否横向（= PaperOrientation Fact 派生）
+ */
+
+/**
  * 归一化旋转角到 {0,90,180,270}（顺时针）。
  * 任何输入（含 45° 等非法值）都被 snap 到最近的 90° 倍数，
  * 防止 RE/Canvas/Print 三端各自支持渐变旋转导致复杂度失控。
@@ -35,8 +49,12 @@ function normalizeRotation(deg) {
 export function emptyRenderLayout() {
   return {
     paper: null,
+    paperRect: { w: 0, h: 0 },
+    usableRect: { x: 0, y: 0, w: 0, h: 0 },
+    rotatedBounds: { width: 0, height: 0 },
     placement: { scale: 0, offsetX: 0, offsetY: 0 },
     rotation: 0,
+    paperLandscape: false,
     clip: { x: 0, y: 0, width: 0, height: 0 },
   }
 }
@@ -79,63 +97,74 @@ export function buildRenderLayout(paperLayout, documentState) {
 
   const { contentRect, clipRect, paperRect } = paperLayout
 
-  // 1) 纸随内容方向（V17 paperLandscape 模型）：
-  //    旧模型用 swapRotation=90 把内容旋转进固定纸；新模型改为「翻转纸张尺寸」，
-  //    内容永远自然方向（rotation=0）。paperLandscape 即有效纸张的横竖。
-  const paperOrient = paperRect.w > paperRect.h ? 'landscape' : 'portrait'
-  const docOrient = documentState?.pageOrientation
-  const swapped = !!docOrient && docOrient !== paperOrient
-  const swapRotation = swapped ? 90 : 0
+  // ── Page Placement Pipeline（2026-07-16 锁定模型）──
+  // 输入两个独立 Fact（互不 Derived，且都不在本层被重新推导 = Single Decision Point）：
+  //   paperOrientation : 有效纸张方向（Portrait/Landscape）→ 决定 paperRect / usableRect 是否交换。
+  //   contentRotation  : 内容旋转角(0/90/180/270)          → 决定 rotatedBounds 是否交换 + 输出 rotation。
+  const paperOrientation =
+    documentState?.paperOrientation || documentState?.pageOrientation || 'portrait'
+  const contentRotation = normalizeRotation(
+    documentState?.contentRotation ?? documentState?.rotation ?? 0
+  )
+  // 有效纸张是否横向：直接由 PaperOrientation Fact 派生，根除旧 totalRot 推导的 180° bug。
+  const paperLandscape = paperOrientation === 'landscape'
 
-  // 2) 文件级旋转（/Rotate 或预览旋转）→ 仅影响纸张方向（横/竖），不再旋转内容
-  const fileRotation = normalizeRotation(documentState?.rotation || 0)
-  const totalRot = normalizeRotation(swapRotation + fileRotation)
-  // 🆕 paperLandscape：有效纸张是否横向（内容方向 + 手动旋转共同决定）
-  const paperLandscape = totalRot === 90 || totalRot === 270
-
-  // 3) 内容自然尺寸（rotation 已废弃为 0，内容不再旋转）
-  let natW = documentState?.pageSize?.w || 0
-  let natH = documentState?.pageSize?.h || 0
+  // 内容内禀尺寸
+  const natW = documentState?.pageSize?.w || 0
+  const natH = documentState?.pageSize?.h || 0
   if (!natW || !natH) {
     console.warn(`[V16 WARN] buildRenderLayout: documentState pageSize missing/zero (natW=${natW}, natH=${natH}) — returning empty (scale=0).`)
     return emptyRenderLayout()
   }
 
-  // 4) 有效纸张/内容矩形：paperLandscape 时交换宽高（纸随内容）
-  const effContentW = paperLandscape ? contentRect.h : contentRect.w
-  const effContentH = paperLandscape ? contentRect.w : contentRect.h
+  // 旋转后的内容包围盒（90/270 交换 natW/natH；0/180 不交换）。Renderer 不再旋转内容。
+  const rotated = contentRotation % 180 !== 0
+  const rotatedBounds = rotated
+    ? { width: natH, height: natW }
+    : { width: natW, height: natH }
 
-  // 5) fit（复用 layout.js 纯函数），在 usableRect 内居中。
-  //    usableRect 已含边距原点（x=mLeft, y=mTop），paperLandscape 时交换 x/y 与 w/h
-  //    （90° CW：物理 top 边 → 有效 left 边，物理 left 边 → 有效 top 边），
-  //    使四边距在横竖向均生效。calculateCenteredPosition 用 slot.x/y 作居中基准，
-  //    故图永远落在安全区内，而非绕纸张中心。
-  const usableRect = paperLayout.usableRect || { x: 0, y: 0, w: contentRect.w, h: contentRect.h }
-  // 可见坐标系（WYSIWYG）：slot 原点 = usableRect 原点（mLeft→屏幕左、mTop→屏幕上），
-  // 不随纸张方向交换。纸张「尺寸」交换（effContentW/H）保留——可见纸横向下内容盒本就是 contentRect.h×contentRect.w。
-  // 物理纸坐标变换（visible→physical）不在 Layout 层做，留待 RenderSpec / RE Adapter（架构决策，见 commit 备注）。
-  const slot = { x: usableRect.x, y: usableRect.y, width: effContentW, height: effContentH }
-  const contentBounds = { width: natW, height: natH }
-  const fitScale = calculateFitScale(slot, contentBounds)
-  const pos = calculateCenteredPosition(slot, contentBounds, fitScale)
+  // 有效 usableRect：paperLandscape 时按新纸坐标重生（margins 物理值不变，仅 w/h 依据新纸重算）。
+  //   margins 属于 Paper 坐标（Top 仍是物理上边、Left 仍是物理左边），绝不随内容旋转。
+  const naturalUsable = paperLayout.usableRect || { x: 0, y: 0, w: contentRect.w, h: contentRect.h }
+  const mL = naturalUsable.x
+  const mT = naturalUsable.y
+  const mR = paperRect.w - naturalUsable.w - mL
+  const mB = paperRect.h - naturalUsable.h - mT
+  const usableRect = paperLandscape
+    ? { x: mL, y: mT, w: paperRect.h - mL - mR, h: paperRect.w - mT - mB }
+    : naturalUsable
+
+  // Fit + Center 在 rotatedBounds 上做（Renderer 不重算）。
+  const slot = { x: usableRect.x, y: usableRect.y, width: usableRect.w, height: usableRect.h }
+  const fitScale = calculateFitScale(slot, rotatedBounds)
+  const pos = calculateCenteredPosition(slot, rotatedBounds, fitScale)
+
+  // 有效纸张像素尺寸（paperLandscape 时交换），供 Renderer 直接使用，无需再次 swap。
+  const effPaperRect = paperLandscape
+    ? { w: paperRect.h, h: paperRect.w }
+    : { w: paperRect.w, h: paperRect.h }
 
   return {
-    // PaperLayout 是 Derived（非 Facts），可持有引用
+    // PaperLayout 是 Derived（非 Facts），可持有引用（自然纸坐标；有效纸见 paperRect）
     paper: paperLayout,
+    paperRect: effPaperRect,
+    usableRect,
+    rotatedBounds,
     placement: {
       scale: fitScale,
       offsetX: pos.x,
       offsetY: pos.y,
     },
-    // 🆕 V17 deprecated：内容不再旋转；方向完全由 paperLandscape 表达（RE/Canvas/Print 三端统一）
-    rotation: 0,
+    rotation: 0, // [LEGACY Wire] Slice 1.1 恒 0：协议不变（rotation 暂不发给 RE）；Slice 1.2 起 = contentRotation
+    contentRotation, // 【契约】内容旋转角，Factory 唯一决策点产出；Renderer/RE 在 Slice 1.2+ 消费
     paperLandscape,
-    // clip 与 placement 同帧（可见坐标），不随纸张方向交换（同 slot 原点修复）
-    clip: {
-      x: clipRect?.x ?? 0,
-      y: clipRect?.y ?? 0,
-      width: clipRect?.w ?? 0,
-      height: clipRect?.h ?? 0,
-    },
+    clip: paperLandscape
+      ? { x: 0, y: 0, width: paperRect.h, height: paperRect.w }
+      : {
+          x: clipRect?.x ?? 0,
+          y: clipRect?.y ?? 0,
+          width: clipRect?.w ?? paperRect.w,
+          height: clipRect?.h ?? paperRect.h,
+        },
   }
 }

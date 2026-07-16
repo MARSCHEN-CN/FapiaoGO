@@ -7,7 +7,7 @@ import { detectDocumentOrientation } from '../utils/detectOrientation'
 import { getForcedLandscape } from '../utils/mergeMode'
 import { buildPreviewCacheKey } from '../utils/previewCacheKey'
 import { getRenderEnginePreviewUrl } from '../utils/previewTarget'
-import { emptyContentLayout, initialRenderState, computePaperLayout } from '../previewState'
+import { emptyContentLayout, initialRenderState, computePaperLayout, getDocNaturalOrientation } from '../previewState'
 import { buildRenderLayout } from '../layout/RenderLayoutFactory.js'
 import { buildRenderSpec, RENDER_SPEC_VERSION, renderSpecSignature } from '../layout/renderSpec.js'
 import { resolvePaper, paperKeyFragment } from '../layout/resolvePaper.js'
@@ -185,7 +185,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
       id: loadedFile.key || loadedFile.id || '',
       pageCount: loadedFile._pdfPageCount || 1,
       pageSize: { w: pageW, h: pageH },
-      pageOrientation: pageW > pageH ? 'landscape' : 'portrait',
+      pageOrientation: getDocNaturalOrientation({ w: pageW, h: pageH }),
       sourceType: loadedFile._fileFormat || 'pdf',
       pageNum: loadedFile.pageNum || 1,
     }
@@ -415,7 +415,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
   // paperLayout 在 Render 阶段随 settings 同步派生 → margin 修改当帧即生效，无 effect 滞后。
   const renderLayout = useMemo(
     () => {
-      return buildRenderLayout(paperLayout, { ...(documentStateRef.current || {}), rotation: previewRotation })
+      return buildRenderLayout(paperLayout, { ...(documentStateRef.current || {}), contentRotation: previewRotation })
     },
     [paperLayout, previewRotation, previewFile]
   )
@@ -1216,12 +1216,19 @@ export function usePreview({ files, settings, electronAPIRef }) {
     // DocumentState（文档属性，与纸张无关）— swap 仅用于缓存 key，不污染 PaperLayout
     const docW = loadedFile._pdfPageWidth || loadedFile._imageWidth || 0
     const docH = loadedFile._pdfPageHeight || loadedFile._imageHeight || 0
-    const docOrientation = (docW && docH) ? (docW > docH ? 'landscape' : 'portrait') : contentOrient
+    // getDocNaturalOrientation 对空/零尺寸返回 null（拒绝数学偶然）；null 时回落 contentOrient/portrait
+    const naturalOrientation = (docW > 0 && docH > 0) ? getDocNaturalOrientation({ w: docW, h: docH }) : null
+    const docOrientation = naturalOrientation || contentOrient || 'portrait'
     documentStateRef.current = {
       id: loadedFile.key || loadedFile.id || '',
       pageCount: loadedFile._pdfPageCount || 1,
       pageSize: { w: docW, h: docH },
       pageOrientation: docOrientation,
+      // 【Page Placement Pipeline Fact】有效纸张方向：Initialize Once（本会话内 doc_id 首次加载即定，re-parse 不覆盖）。
+      // 当前无持久化层时以文档天然方向初始化；Legacy 旋转经 contentRotation 迁移接入。
+      paperOrientation: docOrientation,
+      contentRotation: fileRotations[loadedFile.key] || 0, // Legacy 迁移：旧 fileRotations 作为 contentRotation 来源
+      rotation: fileRotations[loadedFile.key] || 0, // [LEGACY 镜像] = contentRotation；Slice 1.5 随 fileRotations 一并移除（保留以便旧代码仍可读取 documentState.rotation）
       sourceType: loadedFile._fileFormat || 'pdf',
       pageNum: loadedFile.pageNum || 1,
     }
@@ -1277,7 +1284,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
         try {
           const l2Layout = buildRenderLayout(paperLayout, {
             ...(documentStateRef.current || {}),
-            rotation: fileRotations[loadedFile.key] || 0,
+            contentRotation: fileRotations[loadedFile.key] || 0,
           })
           l2Spec = buildRenderSpec(l2Layout, {
             docId: loadedFile.docId,

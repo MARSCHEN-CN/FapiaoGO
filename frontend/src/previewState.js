@@ -20,11 +20,29 @@ import { resolvePaper } from './layout/resolvePaper.js'
  * @property {string}   id               - 文档唯一标识
  * @property {number}   pageCount        - 总页数
  * @property {Size}     pageSize         - 文档原始像素尺寸
- * @property {'landscape'|'portrait'} pageOrientation - 文档原始方向
- * @property {number}   rotation         - 文件级旋转（/Rotate 或预览旋转），°；最终旋转由 RenderLayoutFactory 归一到 {0,90,180,270}
+ * @property {'landscape'|'portrait'} pageOrientation - 文档原始方向（天然），由 getDocNaturalOrientation 推导
+ * @property {'landscape'|'portrait'} [paperOrientation] - 【Page Placement Pipeline Fact】有效纸张方向（用户可控）；缺省回落 pageOrientation
+ * @property {0|90|180|270} [contentRotation] - 【Page Placement Pipeline Fact】内容旋转角（用户可控）；缺省回落 legacy rotation
+ * @property {number}   rotation         - [LEGACY] 文件级旋转（/Rotate 或预览旋转），°；最终旋转改用 contentRotation（本字段仅作 legacy 回落兼容，新代码勿依赖）
  * @property {'pdf'|'ofd'|'image'} sourceType - 文档类型
  * @property {number}   pageNum          - 当前页码
  */
+
+/**
+ * 文档天然方向 — 单一决策点（Single Decision Point，2026-07-16 锁定）。
+ * 依据页面/图片**内禀宽高**判定，**绝不**看 PDF /Rotate 元数据或 EXIF，
+ * 避免多年后多处分叉（content 方向 / paper 方向 / 旋转元数据各看一处）。
+ * ⚠️ 拒绝数学偶然：空/零尺寸不是合法方向输入——`0>=0` 绝不能成为「landscape」业务事实。
+ *    无尺寸的文档本就不能 Layout；非法输入返回 null，由调用方显式回落（Init 用 'portrait'，或上层 ASSERT）。
+ * @param {{w:number, h:number}} size
+ * @returns {'portrait'|'landscape'|null}
+ */
+export function getDocNaturalOrientation(size) {
+  const w = size?.w || 0
+  const h = size?.h || 0
+  if (w <= 0 || h <= 0) return null
+  return w >= h ? 'landscape' : 'portrait'
+}
 
 // ── PaperLayout ────────────────────────────────────────────────
 // 始终存在，不依赖渲染内容。Paper 不知道 Content。
