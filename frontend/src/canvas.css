@@ -2,24 +2,35 @@
    canvas.css ?Canvas Area, Paper, Navigation Arrows
    ================================================================ */
 
-/* ======================== Canvas & Paper ======================== */
+/* ======================== 2. Control Bar（缩放工具栏区域） ======================== */
+.control-bar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 16px 8px;
+  animation: fadeInUp 0.3s var(--ease) 0.2s both;
+}
+
+/* ======================== 3. Canvas（预览区，占满剩余空间） ======================== */
 .canvas {
   flex: 1;
   position: relative;
-  background: linear-gradient(180deg, #f5f7fb 0%, #eef1f8 100%);
+  /* 背景由 .main 统一承载，此处透明 */
+  background: transparent;
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  min-height: 0;
 }
 
-/* 滚动层：专门负责内容滚动，控件不在这里面 */
+/* 滚动层 */
 .canvas-scroll {
   flex: 1;
-  min-height: 100px;  /* 防止 DevTools 打开时容器完全坍塌 */
+  min-height: 0;
   overflow: auto;
   display: flex;
-  padding: clamp(20px, 1.5vw, 40px);
-  /* 手型光标：提示可拖拽 */
+  padding: clamp(24px, 2.5vw, 48px) clamp(24px, 2vw, 48px);
   cursor: grab;
 }
 
@@ -38,43 +49,43 @@
   position: absolute;
   top: 50%;
   transform: translateY(-50%);
-  width: 36px;
-  height: 44px;
-  border: 0.5px solid var(--canvas-float-border);
-  border-radius: var(--r-md);
-  background: var(--canvas-float-bg);
+  width: 38px;
+  height: 38px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.92);
   color: var(--text-2);
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 10;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08), 0 0 0 0.5px rgba(0,0,0,0.04);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.10);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
   transition: all 0.2s var(--ease);
-  opacity: 0.35;
+  opacity: 0.5;
 }
 
 .canvas-arrow:hover {
   background: var(--white);
   color: var(--accent);
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.1), 0 0 0 0.5px rgba(0,0,0,0.06);
-  transform: translateY(-50%) scale(1.05);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.14);
+  transform: translateY(-50%) scale(1.08);
   opacity: 1;
 }
 
 [data-theme="dark"] .canvas-arrow {
   background: var(--canvas-float-bg);
   color: var(--text-2);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
-  border: 0.5px solid var(--canvas-float-border);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.3);
+  border: none;
 }
 
 [data-theme="dark"] .canvas-arrow:hover {
-  background: rgba(38, 42, 56, 0.96);
+  background: rgba(38, 42, 56, 0.98);
   color: var(--accent);
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.4);
 }
 
 .canvas-arrow:active {
@@ -93,11 +104,11 @@
 }
 
 .canvas-arrow-left {
-  left: 16px;
+  left: 22px;
 }
 
 .canvas-arrow-right {
-  right: 16px;
+  right: 22px;
 }
 
 /* 鼠标移入预览区时箭头显示 */
@@ -177,12 +188,12 @@
 
 .paper {
   background: var(--paper-bg);
-  border-radius: 3px;
+  border-radius: 8px;
   box-shadow:
-    0 2px 4px rgba(0, 0, 0, 0.03),
-    0 8px 20px rgba(0, 0, 0, 0.07),
-    0 20px 50px rgba(0, 0, 0, 0.06),
-    0 0 0 1px rgba(0, 0, 0, 0.03);
+    0 2px 6px rgba(0, 0, 0, 0.04),
+    0 12px 32px rgba(0, 0, 0, 0.08),
+    0 24px 60px rgba(0, 0, 0, 0.06),
+    0 0 0 1px rgba(0, 0, 0, 0.04);
   overflow: hidden;
   flex-shrink: 0;
   position: relative;
@@ -195,9 +206,9 @@
 
 .paper:hover {
   box-shadow:
-    0 2px 6px rgba(0, 0, 0, 0.04),
-    0 10px 24px rgba(0, 0, 0, 0.08),
-    0 24px 60px rgba(0, 0, 0, 0.07),
+    0 2px 8px rgba(0, 0, 0, 0.05),
+    0 14px 36px rgba(0, 0, 0, 0.10),
+    0 28px 70px rgba(0, 0, 0, 0.08),
     0 0 0 1px rgba(0, 0, 0, 0.06);
 }
 
@@ -220,65 +231,72 @@
 }
 
 .canvas-zoom-control {
-  position: absolute;
-  top: 14px;
-  left: 50%;
-  transform: translateX(-50%);
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 2px;
   padding: 4px;
-  background: rgba(255, 255, 255, 0.85);
+  background: var(--canvas-float-bg);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
-  border-radius: 8px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06), 0 8px 24px rgba(0, 0, 0, 0.04), 0 0 0 0.5px rgba(0,0,0,0.05);
+  border-radius: 12px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08), 0 0 0 0.5px rgba(0,0,0,0.04);
   z-index: 10;
-  border: 0.5px solid rgba(255, 255, 255, 0.8);
-  /* 入场：初始隐藏，300ms 后淡入上移 */
-  opacity: 0;
-  transform: translateX(-50%) translateY(-4px);
-  animation: zoomControlIn 0.35s 0.3s var(--ease) forwards;
+  border: 0.5px solid var(--canvas-float-border);
   transition: box-shadow var(--t-fast) var(--ease);
 }
 
 .canvas-zoom-control:hover {
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08), 0 12px 32px rgba(0, 0, 0, 0.05), 0 0 0 0.5px rgba(0,0,0,0.06);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.10), 0 0 0 0.5px rgba(0,0,0,0.06);
 }
 
 [data-theme="dark"] .canvas-zoom-control {
-  background: rgba(30, 33, 48, 0.9);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  border-color: rgba(255, 255, 255, 0.08);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3), 0 0 0 0.5px rgba(255, 255, 255, 0.06);
+  background: var(--canvas-float-bg);
+  border-color: var(--canvas-float-border);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.3);
 }
 
-/* ======================== Status Indicator ======================== */
-/* ======================== Status Indicator ======================== */
-/* 状态指示器 - 定位?canvas 容器右下?*/
-.status-indicator {
-  position: absolute;
-  bottom: 14px;
-  right: 14px;
+[data-theme="dark"] .canvas-zoom-control:hover {
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+
+[data-theme="dark"] .status-indicator {
+  background: var(--canvas-float-bg);
+  border-color: var(--canvas-float-border);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.3);
+}
+
+[data-theme="dark"] .status-indicator:hover {
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+
+/* ======================== 4. Status Bar（状态区域） ======================== */
+.status-bar {
+  flex-shrink: 0;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 7px 14px;
-  background: rgba(255, 255, 255, 0.85);
+  justify-content: flex-end;
+  padding: 6px 20px;
+}
+
+/* 状态指示器 */
+.status-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 5px 12px;
+  background: var(--canvas-float-bg);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
-  border-radius: 8px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06), 0 8px 24px rgba(0, 0, 0, 0.04), 0 0 0 0.5px rgba(0,0,0,0.05);
+  border-radius: 20px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.06), 0 0 0 0.5px rgba(0,0,0,0.04);
   font-size: 12px;
-  color: var(--text-2, #4a5568);
-  z-index: 10;
-  border: 0.5px solid rgba(255, 255, 255, 0.8);
+  color: var(--text-2);
+  border: 0.5px solid var(--canvas-float-border);
   transition: box-shadow var(--t-fast) var(--ease);
 }
 
 .status-indicator:hover {
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08), 0 12px 32px rgba(0, 0, 0, 0.05), 0 0 0 0.5px rgba(0,0,0,0.06);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08), 0 0 0 0.5px rgba(0,0,0,0.06);
 }
 
 [data-theme="dark"] .status-indicator {
@@ -293,30 +311,33 @@
 .status-indicator-item {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 5px;
+  padding: 3px 8px;
+  border-radius: 14px;
+  font-weight: 600;
+  font-size: 12px;
+  transition: background var(--t-fast) var(--ease);
 }
 
 .status-indicator-item + .status-indicator-item {
-  padding-left: 10px;
-  border-left: 1px solid rgba(0, 0, 0, 0.1);
-}
-
-[data-theme="dark"] .status-indicator-item + .status-indicator-item {
-  border-left-color: var(--border);
+  margin-left: 0;
+  border-left: none;
+  padding-left: 8px;
 }
 
 .status-dot {
-  width: 8px;
-  height: 8px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
   background: #22c55e;
   box-shadow: 0 0 6px rgba(34, 197, 94, 0.5);
   animation: statusPulse 2s ease-in-out infinite;
+  flex-shrink: 0;
 }
 
 .status-special {
   color: #f59e0b;
-  font-weight: 500;
+  font-weight: 600;
 }
 
 @keyframes statusPulse {
@@ -334,27 +355,25 @@
    DARK MODE — canvas · 深色沉浸（类Figma/PS）
    ================================================================ */
 [data-theme="dark"] .canvas {
-  background: #15171f;
-  background-image:
-    radial-gradient(circle at 50% 40%, rgba(108, 138, 255, 0.04) 0%, transparent 60%),
-    linear-gradient(rgba(255, 255, 255, 0.018) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.018) 1px, transparent 1px);
-  background-size: 100% 100%, 32px 32px, 32px 32px;
+  /* 背景由 .main 统一承载 */
+  background: transparent;
 }
 
 [data-theme="dark"] .paper {
   background: var(--paper-bg);
   box-shadow:
-    0 0 0 1px rgba(255, 255, 255, 0.10),
-    0 8px 30px rgba(0, 0, 0, 0.5),
-    0 30px 80px rgba(0, 0, 0, 0.4);
+    0 0 0 1px rgba(255, 255, 255, 0.06),
+    0 4px 14px rgba(0, 0, 0, 0.35),
+    0 14px 40px rgba(0, 0, 0, 0.40),
+    0 28px 70px rgba(0, 0, 0, 0.30);
 }
 
 [data-theme="dark"] .paper:hover {
   box-shadow:
-    0 0 0 1px rgba(255, 255, 255, 0.16),
-    0 10px 36px rgba(0, 0, 0, 0.55),
-    0 36px 100px rgba(0, 0, 0, 0.45);
+    0 0 0 1px rgba(255, 255, 255, 0.10),
+    0 4px 16px rgba(0, 0, 0, 0.40),
+    0 16px 44px rgba(0, 0, 0, 0.45),
+    0 32px 80px rgba(0, 0, 0, 0.35);
 }
 
 [data-theme="dark"] .canvas-empty .canvas-empty-title {

@@ -552,6 +552,7 @@ function AppContent() {
       />
 
       <main className="main">
+        {/* 1. Header：计算器、菜单、设置、窗口控制 */}
         <TopBar
           extraSpecial={settings.extraSpecial}
           paperSize={settings.paperSize}
@@ -568,86 +569,9 @@ function AppContent() {
           openCalculator={openCalculator}
         />
 
-        <div
-          className="canvas"
-          onMouseMove={handleCanvasMouseMove}
-          onMouseLeave={handleCanvasMouseLeave}
-        >
-          {(() => {
-            // 空状态：无预览文件
-            if (!previewFile) {
-              return (
-                <div className="canvas-center-overlay canvas-empty">
-                  <img src="/icon/waiting.svg" alt="等待预览" width="240" height="100" />
-                  <p className="canvas-empty-title">左侧添加文件以预览</p>
-                  <p className="canvas-empty-sub">支持 PDF、OFD、图片格式的发票文件</p>
-                </div>
-              )
-            }
-
-            // OFD 不支持预览
-            if (previewFile._fileFormat === 'ofd' && !previewFile._previewImageUrl) {
-              return <div className="canvas-center-overlay canvas-loading">OFD 文件不支持预览</div>
-            }
-
-            // 加载中：有预览文件但渲染尚未就绪
-            // hasPreview 统一覆盖两种预览来源：旧 Canvas 预览（previewCanvas）与 Render Engine 的 <img> 预览（previewUrl）。
-            // 迁移到 RE 后 previewCanvas 恒为 null，不能再单独以它为"就绪"判据。
-            const hasPreview = !!previewCanvas || !!previewUrl;
-            if (!contentLayout?.ready || !hasPreview) {
-              // 区分：预览 canvas 已就绪但容器太小 → 显示友好提示
-              if (previewCanvas && !contentLayout?.ready) {
-                return (
-                  <div className="canvas-center-overlay canvas-loading" style={{ gap: '10px' }}>
-                    <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" style={{ opacity: 0.5 }}>
-                      <rect x="2" y="3" width="20" height="14" rx="2" />
-                      <line x1="8" y1="21" x2="16" y2="21" />
-                      <line x1="12" y1="17" x2="12" y2="21" />
-                      <line x1="2" y1="9" x2="22" y2="9" />
-                      <line x1="3" y1="13" x2="5" y2="13" />
-                      <line x1="19" y1="13" x2="21" y2="13" />
-                    </svg>
-                    <span style={{ fontSize: '14px', fontWeight: 500, color: 'var(--text-2)' }}>
-                      预览区域过小
-                    </span>
-                    <span style={{ fontSize: '12px', color: 'var(--text-3)' }}>
-                      请收起 DevTools（F12）或放大窗口
-                    </span>
-                  </div>
-                )
-              }
-              return (
-                <div className="canvas-center-overlay canvas-loading">
-                  <svg className="canvas-loading-spinner" viewBox="0 0 36 36" fill="none">
-                    <circle className="ring-track" cx="18" cy="18" r="15" strokeWidth="3" />
-                    <circle cx="18" cy="18" r="15" stroke="currentColor" strokeWidth="3"
-                      strokeDasharray="60 100" strokeLinecap="round" />
-                  </svg>
-                  <span>加载中...</span>
-                </div>
-              )
-            }
-
-            // 预览已就绪 — 不渲染 overlay，由下方 scroll 层显示 canvas
-            return null
-          })()}
-
-          {/* 滚动层：ref 绑定在这里，用于 ResizeObserver 和滚动控制 */}
-          <div ref={previewContainerRef} className="canvas-scroll">
-            <PreviewCanvas
-              previewFile={previewFile}
-              previewCanvas={previewCanvas}
-              previewUrl={previewUrl}
-              grayscale={settings.grayscale}
-              previewRenderVersion={previewRenderVersion}
-              paperLayout={paperLayout}
-              contentLayout={contentLayout}
-              previewRotation={previewRotation}
-              previewLoading={previewLoading}
-            />
-          </div>
-
-          {previewFile && (
+        {/* 2. Control：缩放工具栏 */}
+        {previewFile && (
+          <div className="control-bar">
             <div className="canvas-zoom-control">
               <button className="tb-btn" onClick={() => {
                 const current = files.find(f => f.key === previewFile.key)
@@ -703,7 +627,86 @@ function AppContent() {
                 <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
               </button>
             </div>
-          )}
+          </div>
+        )}
+
+        {/* 3. Canvas：预览内容区 */}
+        <div
+          className="canvas"
+          onMouseMove={handleCanvasMouseMove}
+          onMouseLeave={handleCanvasMouseLeave}
+        >
+          {(() => {
+            // 空状态：无预览文件
+            if (!previewFile) {
+              return (
+                <div className="canvas-center-overlay canvas-empty">
+                  <img src="/icon/waiting.svg" alt="等待预览" width="240" height="100" />
+                  <p className="canvas-empty-title">左侧添加文件以预览</p>
+                  <p className="canvas-empty-sub">支持 PDF、OFD、图片格式的发票文件</p>
+                </div>
+              )
+            }
+
+            // OFD 不支持预览
+            if (previewFile._fileFormat === 'ofd' && !previewFile._previewImageUrl) {
+              return <div className="canvas-center-overlay canvas-loading">OFD 文件不支持预览</div>
+            }
+
+            // 加载中：有预览文件但渲染尚未就绪
+            const hasPreview = !!previewCanvas || !!previewUrl;
+            if (!contentLayout?.ready || !hasPreview) {
+              if (previewCanvas && !contentLayout?.ready) {
+                return (
+                  <div className="canvas-center-overlay canvas-loading" style={{ gap: '10px' }}>
+                    <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" style={{ opacity: 0.5 }}>
+                      <rect x="2" y="3" width="20" height="14" rx="2" />
+                      <line x1="8" y1="21" x2="16" y2="21" />
+                      <line x1="12" y1="17" x2="12" y2="21" />
+                      <line x1="2" y1="9" x2="22" y2="9" />
+                      <line x1="3" y1="13" x2="5" y2="13" />
+                      <line x1="19" y1="13" x2="21" y2="13" />
+                    </svg>
+                    <span style={{ fontSize: '14px', fontWeight: 500, color: 'var(--text-2)' }}>
+                      预览区域过小
+                    </span>
+                    <span style={{ fontSize: '12px', color: 'var(--text-3)' }}>
+                      请收起 DevTools（F12）或放大窗口
+                    </span>
+                  </div>
+                )
+              }
+              return (
+                <div className="canvas-center-overlay canvas-loading">
+                  <svg className="canvas-loading-spinner" viewBox="0 0 36 36" fill="none">
+                    <circle className="ring-track" cx="18" cy="18" r="15" strokeWidth="3" />
+                    <circle cx="18" cy="18" r="15" stroke="currentColor" strokeWidth="3"
+                      strokeDasharray="60 100" strokeLinecap="round" />
+                  </svg>
+                  <span>加载中...</span>
+                </div>
+              )
+            }
+
+            return null
+          })()}
+
+          {/* 滚动层：ref 绑定在这里 */}
+          <div ref={previewContainerRef} className="canvas-scroll">
+            <PreviewCanvas
+              previewFile={previewFile}
+              previewCanvas={previewCanvas}
+              previewUrl={previewUrl}
+              grayscale={settings.grayscale}
+              previewRenderVersion={previewRenderVersion}
+              paperLayout={paperLayout}
+              contentLayout={contentLayout}
+              previewRotation={previewRotation}
+              previewLoading={previewLoading}
+            />
+          </div>
+
+          {/* 翻页箭头（浮于 canvas 内两侧） */}
           {previewFile && files.length > 1 && (
             <>
               {showLeftArrow && (
@@ -734,6 +737,10 @@ function AppContent() {
               )}
             </>
           )}
+        </div>
+
+        {/* 4. Status：状态指示器 */}
+        <div className="status-bar">
           <StatusIndicator
             paperSize={settings.paperSize}
             landscape={settings.landscape}
@@ -741,6 +748,7 @@ function AppContent() {
           />
         </div>
 
+        {/* 5. Footer：总金额+操作按钮 */}
         <ActionBar
           handleRename={handleRename}
           handlePack={handlePack}

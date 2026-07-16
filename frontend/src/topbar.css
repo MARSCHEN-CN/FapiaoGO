@@ -11,24 +11,23 @@
   flex-direction: column;
   height: 100vh;
   min-width: 0;
+  /* main 作为统一背景承载层，所有子区域透明叠加 */
+  background: linear-gradient(180deg, #f5f7fb 0%, #eef1f8 100%);
   animation: fadeInUp 0.4s var(--ease) 0.1s both;
 }
 
-/* ======================== Top Toolbar ======================== */
+/* ======================== 1. Header（顶部按钮区） ======================== */
 .topbar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 0 clamp(12px, 0.8vw, 24px);
+  justify-content: flex-end;
+  padding: 8px 16px;
   height: var(--topbar-height);
-  background: rgba(255, 255, 255, 0.75);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  border-bottom: 1px solid rgba(0, 0, 0, 0.04);
+  background: transparent;
   flex-shrink: 0;
   z-index: 50;
   -webkit-app-region: drag;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02), var(--highlight-top);
+  gap: 0;
 }
 
 /* 按钮区域不可拖拽 */
@@ -37,7 +36,7 @@
   -webkit-app-region: no-drag;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 6px;
 }
 
 .tb-tag {
@@ -83,7 +82,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  @apply rounded-md;
+  border-radius: var(--r-md);
   flex-shrink: 0;
 }
 
@@ -115,14 +114,14 @@
   justify-content: center;
   border: none;
   background: transparent;
-  @apply rounded-md;
+  border-radius: var(--r-md);
   color: var(--text-2);
   cursor: pointer;
   transition: all var(--t-fast) var(--ease);
 }
 
 .tb-btn:hover {
-  background: var(--surface);
+  background: var(--surface-hover);
   color: var(--text);
   box-shadow: var(--highlight-top);
 }
@@ -156,7 +155,7 @@
   color: var(--text-2);
   background: var(--surface);
   border: 1px solid var(--border-light);
-  @apply rounded-md;
+  border-radius: var(--r-md);
   cursor: pointer;
   white-space: nowrap;
   overflow: hidden;
@@ -255,7 +254,7 @@
   justify-content: center;
   border: none;
   background: transparent;
-  @apply rounded-md;
+  border-radius: var(--r-md);
   color: var(--text-2);
   cursor: pointer;
   transition: all var(--t-fast) var(--ease);
@@ -284,13 +283,12 @@
   left: 0;
   min-width: 180px;
   background: var(--white);
-  @apply rounded-md;
-  @apply shadow-lg;
+  border-radius: var(--r-md);
   border: 1px solid var(--border);
   overflow: visible;
   z-index: 100;
   animation: fadeIn 0.15s ease;
-  box-shadow: var(--shadow-lg), var(--highlight-top-strong);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.12), var(--highlight-top-strong);
 }
 
 .tb-dropdown-header {
@@ -388,7 +386,7 @@
   align-items: center;
   justify-content: center;
   background: var(--accent-soft);
-  @apply rounded-md;
+  border-radius: var(--r-md);
   flex-shrink: 0;
 }
 
@@ -432,7 +430,7 @@
 .tb-win-btn {
   width: 36px;
   height: 32px;
-  @apply rounded-md;
+  border-radius: var(--r-md);
   transition: all 0.15s ease;
 }
 
@@ -534,9 +532,9 @@
   left: auto;
   min-width: 200px;
   background: var(--white);
-  @apply rounded-md;
-  @apply shadow-lg;
+  border-radius: var(--r-md);
   border: 1px solid var(--border-light);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.12);
   z-index: 110;
   animation: fadeIn 0.15s ease;
 }
@@ -555,10 +553,10 @@
 
 .tb-about-modal {
   background: var(--white);
-  @apply rounded-lg;
+  border-radius: var(--r-lg);
   padding: 32px 40px;
   text-align: center;
-  @apply shadow-xl;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.18);
   position: relative;
   min-width: 260px;
   animation: scaleIn 0.2s ease;
@@ -575,7 +573,7 @@
   justify-content: center;
   border: none;
   background: transparent;
-  @apply rounded-sm;
+  border-radius: 2px;
   color: var(--text-3);
   cursor: pointer;
   transition: all var(--t-fast);
@@ -679,12 +677,21 @@
 /* ================================================================
    DARK MODE — topbar · 质感升级
    ================================================================ */
+[data-theme="dark"] .main {
+  background: #15171f;
+  background-image:
+    radial-gradient(circle at 50% 40%, rgba(108, 138, 255, 0.04) 0%, transparent 60%),
+    linear-gradient(rgba(255, 255, 255, 0.018) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.018) 1px, transparent 1px);
+  background-size: 100% 100%, 32px 32px, 32px 32px;
+}
+
 [data-theme="dark"] .topbar {
-  background: #1a1d27;
+  background: transparent;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
-  border-bottom-color: rgba(255, 255, 255, 0.06);
-  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.03);
+  border-bottom-color: transparent;
+  box-shadow: none;
 }
 
 [data-theme="dark"] .tb-btn:hover {
