@@ -166,6 +166,11 @@ def rebuild_spec_from_args(args, doc_id, page) -> dict:
     # 用 camelCase「paperLandscape」与前端 buildRenderSpec 输出结构一致，
     # 使 render_spec_signature 重算签名能与前端 spec_sig 对齐（verified=True）。
     paper_landscape_val = args.get("paper_landscape", "0") == "1"
+    # 🆕 Page Placement Pipeline（Slice 1.2A）：contentRotation 随 URL 发来（wireFieldsOf），
+    # 必须带进重建的 spec，否则前端签名的 spec 含 contentRotation、后端重建的没有 → verified=False
+    # （静默 Bug，与 paper_landscape 漏字段同源：契约字段丢失 = 签名不符）。值 = 内容旋转角(0/90/180/270)。
+    # legacy rotation 字段保留兼容（恒 0），contentRotation 才是真实内容旋转 Fact。
+    content_rotation_val = int(f("content_rotation", 0.0))
     spec = {
         "docId": doc_id,
         "page": page,
@@ -180,6 +185,8 @@ def rebuild_spec_from_args(args, doc_id, page) -> dict:
         "placement": {"scale": f("scale"), "offsetX": f("ox"), "offsetY": f("oy")},
         "rotation": int(f("rotation", 0.0)),
         "paperLandscape": paper_landscape_val,
+        # 🆕 Page Placement Pipeline（Slice 1.2A）：真实内容旋转 Fact，RE 于 1.2B 消费。
+        "contentRotation": content_rotation_val,
         "clip": {
             "x": f("clip_x"),
             "y": f("clip_y"),

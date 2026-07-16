@@ -12,8 +12,9 @@
  * 已真实消费 placement（scale / ox / oy / clip）—— 非 shadow / 非 legacy。
  * 修改本模块产出的 spec 会直接改变 RE 渲染输出，前端与后端几何需对照排查
  * （本次审查前半段即因误信"后端不识别"而走弯路）。
- * margin_* / rotation / paper_landscape 等字段当前仅用于签名回显比对，
- * 不参与几何定位（placement 已含 offset）。
+ * margin_* / rotation / paper_landscape / content_rotation 等字段当前仅用于签名回显比对，
+ * 不参与几何定位（placement 已含 offset）。content_rotation 自 Slice 1.2A 起进协议，
+ * RE 于 Slice 1.2B 才消费（见 contentRotation 字段注释）。
  * 余下 Step 4 项：移除 PreviewCanvas CSS 旋转、删除 A4 硬编码 —— 尚未完成。
  */
 
@@ -41,8 +42,9 @@ function wireFieldsOf(spec) {
     scale: spec.placement ? String(spec.placement.scale) : undefined,
     ox: spec.placement ? String(spec.placement.offsetX) : undefined,
     oy: spec.placement ? String(spec.placement.offsetY) : undefined,
-    rotation: String(spec.rotation ?? 0),  // 🆕 V17 deprecated：内容不再旋转，保留字段仅作兼容
-    paper_landscape: spec.paperLandscape ? '1' : '0',  // 🆕 V17：纸随内容方向
+    rotation: String(spec.rotation ?? 0),  // [LEGACY Wire] V17 deprecated：内容不再旋转，保留字段仅作兼容（恒为 0）；真实内容旋转见 content_rotation
+    paper_landscape: spec.paperLandscape ? '1' : '0',  // [LEGACY DERIVED] = (paperOrientation==='landscape')；真实 Fact 是 paperOrientation，未来 RE 直接收 paperOrientation
+    content_rotation: spec.contentRotation != null ? String(spec.contentRotation) : '0',  // 🆕 Page Placement Pipeline（Slice 1.2A）：内容旋转角 = ContentRotation Fact；RE 于 1.2B 消费
     clip_x: spec.clip ? String(spec.clip.x) : undefined,
     clip_y: spec.clip ? String(spec.clip.y) : undefined,
     clip_w: spec.clip ? String(spec.clip.width) : undefined,
@@ -131,7 +133,7 @@ export function renderSpecSignature(spec) {
  */
 export function buildRenderSpec(renderLayout, { docId, page = 1, dpi = PREVIEW_DPI, marginsMm } = {}) {
   if (!renderLayout || !renderLayout.paper || !renderLayout.paper.paperRect) return null
-  const { paper, placement, rotation, clip, paperLandscape } = renderLayout
+  const { paper, placement, rotation, clip, paperLandscape, contentRotation } = renderLayout
   const pr = paper.paperRect
   const spec = {
     docId,
@@ -147,10 +149,15 @@ export function buildRenderSpec(renderLayout, { docId, page = 1, dpi = PREVIEW_D
       offsetX: placement?.offsetX ?? 0,
       offsetY: placement?.offsetY ?? 0,
     },
-    // 🆕 V17 deprecated：内容不再旋转（纸随内容方向）；保留字段仅作兼容，恒为 0
+    // [LEGACY Wire] V17 deprecated：内容不再旋转（纸随内容方向）；保留字段仅作兼容，恒为 0。
+    // 真实内容旋转见下方 contentRotation；RE 于 Slice 1.2B 才消费 rotation 语义。
     rotation: rotation ?? 0,
-    // 🆕 V17：纸随内容方向（True=横纸/False=竖纸）；RE/Canvas/Print 三端统一消费此字段
+    // [LEGACY DERIVED] = (paperOrientation === 'landscape')；真实 Fact 是 paperOrientation，
+    // 未来 RE 直接收 paperOrientation 即可，本字段进入退役计划（保留仅作兼容）。
     paperLandscape: !!paperLandscape,
+    // 🆕 Page Placement Pipeline（Slice 1.2A 进协议）：内容旋转角（= ContentRotation Fact，0/90/180/270），
+    // 由 RenderLayoutFactory 单一决策点产出；本切片仅进签名/缓存键、不改渲染，RE 于 1.2B 才消费。
+    contentRotation: contentRotation ?? 0,
     // 完全来自 PaperLayout.clipRect（评审修正④），RE 不得重算
     // 注：buildRenderLayout 已把 clipRect 统一为 {x,y,width,height} 形态
     clip: { x: clip?.x ?? 0, y: clip?.y ?? 0, width: clip?.width ?? 0, height: clip?.height ?? 0 },
