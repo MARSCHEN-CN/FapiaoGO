@@ -285,13 +285,14 @@ export function useExport({ files, electronAPIRef }) {
       }
 
       es.onerror = () => {
-        // EventSource 断开连接 → 标记完成
+        // 流断开（网络错误或非预期关闭）。若已收到终态则不再覆盖；
+        // 否则标记连接中断（失败态），避免 UI 卡在 running。
         es.close()
-        setPdfExportTask(prev => prev ? {
-          ...prev,
-          status: 'completed',
-          stage: '连接中断',
-        } : null)
+        setPdfExportTask(prev => {
+          if (!prev) return prev
+          if (['completed', 'cancelled', 'failed'].includes(prev.status)) return prev
+          return { ...prev, status: 'failed', stage: '连接中断', errors: [{ file: '', error: 'SSE 连接中断' }] }
+        })
       }
     } catch (err) {
       console.error('PDF 导出异常:', err)
@@ -309,7 +310,8 @@ export function useExport({ files, electronAPIRef }) {
     setPdfExportTask(prev => {
       if (!prev) return prev
 
-      if (msg.status === 'running') {
+      // 'pending'：任务已建立但尚未 start（GET 流可能在 start 前就连上）；按运行态展示
+      if (msg.status === 'pending' || msg.status === 'running') {
         return {
           ...prev,
           taskId: msg.taskId ?? prev.taskId,
@@ -322,14 +324,17 @@ export function useExport({ files, electronAPIRef }) {
         }
       }
 
-      if (msg.status === 'completed' || msg.status === 'cancelled') {
+      // 终态：completed / cancelled / failed
+      if (msg.status === 'completed' || msg.status === 'cancelled' || msg.status === 'failed') {
+        const stageText = msg.status === 'completed' ? '导出完成'
+          : msg.status === 'cancelled' ? '已取消' : '导出失败'
         return {
           ...prev,
           status: msg.status,
           successCount: msg.successCount ?? prev.successCount,
           failCount: msg.failCount ?? prev.failCount,
           errors: msg.errors ?? prev.errors,
-          stage: msg.status === 'completed' ? '导出完成' : '已取消',
+          stage: stageText,
         }
       }
 
