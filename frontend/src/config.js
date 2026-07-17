@@ -23,6 +23,11 @@ export const PRINT_SETTINGS_DEFAULTS = {
 
 export const BACKEND_URL = import.meta.env?.VITE_BACKEND_URL || 'http://localhost:5000'
 
+// ── 静态资源基路径 ──
+// Vite base='./' → Electron file:// 下需要相对路径
+// 开发模式(base='/') → Vite dev server 从 public/ 根目录加载
+export const PUBLIC_BASE = import.meta.env.BASE_URL
+
 // ─── Render Engine Preview（Phase 1 Feature Flag）─────────────────
 // true  = usePreview 走 /preview/{doc_id} HTTP 渲染
 // false = 回退 pdf.js + Canvas 旧链路

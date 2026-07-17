@@ -15,6 +15,7 @@ export default React.memo(function ActionBar({
   printing,
   removeFailedFiles,
   handleExportExcel,
+  handleExportPdf,
   exporting,
 }) {
   const { files, chineseAmount, totalAmountInt, totalAmountDecimal, printableCount, hasFailedFiles, failedFilesCount } = useFileContext()
@@ -85,6 +86,19 @@ export default React.memo(function ActionBar({
 
             {exportDropdownOpen && (
               <div className="abm-dropdown">
+                <button
+                  className="abm-dropdown-item"
+                  onClick={() => { handleExportPdf(); setExportDropdownOpen(false) }}
+                >
+                  <svg viewBox="0 0 1024 1024" style={{ width: 17, height: 17 }}>
+                    <path d="M910.848 199.68L778.24 67.072A66.56 66.56 0 0 0 729.6 46.08H266.24c-36.864 0-66.56 29.696-66.56 66.56v798.72c0 36.864 29.696 66.56 66.56 66.56h604.16c36.864 0 66.56-29.696 66.56-66.56V248.32a66.56 66.56 0 0 0-26.112-48.64z" fill="currentColor" opacity="0.3"/>
+                    <path d="M512 542.72c0 70.656-70.656 128-138.24 128-67.584 0-123.904-57.344-138.24-128-7.168-3.072-15.36-6.144-15.36-15.36l-3.072-51.2c0-8.192 6.144-15.36 15.36-15.36h281.6c9.216 0 15.36 7.168 15.36 15.36l-3.072 51.2c-1.024 8.192-7.168 11.264-14.336 15.36z" fill="white"/>
+                    <path d="M640 46.08v168.96c0 36.864 29.696 66.56 66.56 66.56h168.96l-235.52-235.52z" fill="currentColor" opacity="0.5"/>
+                    <path d="M512 542.72c0 70.656-70.656 128-138.24 128-67.584 0-123.904-57.344-138.24-128-7.168-3.072-15.36-6.144-15.36-15.36l-3.072-51.2c0-8.192 6.144-15.36 15.36-15.36h281.6c9.216 0 15.36 7.168 15.36 15.36l-3.072 51.2c-1.024 8.192-7.168 11.264-14.336 15.36z" fill="currentColor"/>
+                    <path d="M565.76 543.744c0 106.496-106.496 192-207.872 192-102.4 0-186.368-86.528-207.872-192-10.24-5.12-22.528-9.216-22.528-23.552l-5.12-77.824c0-12.288 9.216-23.552 23.552-23.552h424.96c14.336 0 23.552 11.264 23.552 23.552l-5.12 77.824c-1.024 14.336-12.288 18.432-23.552 23.552z" fill="currentColor"/>
+                  </svg>
+                  导出为PDF
+                </button>
                 <button
                   className="abm-dropdown-item"
                   onClick={() => { handleExportExcel(); setExportDropdownOpen(false) }}

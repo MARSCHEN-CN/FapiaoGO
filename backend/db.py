@@ -14,9 +14,9 @@ datastore.js，作为唯一的数据存储层。
 oplog，保证数据不丢失。
 
 路径解析优先级：
-  1. 环境变量 MARSPRINT_DB_PATH（兼容 Electron 注入）
+  1. 环境变量 FAPIAOGO_DB_PATH（兼容 Electron 注入）
   2. 开发模式兜底：相对于本文件向上两层的 database/ 目录
-  3. 用户主目录 ~/.marsprint/（最终兜底）
+  3. 用户主目录 ~/.fapiaogo/（最终兜底）
 
 并发控制：
   - 使用读写锁（readerwriterlock.RWLockFair）保证线程安全：读路径共享锁、写路径排他锁
@@ -77,7 +77,7 @@ def _resolve_db_dir() -> str:
     if dev_path.exists():
         return str(dev_path)
 
-    return str(Path.home() / '.marsprint')
+    return str(Path.home() / '.fapiaogo')
 
 
 DB_DIR = _resolve_db_dir()

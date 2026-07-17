@@ -10,7 +10,7 @@ const path = require('path')
 
 // 临时文件存放目录
 const { app } = require('electron')
-const TEMP_DIR = path.join(app.getPath('temp'), 'marsprint')
+const TEMP_DIR = path.join(app.getPath('temp'), 'FapiaoGO')
 
 // 配置
 const TEMP_FILES_MAX_SIZE = 5000 * 1024 * 1024  // 5000MB 上限

@@ -430,7 +430,7 @@ async function _getCacheDir() {
   // 优先用 app.getPath('userData')，但这里可能没有 Electron 上下文
   // fallback 到项目目录下的 printer-cache 文件夹
   const userDataDir = process.env.APPDATA
-    ? path.join(process.env.APPDATA, 'marsprint')
+    ? path.join(process.env.APPDATA, 'FapiaoGO')
     : path.join(__dirname, '../../printer-cache');
   const cacheDir = path.join(userDataDir, 'printer-cache');
   // 异步创建目录，避免打印/解析链路主线程被 mkdir 阻塞（_loadDiskCache/_saveDiskCache 均为 async）

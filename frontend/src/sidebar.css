@@ -13,15 +13,12 @@
   flex-direction: column;
   background: var(--sidebar-bg);
   color: var(--text);
-  border-right: none;
+  border-right: 1px solid var(--border-light);
   animation: slideInLeft 0.35s var(--ease) both;
   user-select: none;
   position: relative;
   z-index: 20;
-  /* 浮动卡片：右侧大圆角 + 右侧阴影 */
-  border-radius: 0 22px 22px 0;
-  box-shadow: 2px 0 24px rgba(0, 0, 0, 0.06), var(--highlight-top);
-  overflow: hidden;
+  box-shadow: 2px 0 16px rgba(0, 0, 0, 0.04), var(--highlight-top);
 }
 
 /* -- Sidebar header -- */
@@ -81,14 +78,14 @@
 }
 
 .sb-brand-badge {
-  font-size: 11px;
-  font-weight: 700;
+  font-size: 10px;
+  font-weight: 600;
   color: #fff;
   background: var(--accent-gradient);
-  padding: 5px 14px;
-  border-radius: 20px;
-  letter-spacing: 0.04em;
-  box-shadow: 0 2px 8px rgba(79, 124, 255, 0.25);
+  padding: 3px 9px;
+  border-radius: var(--r-sm);
+  letter-spacing: 0.08em;
+  box-shadow: 0 2px 6px rgba(79, 124, 255, 0.25);
 }
 
 /* -- Sidebar action buttons -- */
@@ -1345,10 +1342,6 @@
   background: var(--sidebar-bg);
   border-color: var(--border);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35), var(--highlight-top-strong);
-}
-
-[data-theme="dark"] .sidebar {
-  box-shadow: 2px 0 28px rgba(0, 0, 0, 0.30), var(--highlight-top);
 }
 
 [data-theme="dark"] .sb-dropdown-item:hover {

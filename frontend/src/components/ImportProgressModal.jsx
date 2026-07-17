@@ -1,4 +1,5 @@
 import React, { useMemo } from 'react'
+import { PUBLIC_BASE } from '../config'
 
 const STEPS = [
   { key: 'read', label: '读取文件' },
@@ -53,7 +54,7 @@ const ImportProgressModal = (props) => {
       <div className="ipm-panel">
         {/* 顶部横幅区 */}
         <div className="ipm-banner">
-          <img src="/icon/wait.svg" alt="" className="ipm-banner-svg" />
+          <img src={`${PUBLIC_BASE}icon/wait.svg`} alt="" className="ipm-banner-svg" />
           <div className="ipm-banner-fade" />
           <div className="ipm-banner-bottom">
             <div className="ipm-title-row">

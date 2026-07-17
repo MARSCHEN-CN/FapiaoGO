@@ -131,6 +131,49 @@ export function useExport({ files, electronAPIRef }) {
     }
   }, [files, electronAPIRef])
 
+  const handleExportPdf = useCallback(async () => {
+    const ipc = electronAPIRef.current?.ipcRenderer
+    if (!ipc) return
+
+    const parsedFiles = files.filter(f => f.status === 'parsed')
+    if (parsedFiles.length === 0) {
+      setExportAlert({ visible: true, title: '提示', message: '没有可导出发票数据', type: 'warning' })
+      return
+    }
+
+    setExporting(true)
+    setExportProgress({ current: 0, total: 100, stage: '准备中' })
+    setExportResult(null)
+
+    const fileNames = parsedFiles.map(f => f.name || f.path || f.fileName || '').filter(Boolean)
+    if (fileNames.length === 0) {
+      setExportAlert({ visible: true, title: '提示', message: '无法获取文件名', type: 'warning' })
+      setExporting(false)
+      return
+    }
+
+    try {
+      const dialogResult = await ipc.invoke('select-save-path', {
+        defaultName: `发票PDF_${new Date().toISOString().slice(0, 10).replace(/-/g, '')}`,
+        filters: [{ name: 'PDF 文件', extensions: ['pdf'] }],
+      })
+      if (!dialogResult || dialogResult.canceled || !dialogResult.filePath) {
+        setExporting(false)
+        setExportProgress({ current: 0, total: 0, stage: '' })
+        return
+      }
+
+      // TODO: 接入后端 /api/export-pdf 接口做实际 PDF 生成
+      setExportResult({ success: true, message: `已保存到 ${dialogResult.filePath}` })
+    } catch (err) {
+      console.error('PDF 导出异常:', err)
+      setExportResult({ success: false, error: err.message || '导出异常' })
+    } finally {
+      setExporting(false)
+      setExportProgress({ current: 0, total: 0, stage: '' })
+    }
+  }, [files, electronAPIRef])
+
   return {
     exporting,
     exportProgress,
@@ -141,5 +184,6 @@ export function useExport({ files, electronAPIRef }) {
     setExportResult,
     setExportProgress,
     handleExportExcel,
+    handleExportPdf,
   }
 }

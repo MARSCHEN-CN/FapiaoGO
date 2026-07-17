@@ -14,7 +14,7 @@ const ImportProgressModal = lazy(() => import('./components/ImportProgressModal'
 const ExportProgressModal = lazy(() => import('./components/ExportProgressModal'))
 const CalculatorWindow = lazy(() => import('./components/CalculatorWindow'))
 
-import { PREVIEW_DPI, SUPPORTED_EXTENSIONS, ZOOM_STEPS } from './config'
+import { PREVIEW_DPI, SUPPORTED_EXTENSIONS, ZOOM_STEPS, PUBLIC_BASE } from './config'
 import {
   getElectronAPI, getFilePath, getFileFormat, isMergeMode, getMergeGroupStart,
   detectDuplicateInvoices,
@@ -316,6 +316,7 @@ function AppContent() {
     exporting, exportProgress, exportResult, exportAlert,
     closeExportAlert, setExporting, setExportResult, setExportProgress,
     handleExportExcel,
+    handleExportPdf,
   } = useExport({ files, electronAPIRef })
 
   const handleSelectAll = useCallback(() => {
@@ -671,7 +672,7 @@ function AppContent() {
             if (!previewFile) {
               return (
                 <div className="canvas-center-overlay canvas-empty">
-                  <img src="/icon/waiting.svg" alt="等待预览" width="240" height="100" />
+                  <img src={`${PUBLIC_BASE}icon/waiting.svg`} alt="等待预览" width="240" height="100" />
                   <p className="canvas-empty-title">左侧添加文件以预览</p>
                   <p className="canvas-empty-sub">支持 PDF、OFD、图片格式的发票文件</p>
                 </div>
@@ -788,6 +789,7 @@ function AppContent() {
           printing={printing}
           removeFailedFiles={removeFailedFiles}
           handleExportExcel={handleExportExcel}
+          handleExportPdf={handleExportPdf}
           exporting={exporting}
         />
       </main>

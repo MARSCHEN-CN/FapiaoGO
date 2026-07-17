@@ -3,6 +3,7 @@
  * 包含：菜单下拉、主题卡片、快捷键卡片、关于弹窗（via Portal 到 document.body）
  */
 import { createPortal } from 'react-dom'
+import { PUBLIC_BASE } from '../config'
 
 export default function TopBarMenu({
   showDropdown,
@@ -145,7 +146,7 @@ export default function TopBarMenu({
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
             </button>
             <div className="tb-about-icon">
-              <img src="/icon/app-icon.png" alt="Logo" width="48" height="48" />
+              <img src={`${PUBLIC_BASE}icon/app-icon.png`} alt="Logo" width="48" height="48" />
             </div>
             <h3 className="tb-about-title">发票管理助手</h3>
             <div className="tb-about-version-row">

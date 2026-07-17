@@ -11,6 +11,8 @@
   align-items: center;
   width: 100%;
   padding: 6px 16px 8px;
+  position: relative;
+  z-index: 2;  /* 确保缩放下拉菜单不被 .paper(z-index:1) 遮盖 */
   animation: fadeInUp 0.3s var(--ease) 0.2s both;
 }
 

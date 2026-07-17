@@ -1,17 +1,29 @@
 # Electron Builder 配置
-appId: com.marsprint.app
-productName: MarsPrint
+appId: com.FapiaoGO.app
+productName: FapiaoGO
 directories:
-  output: release
+  output: release2
   buildResources: resources
 files:
   - "electron/**/*"
   - "!electron/node_modules/**/*"
   - "dist/**/*"
-# 打包时额外资源（SumatraPDF）
+# 打包时额外资源（SumatraPDF + Python 后端 + 脚本）
 extraResources:
   - from: resources/sumatra
     to: sumatra
+  - from: backend
+    to: backend
+    filter:
+      - "**/*"
+      - "!**/__pycache__/**"
+      - "!**/*.pyc"
+      - "!**/*.pyo"
+      - "!**/.git/**"
+      - "!**/tests/**"
+      - "!**/test_*.py"
+  - from: pyscripts
+    to: pyscripts
 # Windows 打包配置
 win:
   target:
@@ -21,3 +33,15 @@ win:
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
+
+# 自动更新配置
+#   electron-updater 在运行时从 userData/config.json 读取 updateUrl 覆盖此 URL。
+#   构建时此 publish 段用于生成 latest.yml 元数据（provider=generic）。
+#   不同渠道通过不同 URL 区分，例如：
+#     stable → https://update.example.com/stable/
+#     rc     → https://update.example.com/rc/
+#     dev    → https://update.example.com/dev/
+#     internal → http://192.168.1.100/FapiaoGO/dev/
+publish:
+  provider: generic
+  url: https://update.example.com/dev/

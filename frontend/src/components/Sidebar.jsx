@@ -1,6 +1,7 @@
 import React, { useMemo, useRef, useCallback, useEffect, useState } from 'react'
 import { isMergeMode, getDuplicateGroupInfo, getElectronAPI } from '../utils'
 import { useFileContext } from '../contexts/FileContext'
+import { PUBLIC_BASE } from '../config'
 import FileList from './FileList'
 
 function isFailed(fileObj, fieldKey) {
@@ -202,7 +203,7 @@ export default React.memo(function Sidebar({
       <div className="sb-header" onMouseDown={handleHeaderMouseDown} onDoubleClick={handleHeaderDoubleClick}>
         <div className="sb-brand">
           <div className="sb-brand-logo">
-            <img src="/icon/app-icon.png" alt="Logo" />
+            <img src={`${PUBLIC_BASE}icon/app-icon.png`} alt="Logo" />
           </div>
           <div className="sb-brand-info">
             <div className="sb-brand-text">POPIC</div>
@@ -282,7 +283,7 @@ export default React.memo(function Sidebar({
         >
           <input {...getInputProps()} />
           <div className="dropzone-icon">
-            <img src="/icon/files.svg" alt="打开文件夹" width="98" height="98" />
+            <img src={`${PUBLIC_BASE}icon/files.svg`} alt="打开文件夹" width="98" height="98" />
           </div>
           {isNativeDragActive ? (
             <p className="dropzone-text-active">释放文件以添加</p>
@@ -332,7 +333,7 @@ export default React.memo(function Sidebar({
               {isSearching && filteredFiles.length === 0 ? (
                 <div className="sb-search-empty">
                   <div className="sb-search-empty-icon">
-                    <img src="/icon/nosearch.svg" alt="" />
+                    <img src={`${PUBLIC_BASE}icon/nosearch.svg`} alt="" />
                   </div>
                   <div className="sb-search-empty-text">未找到匹配文件</div>
                   <button

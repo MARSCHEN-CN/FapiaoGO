@@ -18,6 +18,8 @@ const { registerFileOpsHandlers } = require('./ipc-file-ops')
 const { registerRenameHandlers } = require('./ipc-rename')
 const { registerPackHandlers } = require('./ipc-pack')
 const pdfMargin = require('./print-service/pdf-margin-processor')
+const { initUpdateManager } = require('./services/Update/UpdateManager')
+const { load: loadConfig } = require('./services/ConfigService')
 
 // ⚠️ 预热已移至 app.whenReady() 内（见下方）：模块加载期不应产生副作用，
 //    且彼时 logger 尚未 init()，日志会丢失。
@@ -251,7 +253,7 @@ function createSettingsWindow() {
   if (isDev) {
     settingsWindow.loadURL('http://localhost:5173/#/settings')
   } else {
-    settingsWindow.loadFile(path.join(__dirname, '../dist/index.html'), { hash: 'settings' })
+    settingsWindow.loadFile(path.join(__dirname, '../dist/index.html'), { hash: '/settings' })
   }
 
   settingsWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
@@ -334,7 +336,7 @@ function createCalculatorWindow() {
   if (isDev) {
     calculatorWindow.loadURL('http://localhost:5173/#/calculator')
   } else {
-    calculatorWindow.loadFile(path.join(__dirname, '../dist/index.html'), { hash: 'calculator' })
+    calculatorWindow.loadFile(path.join(__dirname, '../dist/index.html'), { hash: '/calculator' })
   }
 
   calculatorWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
@@ -597,6 +599,67 @@ async function callPython(args, timeoutMs = 30000) {
     })
     child.on('error', reject)
   })
+}
+
+// ── Flask 后端进程管理 ──────────────────────────────────────────
+let backendProcess = null
+
+function _getBackendPaths() {
+  if (isDev) {
+    return {
+      exe: path.join(__dirname, '../backend/venv/Scripts/python.exe'),
+      script: path.join(__dirname, '../backend/app.py'),
+    }
+  }
+  return {
+    exe: path.join(process.resourcesPath, 'backend/venv/Scripts/python.exe'),
+    script: path.join(process.resourcesPath, 'backend/app.py'),
+  }
+}
+
+function startBackendServer() {
+  // 开发模式下假定后端由开发者手动启动
+  if (isDev) {
+    console.log('[BACKEND] 开发模式：跳过自动启动，假定手动运行 Flask')
+    return
+  }
+  const { exe, script } = _getBackendPaths()
+  console.log(`[BACKEND] 启动 Flask: ${exe} ${script}`)
+  backendProcess = spawn(exe, [script], {
+    windowsHide: true,
+    cwd: path.dirname(script),
+    env: {
+      ...process.env,
+      PYTHONIOENCODING: 'utf-8',
+      FLASK_PORT: '5000',
+    },
+  })
+  backendProcess.stdout?.on('data', d => {
+    const lines = d.toString().trim().split('\n')
+    for (const line of lines) {
+      if (line) console.log(`[BACKEND stdout] ${line}`)
+    }
+  })
+  backendProcess.stderr?.on('data', d => {
+    const lines = d.toString().trim().split('\n')
+    for (const line of lines) {
+      if (line) console.log(`[BACKEND stderr] ${line}`)
+    }
+  })
+  backendProcess.on('error', err => {
+    console.error('[BACKEND] 启动失败:', err.message)
+  })
+  backendProcess.on('exit', (code, signal) => {
+    console.log(`[BACKEND] 进程退出: code=${code}, signal=${signal}`)
+  })
+}
+
+function stopBackendServer() {
+  if (backendProcess && !backendProcess.killed) {
+    console.log('[BACKEND] 停止 Flask 进程')
+    backendProcess.kill()
+    backendProcess = null
+  }
 }
 
 ipcMain.handle('print-merged-images', async (_event, { images, settings }) => {
@@ -1032,9 +1095,18 @@ if (!gotTheLock) {
       console.error('[BOOT] PaperRegistryProvider initialization failed:', err.message)
     }
 
+    // ✅ 启动 Flask 后端（生产模式下 spawn Python 进程）
+    startBackendServer()
+
+    // ✅ 自动更新（ConfigService → Provider + Client → check + fallback）
+    const config = loadConfig()
+    initUpdateManager(config)
+
     createWindow()
 
     app.on('before-quit', () => {
+      // ✅ 停止后端 Flask 进程
+      stopBackendServer()
       // ✅ 清理临时文件
       cleanupAllTempFiles()
       // ✅ 刷新日志（如果 logger 支持）
