@@ -227,6 +227,7 @@ export function useExport({ files, electronAPIRef }) {
     }
 
     try {
+      // ── POST 创建任务 → 获取 taskId ──
       const response = await fetch(`${BACKEND_URL}/api/export-pdf`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -249,29 +250,48 @@ export function useExport({ files, electronAPIRef }) {
         return
       }
 
-      // ── 消费 SSE ──
-      const reader = response.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
+      const { taskId } = await response.json()
+      if (!taskId) {
+        setPdfExportTask(prev => prev ? {
+          ...prev,
+          status: 'completed',
+          stage: '未返回 taskId',
+        } : null)
+        return
+      }
 
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
+      // 更新 taskId
+      setPdfExportTask(prev => prev ? { ...prev, taskId } : null)
 
-        buffer += decoder.decode(value, { stream: true })
-        const lines = buffer.split('\n')
-        buffer = lines.pop() || ''
+      // ── EventSource 消费 SSE ──
+      const es = new EventSource(`${BACKEND_URL}/api/export-pdf/events/${taskId}`)
 
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            try {
-              const msg = JSON.parse(line.slice(6))
-              handleSseMessage(msg)
-            } catch (e) {
-              // 跳过无法解析的行
-            }
+      es.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data)
+          // 首次收到 running 时补全 taskId
+          if (msg.status === 'running' && !msg.taskId) {
+            msg.taskId = taskId
           }
+          handleSseMessage(msg)
+
+          // 终态 → 关闭 EventSource
+          if (msg.status === 'completed' || msg.status === 'cancelled' || msg.status === 'failed') {
+            es.close()
+          }
+        } catch (e) {
+          // 跳过无法解析的数据
         }
+      }
+
+      es.onerror = () => {
+        // EventSource 断开连接 → 标记完成
+        es.close()
+        setPdfExportTask(prev => prev ? {
+          ...prev,
+          status: 'completed',
+          stage: '连接中断',
+        } : null)
       }
     } catch (err) {
       console.error('PDF 导出异常:', err)
@@ -289,18 +309,16 @@ export function useExport({ files, electronAPIRef }) {
     setPdfExportTask(prev => {
       if (!prev) return prev
 
-      if (msg.status === 'started') {
-        return { ...prev, taskId: msg.taskId, status: 'running', stage: '正在导出' }
-      }
-
       if (msg.status === 'running') {
         return {
           ...prev,
+          taskId: msg.taskId ?? prev.taskId,
+          status: 'running',
           current: msg.current ?? prev.current,
           total: msg.total ?? prev.total,
           percent: msg.percent ?? prev.percent,
           currentFile: msg.currentFile ?? prev.currentFile,
-          stage: msg.stage ?? prev.stage,
+          stage: msg.stage || '正在导出',
         }
       }
 
