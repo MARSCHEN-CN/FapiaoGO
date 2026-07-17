@@ -850,14 +850,10 @@ export function usePreview({ files, settings, electronAPIRef }) {
     const effH = swapped ? pl.paperRect.w : pl.paperRect.h
     let paperScaleBase = 1
     if (containerSize.width && containerSize.height) {
-      let PAD = 64, LABEL_H = 36, MIN_MARGIN = 28
-      let availW = containerSize.width - PAD - MIN_MARGIN * 2
-      let availH = containerSize.height - PAD - LABEL_H - MIN_MARGIN * 2
-      if (availW <= 0 || availH <= 0) {
-        PAD = 20; LABEL_H = 0; MIN_MARGIN = 8
-        availW = containerSize.width - PAD - MIN_MARGIN * 2
-        availH = containerSize.height - PAD - LABEL_H - MIN_MARGIN * 2
-      }
+      // 纸张铺满 canvas-scroll 内容区（与 CSS .canvas-scroll 的 padding:8px 对应，留出阴影空间）
+      const SHADOW_PAD = 8
+      let availW = containerSize.width - SHADOW_PAD * 2
+      let availH = containerSize.height - SHADOW_PAD * 2
       if (availW > 0 && availH > 0) {
         paperScaleBase = Math.min(availW / effW, availH / effH)
       }

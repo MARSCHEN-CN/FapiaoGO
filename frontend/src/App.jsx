@@ -12,6 +12,7 @@ const AlertModal = lazy(() => import('./components/AlertModal'))
 const PrintConfirmModal = lazy(() => import('./components/PrintConfirmModal'))
 const ImportProgressModal = lazy(() => import('./components/ImportProgressModal'))
 const ExportProgressModal = lazy(() => import('./components/ExportProgressModal'))
+const PdfExportConfirmModal = lazy(() => import('./components/PdfExportConfirmModal'))
 const CalculatorWindow = lazy(() => import('./components/CalculatorWindow'))
 
 import { PREVIEW_DPI, SUPPORTED_EXTENSIONS, ZOOM_STEPS, PUBLIC_BASE } from './config'
@@ -148,6 +149,9 @@ function AppContent() {
     handlePrintClose()
     executePrint(previewFile, settings)
   }, [previewFile, settings, executePrint, handlePrintClose])
+
+  // ── PDF 导出弹窗状态 ──
+  const [showPdfExport, setShowPdfExport] = useState(false)
 
   const {
     packing, packProgress, packResult, setPackResult, setPacking,
@@ -789,7 +793,7 @@ function AppContent() {
           printing={printing}
           removeFailedFiles={removeFailedFiles}
           handleExportExcel={handleExportExcel}
-          handleExportPdf={handleExportPdf}
+          onExportPdf={() => setShowPdfExport(true)}
           exporting={exporting}
         />
       </main>
@@ -852,6 +856,16 @@ function AppContent() {
           onConfirm={onPrintConfirm}
           onCancel={handlePrintCancel}
           onSettingsChange={updateSettings}
+        />
+        <PdfExportConfirmModal
+          visible={showPdfExport}
+          files={files.filter(f => f.status === 'parsed')}
+          onConfirm={(config) => {
+            setShowPdfExport(false)
+            console.log('[PDF Export] ready to export:', config)
+            // Phase 3: 这里接 handleExportPdf → SSE /api/export-pdf
+          }}
+          onCancel={() => setShowPdfExport(false)}
         />
       </Suspense>
 

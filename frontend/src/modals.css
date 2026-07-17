@@ -162,11 +162,11 @@
 }
 
 /* ======================== Modal Overlay & Base Styles ======================== */
-.pc-overlay, .rp-overlay, .pk-overlay, .ex-overlay {
+.pc-overlay, .rp-overlay, .pk-overlay, .ex-overlay, .pe-overlay {
   z-index: 100;
 }
 
-.pc-panel, .rp-panel, .pk-panel, .ex-panel {
+.pc-panel, .rp-panel, .pk-panel, .ex-panel, .pe-panel {
   background: var(--canvas-float-bg);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
@@ -382,7 +382,7 @@ button.pc-btn.outline,
 .pc-file-info { font-size: 11px; color: var(--text-3); flex-shrink: 0; }
 
 /* footer */
-.pc-footer, .rp-footer, .pk-footer {
+.pc-footer, .rp-footer, .pk-footer, .pe-footer {
   display: flex; align-items: center; justify-content: flex-end; gap: 10px;
   padding: 16px 24px; border-top: 1px solid var(--border-light);
 }
@@ -554,6 +554,7 @@ button.pc-btn.outline,
 /* ======================== Pack Progress Modal (pk-) ======================== */
 .pk-panel { width: var(--modal-width-lg); max-width: 92vw; }
 .ex-panel { width: var(--modal-width-md); max-width: 92vw; }
+.pe-panel { width: var(--modal-width-md); max-width: 92vw; }
 
 .pk-header {
   display: flex; align-items: center; justify-content: space-between;
@@ -823,6 +824,174 @@ button.pc-btn.outline,
   transform: translateY(0) scale(0.98);
 }
 
+/* ======================== PDF Export Confirm Modal (pe-) ======================== */
+.pe-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 24px 24px 0;
+}
+
+.pe-header-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.pe-icon {
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+}
+
+.pe-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0;
+}
+
+.pe-body {
+  padding: 16px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.pe-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.pe-section-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-3);
+}
+
+/* ── select row (mode / output location) ── */
+.pe-select-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.pe-select {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 28px 4px 10px;
+  cursor: pointer;
+  outline: none;
+  appearance: auto;
+  min-width: 140px;
+  text-align: left;
+  transition: border-color var(--t-fast), box-shadow var(--t-fast);
+}
+
+.pe-select:hover {
+  border-color: var(--accent);
+}
+
+.pe-select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(59, 108, 245, 0.12);
+}
+
+/* ── folder picker row ── */
+.pe-folder-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pe-path-input {
+  flex: 1;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  outline: none;
+  font-family: inherit;
+  transition: border-color var(--t-fast), box-shadow var(--t-fast);
+}
+
+.pe-path-input:hover {
+  border-color: var(--accent);
+}
+
+.pe-path-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(59, 108, 245, 0.12);
+}
+
+.pe-path-input::placeholder {
+  color: var(--text-3);
+}
+
+.pe-folder-btn {
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--text-2);
+  flex-shrink: 0;
+  transition: border-color var(--t-fast), color var(--t-fast), background var(--t-fast);
+}
+
+.pe-folder-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.pe-folder-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* ── file name input (merge mode) ── */
+.pe-file-name-input {
+  font-size: 13px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  outline: none;
+  font-family: inherit;
+  width: 100%;
+  box-sizing: border-box;
+  transition: border-color var(--t-fast), box-shadow var(--t-fast);
+}
+
+.pe-file-name-input:hover {
+  border-color: var(--accent);
+}
+
+.pe-file-name-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(59, 108, 245, 0.12);
+}
+
+/* ── summary row (file count) ── */
+.pe-summary {
+  font-size: 13px;
+  color: var(--text-2);
+  padding: 0;
+}>
+
 /* ================================================================
    DARK MODE — all modals · 质感升级
    ================================================================ */
@@ -957,7 +1126,7 @@ button.pc-btn.outline,
 /* ======================== Glassmorphism Fallback ======================== */
 @supports not (backdrop-filter: blur(1px)) {
   .print-modal,
-  .pc-panel, .rp-panel, .pk-panel, .ex-panel,
+  .pc-panel, .rp-panel, .pk-panel, .ex-panel, .pe-panel,
   .am-panel,
   .pcm-panel {
     background: var(--white);
@@ -1925,8 +2094,46 @@ button.pc-btn.outline,
   color: var(--text-4);
 }
 
-/* 响应式 */
-@media (max-width: 480px) {
+/* ── pe-* dark mode ── */
+[data-theme="dark"] .pe-select {
+  background: var(--dark-surface);
+  border-color: var(--dark-border);
+  color: var(--dark-text);
+}
+
+[data-theme="dark"] .pe-select:hover,
+[data-theme="dark"] .pe-select:focus {
+  border-color: var(--accent);
+}
+
+[data-theme="dark"] .pe-path-input,
+[data-theme="dark"] .pe-file-name-input {
+  background: rgba(255, 255, 255, 0.03);
+  border-color: var(--border);
+  color: var(--text);
+  box-shadow: var(--highlight-top);
+}
+
+[data-theme="dark"] .pe-path-input:focus,
+[data-theme="dark"] .pe-file-name-input:focus {
+  border-color: var(--accent);
+}
+
+[data-theme="dark"] .pe-folder-btn {
+  background: rgba(255, 255, 255, 0.03);
+  border-color: var(--border);
+  color: var(--text-2);
+  box-shadow: var(--highlight-top);
+}
+
+[data-theme="dark"] .pe-folder-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(59, 108, 245, 0.08);
+}
+
+/* 响应式：小窗口 */
+@media (max-width: 400px) {
   .ipm-panel {
     width: calc(100vw - 32px);
   }

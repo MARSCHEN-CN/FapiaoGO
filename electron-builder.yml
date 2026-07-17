@@ -7,6 +7,15 @@ directories:
 files:
   - "electron/**/*"
   - "!electron/node_modules/**/*"
+  - "electron/node_modules/electron-updater/**/*"
+  - "electron/node_modules/builder-util-runtime/**/*"
+  - "electron/node_modules/lazy-val/**/*"
+  - "electron/node_modules/semver/**/*"
+  - "electron/node_modules/tiny-typed-emitter/**/*"
+  - "electron/node_modules/fs-extra/**/*"
+  - "electron/node_modules/lodash.escaperegexp/**/*"
+  - "electron/node_modules/lodash.isequal/**/*"
+  - "electron/node_modules/js-yaml/**/*"
   - "dist/**/*"
 # 打包时额外资源（SumatraPDF + Python 后端 + 脚本）
 extraResources:

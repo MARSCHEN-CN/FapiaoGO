@@ -15,7 +15,7 @@ export default React.memo(function ActionBar({
   printing,
   removeFailedFiles,
   handleExportExcel,
-  handleExportPdf,
+  onExportPdf,
   exporting,
 }) {
   const { files, chineseAmount, totalAmountInt, totalAmountDecimal, printableCount, hasFailedFiles, failedFilesCount } = useFileContext()
@@ -88,7 +88,7 @@ export default React.memo(function ActionBar({
               <div className="abm-dropdown">
                 <button
                   className="abm-dropdown-item"
-                  onClick={() => { handleExportPdf(); setExportDropdownOpen(false) }}
+                  onClick={() => { onExportPdf?.(); setExportDropdownOpen(false) }}
                 >
                   <svg viewBox="0 0 1024 1024" style={{ width: 17, height: 17 }}>
                     <path d="M910.848 199.68L778.24 67.072A66.56 66.56 0 0 0 729.6 46.08H266.24c-36.864 0-66.56 29.696-66.56 66.56v798.72c0 36.864 29.696 66.56 66.56 66.56h604.16c36.864 0 66.56-29.696 66.56-66.56V248.32a66.56 66.56 0 0 0-26.112-48.64z" fill="currentColor" opacity="0.3"/>

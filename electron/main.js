@@ -128,8 +128,15 @@ function createWindow() {
     mainWindow.loadFile(path.join(__dirname, '../dist/index.html'))
   }
 
-  // 阻止外部窗口打开
-  mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+  // 外部链接在系统浏览器中打开
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      console.log(`[main.js] 外部链接，在浏览器中打开: ${url}`)
+      require('electron').shell.openExternal(url)
+      return { action: 'deny' }
+    }
+    return { action: 'deny' }
+  })
 
   // URL 白名单导航控制
   const allowedOrigins = ['http://localhost:5173', 'file://']
@@ -256,7 +263,14 @@ function createSettingsWindow() {
     settingsWindow.loadFile(path.join(__dirname, '../dist/index.html'), { hash: '/settings' })
   }
 
-  settingsWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+  settingsWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      console.log(`[main.js] 设置窗口外部链接，在浏览器中打开: ${url}`)
+      require('electron').shell.openExternal(url)
+      return { action: 'deny' }
+    }
+    return { action: 'deny' }
+  })
 
   // URL 白名单导航控制
   const allowedOrigins = ['http://localhost:5173', 'file://']
@@ -339,7 +353,14 @@ function createCalculatorWindow() {
     calculatorWindow.loadFile(path.join(__dirname, '../dist/index.html'), { hash: '/calculator' })
   }
 
-  calculatorWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+  calculatorWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      console.log(`[main.js] 计算器窗口外部链接，在浏览器中打开: ${url}`)
+      require('electron').shell.openExternal(url)
+      return { action: 'deny' }
+    }
+    return { action: 'deny' }
+  })
 
   // URL 白名单导航控制
   const allowedOrigins = ['http://localhost:5173', 'file://']
@@ -1030,6 +1051,25 @@ ipcMain.handle('select-save-path', async (event, options) => {
     return { canceled: false, filePath: result.filePath }
   } catch (error) {
     console.error('[main.js] select-save-path error:', error)
+    return { canceled: true, error: error.message }
+  }
+})
+
+// ============================
+// 导出文件夹选择对话框（PDF 导出用）
+// ============================
+ipcMain.handle('select-export-folder', async () => {
+  try {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: '选择导出文件夹',
+      properties: ['openDirectory'],
+    })
+    if (result.canceled || !result.filePaths?.length) {
+      return { canceled: true }
+    }
+    return { canceled: false, folderPath: result.filePaths[0] }
+  } catch (error) {
+    console.error('[main.js] select-export-folder error:', error)
     return { canceled: true, error: error.message }
   }
 })

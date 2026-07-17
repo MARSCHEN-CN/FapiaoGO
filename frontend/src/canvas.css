@@ -34,7 +34,8 @@
   min-height: 0;
   overflow: auto;
   display: flex;
-  padding: clamp(24px, 2.5vw, 48px) clamp(24px, 2vw, 48px);
+  /* 纸张铺满滚动区域，仅留极小边距用于阴影渲染 */
+  padding: 8px;
   cursor: grab;
 }
 
