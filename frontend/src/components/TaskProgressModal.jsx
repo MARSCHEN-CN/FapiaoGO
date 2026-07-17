@@ -1,4 +1,5 @@
 import { useMemo } from 'react'
+import { deriveTaskModalView } from './taskModalView.mjs'
 
 /**
  * 通用任务进度弹窗（不感知具体业务类型）。
@@ -14,7 +15,7 @@ const TaskProgressModal = ({
   percent,
   currentFile = '',
   stage = '',
-  status,        // 'running' | 'completed' | 'cancelled'
+  status,        // 'starting' | 'pending' | 'running' | 'completed' | 'cancelled' | 'failed'
   errors = [],   // [{ file, error }]
   onCancel,
   onClose,
@@ -22,11 +23,9 @@ const TaskProgressModal = ({
   const pct = percent !== undefined ? percent
     : total > 0 ? Math.round((current / total) * 100) : 0
 
-  const isRunning = status === 'running' || (!status && visible)
-  const isDone = status === 'completed'
-  const isCancelled = status === 'cancelled'
-  const isFinished = isDone || isCancelled
-  const hasErrors = errors.length > 0
+  // 状态→展示派生量集中到纯函数（见 taskModalView.mjs），单一真相、可单测。
+  const { isRunning, isDone, isCancelled, isFinished, hasErrors, resultIcon } =
+    deriveTaskModalView(status, errors)
 
   if (!visible) return null
 
@@ -74,7 +73,7 @@ const TaskProgressModal = ({
           ) : (
             /* ── 完成/取消：结果展示 ── */
             <div className="tp-result-section">
-              <div className={`tp-result-icon ${isCancelled ? 'cancelled' : (hasErrors ? 'error' : 'success')}`}>
+              <div className={`tp-result-icon ${resultIcon}`}>
                 {isCancelled ? (
                   /* 取消：横线（与 RenamePreviewModal 的 X/cancel 风格一致） */
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
