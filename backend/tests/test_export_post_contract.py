@@ -174,6 +174,27 @@ def test_sse_unknown_task_returns_404(client):
     assert resp.status_code == 404
 
 
+# ── 路由契约：GET /events 返回 SSE 流，帧格式归 app.py 封装 ──
+def test_get_events_route_streams_sse_frames(client):
+    """GET 路由必须返回 text/event-stream，且每帧为 `data: {...}`（路由层封装职责）。
+
+    锁定路由委托 services.export_stream.stream_export_progress 产出状态，
+    而非自行内联轮询循环——边界收口（Phase 3.1.3-A 选 A）。
+    """
+    # 用已完成任务制造确定性终态，避免依赖后台线程时序
+    task = backend_app.task_registry.create(total=1)
+    task.complete()
+
+    resp = client.get(f'/api/export-pdf/events/{task.id}')
+    assert resp.status_code == 200
+    assert resp.content_type.startswith('text/event-stream'), \
+        f"GET /events 必须返回 SSE，实为 {resp.content_type}"
+
+    events = _parse_sse(resp.get_data(as_text=True))
+    assert events, "SSE 流至少应有一帧"
+    assert events[-1]['status'] == 'completed'
+
+
 # ── 路由契约：缺 files 参数 → 400 ──
 def test_post_missing_files_returns_400(client, fake_resolver):
     resp = client.post('/api/export-pdf', json={'mode': 'single'})

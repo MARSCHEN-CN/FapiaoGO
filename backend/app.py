@@ -1230,6 +1230,7 @@ def parse_batch():
 
 from services.pdf_export import PdfExportService, ExportItem
 from services.task import task_registry
+from services.export_stream import stream_export_progress
 import base64
 
 _export_pdf_service = PdfExportService()
@@ -1312,22 +1313,19 @@ def api_export_pdf():
 
 @app.route('/api/export-pdf/events/<task_id>', methods=['GET'])
 def api_export_pdf_events(task_id):
-    """SSE 流式读取任务状态（只读，不参与业务执行）。"""
-    task = task_registry.get(task_id)
-    if task is None:
+    """SSE 流式读取任务状态（只读，不参与业务执行）。
+
+    职责边界（Phase 3.1.3-B 冻结）：
+      - 本路由只负责 HTTP 状态码、SSE 帧封装与 headers
+      - 状态读取 / 轮询 / 终态停止由 services.export_stream.stream_export_progress 承担
+      - 状态的唯一来源是 ExportTask.to_dict()
+    """
+    if task_registry.get(task_id) is None:
         return jsonify({"success": False, "error": "任务不存在"}), 404
 
-    import time
-
     def generate():
-        while True:
-            d = task.to_dict()
-            yield f"data: {_json.dumps(d, ensure_ascii=False)}\n\n"
-
-            if d['status'] in ('completed', 'cancelled', 'failed'):
-                break
-
-            time.sleep(0.2)  # 200ms 轮询
+        for state in stream_export_progress(task_id, task_registry):
+            yield f"data: {_json.dumps(state, ensure_ascii=False)}\n\n"
 
     return Response(
         stream_with_context(generate()),
