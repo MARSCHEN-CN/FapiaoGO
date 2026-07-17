@@ -187,15 +187,19 @@ function AppContent() {
   // 根因：重命名把新文件追加、再删除旧文件；usePreview 的自动导航只会跳到 files[0]，
   // 批量重命名时那不是被重命名的文件 → 预览停留在骨架屏（contentReady=false，
   // 用 paperLayout.displayRect 兜底 → 容器被撑得特别大）。此处用重命名时记录的 key，
+  // ── 用 ref 打破 handlePreview 的依赖闭环 ──
+  const handlePreviewRef = useRef(handlePreview)
+  useEffect(() => { handlePreviewRef.current = handlePreview }, [handlePreview])
+
   // 在最新 files 状态里取出「已解析、带 docId」的对象重新导入，保证 Render Engine 预览正确。
   useEffect(() => {
     if (!renameResult?.success || !renamedPreviewKey) return
     const f = filesRef.current.find(x => x.key === renamedPreviewKey)
     if (f && f.status === 'parsed') {
       skipAutoNavRef.current = true
-      handlePreview(f)
+      handlePreviewRef.current(f)
     }
-  }, [renameResult, renamedPreviewKey, handlePreview, skipAutoNavRef])
+  }, [renameResult, renamedPreviewKey, skipAutoNavRef])
 
   const removeFile = useCallback((key) => {
     // 先找到当前预览文件在列表中的位置（读取 ref 中的最新 files / previewFile）
