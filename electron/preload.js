@@ -28,6 +28,7 @@ const ALLOWED_INVOKE_PREFIXES = [
   'scan-',     // scan-dropped-paths
   'read-',     // read-file
   'submit-',   // submit-print-job
+  'delete-',   // delete-files
 ]
 
 const ALLOWED_ON = ['print-progress', 'settings-window-closed', 'context-menu-files', 'rename-progress', 'pack-progress', 'excel-progress', 'settings-changed', 'theme-changed', 'print-job-completed', 'print-job-failed']
