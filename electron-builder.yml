@@ -2,7 +2,7 @@
 appId: com.FapiaoGO.app
 productName: FapiaoGO
 directories:
-  output: release2
+  output: release
   buildResources: resources
 files:
   - "electron/**/*"
