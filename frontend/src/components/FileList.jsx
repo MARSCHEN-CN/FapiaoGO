@@ -51,7 +51,7 @@ const FileCardRow = memo(({ index, style, files, previewFileKey, mergeActive, me
       onMouseEnter={handleMouseEnter}
     >
       {isDupFirst && <div className="duplicate-bar"></div>}
-      {isDupFirst && <div className="duplicate-label">重复组 {dupGroupIndex}</div>}
+      {isDuplicate && <div className="duplicate-label">重复组 {dupGroupIndex}</div>}
       {isGroupFirst && mergeActive && <div className="merge-group-label">合并组 {Math.floor(index / mergeCount) + 1}</div>}
 
       <button className="file-card-rotate" onClick={handleRotate} title={`旋转 (${fileRotations?.[fileObj.key] || 0}°)`}>

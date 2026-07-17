@@ -142,3 +142,81 @@ class PdfExportService:
 
         task.complete()
         return task
+
+    # ── 合并导出 ──
+
+    def merge_files(self, items: List[ExportItem], output_path: str,
+                    task: Optional[ExportTask] = None) -> ExportTask:
+        """将多个文件合并为一个 PDF（按 items 顺序）。
+
+        每个源文件通过对应 Handler 的 export_merge 插入页面到同一 fitz.Document，
+        最后保存到 output_path。单个失败不中断整个合并。
+
+        Args:
+            items:      源文件列表。
+            output_path: 合并后 PDF 输出路径。
+            task:        可选，已有任务对象。
+
+        Returns:
+            含有最终状态、进度、错误列表的 ExportTask。
+        """
+        if task is None:
+            task = self._task_registry.create(total=len(items))
+        else:
+            task.total = len(items)
+            task.current = 0
+
+        task.start()
+
+        try:
+            import fitz
+        except ImportError:
+            raise RuntimeError("PyMuPDF (fitz) is not available for merge")
+
+        target_doc = fitz.open()
+        try:
+            for item in items:
+                if task.cancelled:
+                    logger.info("[PdfExport] merge 任务 %s 已取消，跳过剩余 %d 个文件",
+                                task.id[:8], len(items) - task.current)
+                    break
+
+                handler = self.resolver.resolve(item.source, item.filename or 'unknown')
+                if handler is None:
+                    msg = f"不支持的格式，跳过合并: {item.filename}"
+                    logger.warning("[PdfExport] %s", msg)
+                    if task is not None:
+                        task.add_error(item.filename or 'unknown', msg)
+                        task.advance(item.filename)
+                    continue
+
+                try:
+                    # 调用 Handler 的 export_merge（各 Handler 实现了不同格式的 merge）
+                    export_merge = getattr(handler, 'export_merge', None)
+                    if export_merge is None:
+                        raise NotImplementedError(
+                            f"{type(handler).__name__} 不支持合并")
+                    insert_count = export_merge(item.source, item.filename, target_doc)
+                    logger.info("[PdfExport] merge: %s → %d pages",
+                                item.filename, insert_count)
+                    if task is not None:
+                        task.advance(item.filename)
+                except Exception as e:
+                    logger.error("[PdfExport] merge 失败: %s: %s", item.filename, e)
+                    if task is not None:
+                        task.add_error(item.filename, str(e))
+                        task.advance(item.filename)
+
+            target_doc.save(output_path, incremental=False, deflate=True)
+            total_pages = len(target_doc)
+            logger.info("[PdfExport] merge 完成: %s (%d pages)",
+                        output_path, total_pages)
+            if total_pages > 500:
+                logger.warning("[PdfExport] 合并文件超过 500 页 (%d)，"
+                              "建议分批导出以控制内存", total_pages)
+
+        finally:
+            target_doc.close()
+
+        task.complete()
+        return task

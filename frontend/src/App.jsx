@@ -253,13 +253,13 @@ function AppContent() {
     })
   }, [])
 
-  const removeDuplicateFiles = useCallback(() => {
+  const removeDuplicateFiles = useCallback((removeSource = false) => {
     setFiles(prev => {
       const duplicates = detectDuplicateInvoices(prev)
       const duplicateKeys = new Set()
       duplicates.forEach((dupFiles) => {
         dupFiles.forEach((file, idx) => {
-          if (idx > 0) {
+          if (removeSource ? idx === 0 : idx > 0) {
             duplicateKeys.add(file.key)
           }
         })

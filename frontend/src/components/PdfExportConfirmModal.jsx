@@ -4,10 +4,10 @@ import { useState, useCallback } from 'react'
  * PDF 导出确认弹窗
  *
  * 职责：展示配置选项 → 输出 config（不触发导出）
- * 状态机约束（v1.3.1）：
+ * 状态机约束：
  *   single → 允许 source / folder
- *   merge  → 强制 file
- *   mode 切换时自动修正 outputType
+ *   merge  → 允许 source / folder（与 single 一致）
+ *   mode 切换时不改变 outputType
  */
 const PdfExportConfirmModal = ({
   visible,
@@ -22,13 +22,8 @@ const PdfExportConfirmModal = ({
     fileName: 'invoice_export.pdf',
   })
 
-  // ── mode 切换自动修正 outputType ──
   const changeMode = useCallback((nextMode) => {
-    setExportConfig(prev => ({
-      ...prev,
-      mode: nextMode,
-      outputType: nextMode === 'merge' ? 'file' : 'source',
-    }))
+    setExportConfig(prev => ({ ...prev, mode: nextMode }))
   }, [])
 
   const changeOutputType = useCallback((nextType) => {
@@ -103,45 +98,43 @@ const PdfExportConfirmModal = ({
             </div>
           </div>
 
-          {/* ── 输出位置（仅 single 模式） ── */}
-          {exportConfig.mode === 'single' && (
-            <div className="pe-section">
-              <span className="pe-section-label">输出位置</span>
-              <div className="pe-select-row">
-                <select
-                  className="pe-select"
-                  value={exportConfig.outputType}
-                  onChange={(e) => changeOutputType(e.target.value)}
-                >
-                  <option value="source">与文件同源</option>
-                  <option value="folder">指定文件夹</option>
-                </select>
-              </div>
-
-              {/* 指定文件夹时展开路径输入 */}
-              {exportConfig.outputType === 'folder' && (
-                <div className="pe-folder-row" style={{ marginTop: 6 }}>
-                  <input
-                    className="pe-path-input"
-                    type="text"
-                    placeholder="选择或输入导出路径..."
-                    value={exportConfig.folderPath}
-                    onChange={changeFolderPath}
-                  />
-                  <button
-                    className="pe-folder-btn"
-                    onClick={handleSelectFolder}
-                    title="选择文件夹"
-                    type="button"
-                  >
-                    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M2 4.5A1.5 1.5 0 013.5 3h3.84a1.5 1.5 0 011.06.44l1.1 1.1a1.5 1.5 0 001.06.44H16.5A1.5 1.5 0 0118 6.48V16a2 2 0 01-2 2H4a2 2 0 01-2-2V4.5z" />
-                    </svg>
-                  </button>
-                </div>
-              )}
+          {/* ── 输出位置（单文件和合并都用） ── */}
+          <div className="pe-section">
+            <span className="pe-section-label">输出位置</span>
+            <div className="pe-select-row">
+              <select
+                className="pe-select"
+                value={exportConfig.outputType}
+                onChange={(e) => changeOutputType(e.target.value)}
+              >
+                <option value="source">与文件同源</option>
+                <option value="folder">指定文件夹</option>
+              </select>
             </div>
-          )}
+
+            {/* 指定文件夹时展开路径输入 */}
+            {exportConfig.outputType === 'folder' && (
+              <div className="pe-folder-row" style={{ marginTop: 6 }}>
+                <input
+                  className="pe-path-input"
+                  type="text"
+                  placeholder="选择或输入导出路径..."
+                  value={exportConfig.folderPath}
+                  onChange={changeFolderPath}
+                />
+                <button
+                  className="pe-folder-btn"
+                  onClick={handleSelectFolder}
+                  title="选择文件夹"
+                  type="button"
+                >
+                  <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M2 4.5A1.5 1.5 0 013.5 3h3.84a1.5 1.5 0 011.06.44l1.1 1.1a1.5 1.5 0 001.06.44H16.5A1.5 1.5 0 0118 6.48V16a2 2 0 01-2 2H4a2 2 0 01-2-2V4.5z" />
+                  </svg>
+                </button>
+              </div>
+            )}
+          </div>
 
           {/* ── 文件名输入（仅 merge 模式） ── */}
           {exportConfig.mode === 'merge' && (

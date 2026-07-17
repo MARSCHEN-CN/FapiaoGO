@@ -48,6 +48,8 @@ export function usePreview({ files, settings, electronAPIRef }) {
   const [containerSize, setContainerSize] = useState({ width: 0, height: 0 })
   // ✅ 移除多余的 previewRotation state，所有旋转都通过 fileRotations 管理
   const [fileRotations, setFileRotations] = useState({})
+  const fileRotationsRef = useRef(fileRotations)
+  useEffect(() => { fileRotationsRef.current = fileRotations }, [fileRotations])
   const [showLeftArrow, setShowLeftArrow] = useState(false)
   const [showRightArrow, setShowRightArrow] = useState(false)
 
@@ -1241,7 +1243,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
       return
     }
 
-    let rotation = (fileRotations[loadedFile.key] || 0)
+    let rotation = (fileRotationsRef.current[loadedFile.key] || 0)
     // 与 render effect 保持一致的 isLandscape 计算：统一走 resolvePaper（Single Decision Point）。
     // 否则 Custom 纸型下 PAPER_SIZE_MAP 与 resolvePaper 结果不一致 → L2 缓存键与渲染键漂移 →
     // 点击命中陈旧 Canvas，与自动预览（RE）视觉不一致。
@@ -1421,7 +1423,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
       }
     }
     console.log(`[PREVIEW FLOW ${previewToken}] FINALLY | doLoadPreview complete | version=${version}`)
-  }, [settings.mergeMode, loadPairItemForPreview, loadFilePreview, fullCacheRef, skipRenderRef, previewFileRef, previewVersionRef, previewUrlRef, pendingBlobUrlsRef, fileRotations, paperLayout])
+  }, [settings.mergeMode, loadPairItemForPreview, loadFilePreview, fullCacheRef, skipRenderRef, previewFileRef, previewVersionRef, previewUrlRef, pendingBlobUrlsRef, paperLayout])
 
   // ============================
   // 预览文件（带防抖）

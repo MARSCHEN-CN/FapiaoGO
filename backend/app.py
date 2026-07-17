@@ -1240,19 +1240,26 @@ _export_pdf_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix='pdf
 def api_export_pdf():
     data = request.get_json(silent=True) or {}
     files = data.get('files', [])
+    mode = data.get('mode', 'single')
+    merge_output = data.get('outputPath', '')
+
     if not files:
         return jsonify({"success": False, "error": "缺少 files 参数"}), 400
+
+    if mode == 'merge' and not merge_output:
+        return jsonify({"success": False, "error": "合并模式缺少 outputPath"}), 400
 
     # ── 构建 ExportItem 列表 ──
     items = []
     for f in files:
         filename = f.get('name', '')
-        output_path = f.get('outputPath', '')
 
-        if not output_path:
+        # 合并模式：不要求每文件 outputPath
+        output_path = f.get('outputPath', '')
+        if mode != 'merge' and not output_path:
             return jsonify({"success": False, "error": f"缺少 outputPath: {filename}"}), 400
 
-        # 优先读取本地文件路径（PDF 优化路径，无需加载到内存）
+        # 优先读取本地文件路径
         file_path = f.get('path', '')
         if file_path and os.path.isfile(file_path):
             with open(file_path, 'rb') as fh:
@@ -1264,7 +1271,7 @@ def api_export_pdf():
 
         items.append(ExportItem(
             source=source,
-            output_path=output_path,
+            output_path=output_path or merge_output,
             filename=filename,
         ))
 
@@ -1280,7 +1287,10 @@ def api_export_pdf():
     # ── 后台线程执行导出 ──
     def _run():
         try:
-            _export_pdf_service.export_files(items, task=task)
+            if mode == 'merge':
+                _export_pdf_service.merge_files(items, merge_output, task=task)
+            else:
+                _export_pdf_service.export_files(items, task=task)
         except Exception as e:
             logger.exception("[PDF Export] 后台导出异常")
             task.add_error('', str(e))

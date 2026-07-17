@@ -808,10 +808,10 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
   border: none;
-  border-radius: var(--r-lg);
+  border-radius: var(--r-md);
   background: color-mix(in srgb, var(--danger) 10%, transparent);
   color: var(--danger);
   cursor: pointer;
@@ -826,8 +826,8 @@
 }
 
 .sb-stat-failed-btn svg {
-  width: 16px;
-  height: 16px;
+  width: 14px;
+  height: 14px;
   fill: var(--danger);
   stroke: none;
 }
@@ -836,6 +836,7 @@
   font-size: 10px;
   color: var(--danger);
   font-weight: 600;
+  white-space: nowrap;
 }
 
 /* -- 侧边栏移除重复文件区域 -- */
@@ -843,8 +844,8 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
-  padding: 6px 4px;
+  gap: 3px;
+  padding: 4px 2px;
   cursor: pointer;
   border-radius: var(--r-lg);
   transition: all var(--t-fast) var(--ease);
@@ -859,10 +860,10 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
   border: none;
-  border-radius: var(--r-lg);
+  border-radius: var(--r-md);
   background: var(--orange-soft);
   color: var(--orange);
   cursor: pointer;
@@ -877,8 +878,8 @@
 }
 
 .sb-stat-duplicate-btn svg {
-  width: 16px;
-  height: 16px;
+  width: 14px;
+  height: 14px;
   fill: var(--orange);
   stroke: none;
 }
@@ -898,6 +899,41 @@
   font-size: 10px;
   color: var(--orange);
   font-weight: 600;
+  white-space: nowrap;
+  line-height: 1;
+}
+
+.sb-stat-duplicate-switch {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 1px;
+}
+
+.sb-stat-duplicate-switch-label {
+  font-size: 9px;
+  color: var(--text-3);
+  font-weight: 500;
+  white-space: nowrap;
+  line-height: 1;
+}
+
+/* 迷你开关：适配 stat 卡片紧凑空间 */
+.sb-stat-mini-switch {
+  width: 28px !important;
+  height: 16px !important;
+}
+.sb-stat-mini-switch .toggle-track {
+  border-radius: 8px;
+}
+.sb-stat-mini-switch .toggle-thumb {
+  width: 12px;
+  height: 12px;
+  top: 2px;
+  left: 2px;
+}
+.sb-stat-mini-switch input:checked ~ .toggle-thumb {
+  transform: translateX(12px);
 }
 
 /* -- Dropzone area -- */

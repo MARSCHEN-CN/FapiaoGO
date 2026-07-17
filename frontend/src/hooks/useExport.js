@@ -146,18 +146,11 @@ export function useExport({ files, electronAPIRef }) {
   }
 
   /**
-   * 为单个文件生成输出路径。
+   * 为文件生成输出路径。
+   * single 模式：每个文件独立路径（用源文件目录 + basename_export_YYMMDD.pdf）。
+   * merge 模式：单一路径（输出目录 + config.fileName）。
    */
   const _resolveOutputPath = (file, config) => {
-    const name = file.name || file.path?.split(/[\\/]/).pop() || 'export'
-    const baseName = name.replace(/\.[^.]+$/, '')  // 去掉扩展名
-    const suffix = _dateSuffix()
-
-    if (config.mode === 'merge') {
-      // 合并模式：由 save dialog 处理，此处生成临时路径
-      return config.fileName || 'invoice_export.pdf'
-    }
-
     // 确定输出目录
     let outputDir = ''
     if (config.outputType === 'source' && file.path) {
@@ -167,10 +160,19 @@ export function useExport({ files, electronAPIRef }) {
     }
 
     if (!outputDir) {
-      // 兜底：用当前工作目录
       outputDir = '.'
     }
 
+    if (config.mode === 'merge') {
+      // 合并模式：输出目录 + 用户指定的文件名
+      const fname = config.fileName || 'invoice_export.pdf'
+      return `${outputDir}/${fname}`
+    }
+
+    // 单独导出：源文件目录 + basename_export_YYMMDD.pdf
+    const name = file.name || file.path?.split(/[\\/]/).pop() || 'export'
+    const baseName = name.replace(/\.[^.]+$/, '')
+    const suffix = _dateSuffix()
     return `${outputDir}/${baseName}_export_${suffix}.pdf`
   }
 
@@ -195,16 +197,33 @@ export function useExport({ files, electronAPIRef }) {
       errors: [],
     })
 
-    // 构建 POST body（含输出路径生成）
-    const filesPayload = config.files.map(f => ({
-      name: f.name || f.path?.split(/[\\/]/).pop() || '',
-      path: f.path || '',
-      outputPath: _resolveOutputPath(f, config),
-    }))
+    // ── 构建 POST body ──
+    let body
 
-    const body = {
-      mode: config.mode || 'single',
-      files: filesPayload,
+    if (config.mode === 'merge') {
+      // 合并模式：源文件列表 + 顶层 outputPath
+      const firstFile = config.files[0]
+      const mergeOutput = _resolveOutputPath(firstFile, config)
+      const filesPayload = config.files.map(f => ({
+        name: f.name || f.path?.split(/[\\/]/).pop() || '',
+        path: f.path || '',
+      }))
+      body = {
+        mode: 'merge',
+        files: filesPayload,
+        outputPath: mergeOutput,
+      }
+    } else {
+      // 单独导出：每个文件独立输出路径
+      const filesPayload = config.files.map(f => ({
+        name: f.name || f.path?.split(/[\\/]/).pop() || '',
+        path: f.path || '',
+        outputPath: _resolveOutputPath(f, config),
+      }))
+      body = {
+        mode: 'single',
+        files: filesPayload,
+      }
     }
 
     try {

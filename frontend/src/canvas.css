@@ -246,7 +246,7 @@
   background: var(--canvas-float-bg);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
-  border-radius: 12px;
+  border-radius: var(--r-lg);
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08), 0 0 0 0.5px rgba(0,0,0,0.04);
   z-index: 10;
   border: 0.5px solid var(--canvas-float-border);
@@ -295,7 +295,7 @@
   background: var(--canvas-float-bg);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
-  border-radius: 20px;
+  border-radius: var(--r-2xl);
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.06), 0 0 0 0.5px rgba(0,0,0,0.04);
   font-size: 12px;
   color: var(--text-2);
@@ -321,7 +321,7 @@
   align-items: center;
   gap: 5px;
   padding: 3px 8px;
-  border-radius: 14px;
+  border-radius: var(--r-lg);
   font-weight: 600;
   font-size: 12px;
   transition: background var(--t-fast) var(--ease);

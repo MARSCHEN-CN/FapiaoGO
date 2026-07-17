@@ -58,6 +58,7 @@ export default React.memo(function Sidebar({
   // sort
   sortBy, sortOrder, toggleSort,
 }) {
+  const [removeSourceFile, setRemoveSourceFile] = useState(false)
   const { files, searchQuery, setSearchQuery, filteredFiles, isSearching, totalAmount, hasFailedFiles, failedFilesCount } = useFileContext()
   const mergeActive = isMergeMode(paperSize)
 
@@ -377,22 +378,30 @@ export default React.memo(function Sidebar({
               <button 
                 className="sb-stat-failed-btn"
                 onClick={(e) => { e.stopPropagation(); removeFailedFiles() }}
-                title="移除解析失败的文件"
+                title="移除失败文件"
               >
                 {ICONS.trash}
               </button>
-              <span className="sb-stat-failed-label">移除失败文件</span>
+              <span className="sb-stat-failed-label">移除失败</span>
             </div>
           ) : duplicateGroupCount > 0 ? (
             <div className="sb-stat sb-stat-remove-duplicate">
               <button 
                 className="sb-stat-duplicate-btn"
-                onClick={(e) => { e.stopPropagation(); removeDuplicateFiles() }}
+                onClick={(e) => { e.stopPropagation(); removeDuplicateFiles(removeSourceFile) }}
                 title="一键去重"
               >
                 {ICONS.trash}
               </button>
-              <span className="sb-stat-duplicate-label">一键去重</span>
+              <span className="sb-stat-duplicate-label">去重</span>
+              <div className="sb-stat-duplicate-switch">
+                <label className="toggle-switch sb-stat-mini-switch">
+                  <input type="checkbox" checked={removeSourceFile} onChange={(e) => setRemoveSourceFile(e.target.checked)} />
+                  <span className="toggle-track"></span>
+                  <span className="toggle-thumb"></span>
+                </label>
+                <span className="sb-stat-duplicate-switch-label">删源</span>
+              </div>
             </div>
           ) : (
             <div className="sb-stat">
