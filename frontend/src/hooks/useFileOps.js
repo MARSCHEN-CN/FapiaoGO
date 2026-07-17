@@ -3,7 +3,7 @@ import { useDropzone } from 'react-dropzone'
 import { BACKEND_URL, SUPPORTED_EXTENSIONS } from '../config'
 import {
   getElectronAPI, getFilePath, getFileFormat, getExtension, getExtensionWithDot,
-  getMimeType, concurrentBatch, applySort, buildSearchText,
+  getMimeType, concurrentBatch, applySort, buildSearchText, detectDuplicateInvoices,
 } from '../utils'
 import { buildFileObj, generateFileKey, processPdfFile, stripIdentity } from '../utils/fileHelpers'
 import { db } from '../db'
@@ -239,9 +239,16 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
       if (filesToParse.length > 1) {
         try {
           await parseFilesBatch(filesToParse)
-          setFiles((prev) =>
-            applySort(prev, sortByRef.current, sortOrderRef.current)
-          )
+          setFiles((prev) => {
+            const duplicates = detectDuplicateInvoices(prev)
+            const duplicateInfo = new Map()
+            duplicates.forEach((dupFiles, groupIndex) => {
+              dupFiles.forEach((file, idx) => {
+                duplicateInfo.set(file.key, { groupIndex, isFirst: idx === 0 })
+              })
+            })
+            return applySort(prev, sortByRef.current, sortOrderRef.current, duplicateInfo)
+          })
           return
         } catch (batchErr) {
           console.warn('[parseFiles] 批量解析失败，回退逐个解析:', batchErr)
@@ -398,7 +405,14 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
       }, CONCURRENCY_LIMIT)
 
       setFiles((prev) => {
-        return applySort(prev, sortByRef.current, sortOrderRef.current)
+        const duplicates = detectDuplicateInvoices(prev)
+        const duplicateInfo = new Map()
+        duplicates.forEach((dupFiles, groupIndex) => {
+          dupFiles.forEach((file, idx) => {
+            duplicateInfo.set(file.key, { groupIndex, isFirst: idx === 0 })
+          })
+        })
+        return applySort(prev, sortByRef.current, sortOrderRef.current, duplicateInfo)
       })
     } finally {
       setParsing(false)
@@ -698,7 +712,16 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
     await Promise.all(parseWorkers)
 
     // 解析完成后：重排序（与旧 parseFiles 行为一致）+ 收尾状态
-    setFiles((prev) => applySort(prev, sortByRef.current, sortOrderRef.current))
+    setFiles((prev) => {
+      const duplicates = detectDuplicateInvoices(prev)
+      const duplicateInfo = new Map()
+      duplicates.forEach((dupFiles, groupIndex) => {
+        dupFiles.forEach((file, idx) => {
+          duplicateInfo.set(file.key, { groupIndex, isFirst: idx === 0 })
+        })
+      })
+      return applySort(prev, sortByRef.current, sortOrderRef.current, duplicateInfo)
+    })
     setParsing(false)
     setParseProgress({ current: 0, total: 0 })
     setImporting(false)

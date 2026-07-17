@@ -710,7 +710,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
               // PDF：通过 pdfDocCache 加载 + page.render
               const pdfDoc = await getOrLoadPdfDocument(previewFile._pdfData)
               if (pdfDoc) {
-                await switchPreviewFile(pdfDoc, 1, signal, renderCommand)
+                await switchPreviewFile(pdfDoc, 1, signal, currentRotation)
               }
             } else if (previewFile._previewImageUrl) {
               // 图片/OFD：加载图片后 drawImage 到全局 Canvas
@@ -721,7 +721,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
                 image.src = previewFile._previewImageUrl
               })
               if (img) {
-                await switchPreviewImage(img, signal, renderCommand)
+                await switchPreviewImage(img, signal, currentRotation)
               }
             }
           }

@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
-import { applySort } from '../utils'
+import { applySort, detectDuplicateInvoices } from '../utils'
 
-export function useSort(setFiles) {
+export function useSort(setFiles, files) {
   const [sortBy, setSortBy] = useState(() => {
     try { return localStorage.getItem('invoiceSortBy') || 'fileName' }
     catch { return 'fileName' }
@@ -32,10 +32,26 @@ export function useSort(setFiles) {
     }
   }, [sortBy, sortOrder])
 
+  const duplicateInfo = useRef(null)
+  useEffect(() => {
+    if (!files || files.length === 0) {
+      duplicateInfo.current = null
+      return
+    }
+    const duplicates = detectDuplicateInvoices(files)
+    const info = new Map()
+    duplicates.forEach((dupFiles, groupIndex) => {
+      dupFiles.forEach((file, idx) => {
+        info.set(file.key, { groupIndex, isFirst: idx === 0 })
+      })
+    })
+    duplicateInfo.current = info
+  }, [files])
+
   useEffect(() => {
     setFiles(current => {
       if (current.length <= 1) return current
-      return applySort(current, sortBy, sortOrder)
+      return applySort(current, sortBy, sortOrder, duplicateInfo.current)
     })
   }, [sortBy, sortOrder, setFiles])
 

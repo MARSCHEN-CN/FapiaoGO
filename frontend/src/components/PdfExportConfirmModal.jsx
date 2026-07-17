@@ -43,9 +43,22 @@ const PdfExportConfirmModal = ({
     setExportConfig(prev => ({ ...prev, fileName: e.target.value }))
   }, [])
 
-  // ── 文件夹选择（Phase 1 占位，不接 IPC） ──
-  const handleSelectFolder = useCallback(() => {
-    console.log('[PDF Export] select folder — IPC placeholder')
+  // ── 文件夹选择 ──
+  const handleSelectFolder = useCallback(async () => {
+    try {
+      const ep = window.electronAPI
+      if (!ep || !ep.ipcRenderer) {
+        console.log('[PDF Export] electronAPI unavailable, fallback to manual input')
+        return
+      }
+      const result = await ep.ipcRenderer.invoke('select-export-folder')
+      if (result && !result.canceled && result.folderPath) {
+        setExportConfig(prev => ({ ...prev, folderPath: result.folderPath }))
+      }
+      // 取消选择 → 不关闭 Modal，保持已有输入
+    } catch (e) {
+      console.log('[PDF Export] select folder error:', e)
+    }
   }, [])
 
   const handleConfirm = useCallback(() => {

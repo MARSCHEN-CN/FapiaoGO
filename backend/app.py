@@ -1225,8 +1225,100 @@ def parse_batch():
 
 
 # ============================
-# 入口
+#  PDF 导出 SSE
 # ============================
+
+from services.pdf_export import PdfExportService, ExportItem
+from services.task import task_registry
+import base64
+
+_export_pdf_service = PdfExportService()
+_export_pdf_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix='pdf-export')
+
+
+@app.route('/api/export-pdf', methods=['POST'])
+def api_export_pdf():
+    data = request.get_json(silent=True) or {}
+    files = data.get('files', [])
+    if not files:
+        return jsonify({"success": False, "error": "缺少 files 参数"}), 400
+
+    # ── 构建 ExportItem 列表 ──
+    items = []
+    for f in files:
+        filename = f.get('name', '')
+        output_path = f.get('outputPath', '')
+
+        if not output_path:
+            return jsonify({"success": False, "error": f"缺少 outputPath: {filename}"}), 400
+
+        # 优先读取本地文件路径（PDF 优化路径，无需加载到内存）
+        file_path = f.get('path', '')
+        if file_path and os.path.isfile(file_path):
+            with open(file_path, 'rb') as fh:
+                source = fh.read()
+        elif f.get('data'):
+            source = base64.b64decode(f['data'])
+        else:
+            return jsonify({"success": False, "error": f"缺少 source: {filename}"}), 400
+
+        items.append(ExportItem(
+            source=source,
+            output_path=output_path,
+            filename=filename,
+        ))
+
+    # ── 创建任务 ──
+    progress_queue = queue.Queue()
+
+    def on_progress(task):
+        d = task.to_dict()
+        progress_queue.put(d)
+
+    task = task_registry.create(total=len(items), progress_callback=on_progress)
+
+    # ── 后台线程执行导出 ──
+    def _run():
+        try:
+            _export_pdf_service.export_files(items, task=task)
+        except Exception as e:
+            logger.exception("[PDF Export] 后台导出异常")
+            task.add_error('', str(e))
+            task.complete()
+        finally:
+            progress_queue.put(None)  # 哨兵信号
+
+    _export_pdf_executor.submit(_run)
+
+    # ── SSE generator：只读 task state，不执行导出 ──
+    def generate():
+        yield f"data: {_json.dumps({'status': 'started', 'taskId': task.id}, ensure_ascii=False)}\n\n"
+        while True:
+            msg = progress_queue.get()  # 阻塞等待
+            if msg is None:
+                break
+            yield f"data: {_json.dumps(msg, ensure_ascii=False)}\n\n"
+
+        # 完成事件
+        final = task.to_dict()
+        yield f"data: {_json.dumps(final, ensure_ascii=False)}\n\n"
+
+    return Response(
+        stream_with_context(generate()),
+        mimetype='text/event-stream',
+        headers={'Cache-Control': 'no-cache', 'Connection': 'keep-alive', 'X-Accel-Buffering': 'no'},
+    )
+
+
+@app.route('/api/export-pdf/cancel', methods=['POST'])
+def api_export_pdf_cancel():
+    data = request.get_json(silent=True) or {}
+    task_id = data.get('taskId', '')
+    if not task_id:
+        return jsonify({"success": False, "error": "缺少 taskId"}), 400
+    if task_registry.cancel(task_id):
+        return jsonify({"success": True})
+    return jsonify({"success": False, "error": "任务不存在"}), 404
 
 if __name__ == '__main__':
     logging.basicConfig(

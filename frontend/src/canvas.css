@@ -497,44 +497,116 @@
   margin: 0 4px;
 }
 
-/* ======================== 2b. 纸张方向控制（自动/横向/纵向 + 旋转） ======================== */
+/* ======================== 2b. 纸张方向控制（圆角矩形分段 · 与 zoom-control 同语言） ======================== */
 .canvas-orient-control {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 8px;
-  /* 落在 grid 右列(1fr)并靠右对齐，与中列居中的缩放控件互不干扰 */
+  gap: 2px;
+  /* 落在 grid 右列并靠右对齐 */
   grid-column: 3;
   justify-self: end;
+  /* 与 canvas-zoom-control 完全同规格：毛玻璃 + r-lg 圆角矩形 */
+  padding: 4px;
+  background: var(--canvas-float-bg);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-radius: var(--r-lg);
+  border: 0.5px solid var(--canvas-float-border);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08), 0 0 0 0.5px rgba(0,0,0,0.04);
+  z-index: 10;
+  transition: box-shadow var(--t-fast) var(--ease);
 }
-.oco-label {
-  font-size: 12px;
-  color: var(--text-secondary, #666);
+.canvas-orient-control:hover {
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.10), 0 0 0 0.5px rgba(0,0,0,0.06);
 }
 .oco-segment {
   display: inline-flex;
-  border: 1px solid rgba(0, 0, 0, 0.12);
-  border-radius: 6px;
-  overflow: hidden;
+  align-items: center;
+  gap: 2px;
 }
 .oco-btn {
   border: none;
   background: transparent;
-  padding: 5px 12px;
+  padding: 6px 12px;
   font-size: 12px;
+  font-weight: 500;
+  color: var(--text-2, #666);
   cursor: pointer;
-  color: var(--text, #333);
-  transition: background 0.15s, color 0.15s;
+  /* 内部按钮圆角与 tb-btn 保持一致（r-md） */
+  border-radius: var(--r-md);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  transition: all 0.18s ease;
+  white-space: nowrap;
 }
-.oco-btn + .oco-btn {
-  border-left: 1px solid rgba(0, 0, 0, 0.12);
+.oco-btn svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
 }
 .oco-btn:hover {
   background: rgba(0, 0, 0, 0.05);
+  color: var(--text, #333);
 }
 .oco-btn.active {
-  background: var(--accent, #3b82f6);
+  background: var(--accent-gradient);
   color: #fff;
+  box-shadow: 0 2px 6px rgba(79, 124, 255, 0.35);
 }
+.oco-divider {
+  width: 1px;
+  height: 16px;
+  background: rgba(0, 0, 0, 0.08);
+  margin: 0 4px;
+  flex-shrink: 0;
+}
+/* 旋转按钮：与 tb-btn 同尺寸同圆角（方形 r-md），保持工具栏内部按钮一致性 */
 .oco-rotate {
-  margin-left: 4px;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--r-md);
+  border: none;
+  background: transparent;
+  color: var(--text-2, #666);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+  padding: 0;
+}
+.oco-rotate svg {
+  width: 16px;
+  height: 16px;
+}
+.oco-rotate:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+/* ---------- 暗色模式 ---------- */
+[data-theme="dark"] .canvas-orient-control {
+  background: var(--canvas-float-bg);
+  border-color: var(--canvas-float-border);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.3);
+}
+[data-theme="dark"] .canvas-orient-control:hover {
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+[data-theme="dark"] .oco-btn:hover {
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--text);
+}
+[data-theme="dark"] .oco-divider {
+  background: rgba(255, 255, 255, 0.1);
+}
+[data-theme="dark"] .oco-rotate {
+  background: transparent;
+  color: var(--text-2);
+}
+[data-theme="dark"] .oco-rotate:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
 }

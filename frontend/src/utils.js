@@ -208,25 +208,31 @@ export function isFailedFile(file) {
   return false
 }
 
-export function applySort(list, field, order) {
+export function applySort(list, field, order, duplicateInfo = null) {
   const dir = order === 'desc' ? -1 : 1
 
-  // 单次遍历分区：将失败文件与正常文件分开
-  // 避免先 sort 再 filter 导致的多次 isFailedFile 调用
+  // 单次遍历分区：失败文件、重复组、正常文件
   const failedFiles = []
+  const duplicateGroups = new Map()
   const normalFiles = []
   for (let i = 0; i < list.length; i++) {
-    if (isFailedFile(list[i])) {
-      failedFiles.push(list[i])
+    const file = list[i]
+    if (isFailedFile(file)) {
+      failedFiles.push(file)
+    } else if (duplicateInfo && duplicateInfo.has(file.key)) {
+      const groupIndex = duplicateInfo.get(file.key).groupIndex
+      if (!duplicateGroups.has(groupIndex)) {
+        duplicateGroups.set(groupIndex, [])
+      }
+      duplicateGroups.get(groupIndex).push(file)
     } else {
-      normalFiles.push(list[i])
+      normalFiles.push(file)
     }
   }
 
-  // 在失败的文件内部，以及正常的文件之间应用排序规则
-
-  // 对失败文件内部应用排序规则
+  // 排序函数：主排序字段 + 文件名兜底保证稳定性
   const sortFn = (a, b) => {
+    let result = 0
     switch (field) {
       case 'invoiceType': {
         const typeOrder = (t) => {
@@ -234,10 +240,12 @@ export function applySort(list, field, order) {
           if (t === '普票') return 1
           return 2
         }
-        return (typeOrder(a.invoiceType) - typeOrder(b.invoiceType)) * dir
+        result = (typeOrder(a.invoiceType) - typeOrder(b.invoiceType)) * dir
+        break
       }
       case 'fileName':
-        return naturalSort(a.name, b.name) * dir
+        result = naturalSort(a.name, b.name) * dir
+        break
       case 'amount': {
         const parseAmt = (s) => {
           if (!s) return NaN
@@ -246,30 +254,44 @@ export function applySort(list, field, order) {
         }
         const amtA = parseAmt(a.amount)
         const amtB = parseAmt(b.amount)
-        if (isNaN(amtA) && isNaN(amtB)) return 0
-        if (isNaN(amtA)) return 1
-        if (isNaN(amtB)) return -1
-        return (amtA - amtB) * dir
+        if (isNaN(amtA) && isNaN(amtB)) result = 0
+        else if (isNaN(amtA)) result = 1
+        else if (isNaN(amtB)) result = -1
+        else result = (amtA - amtB) * dir
+        break
       }
       case 'invoiceDate': {
         const dateA = a.invoiceDate && a.invoiceDate !== '未知日期' ? a.invoiceDate : ''
         const dateB = b.invoiceDate && b.invoiceDate !== '未知日期' ? b.invoiceDate : ''
-        if (!dateA && !dateB) return 0
-        if (!dateA) return 1
-        if (!dateB) return -1
-        return dateA.localeCompare(dateB) * dir
+        if (!dateA && !dateB) result = 0
+        else if (!dateA) result = 1
+        else if (!dateB) result = -1
+        else result = dateA.localeCompare(dateB) * dir
+        break
       }
       default:
-        return 0
+        result = 0
     }
+    // 兜底：主排序字段相同时，按文件名升序排序保证稳定性
+    return result !== 0 ? result : naturalSort(a.name, b.name)
   }
 
-  // 分别对失败文件和正常文件应用排序
+  // 分别对各分区应用排序
   failedFiles.sort(sortFn)
+  
+  // 重复组：先按组索引升序排列组，组内按用户选定字段排序
+  const sortedDuplicateGroups = []
+  const sortedGroupIndices = [...duplicateGroups.keys()].sort((a, b) => a - b)
+  for (const groupIndex of sortedGroupIndices) {
+    const groupFiles = duplicateGroups.get(groupIndex)
+    groupFiles.sort(sortFn)
+    sortedDuplicateGroups.push(...groupFiles)
+  }
+  
   normalFiles.sort(sortFn)
 
-  // 合并：失败文件在前，正常文件在后
-  return [...failedFiles, ...normalFiles]
+  // 合并：失败文件在前，然后是重复组，最后是非重复文件
+  return [...failedFiles, ...sortedDuplicateGroups, ...normalFiles]
 }
 
 // ============================

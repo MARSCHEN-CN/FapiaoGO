@@ -13,6 +13,7 @@ const PrintConfirmModal = lazy(() => import('./components/PrintConfirmModal'))
 const ImportProgressModal = lazy(() => import('./components/ImportProgressModal'))
 const ExportProgressModal = lazy(() => import('./components/ExportProgressModal'))
 const PdfExportConfirmModal = lazy(() => import('./components/PdfExportConfirmModal'))
+const TaskProgressModal = lazy(() => import('./components/TaskProgressModal'))
 const CalculatorWindow = lazy(() => import('./components/CalculatorWindow'))
 
 import { PREVIEW_DPI, SUPPORTED_EXTENSIONS, ZOOM_STEPS, PUBLIC_BASE } from './config'
@@ -77,7 +78,7 @@ function AppContent() {
 
   const {
     sortBy, sortOrder, toggleSort, sortByRef, sortOrderRef,
-  } = useSort(setFiles)
+  } = useSort(setFiles, files)
 
   const preview = usePreview({ files, settings, electronAPIRef })
   // ✅ 从正确的分组中解构属性
@@ -321,6 +322,9 @@ function AppContent() {
     closeExportAlert, setExporting, setExportResult, setExportProgress,
     handleExportExcel,
     handleExportPdf,
+    pdfExportTask,
+    cancelPdfExport,
+    closePdfExportTask,
   } = useExport({ files, electronAPIRef })
 
   const handleSelectAll = useCallback(() => {
@@ -649,13 +653,29 @@ function AppContent() {
             </div>
 
             <div className="canvas-orient-control">
-              <span className="oco-label">纸张方向</span>
               <div className="oco-segment">
-                <button className={`oco-btn ${autoActive ? 'active' : ''}`} onClick={() => handlePaperOrientationChange('auto')}>自动</button>
-                <button className={`oco-btn ${paperOrientation === 'landscape' ? 'active' : ''}`} onClick={() => handlePaperOrientationChange('landscape')}>横向</button>
-                <button className={`oco-btn ${paperOrientation === 'portrait' ? 'active' : ''}`} onClick={() => handlePaperOrientationChange('portrait')}>纵向</button>
+                <button className={`oco-btn ${autoActive ? 'active' : ''}`} onClick={() => handlePaperOrientationChange('auto')} title="自动方向">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="12" cy="12" r="3"/>
+                    <path d="M12 2v3m0 14v3M2 12h3m14 0h3M5 5l2 2m10 10l2 2M5 19l2-2m10-10l2-2"/>
+                  </svg>
+                  自动
+                </button>
+                <button className={`oco-btn ${paperOrientation === 'landscape' ? 'active' : ''}`} onClick={() => handlePaperOrientationChange('landscape')} title="横向">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="3" y="7" width="18" height="10" rx="1.5"/>
+                  </svg>
+                  横向
+                </button>
+                <button className={`oco-btn ${paperOrientation === 'portrait' ? 'active' : ''}`} onClick={() => handlePaperOrientationChange('portrait')} title="纵向">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="6.5" y="3" width="11" height="18" rx="1.5"/>
+                  </svg>
+                  纵向
+                </button>
               </div>
-              <button className="tb-btn oco-rotate" onClick={() => handleRotate()} title={`旋转 (${previewRotation}°)`}>
+              <div className="oco-divider" />
+              <button className="oco-rotate" onClick={() => handleRotate()} title={`旋转 (${previewRotation}°)`}>
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M21 12a9 9 0 11-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/>
                   <path d="M21 3v5h-5"/>
@@ -862,10 +882,22 @@ function AppContent() {
           files={files.filter(f => f.status === 'parsed')}
           onConfirm={(config) => {
             setShowPdfExport(false)
-            console.log('[PDF Export] ready to export:', config)
-            // Phase 3: 这里接 handleExportPdf → SSE /api/export-pdf
+            handleExportPdf(config)
           }}
           onCancel={() => setShowPdfExport(false)}
+        />
+        <TaskProgressModal
+          visible={!!pdfExportTask}
+          title="正在导出PDF"
+          current={pdfExportTask?.current ?? 0}
+          total={pdfExportTask?.total ?? 0}
+          percent={pdfExportTask?.percent}
+          currentFile={pdfExportTask?.currentFile ?? ''}
+          stage={pdfExportTask?.stage ?? ''}
+          status={pdfExportTask?.status}
+          errors={pdfExportTask?.errors ?? []}
+          onCancel={cancelPdfExport}
+          onClose={closePdfExportTask}
         />
       </Suspense>
 
