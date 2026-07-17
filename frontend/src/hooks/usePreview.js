@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
+import { useState, useCallback, useEffect, useRef, useMemo, useLayoutEffect } from 'react'
 import { PREVIEW_DPI, GLOBAL_PREVIEW_DPI, ZOOM_STEPS, USE_RENDER_ENGINE_PREVIEW, buildPreviewUrl, BACKEND_URL } from '../config'
 import {
   b64toBlob, getFileFormat, getExtension, isMergeMode, getMergePair,
@@ -12,6 +12,12 @@ import { buildRenderCommand } from '../layout/RenderLayoutFactory.js'
 import { buildRenderSpec, RENDER_SPEC_VERSION, renderSpecSignature } from '../layout/renderSpec.js'
 import { resolvePaper, paperKeyFragment } from '../layout/resolvePaper.js'
 import { computeInitialDocFacts } from '../layout/docFacts.js'
+import { nextZoomStep } from './zoomStep.mjs'
+
+// ── 滚轮缩放常量（Ctrl/⌘ + wheel，跟随光标锚点）── V16.1 UX 增强 ──
+// 累加 deltaY 跨过阈值才走一步 + 冷却，避免 trackpad 的 ctrl+pinch 发大量小 delta 时狂飙。
+const WHEEL_STEP_MS = 60
+const WHEEL_THRESHOLD = 30
 
 // ✅ 懒加载 PDF 渲染模块，避免首屏加载 1.4 MB 的 pdfjs-dist + react-pdf
 let _renderers = null
@@ -83,6 +89,12 @@ export function usePreview({ files, settings, electronAPIRef }) {
   const isRenderingRef = useRef(false)
   const zoomModeRef = useRef('adaptive')
   const fitScaleRef = useRef(1)
+  // ── 滚轮缩放（Ctrl/⌘ + wheel，跟随光标锚点）── V16.1 UX 增强：只改 ViewportTransform，不碰 RenderLayout ──
+  const wheelAccumRef = useRef(0)                       // deltaY 累加器（trackpad 防抖）
+  const wheelCooldownRef = useRef(0)                    // 步进冷却时间戳
+  const wheelAnchorRef = useRef(null)                   // { contentX, contentY, cx, cy, oldScale } 缩放前光标下的内容坐标 + 实际视口 scale
+  const userViewportLockRef = useRef(false)             // 用户是否主动接管 viewport（滚轮缩放后为真；文件切换/适应窗口时释放）
+  const paperScaleRef = useRef(1)                       // 镜像 computedContentLayout.paperDisplayScale，供 wheel handler 读当前视口 scale
   const zoomDropdownRef = useRef(null)
   const pendingBlobUrlsRef = useRef([])
   const lastFilesKeyRef = useRef('')
@@ -406,28 +418,67 @@ export function usePreview({ files, settings, electronAPIRef }) {
 
   const zoomIn = useCallback(() => {
     setZoomMode('manual')
-    setZoomPercent(prev => {
-      if (zoomModeRef.current === 'adaptive') {
-        // 新语义：100% = fit（与 adaptive 一致），故 adaptive→manual 锚点固定为 100，而非 fitScale*100
-        return ZOOM_STEPS.find(s => s > 100) || ZOOM_STEPS[ZOOM_STEPS.length - 1]
-      }
-      return ZOOM_STEPS.find(s => s > prev) || ZOOM_STEPS[ZOOM_STEPS.length - 1]
-    })
+    // 档位推进统一走 nextZoomStep（adaptive 锚点视为 100 = fit）
+    setZoomPercent(prev => nextZoomStep(zoomModeRef.current === 'adaptive' ? 100 : prev, 'in', ZOOM_STEPS))
   }, [])
 
   const zoomOut = useCallback(() => {
     setZoomMode('manual')
-    setZoomPercent(prev => {
-      if (zoomModeRef.current === 'adaptive') {
-        // 同上：锚点为 100（fit），先取第一个小于 100 的步进（如 75%）
-        return [...ZOOM_STEPS].reverse().find(s => s < 100) || ZOOM_STEPS[0]
-      }
-      return [...ZOOM_STEPS].reverse().find(s => s < prev) || ZOOM_STEPS[0]
-    })
+    setZoomPercent(prev => nextZoomStep(zoomModeRef.current === 'adaptive' ? 100 : prev, 'out', ZOOM_STEPS))
   }, [])
 
-  const setAdaptive = useCallback(() => { setZoomMode('adaptive') }, [])
+  const setAdaptive = useCallback(() => {
+    setZoomMode('adaptive')
+    userViewportLockRef.current = false   // 🆕 适应窗口 = 释放 viewport 接管，恢复框架自动居中
+  }, [])
   const setManualScale = useCallback((pct) => { setZoomMode('manual'); setZoomPercent(pct) }, [])
+
+  // ── 滚轮缩放（Ctrl/⌘ + wheel，跟随光标锚点）── V16.1 UX 增强 ──
+  // 只改 ViewportTransform.zoom（paperScale），不碰 RenderLayout / RenderSpec / Export / Print。
+  // 关键点（架构评审定稿）：锚点记录「实际视口 scale」而非 zoomPercent，语义对齐 V16。
+  const handleWheelZoom = useCallback((e) => {
+    // 仅 Ctrl/⌘ + wheel 触发缩放；普通 wheel 保留滚动平移
+    if (!(e.ctrlKey || e.metaKey)) return
+    // 排除控件区（与现有 click-outside 同口径）
+    if (e.target.closest?.('.canvas-zoom-control, .status-indicator, .canvas-arrow')) return
+    // 阻止 Electron/Chromium 把 Ctrl+wheel 当成整页缩放
+    e.preventDefault()
+
+    // 累加 deltaY + 冷却 + 阈值，避免 trackpad 过度灵敏
+    const now = performance.now()
+    wheelAccumRef.current += e.deltaY
+    if (now - wheelCooldownRef.current < WHEEL_STEP_MS) return
+    if (Math.abs(wheelAccumRef.current) < WHEEL_THRESHOLD) return
+
+    const dir = wheelAccumRef.current < 0 ? 'in' : 'out'
+    wheelAccumRef.current = 0
+    wheelCooldownRef.current = now
+
+    // 先算目标档位；已到夹取边界则清空锚点直接返回（避免残留锚点误补偿后续布局变化）
+    const cur = zoomModeRef.current === 'adaptive' ? 100 : zoomPercent
+    if (nextZoomStep(cur, dir, ZOOM_STEPS) === cur) {
+      wheelAnchorRef.current = null
+      return
+    }
+
+    // 记录光标下的内容坐标 + 当前「实际视口 scale」（变的是 ViewportTransform，不是 zoomPercent）
+    const el = previewContainerRef.current
+    let anchor = null
+    if (el) {
+      const r = el.getBoundingClientRect()
+      const cx = e.clientX - r.left
+      const cy = e.clientY - r.top
+      anchor = {
+        contentX: el.scrollLeft + cx,
+        contentY: el.scrollTop + cy,
+        cx, cy,
+        oldScale: paperScaleRef.current,
+      }
+    }
+    wheelAnchorRef.current = anchor
+    userViewportLockRef.current = true   // 用户主动接管 viewport
+    if (dir === 'in') zoomIn(); else zoomOut()
+  }, [zoomIn, zoomOut, zoomPercent])
 
   // 当前预览文件的旋转值（用于优化依赖）
   const currentRotation = fileRotations[previewFile?.key] || 0
@@ -917,6 +968,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
   useEffect(() => {
     if (computedContentLayout?.ready) {
       fitScaleRef.current = computedContentLayout.fitScale
+      paperScaleRef.current = computedContentLayout.paperDisplayScale   // 🆕 供 wheel handler 读当前视口 scale
     }
   }, [computedContentLayout])
 
@@ -924,12 +976,38 @@ export function usePreview({ files, settings, electronAPIRef }) {
   useEffect(() => {
     const el = previewContainerRef.current
     if (!el || !computedContentLayout?.paperDisplayRect || !previewCanvas) return
+    // 🆕 用户已接管 viewport（滚轮缩放）时不抢滚动位置；文件切换/适应窗口会释放锁
+    if (userViewportLockRef.current) return
     // 用 rAF 确保 DOM 已完成布局
     requestAnimationFrame(() => {
       el.scrollLeft = Math.max(0, (el.scrollWidth - el.clientWidth) / 2)
       el.scrollTop = Math.max(0, (el.scrollHeight - el.clientHeight) / 2)
     })
   }, [previewCanvas, computedContentLayout, previewContainerRef])
+
+  // ── 滚轮缩放监听（Ctrl/⌘ + wheel；非 passive 以便 preventDefault 阻止整页缩放）──
+  useEffect(() => {
+    const el = previewContainerRef.current
+    if (!el) return
+    el.addEventListener('wheel', handleWheelZoom, { passive: false })
+    return () => el.removeEventListener('wheel', handleWheelZoom)
+  }, [handleWheelZoom])
+
+  // ── 滚轮缩放：跟随光标锚点补偿（DOM 更新后、绘制前）──
+  // newScale 来自更新后的 computedContentLayout.paperDisplayScale（即 ViewportTransform），
+  // 与 oldScale 之比即内容缩放比，保持光标下内容点稳定。
+  useLayoutEffect(() => {
+    const a = wheelAnchorRef.current
+    if (!a) return
+    wheelAnchorRef.current = null
+    const el = previewContainerRef.current
+    if (!el) return
+    const newScale = computedContentLayout?.paperDisplayScale || 1
+    if (newScale === a.oldScale) return   // 夹取边界双保险（handler 已拦截）
+    const ratio = newScale / a.oldScale
+    el.scrollLeft = a.contentX * ratio - a.cx   // 浏览器自动 clamp 到 [0, max]
+    el.scrollTop = a.contentY * ratio - a.cy
+  }, [computedContentLayout])
 
   // ── 手型拖拽平移（Hand Tool）──
   // 点击按住可拖拽画布，类似图片浏览软件
@@ -1121,7 +1199,12 @@ export function usePreview({ files, settings, electronAPIRef }) {
             const fd = await electronAPIRef.current.ipcRenderer.invoke('read-file', fObj.printPath)
             if (signal?.aborted) return fObj
             if (fd.success) {
-              buffer = await fd.data.arrayBuffer()
+              // fd.data 是 Node Buffer/Uint8Array（Electron IPC 自动序列化）。
+              // 不能直接用 fd.data.buffer 拿底层 ArrayBuffer（Node 内部可能共用大块内存池，
+              // 返回的 ArrayBuffer 远超实际数据，含垃圾字节 → PDF 尺寸解析错误 → 方向检测失败）。
+              // 先复制到新 Uint8Array，再取 .buffer 得到精确尺寸的 ArrayBuffer。
+              const clean = new Uint8Array(fd.data)
+              buffer = clean.buffer
             }
           }
           if (buffer) {
@@ -1198,6 +1281,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
     const previewToken = `PRV-${Date.now()}-${version}`
     flowTokenRef.current = previewToken
     console.log(`[PREVIEW FLOW ${previewToken}] START | source=${source} | file=${fileObj.key?.slice(0,20)} | version=${version}`)
+    userViewportLockRef.current = false   // 🆕 新文档加载 = 释放 viewport 接管，恢复框架自动居中
 
     // ✅ 保存旧的 blob URL，在新预览加载完成后再清理
     const oldBlobUrls = [...pendingBlobUrlsRef.current]
@@ -1565,7 +1649,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
         setTimeout(() => {
           cleanupAllBlobUrls()
         }, 0)
-        handlePreview(files[0])
+        handlePreviewRef.current(files[0])
       } else {
         previewFileRef.current = null
         setPreviewFile(null)
@@ -1581,7 +1665,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
     if (filesChanged && isMergeMode(settings.mergeMode)) {
       handlePreviewRef.current?.(previewFile)
     }
-  }, [filesKeyStr, filesKeySet, previewFile, files, handlePreview, cleanupAllBlobUrls])
+  }, [filesKeyStr, filesKeySet, previewFile, files, cleanupAllBlobUrls])
 
   // ── docId 异步就绪 → 重预览（修复「自动预览 vs 点击同文件」视觉不一致）──
   // 根因：自动预览在 files.length 增加时触发，此时预览文件还是解析中占位（docId=null），
