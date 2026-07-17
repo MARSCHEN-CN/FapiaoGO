@@ -13,7 +13,8 @@ extracted/
 node_modules/
 scripts/
 test_fixtures/
-tests/
+**/tests/*
+!backend/tests/test_task_lifecycle.py
 mimo.exe
 
 # 前端依赖与构建产物
@@ -498,3 +499,4 @@ release3
 preview-revert-scan-2026-07-17.md
 progress-demo/canvas-orient-control-demo.html
 backend/2f8f0fd469d2482a8dc9c67e24e9db53_export_260717.pdf
+stats-redesign-demo/pages/duplicate-stats-variants.html
