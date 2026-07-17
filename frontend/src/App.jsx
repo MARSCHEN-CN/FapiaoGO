@@ -244,7 +244,7 @@ function AppContent() {
     clearAllPreviewCache()
   }, [cleanupPreviewUrl, clearPrintState, clearAllPreviewCache])
 
-  const removeFailedFiles = useCallback(() => {
+  const removeFailedFiles = useCallback((/* removeSource */) => {
     setFiles(prev => {
       const filtered = prev.filter(fileObj =>
         !fileObj.failedFields?.length &&
@@ -253,6 +253,7 @@ function AppContent() {
       )
       // ✅ 移除 updater 内副作用 — usePreview 的 auto-nav useEffect 会在
       // previewFile 被移除时自动处理导航和清理
+      // TODO: removeSource=true 时物理删除源文件（待 IPC 支持）
       return filtered
     })
   }, [])

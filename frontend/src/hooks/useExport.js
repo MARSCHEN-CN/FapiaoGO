@@ -331,6 +331,10 @@ export function useExport({ files, electronAPIRef }) {
         return {
           ...prev,
           status: msg.status,
+          current: msg.current ?? prev.current,
+          total: msg.total ?? prev.total,
+          percent: msg.percent ?? prev.percent,
+          currentFile: msg.currentFile ?? prev.currentFile,
           successCount: msg.successCount ?? prev.successCount,
           failCount: msg.failCount ?? prev.failCount,
           errors: msg.errors ?? prev.errors,

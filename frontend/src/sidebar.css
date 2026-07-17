@@ -678,20 +678,21 @@
 
 .fc-failed { color: #ef4444 !important; font-size: 11px; opacity: 0.85; }
 
-/* -- Sidebar stats — 渐变卡片式（方案4） -- */
+/* -- Sidebar stats — 渐变卡片 · 分段控件式（方案5） -- */
 .sb-stats {
   flex-shrink: 0;
   margin: 10px 14px 14px;
-  padding: 14px;
+  padding: 12px 12px 10px;
   display: flex;
-  align-items: center;
-  gap: 0;
+  flex-direction: column;
+  gap: 8px;
   background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 4%, var(--white)) 0%, color-mix(in srgb, var(--accent) 7%, var(--white)) 100%);
   border-radius: var(--r-xl);
   border: 1px solid color-mix(in srgb, var(--accent) 12%, transparent);
   box-shadow: 0 1px 3px color-mix(in srgb, var(--accent) 6%, transparent);
 }
 
+/* 正常状态：两栏统计（文件数 + 总金额） */
 .sb-stat {
   flex: 1;
   display: flex;
@@ -699,11 +700,16 @@
   align-items: center;
   justify-content: center;
   gap: 4px;
-  padding: 4px 8px;
+  padding: 2px 4px;
   position: relative;
 }
-
-.sb-stat + .sb-stat::before {
+.sb-stats:not(:has(.sb-stat-summary)) {
+  flex-direction: row;
+  align-items: center;
+  gap: 0;
+  padding: 14px;
+}
+.sb-stats:not(:has(.sb-stat-summary)) .sb-stat + .sb-stat::before {
   content: '';
   position: absolute;
   left: 0;
@@ -722,22 +728,15 @@
   justify-content: center;
   margin-bottom: 2px;
 }
-
 .sb-stat-icon svg { width: 14px; height: 14px; }
 .sb-stat-icon.blue { background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); }
 .sb-stat-icon.blue svg { fill: var(--accent); stroke: none; }
 .sb-stat-icon.green { background: var(--green-soft); color: var(--green); }
 .sb-stat-icon.green svg { fill: var(--green); stroke: none; }
-.sb-stat-icon.purple { background: var(--purple-soft); color: var(--purple); }
-.sb-stat-icon.purple svg { fill: var(--purple); stroke: none; }
-.sb-stat-icon.red { background: var(--danger-bg); color: var(--danger); }
-.sb-stat-icon.red svg { fill: var(--danger); stroke: none; }
-.sb-stat-icon.orange { background: var(--orange-soft); color: var(--orange); }
-.sb-stat-icon.orange svg { fill: var(--orange); stroke: none; }
 
 .sb-stat-val {
   font-family: 'MiSans', 'NotoSansSymbols', 'NotoSansSymbols2', 'PingFang SC', 'Microsoft YaHei', -apple-system, BlinkMacSystemFont, sans-serif;
-  font-size: clamp(18px, 1.1vw, 24px);
+  font-size: clamp(18px, 1.1vw, 22px);
   font-weight: 800;
   color: var(--text);
   display: block;
@@ -745,11 +744,8 @@
   letter-spacing: -0.03em;
   font-variant-numeric: tabular-nums;
 }
-
 .sb-stat-val.pop { animation: countPop 0.4s var(--ease-spring) both; }
 .sb-stat-val.brand { color: var(--accent); }
-.sb-stat-val.error { color: var(--danger); font-weight: 800; }
-.sb-stat-val.orange { color: var(--orange); font-weight: 800; }
 
 .sb-stat-label {
   font-size: 10px;
@@ -758,182 +754,152 @@
   font-weight: 600;
   letter-spacing: 0.02em;
   opacity: 0.75;
+  white-space: nowrap;
 }
 
-/* -- 失败文件数量显示（旧类名兼容） -- */
-.sb-stat-btn-remove-failed {
+/* ── 摘要文字行（有失败/重复时显示） ── */
+.sb-stat-summary {
+  font-size: 11px;
+  color: var(--text-2);
+  text-align: center;
+  font-weight: 500;
+  line-height: 1.4;
+  padding: 2px 4px 0;
+  white-space: nowrap;
+}
+.sb-stat-summary b {
+  font-weight: 700;
+  color: var(--text);
+}
+.sb-stat-summary-warn {
+  color: var(--orange);
+  font-weight: 700;
+}
+.sb-stat-summary-error {
+  color: var(--danger);
+  font-weight: 700;
+}
+
+/* ── 分段控件（iOS UISegmentedControl 风格） ── */
+.sb-seg-control {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 8px 12px;
-  border: none;
+  background: var(--white);
   border-radius: var(--r-md);
-  background: var(--danger-bg);
-  color: var(--danger);
+  padding: 3px;
+  gap: 3px;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.06);
+  position: relative;
+  min-height: 34px;
+}
+
+/* 主操作按钮 */
+.sb-seg-btn {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 14px;
+  border: none;
+  border-radius: var(--r-sm);
   font-size: 12px;
   font-weight: 600;
-  cursor: pointer;
-  transition: all var(--t-fast) var(--ease);
   font-family: inherit;
-}
-
-.sb-stat-btn-remove-failed:hover {
-  background: color-mix(in srgb, var(--danger) 15%, transparent);
-  transform: translateY(-1px);
-}
-
-.sb-stat-btn-remove-failed svg {
-  width: 14px; height: 14px;
-  fill: var(--danger); stroke: none;
-}
-
-/* -- 侧边栏移除失败文件区域 -- */
-.sb-stat.sb-stat-remove-failed {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-  padding: 6px 4px;
   cursor: pointer;
-  border-radius: var(--r-lg);
-  transition: all var(--t-fast) var(--ease);
+  transition: all 0.2s var(--ease);
+  white-space: nowrap;
+  color: #fff;
 }
-
-.sb-stat.sb-stat-remove-failed:hover {
-  background: color-mix(in srgb, var(--danger) 6%, transparent);
+.sb-seg-btn svg {
+  width: 13px;
+  height: 13px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  flex-shrink: 0;
+}
+.sb-seg-btn.sb-seg-btn-primary {
+  background: linear-gradient(135deg, #f59e0b 0%, #ea580c 100%);
+  box-shadow: 0 2px 6px rgba(245, 158, 11, 0.30);
+}
+.sb-seg-btn.sb-seg-btn-primary:hover {
   transform: translateY(-1px);
+  box-shadow: 0 3px 10px rgba(245, 158, 11, 0.40);
+}
+.sb-seg-btn.sb-seg-btn-primary:active {
+  transform: translateY(0);
+}
+.sb-seg-btn.sb-seg-btn-danger {
+  background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+  box-shadow: 0 2px 6px rgba(239, 68, 68, 0.30);
+}
+.sb-seg-btn.sb-seg-btn-danger:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 3px 10px rgba(239, 68, 68, 0.40);
+}
+.sb-seg-btn.sb-seg-btn-danger:active {
+  transform: translateY(0);
 }
 
-.sb-stat-failed-btn {
-  display: flex;
+/* 选项段（toggle + 标签） */
+.sb-seg-option {
+  display: inline-flex;
   align-items: center;
-  justify-content: center;
-  width: 28px;
+  gap: 6px;
+  padding: 0 10px;
   height: 28px;
-  border: none;
-  border-radius: var(--r-md);
-  background: color-mix(in srgb, var(--danger) 10%, transparent);
-  color: var(--danger);
   cursor: pointer;
-  transition: all var(--t-fast) var(--ease);
-  margin: 0;
-}
-
-.sb-stat-failed-btn:hover {
-  background: color-mix(in srgb, var(--danger) 18%, transparent);
-  box-shadow: 0 2px 8px color-mix(in srgb, var(--danger) 20%, transparent);
-  transform: translateY(-1px);
-}
-
-.sb-stat-failed-btn svg {
-  width: 14px;
-  height: 14px;
-  fill: var(--danger);
-  stroke: none;
-}
-
-.sb-stat-failed-label {
-  font-size: 10px;
-  color: var(--danger);
-  font-weight: 600;
+  user-select: none;
+  border-radius: var(--r-sm);
+  transition: background 0.15s var(--ease);
   white-space: nowrap;
+  flex-shrink: 0;
 }
-
-/* -- 侧边栏移除重复文件区域 -- */
-.sb-stat.sb-stat-remove-duplicate {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 3px;
-  padding: 4px 2px;
-  cursor: pointer;
-  border-radius: var(--r-lg);
-  transition: all var(--t-fast) var(--ease);
+.sb-seg-option:hover {
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
 }
-
-.sb-stat.sb-stat-remove-duplicate:hover {
-  background: color-mix(in srgb, var(--orange) 6%, transparent);
-  transform: translateY(-1px);
+.sb-seg-option input {
+  display: none;
 }
-
-.sb-stat-duplicate-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
+.sb-seg-toggle-track {
+  position: relative;
   width: 28px;
-  height: 28px;
-  border: none;
-  border-radius: var(--r-md);
-  background: var(--orange-soft);
-  color: var(--orange);
-  cursor: pointer;
-  transition: all var(--t-fast) var(--ease);
-  margin: 0;
-}
-
-.sb-stat-duplicate-btn:hover {
-  background: color-mix(in srgb, var(--orange) 18%, transparent);
-  box-shadow: 0 2px 8px color-mix(in srgb, var(--orange) 20%, transparent);
-  transform: translateY(-1px);
-}
-
-.sb-stat-duplicate-btn svg {
-  width: 14px;
-  height: 14px;
-  fill: var(--orange);
-  stroke: none;
-}
-
-.sb-stat-duplicate-count {
-  font-family: 'MiSans', 'NotoSansSymbols', 'NotoSansSymbols2', 'PingFang SC', 'Microsoft YaHei', -apple-system, BlinkMacSystemFont, sans-serif;
-  font-size: clamp(18px, 1.1vw, 24px);
-  font-weight: 800;
-  color: var(--orange);
-  display: block;
-  line-height: 1;
-  letter-spacing: -0.03em;
-  font-variant-numeric: tabular-nums;
-}
-
-.sb-stat-duplicate-label {
-  font-size: 10px;
-  color: var(--orange);
-  font-weight: 600;
-  white-space: nowrap;
-  line-height: 1;
-}
-
-.sb-stat-duplicate-switch {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  margin-top: 1px;
-}
-
-.sb-stat-duplicate-switch-label {
-  font-size: 9px;
-  color: var(--text-3);
-  font-weight: 500;
-  white-space: nowrap;
-  line-height: 1;
-}
-
-/* 迷你开关：适配 stat 卡片紧凑空间 */
-.sb-stat-mini-switch {
-  width: 28px !important;
-  height: 16px !important;
-}
-.sb-stat-mini-switch .toggle-track {
+  height: 16px;
   border-radius: 8px;
+  background: #d2d2d7;
+  flex-shrink: 0;
+  transition: background 0.2s var(--ease);
 }
-.sb-stat-mini-switch .toggle-thumb {
-  width: 12px;
-  height: 12px;
+.sb-seg-toggle-thumb {
+  position: absolute;
   top: 2px;
   left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+  transition: transform 0.2s var(--ease);
 }
-.sb-stat-mini-switch input:checked ~ .toggle-thumb {
+.sb-seg-option input:checked + .sb-seg-toggle-track {
+  background: var(--orange);
+}
+/* 失败场景：toggle 选中态为红色 */
+.sb-seg-control:has(.sb-seg-btn-danger) .sb-seg-option input:checked + .sb-seg-toggle-track {
+  background: var(--danger);
+}
+.sb-seg-option input:checked + .sb-seg-toggle-track .sb-seg-toggle-thumb {
   transform: translateX(12px);
+}
+.sb-seg-option-label {
+  font-size: 11px;
+  color: var(--text-3);
+  font-weight: 500;
+  line-height: 1;
 }
 
 /* -- Dropzone area -- */
@@ -1334,34 +1300,37 @@
   background: rgba(108, 138, 255, 0.12);
 }
 
-[data-theme="dark"] .sb-stat.sb-stat-remove-failed:hover {
-  background: rgba(248, 113, 113, 0.08);
+/* dark: 分段控件 */
+[data-theme="dark"] .sb-seg-control {
+  background: rgba(0, 0, 0, 0.25);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.3);
 }
-
-[data-theme="dark"] .sb-stat-failed-btn {
-  background: rgba(248, 113, 113, 0.10);
+[data-theme="dark"] .sb-seg-option:hover {
+  background: rgba(255, 255, 255, 0.06);
 }
-
-[data-theme="dark"] .sb-stat-failed-btn:hover {
-  background: rgba(248, 113, 113, 0.18);
-  box-shadow: 0 2px 8px rgba(248, 113, 113, 0.15);
+[data-theme="dark"] .sb-seg-toggle-track {
+  background: rgba(255, 255, 255, 0.2);
 }
-
-[data-theme="dark"] .sb-stat.sb-stat-remove-duplicate:hover {
-  background: rgba(251, 146, 60, 0.08);
+[data-theme="dark"] .sb-seg-toggle-thumb {
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
 }
-
-[data-theme="dark"] .sb-stat-duplicate-btn {
-  background: rgba(251, 146, 60, 0.10);
+[data-theme="dark"] .sb-seg-btn.sb-seg-btn-primary {
+  background: linear-gradient(135deg, #fb923c 0%, #ea580c 100%);
+  box-shadow: 0 2px 8px rgba(251, 146, 60, 0.30);
 }
-
-[data-theme="dark"] .sb-stat-duplicate-btn:hover {
-  background: rgba(251, 146, 60, 0.18);
-  box-shadow: 0 2px 8px rgba(251, 146, 60, 0.15);
+[data-theme="dark"] .sb-seg-btn.sb-seg-btn-danger {
+  background: linear-gradient(135deg, #f87171 0%, #ef4444 100%);
+  box-shadow: 0 2px 8px rgba(248, 113, 113, 0.30);
 }
-
-[data-theme="dark"] .sb-stat-btn-remove-failed:hover {
-  background: rgba(248, 113, 113, 0.15);
+[data-theme="dark"] .sb-seg-control:has(.sb-seg-btn-danger) .sb-seg-option input:checked + .sb-seg-toggle-track {
+  background: var(--danger);
+}
+[data-theme="dark"] .sb-seg-option-label {
+  color: var(--text-3);
+}
+[data-theme="dark"] .sb-stat-summary b {
+  color: var(--text);
 }
 
 /* -- dark: 分裂按钮 -- */
