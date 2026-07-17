@@ -95,8 +95,27 @@ class ExportTask:
         self._notify()
 
     def complete(self):
-        """标记任务完成（无错误或含错误均视为完成）。"""
+        """标记任务完成（无错误或含错误均视为完成）。
+
+        已处于终态（cancelled / failed）时不覆盖，
+        保证取消/失败后生命周期闭合、不被误报为完成。
+        """
+        if self.status in (TaskStatus.CANCELLED, TaskStatus.FAILED):
+            return
         self.status = TaskStatus.COMPLETED
+        self.updated_at = time.time()
+        self._notify()
+
+    def fail(self, error: str):
+        """标记任务失败（编排层不可恢复错误，如 resolver 抛错）。
+
+        已取消时不覆盖（取消优先）；否则 status → FAILED 并记录任务级错误。
+        SSE 消费者据此判定终态并停止推送。
+        """
+        if self.status == TaskStatus.CANCELLED:
+            return
+        self.status = TaskStatus.FAILED
+        self.errors.append(TaskError(file='', error=error))
         self.updated_at = time.time()
         self._notify()
 
@@ -131,6 +150,8 @@ class ExportTask:
             stage = '导出完成'
         elif self.status == TaskStatus.CANCELLED:
             stage = '已取消'
+        elif self.status == TaskStatus.FAILED:
+            stage = '导出失败'
 
         d = {
             'taskId': self.id,
