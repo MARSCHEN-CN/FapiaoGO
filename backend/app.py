@@ -1236,8 +1236,54 @@ _export_pdf_service = PdfExportService()
 _export_pdf_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix='pdf-export')
 
 
+def _build_export_items(files, mode, merge_output):
+    """将请求中的 files 列表转为 ExportItem 列表，同时做参数校验。"""
+    items = []
+    for f in files:
+        filename = f.get('name', '')
+
+        # 合并模式：不要求每文件 outputPath
+        output_path = f.get('outputPath', '')
+        if mode != 'merge' and not output_path:
+            return None, f"缺少 outputPath: {filename}"
+
+        # 优先读取本地文件路径
+        file_path = f.get('path', '')
+        if file_path and os.path.isfile(file_path):
+            with open(file_path, 'rb') as fh:
+                source = fh.read()
+        elif f.get('data'):
+            source = base64.b64decode(f['data'])
+        else:
+            return None, f"缺少 source: {filename}"
+
+        items.append(ExportItem(
+            source=source,
+            output_path=output_path or merge_output,
+            filename=filename,
+        ))
+    return items, None
+
+
+def _run_export_task(task_id, items, mode, merge_output):
+    """后台执行导出任务（不阻塞请求线程）。"""
+    task = task_registry.get(task_id)
+    if task is None:
+        logger.error("[PDF Export] task %s not found on execution start", task_id[:8])
+        return
+
+    try:
+        if mode == 'merge':
+            _export_pdf_service.merge_files(items, merge_output, task=task)
+        else:
+            _export_pdf_service.export_files(items, task=task)
+    except Exception:
+        logger.exception("[PDF Export] 后台导出异常 task=%s", task_id[:8])
+
+
 @app.route('/api/export-pdf', methods=['POST'])
 def api_export_pdf():
+    """创建导出任务，返回 taskId。任务在后台执行，不阻塞请求。"""
     data = request.get_json(silent=True) or {}
     files = data.get('files', [])
     mode = data.get('mode', 'single')
@@ -1249,69 +1295,39 @@ def api_export_pdf():
     if mode == 'merge' and not merge_output:
         return jsonify({"success": False, "error": "合并模式缺少 outputPath"}), 400
 
-    # ── 构建 ExportItem 列表 ──
-    items = []
-    for f in files:
-        filename = f.get('name', '')
+    items, err = _build_export_items(files, mode, merge_output)
+    if err:
+        return jsonify({"success": False, "error": err}), 400
 
-        # 合并模式：不要求每文件 outputPath
-        output_path = f.get('outputPath', '')
-        if mode != 'merge' and not output_path:
-            return jsonify({"success": False, "error": f"缺少 outputPath: {filename}"}), 400
+    # 创建任务（无 progress_queue，任务状态由 ExportTask 本身承载）
+    task = task_registry.create(total=len(items))
 
-        # 优先读取本地文件路径
-        file_path = f.get('path', '')
-        if file_path and os.path.isfile(file_path):
-            with open(file_path, 'rb') as fh:
-                source = fh.read()
-        elif f.get('data'):
-            source = base64.b64decode(f['data'])
-        else:
-            return jsonify({"success": False, "error": f"缺少 source: {filename}"}), 400
+    # 后台线程执行
+    _export_pdf_executor.submit(
+        _run_export_task, task.id, items, mode, merge_output
+    )
 
-        items.append(ExportItem(
-            source=source,
-            output_path=output_path or merge_output,
-            filename=filename,
-        ))
+    return jsonify({"success": True, "taskId": task.id})
 
-    # ── 创建任务 ──
-    progress_queue = queue.Queue()
 
-    def on_progress(task):
-        d = task.to_dict()
-        progress_queue.put(d)
+@app.route('/api/export-pdf/events/<task_id>', methods=['GET'])
+def api_export_pdf_events(task_id):
+    """SSE 流式读取任务状态（只读，不参与业务执行）。"""
+    task = task_registry.get(task_id)
+    if task is None:
+        return jsonify({"success": False, "error": "任务不存在"}), 404
 
-    task = task_registry.create(total=len(items), progress_callback=on_progress)
+    import time
 
-    # ── 后台线程执行导出 ──
-    def _run():
-        try:
-            if mode == 'merge':
-                _export_pdf_service.merge_files(items, merge_output, task=task)
-            else:
-                _export_pdf_service.export_files(items, task=task)
-        except Exception as e:
-            logger.exception("[PDF Export] 后台导出异常")
-            task.add_error('', str(e))
-            task.complete()
-        finally:
-            progress_queue.put(None)  # 哨兵信号
-
-    _export_pdf_executor.submit(_run)
-
-    # ── SSE generator：只读 task state，不执行导出 ──
     def generate():
-        yield f"data: {_json.dumps({'status': 'started', 'taskId': task.id}, ensure_ascii=False)}\n\n"
         while True:
-            msg = progress_queue.get()  # 阻塞等待
-            if msg is None:
-                break
-            yield f"data: {_json.dumps(msg, ensure_ascii=False)}\n\n"
+            d = task.to_dict()
+            yield f"data: {_json.dumps(d, ensure_ascii=False)}\n\n"
 
-        # 完成事件
-        final = task.to_dict()
-        yield f"data: {_json.dumps(final, ensure_ascii=False)}\n\n"
+            if d['status'] in ('completed', 'cancelled', 'failed'):
+                break
+
+            time.sleep(0.2)  # 200ms 轮询
 
     return Response(
         stream_with_context(generate()),
@@ -1322,6 +1338,7 @@ def api_export_pdf():
 
 @app.route('/api/export-pdf/cancel', methods=['POST'])
 def api_export_pdf_cancel():
+    """请求取消一个导出任务。"""
     data = request.get_json(silent=True) or {}
     task_id = data.get('taskId', '')
     if not task_id:
@@ -1329,31 +1346,6 @@ def api_export_pdf_cancel():
     if task_registry.cancel(task_id):
         return jsonify({"success": True})
     return jsonify({"success": False, "error": "任务不存在"}), 404
-
-
-@app.route('/api/export-pdf/events/<task_id>', methods=['GET'])
-def api_export_pdf_events(task_id):
-    """SSE 进度流（只读 TaskRegistry，不执行导出、不持有业务状态）。
-
-    与 POST /api/export-pdf 配合：POST 创建任务并在后台运行导出，
-    本端点按 taskId 流式推送进度。状态唯一来源是 ExportTask.to_dict()，
-    本函数不调用 Service / Handler / task.* 状态变更方法。
-    """
-    from services.export_stream import stream_export_progress
-
-    # 未知任务：HTTP 404（不进入 SSE 流），对应契约测试 test_sse_unknown_task
-    if task_registry.get(task_id) is None:
-        return jsonify({"success": False, "error": "任务不存在"}), 404
-
-    def generate():
-        for state in stream_export_progress(task_id, task_registry=task_registry):
-            yield f"data: {_json.dumps(state, ensure_ascii=False)}\n\n"
-
-    return Response(
-        stream_with_context(generate()),
-        mimetype='text/event-stream',
-        headers={'Cache-Control': 'no-cache', 'Connection': 'keep-alive', 'X-Accel-Buffering': 'no'},
-    )
 
 
 if __name__ == '__main__':
