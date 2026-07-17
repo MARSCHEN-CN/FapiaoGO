@@ -674,6 +674,9 @@ function AppContent() {
                       )}
                     </button>
                     <div className="zoom-dropdown-divider"></div>
+                    <div style={{ padding: '6px 12px', fontSize: '12px', color: 'var(--text-muted)', borderBottom: '1px solid var(--border)' }}>
+                      当前：{Math.round(zoomPercent)}%
+                    </div>
                     {ZOOM_STEPS.map(s => (
                       <button
                         key={s}

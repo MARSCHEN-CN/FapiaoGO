@@ -13,11 +13,14 @@ import { buildRenderSpec, RENDER_SPEC_VERSION, renderSpecSignature } from '../la
 import { resolvePaper, paperKeyFragment } from '../layout/resolvePaper.js'
 import { computeInitialDocFacts } from '../layout/docFacts.js'
 import { nextZoomStep } from './zoomStep.mjs'
+import { applyWheelZoom } from './continuousZoom.mjs'
 
-// ── 滚轮缩放常量（Ctrl/⌘ + wheel，跟随光标锚点）── V16.1 UX 增强 ──
-// 累加 deltaY 跨过阈值才走一步 + 冷却，避免 trackpad 的 ctrl+pinch 发大量小 delta 时狂飙。
-const WHEEL_STEP_MS = 60
-const WHEEL_THRESHOLD = 30
+// ── 滚轮缩放常量（Ctrl/⌘ + wheel，跟随光标锚点）── V16.1 平滑增强 ──
+// 连续缩放：deltaY 走指数映射（乘性），rAF 合并高频事件为每帧一次更新；
+// 不再用离散档位 + 冷却/阈值（那套会「跳格 + 迟滞」）。sensitivity 偏小，避免普通鼠标一格冲太猛。
+const WHEEL_SENSITIVITY = 0.0012
+const WHEEL_ZOOM_MIN = 10     // 最小 10%（相对 fit）
+const WHEEL_ZOOM_MAX = 500    // 最大 500%
 
 // ✅ 懒加载 PDF 渲染模块，避免首屏加载 1.4 MB 的 pdfjs-dist + react-pdf
 let _renderers = null
@@ -90,9 +93,11 @@ export function usePreview({ files, settings, electronAPIRef }) {
   const zoomModeRef = useRef('adaptive')
   const fitScaleRef = useRef(1)
   // ── 滚轮缩放（Ctrl/⌘ + wheel，跟随光标锚点）── V16.1 UX 增强：只改 ViewportTransform，不碰 RenderLayout ──
-  const wheelAccumRef = useRef(0)                       // deltaY 累加器（trackpad 防抖）
-  const wheelCooldownRef = useRef(0)                    // 步进冷却时间戳
+  const wheelAccumRef = useRef(0)                       // deltaY 累加器（rAF 帧内合并）
+  const wheelRafRef = useRef(null)                      // 待处理的 rAF 句柄（合并高频 wheel 事件）
+  const wheelCursorRef = useRef(null)                   // { cx, cy } 事件同步捕获的光标（rAF 内事件对象不可靠）
   const wheelAnchorRef = useRef(null)                   // { contentX, contentY, cx, cy, oldScale } 缩放前光标下的内容坐标 + 实际视口 scale
+  const zoomPercentRef = useRef(100)                    // 镜像 zoomPercent，供 rAF 滚轮回调读最新值（避免闭包过期）
   const userViewportLockRef = useRef(false)             // 用户是否主动接管 viewport（滚轮缩放后为真；文件切换/适应窗口时释放）
   const paperScaleRef = useRef(1)                       // 镜像 computedContentLayout.paperDisplayScale，供 wheel handler 读当前视口 scale
   const zoomDropdownRef = useRef(null)
@@ -433,6 +438,9 @@ export function usePreview({ files, settings, electronAPIRef }) {
   }, [])
   const setManualScale = useCallback((pct) => { setZoomMode('manual'); setZoomPercent(pct) }, [])
 
+  // 镜像 zoomPercent 到 ref，供 rAF 滚轮回调读取最新值（避免闭包过期导致连续缩放卡顿）
+  useEffect(() => { zoomPercentRef.current = zoomPercent }, [zoomPercent])
+
   // ── 滚轮缩放（Ctrl/⌘ + wheel，跟随光标锚点）── V16.1 UX 增强 ──
   // 只改 ViewportTransform.zoom（paperScale），不碰 RenderLayout / RenderSpec / Export / Print。
   // 关键点（架构评审定稿）：锚点记录「实际视口 scale」而非 zoomPercent，语义对齐 V16。
@@ -444,41 +452,52 @@ export function usePreview({ files, settings, electronAPIRef }) {
     // 阻止 Electron/Chromium 把 Ctrl+wheel 当成整页缩放
     e.preventDefault()
 
-    // 累加 deltaY + 冷却 + 阈值，避免 trackpad 过度灵敏
-    const now = performance.now()
+    // 光标坐标必须在事件同步捕获：rAF 回调执行时事件对象可能已被浏览器回收，clientX 不可靠。
+    const el0 = previewContainerRef.current
+    if (el0) {
+      const r = el0.getBoundingClientRect()
+      wheelCursorRef.current = { cx: e.clientX - r.left, cy: e.clientY - r.top }
+    }
+
+    // rAF 批处理：合并一帧内的所有 wheel 事件为「一次」缩放更新（Electron 高频事件友好），
+    // 取代原先的 60ms 冷却 + 30 阈值（那套会迟滞 + 跳格）。
     wheelAccumRef.current += e.deltaY
-    if (now - wheelCooldownRef.current < WHEEL_STEP_MS) return
-    if (Math.abs(wheelAccumRef.current) < WHEEL_THRESHOLD) return
+    if (wheelRafRef.current != null) return
+    wheelRafRef.current = requestAnimationFrame(() => {
+      wheelRafRef.current = null
+      const delta = wheelAccumRef.current
+      wheelAccumRef.current = 0
 
-    const dir = wheelAccumRef.current < 0 ? 'in' : 'out'
-    wheelAccumRef.current = 0
-    wheelCooldownRef.current = now
-
-    // 先算目标档位；已到夹取边界则清空锚点直接返回（避免残留锚点误补偿后续布局变化）
-    const cur = zoomModeRef.current === 'adaptive' ? 100 : zoomPercent
-    if (nextZoomStep(cur, dir, ZOOM_STEPS) === cur) {
-      wheelAnchorRef.current = null
-      return
-    }
-
-    // 记录光标下的内容坐标 + 当前「实际视口 scale」（变的是 ViewportTransform，不是 zoomPercent）
-    const el = previewContainerRef.current
-    let anchor = null
-    if (el) {
-      const r = el.getBoundingClientRect()
-      const cx = e.clientX - r.left
-      const cy = e.clientY - r.top
-      anchor = {
-        contentX: el.scrollLeft + cx,
-        contentY: el.scrollTop + cy,
-        cx, cy,
-        oldScale: paperScaleRef.current,
+      // adaptive 锚点视为 100（= fit 比例 1.0），与 nextZoomStep 语义一致；manual 用实际百分比。
+      const curPct = zoomModeRef.current === 'adaptive' ? 100 : zoomPercentRef.current
+      const targetPct = applyWheelZoom(curPct, delta, {
+        sensitivity: WHEEL_SENSITIVITY,
+        min: WHEEL_ZOOM_MIN,
+        max: WHEEL_ZOOM_MAX,
+      })
+      // 已夹取到边界（无变化）则清空锚点直接返回，避免残留锚点误补偿后续布局变化
+      if (targetPct === curPct) {
+        wheelAnchorRef.current = null
+        return
       }
-    }
-    wheelAnchorRef.current = anchor
-    userViewportLockRef.current = true   // 用户主动接管 viewport
-    if (dir === 'in') zoomIn(); else zoomOut()
-  }, [zoomIn, zoomOut, zoomPercent])
+
+      // 记录光标下的内容坐标 + 当前「实际视口 scale」（变的是 ViewportTransform，不是 zoomPercent）
+      const el = previewContainerRef.current
+      let anchor = null
+      if (el && wheelCursorRef.current) {
+        anchor = {
+          contentX: el.scrollLeft + wheelCursorRef.current.cx,
+          contentY: el.scrollTop + wheelCursorRef.current.cy,
+          cx: wheelCursorRef.current.cx,
+          cy: wheelCursorRef.current.cy,
+          oldScale: paperScaleRef.current,
+        }
+      }
+      wheelAnchorRef.current = anchor
+      userViewportLockRef.current = true   // 用户主动接管 viewport
+      setManualScale(targetPct)            // 连续百分比（按钮仍走 nextZoomStep 离散档位）
+    })
+  }, [setManualScale])
 
   // 当前预览文件的旋转值（用于优化依赖）
   const currentRotation = fileRotations[previewFile?.key] || 0
