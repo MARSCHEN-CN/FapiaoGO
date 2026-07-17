@@ -5,9 +5,11 @@
 /* ======================== 2. Control Bar（缩放工具栏区域） ======================== */
 .control-bar {
   flex-shrink: 0;
-  display: flex;
+  /* 三列布局：1fr 左侧留白 / auto 缩放控件居中 / 1fr 右侧留白并把方向控件顶到右端 */
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
   align-items: center;
-  justify-content: center;
+  width: 100%;
   padding: 6px 16px 8px;
   animation: fadeInUp 0.3s var(--ease) 0.2s both;
 }
@@ -234,6 +236,9 @@
   display: inline-flex;
   align-items: center;
   gap: 2px;
+  /* 落在 grid 中列(auto)，相对整个 control-bar 几何居中 */
+  grid-column: 2;
+  justify-self: center;
   padding: 4px;
   background: var(--canvas-float-bg);
   backdrop-filter: blur(16px);
@@ -487,4 +492,46 @@
   height: 20px;
   background: rgba(0, 0, 0, 0.1);
   margin: 0 4px;
+}
+
+/* ======================== 2b. 纸张方向控制（自动/横向/纵向 + 旋转） ======================== */
+.canvas-orient-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  /* 落在 grid 右列(1fr)并靠右对齐，与中列居中的缩放控件互不干扰 */
+  grid-column: 3;
+  justify-self: end;
+}
+.oco-label {
+  font-size: 12px;
+  color: var(--text-secondary, #666);
+}
+.oco-segment {
+  display: inline-flex;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.oco-btn {
+  border: none;
+  background: transparent;
+  padding: 5px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--text, #333);
+  transition: background 0.15s, color 0.15s;
+}
+.oco-btn + .oco-btn {
+  border-left: 1px solid rgba(0, 0, 0, 0.12);
+}
+.oco-btn:hover {
+  background: rgba(0, 0, 0, 0.05);
+}
+.oco-btn.active {
+  background: var(--accent, #3b82f6);
+  color: #fff;
+}
+.oco-rotate {
+  margin-left: 4px;
 }

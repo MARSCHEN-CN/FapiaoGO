@@ -11,6 +11,7 @@ import { emptyContentLayout, initialRenderState, computePaperLayout, getDocNatur
 import { buildRenderCommand } from '../layout/RenderLayoutFactory.js'
 import { buildRenderSpec, RENDER_SPEC_VERSION, renderSpecSignature } from '../layout/renderSpec.js'
 import { resolvePaper, paperKeyFragment } from '../layout/resolvePaper.js'
+import { computeInitialDocFacts } from '../layout/docFacts.js'
 
 // ✅ 懒加载 PDF 渲染模块，避免首屏加载 1.4 MB 的 pdfjs-dist + react-pdf
 let _renderers = null
@@ -49,6 +50,17 @@ export function usePreview({ files, settings, electronAPIRef }) {
   const [fileRotations, setFileRotations] = useState({})
   const [showLeftArrow, setShowLeftArrow] = useState(false)
   const [showRightArrow, setShowRightArrow] = useState(false)
+
+  // ── Commit C：纸张方向 Fact（自动/横向/纵向），per doc_id 持久化 ──
+  const [paperOrientation, setPaperOrientation] = useState('portrait')
+  const [autoActive, setAutoActive] = useState(true)
+  const paperOrientationRef = useRef('portrait')
+  const applyPaperOrientation = useCallback((v, isAuto) => {
+    paperOrientationRef.current = v
+    if (documentStateRef.current) documentStateRef.current.paperOrientation = v
+    setPaperOrientation(v)
+    setAutoActive(!!isAuto)
+  }, [])
 
   // ── Zoom state ──
   const [zoomPercent, setZoomPercent] = useState(100)
@@ -187,6 +199,9 @@ export function usePreview({ files, settings, electronAPIRef }) {
       pageSize: { w: pageW, h: pageH },
       pageOrientation: getDocNaturalOrientation({ w: pageW, h: pageH }),
       sourceType: loadedFile._fileFormat || 'pdf',
+      // ⚠️ pageNum 从 null→1 升格后，旧判断 if(pageNum) 会全部命中（单页文件也会 +P1）。
+      //    不要在消费者代码里检查 pageNum 真假值——改用 src/layout/docFacts.js 的
+      //    shouldAppendPageSuffix(doc)（检查 pageCount>1）。
       pageNum: loadedFile.pageNum || 1,
     }
   }
@@ -303,15 +318,42 @@ export function usePreview({ files, settings, electronAPIRef }) {
   }, [numPages])
 
   // ── 旋转 ──
-  // ✅ 只更新 fileRotations，移除对 previewRotation 的更新
+  // ✅ 只更新 fileRotations，移除对 previewRotation 的更新；Commit C：同步持久化 contentRotation
   const handleRotate = useCallback((targetKey) => {
     const key = targetKey || previewFileRef.current?.key
     if (!key) return
-    setFileRotations(prev => ({
-      ...prev,
-      [key]: ((prev[key] || 0) + 90) % 360
-    }))
-  }, [])
+    const deg = ((fileRotations[key] || 0) + 90) % 360
+    setFileRotations(prev => ({ ...prev, [key]: deg }))
+    // 持久化 contentRotation（纸张方向 Fact 之一），paperOrientation 取当前 Fact
+    const f = previewFileRef.current
+    const factKey = f?.docId || f?.path || key
+    const api = electronAPIRef.current
+    if (api && api.saveDocFacts) {
+      api.saveDocFacts(factKey, { paperOrientation: paperOrientationRef.current, contentRotation: deg }).catch(() => {})
+    }
+  }, [fileRotations, electronAPIRef])
+
+  // ── Commit C：纸张方向切换（自动/横向/纵向）──
+  // 自动 = 删除持久记录，方向回落文档天然方向（下次加载重新推导并写回）；
+  // 横向/纵向 = 覆盖持久记录。contentRotation 保持不变（来自当前 Fact）。
+  const handlePaperOrientationChange = useCallback((mode) => {
+    const f = previewFileRef.current
+    const factKey = f?.docId || f?.path || f?.key
+    const api = electronAPIRef.current
+    if (mode === 'auto') {
+      const ds = documentStateRef.current
+      const nat = ds?.pageSize ? getDocNaturalOrientation(ds.pageSize) : null
+      const natural = nat || 'portrait'
+      applyPaperOrientation(natural, true)
+      if (api && api.clearDocFacts) api.clearDocFacts(factKey).catch(() => {})
+      return
+    }
+    if (mode !== 'portrait' && mode !== 'landscape') return
+    applyPaperOrientation(mode, false)
+    if (api && api.saveDocFacts) {
+      api.saveDocFacts(factKey, { paperOrientation: mode, contentRotation: fileRotations[f?.key] || 0 }).catch(() => {})
+    }
+  }, [electronAPIRef, fileRotations])
 
   // ── 清理预览 URL ──
   const cleanupPreviewUrl = useCallback(() => {
@@ -417,7 +459,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
     () => {
       return buildRenderCommand(paperLayout, { ...(documentStateRef.current || {}), contentRotation: previewRotation })
     },
-    [paperLayout, previewRotation, previewFile]
+    [paperLayout, previewRotation, previewFile, paperOrientation]
   )
   // renderCommand 就绪（placement.scale>0）才用 Factory 派生；否则回退旧 bitmap 拟合，行为不变。
   const renderCommandReady = !!(renderCommand && renderCommand.placement && renderCommand.placement.scale > 0)
@@ -668,7 +710,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
               // PDF：通过 pdfDocCache 加载 + page.render
               const pdfDoc = await getOrLoadPdfDocument(previewFile._pdfData)
               if (pdfDoc) {
-                await switchPreviewFile(pdfDoc, 1, signal, currentRotation, renderCommand)
+                await switchPreviewFile(pdfDoc, 1, signal, renderCommand)
               }
             } else if (previewFile._previewImageUrl) {
               // 图片/OFD：加载图片后 drawImage 到全局 Canvas
@@ -679,7 +721,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
                 image.src = previewFile._previewImageUrl
               })
               if (img) {
-                await switchPreviewImage(img, signal, currentRotation, renderCommand)
+                await switchPreviewImage(img, signal, renderCommand)
               }
             }
           }
@@ -695,6 +737,9 @@ export function usePreview({ files, settings, electronAPIRef }) {
             {
               paperSize: settings.paperSize,
               isLandscape,
+              // 🔴 V17 不变式：缓存身份必须包含每一个影响 RenderCommand 的 Fact。
+              //    paperLandscape 由 PaperOrientation Fact 驱动绘制，缺失会导致强制方向后命中错误快照。
+              paperLandscape: renderCommand?.paperLandscape ?? false,
               mergeMode: settings.mergeMode,
               customPaper: settings.customPaper,
               margins: {
@@ -1200,7 +1245,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
       return
     }
 
-    const rotation = (fileRotations[loadedFile.key] || 0)
+    let rotation = (fileRotations[loadedFile.key] || 0)
     // 与 render effect 保持一致的 isLandscape 计算：统一走 resolvePaper（Single Decision Point）。
     // 否则 Custom 纸型下 PAPER_SIZE_MAP 与 resolvePaper 结果不一致 → L2 缓存键与渲染键漂移 →
     // 点击命中陈旧 Canvas，与自动预览（RE）视觉不一致。
@@ -1218,25 +1263,62 @@ export function usePreview({ files, settings, electronAPIRef }) {
     const docH = loadedFile._pdfPageHeight || loadedFile._imageHeight || 0
     // getDocNaturalOrientation 对空/零尺寸返回 null（拒绝数学偶然）；null 时回落 contentOrient/portrait
     const naturalOrientation = (docW > 0 && docH > 0) ? getDocNaturalOrientation({ w: docW, h: docH }) : null
+
+    // ── Commit C：按 doc_id 加载方向 Fact（Initialize Once + 持久化）──
+    // factKey 优先用内容哈希 docId（稳定跨重启）；图片/OFD 无 docId 时退化为落盘路径。
+    const factKey = loadedFile.docId || loadedFile.path || loadedFile.key
+    let loadedFacts = null
+    try {
+      const api = electronAPIRef.current
+      if (api && api.loadDocFacts) loadedFacts = await api.loadDocFacts(factKey)
+    } catch (_) { /* 无持久层（Web 模式）退化为 natural 推导 */ }
+    const init = computeInitialDocFacts(loadedFacts, naturalOrientation)
+    // 恢复 contentRotation 到实时镜象（fileRotations），保证 previewRotation / L2 / full cache 一致
+    setFileRotations(prev => ({ ...prev, [loadedFile.key]: init.contentRotation }))
+    rotation = init.contentRotation // 修正上方 rotation（cacheKey 用）
+    applyPaperOrientation(init.paperOrientation, init.isAuto)
+    if (init.shouldPersist) {
+      try {
+        const api = electronAPIRef.current
+        if (api && api.saveDocFacts) await api.saveDocFacts(factKey, { paperOrientation: init.paperOrientation, contentRotation: init.contentRotation })
+      } catch (_) { /* 忽略落盘失败，不影响预览 */ }
+    }
+
     const docOrientation = naturalOrientation || contentOrient || 'portrait'
     documentStateRef.current = {
       id: loadedFile.key || loadedFile.id || '',
       pageCount: loadedFile._pdfPageCount || 1,
       pageSize: { w: docW, h: docH },
       pageOrientation: docOrientation,
-      // 【Page Placement Pipeline Fact】有效纸张方向：Initialize Once（本会话内 doc_id 首次加载即定，re-parse 不覆盖）。
-      // 当前无持久化层时以文档天然方向初始化；Legacy 旋转经 contentRotation 迁移接入。
-      paperOrientation: docOrientation,
-      contentRotation: fileRotations[loadedFile.key] || 0, // Legacy 迁移：旧 fileRotations 作为 contentRotation 来源
-      rotation: fileRotations[loadedFile.key] || 0, // [LEGACY 镜像] = contentRotation；Slice 1.5 随 fileRotations 一并移除（保留以便旧代码仍可读取 documentState.rotation）
+      // 【Page Placement Pipeline Fact】纸张方向：Initialize Once（首次加载即定）。
+      // 持久层存在时以记录为准（用户选择或 Auto 推导值均已落盘）；不存在时以文档天然方向初始化。
+      paperOrientation: init.paperOrientation,
+      contentRotation: init.contentRotation, // Legacy 迁移：旧 fileRotations 作为 contentRotation 来源
+      rotation: init.contentRotation, // [LEGACY 镜像] = contentRotation
       sourceType: loadedFile._fileFormat || 'pdf',
+      // ⚠️ pageNum 从 null→1 升格后，旧判断 if(pageNum) 会全部命中（单页文件也会 +P1）。
+      //    不要在消费者代码里检查 pageNum 真假值——改用 src/layout/docFacts.js 的
+      //    shouldAppendPageSuffix(doc)（检查 pageCount>1）。
       pageNum: loadedFile.pageNum || 1,
+    }
+    // 🔴 V17 不变式：缓存身份必须包含每一个影响 RenderCommand 的 Fact。
+    //    paperLandscape 由 PaperOrientation Fact 驱动绘制（renderCommand.paperLandscape），
+    //    但旧缓存键只用 isLandscape（内容 vs 纸张）→ 强制方向后键不变、canvas 变 → 命中错误快照。
+    //    此处用与渲染路径完全一致的 buildRenderCommand 派生 paperLandscape，喂给缓存键；
+    //    同时复用同一 l2Command 构造 L2 命中的 RE URL（contentRotation 以 documentStateRef.current 为真值，不覆盖）。
+    let paperLandscape = false
+    let l2Command = null
+    if (paperLayout) {
+      l2Command = buildRenderCommand(paperLayout, documentStateRef.current)
+      paperLandscape = !!l2Command.paperLandscape
     }
     const cacheKey = buildPreviewCacheKey(
       { fileKey: loadedFile.key, rotation },
       {
         paperSize: settingsRef.current.paperSize,
         isLandscape,
+        // 🔴 V17 不变式：paperLandscape 必须进缓存身份（见上方说明）
+        paperLandscape,
         mergeMode: settingsRef.current.mergeMode,
         customPaper: settingsRef.current.customPaper,
         margins: {
@@ -1280,12 +1362,10 @@ export function usePreview({ files, settings, electronAPIRef }) {
       //    用它会把本应重建的 l2Spec 门控跳过 → URL 裸奔 → 后端 rotation=0 → 横向内容落竖纸错位。
       //    改用同步可用且与 renderCommand memo 输入一致的 paperLayout / documentStateRef.current 直接重建，
       //    不依赖尚未提交的 useMemo。这正是 V16「renderCommand 实时派生、不缓存」的设计意图。
-      if (paperLayout) {
+      if (l2Command) {
         try {
-          const l2Command = buildRenderCommand(paperLayout, {
-            ...(documentStateRef.current || {}),
-            contentRotation: fileRotations[loadedFile.key] || 0,
-          })
+          // ✅ 复用上方已构造的 l2Command：contentRotation 真值在 documentStateRef.current
+          //    （Single Source of Truth），不再用 fileRotations 闭包旧值覆盖（删掉第二个真相源）。
           l2Spec = buildRenderSpec(l2Command, {
             docId: loadedFile.docId,
             page: loadedFile.pageNum || 1,
@@ -1635,6 +1715,8 @@ export function usePreview({ files, settings, electronAPIRef }) {
       previewImgDims,
       previewLoading,
       previewRotation,
+      paperOrientation,
+      autoActive,
       fileRotations,
       showLeftArrow,
       showRightArrow,
@@ -1652,6 +1734,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
       handlePreview,
       preloadHD,
       handleRotate,
+      handlePaperOrientationChange,
       prevPage,
       nextPage,
       handlePrevFile,

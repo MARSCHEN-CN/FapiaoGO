@@ -30,7 +30,8 @@ function buildPrinterOptions(printers, currentPrinter) {
 function buildSummaryItems(
   settings, printers, totalFiles,
   mergeMode, isOneNormalTwoSpecial,
-  handlePrinterChange, handleGrayscaleChange, handlePaperSizeChange
+  handlePrinterChange, handleGrayscaleChange, handlePaperSizeChange,
+  paperOrientation, contentRotation
 ) {
   const colorValue = settings.grayscale ? 'grayscale' : 'color'
   const currentPaper = settings.paperSize || 'A4'
@@ -72,11 +73,12 @@ function buildSummaryItems(
     </div>
   )
 
-  // 纸张方向（硬编码为自动）
+  // 纸张方向（Commit C：读真实 Fact，不再硬编码"自动"）
+  const orientLabel = paperOrientation === 'landscape' ? '横向' : paperOrientation === 'portrait' ? '纵向' : '自动'
   items.push(
     <div key="orientation" className="pcm-item">
       <span className="pcm-item-label">纸张方向</span>
-      <span className="pcm-item-value">自动</span>
+      <span className="pcm-item-value">{orientLabel}{contentRotation ? ` · 旋转 ${contentRotation}°` : ''}</span>
     </div>
   )
 
@@ -139,6 +141,8 @@ const PrintConfirmModal = ({
   totalFiles,
   mergeMode,
   isOneNormalTwoSpecial,
+  paperOrientation,
+  contentRotation,
   onConfirm,
   onCancel,
 }) => {
@@ -161,10 +165,12 @@ const PrintConfirmModal = ({
     buildSummaryItems(
       settings, printers, totalFiles,
       mergeMode, isOneNormalTwoSpecial,
-      handlePrinterChange, handleGrayscaleChange, handlePaperSizeChange
+      handlePrinterChange, handleGrayscaleChange, handlePaperSizeChange,
+      paperOrientation, contentRotation
     ),
     [settings, printers, totalFiles, mergeMode, isOneNormalTwoSpecial,
-     handlePrinterChange, handleGrayscaleChange, handlePaperSizeChange]
+     handlePrinterChange, handleGrayscaleChange, handlePaperSizeChange,
+     paperOrientation, contentRotation]
   )
 
   return (

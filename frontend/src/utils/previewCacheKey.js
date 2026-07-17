@@ -9,14 +9,20 @@
  *   documentKey: 文档身份（fileKey + rotation）— 与布局无关
  *   layoutKey:   所有影响渲染结果的布局参数
  *
- * ⚠️ 仅放入真正改变 Canvas 的字段（paperSize / isLandscape / margins /
- *    customPaper / mergeMode ...）。打印机选择、打印份数、静默打印、UI 状态
+ * ⚠️ 仅放入真正改变 Canvas 的字段（paperSize / isLandscape / paperLandscape /
+ *    margins / customPaper / mergeMode ...）。打印机选择、打印份数、静默打印、UI 状态
  *    等不改变预览结果的字段不得进入，否则无谓降低命中率。
  *    新增渲染维度时，只改本函数一处即可保证读写两侧一致。
  *
+ * 🔴 V17 不变式（缓存身份 = RenderCommand 字段 = 渲染输出）：
+ *    任何影响 RenderCommand 的 Fact 都必须进入本 key。paperLandscape 由
+ *    PaperOrientation Fact 驱动绘制，若不入 key，强制方向后 canvas 变了但 key 不变
+ *    → 命中陈旧快照 → 显示错误方向。后续 colorTransform / nupLayout / cropMode 等同理：
+ *    影响 RenderCommand ⇒ 必须进 Cache Identity。（见 p0-stage1-closeout.md「缓存身份不变式」）
+ *
  * @param {{fileKey: string, rotation: number}} documentState
- * @param {{paperSize: string, isLandscape: boolean, mergeMode?: string,
- *          customPaper?: {widthMM:number, heightMM:number},
+ * @param {{paperSize: string, isLandscape: boolean, paperLandscape?: boolean,
+ *          mergeMode?: string, customPaper?: {widthMM:number, heightMM:number},
  *          margins?: {left:number, right:number, top:number, bottom:number}}} layoutState
  * @returns {string}
  */
@@ -28,6 +34,11 @@ export function buildPreviewCacheKey(documentState, layoutState) {
   const {
     paperSize,
     isLandscape,
+    // 🔴 V17 不变式：任何影响 RenderCommand 的 Fact 都必须参与缓存身份（Cache Identity）。
+    //    paperLandscape 由 PaperOrientation Fact 驱动 Canvas 绘制；若不入 key，强制方向后
+    //    canvas 变了但 key 不变 → 命中陈旧快照 → 显示错误方向。
+    //    后续 colorTransform / nupLayout / cropMode 等同理：影响 RenderCommand ⇒ 必须进 Cache Identity。
+    paperLandscape,
     mergeMode,
     customPaper,
     margins,
@@ -39,7 +50,7 @@ export function buildPreviewCacheKey(documentState, layoutState) {
     ? `${margins.left}_${margins.right}_${margins.top}_${margins.bottom}`
     : '0_0_0_0'
   const customStr = paperKeyFragment(resolvePaper(paperSize, customPaper))
-  const layoutKey = `p${paperSize}_l${isLandscape ? 1 : 0}_m${mergeMode || 'none'}_${customStr}_mg${marginStr}`
+  const layoutKey = `p${paperSize}_l${isLandscape ? 1 : 0}_pl${paperLandscape ? 1 : 0}_m${mergeMode || 'none'}_${customStr}_mg${marginStr}`
 
   return `${documentKey}@${layoutKey}`
 }

@@ -17,6 +17,7 @@ const ALLOWED_INVOKE_PREFIXES = [
   'get-',      // get-printers, get-file-stats, get-printer-capabilities
   'load-',     // load-print-settings
   'save-',     // save-print-settings
+  'clear-',     // clear-doc-facts
   'rename-',   // rename-invoices
   'pack-',     // pack-invoices
   'generate-', // generate-print-pdf
@@ -66,6 +67,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   generatePdfFromCanvas: (canvasBuffer, paperSize, orientation, customPaper) => {
     return ipcRenderer.invoke('generate-print-pdf', { canvasBuffer, paperSize, orientation, customPaper })
   },
+
+  // 文档方向 Fact 持久化（Commit C）
+  loadDocFacts: (factKey) => ipcRenderer.invoke('load-doc-facts', factKey),
+  saveDocFacts: (factKey, facts) => ipcRenderer.invoke('save-doc-facts', factKey, facts),
+  clearDocFacts: (factKey) => ipcRenderer.invoke('clear-doc-facts', factKey),
 
   ipcRenderer: {
     send: (channel, data) => {

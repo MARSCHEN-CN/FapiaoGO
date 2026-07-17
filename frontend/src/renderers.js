@@ -5,7 +5,9 @@ import * as pdfjs from 'pdfjs-dist'
 import pdfjsWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import { PREVIEW_DPI } from './config'
 import { rotateContentOnPaper } from './utils/canvasUtils'
-import { dualTrackAssertGeometry } from './layout/dualTrack.js'
+import { validateRenderCommand } from './layout/RenderLayoutFactory.js'
+import { buildMergeRenderCommands } from './layout/mergeFactory.js'
+import { drawRenderCommand } from './layout/renderDraw.js'
 import { createLayout, normalizeLayoutItem, normalizeLayoutItems, getPaperPixels, PRINT_SAFE_MARGIN_MM, PRINTER_PROFILES, getPrintableArea } from './layout'
 import { isDocumentEngineEnabled, makeImageRef, ConcreteImageHandle, MemoryPixelHandle } from './documentEngine.js'  // P2C 统一入口门面（v12 契约 JS 实现；路线见 v14 §6/§13）+ ②b 桥接用 ImageHandle 值类型（facade 单向依赖，Law #2 允许）
 // ✅ renderModel.js 为死代码，renderMultipleItemsToCanvas 直接做 transform，不经过 RenderModel
@@ -803,6 +805,15 @@ async function _renderViaWorker(items, paperKey, dpi, isLandscape, rotations, sl
     margin: marginMm,
   })
 
+  // [D1] 主线程建 Merge RenderCommand（布局数学唯一决策点），Worker 纯执行。
+  //      contentMeta 由 Phase 1 contentSources 派生，与 _renderDirect 同源。
+  const contentMeta = new Map()
+  for (const item of normalizedItems) {
+    const cs = contentSources.get(item.id)
+    if (cs) contentMeta.set(item.id, { width: cs.width, height: cs.height })
+  }
+  const mergeCommands = buildMergeRenderCommands(layout, contentMeta, rotations, { isLandscape })
+
   // ═══════════════════════════════════════════════════════
   // Phase 1.5: HTMLCanvasElement/Image → ImageBitmap
   // ═══════════════════════════════════════════════════════
@@ -869,7 +880,7 @@ async function _renderViaWorker(items, paperKey, dpi, isLandscape, rotations, sl
     worker.postMessage({
       sources: imageBitmaps,
       layout,
-      rotations,
+      commands: mergeCommands,
       layoutOptions: { ...layoutOptions, _dpi: dpi },
       cacheKey: _cacheKey,
       id,
@@ -1057,40 +1068,25 @@ async function _renderDirect(
   ctx.fillStyle = '#ffffff'
   ctx.fillRect(0, 0, canvas.width, canvas.height)
 
-  const fitMode = 'fit'
-
+  // [D1] 布局数学收进 buildMergeRenderCommands（复用 layout.js 的 calculateFitScale/calculateCenteredPosition
+  //      与 RenderLayoutFactory.normalizeRotation，与单文件 buildRenderCommand 同源）。Renderer 不再自算
+  //      fit/rotate/center/swap，只消费 RenderCommand + 共享 drawRenderCommand（纯执行）。
+  const contentMeta = new Map()
   for (const slot of slots) {
+    if (!slot) continue
+    const cs = contentSources.get(slot.itemId)
+    if (cs) contentMeta.set(slot.itemId, { width: cs.width, height: cs.height })
+  }
+  const mergeCommands = buildMergeRenderCommands(layout, contentMeta, rotations, { isLandscape })
+  let _ci = 0
+  for (const slot of slots) {
+    if (!slot) continue
     const cs = contentSources.get(slot.itemId)
     if (!cs) continue
-
-    const rotate = (rotations && rotations[slot.itemId]) || 0
-    const { source, width: contentW, height: contentH } = cs
-
-    // 旋转时交换宽高以匹配旋转后的包围盒
-    const isRotated90 = rotate === 90 || rotate === 270
-    const effectiveW = isRotated90 ? contentH : contentW
-    const effectiveH = isRotated90 ? contentW : contentH
-
-    // 缩放比例
-    const scale = fitMode === 'fill'
-      ? Math.max(slot.width / effectiveW, slot.height / effectiveH)
-      : Math.min(slot.width / effectiveW, slot.height / effectiveH)
-
-    // clip 到 slot 区域
-    ctx.save()
-    ctx.beginPath()
-    ctx.rect(slot.x, slot.y, slot.width, slot.height)
-    ctx.clip()
-
-    // slot 中心 → 旋转 → 缩放 → 绘制
-    ctx.translate(slot.x + slot.width / 2, slot.y + slot.height / 2)
-    if (rotate) {
-      ctx.rotate(rotate * Math.PI / 180)
-    }
-    ctx.scale(scale, scale)
-    ctx.drawImage(source, -contentW / 2, -contentH / 2, contentW, contentH)
-
-    ctx.restore()
+    const cmd = mergeCommands[_ci++]
+    if (!cmd) continue
+    // ratio=1：Merge/Print 命令与目标画布同 dpi（均为 PREVIEW_DPI），无需缩放对齐
+    drawRenderCommand(ctx, cmd, cs.source, cs.width, cs.height, 1)
   }
 
   // ═══════════════════════════════════════════════
@@ -1308,61 +1304,64 @@ function _getPreviewPdfTempCanvas(w, h) {
 }
 
 /**
- * 切换 PDF 文件到全局 Canvas（双缓冲，防闪烁）
+ * 切换 PDF 文件到全局 Canvas（双缓冲，防闪烁）。
+ *
+ * [Commit B] Renderer 纯执行：不再进行任何 fit/center/offset/swap/rotation 数学。
+ * 仅消费 RenderCommand.placement / rotatedBounds / contentRotation（由 Factory 单一决策点产出）。
+ * 旋转角来自 renderCommand.contentRotation（单一事实源），不再接受调用方传入的 rotation 参数。
+ *
+ * @param {object} pdfDoc pdf.js 文档
+ * @param {number} [pageNum]
+ * @param {AbortSignal} signal
+ * @param {ReturnType<import('./layout/RenderLayoutFactory.js').buildRenderCommand>|null} renderCommand
  */
-export async function switchPreviewFile(pdfDoc, pageNum = 1, signal, rotation = 0, renderCommand = null) {
-  // ②b：像素来源从 pdf.js 直绘改为「ImageHandle → drawImage」桥接。
-  // 像素仍由旧 Renderer(pdf.js) 产生；documentEngine 仅提供 ImageHandle 值类型，
-  // 不参与编排（不调用 getImage / 不引入 P4 pdf.js 耦合 / Engine 不知 Canvas）。
+export async function switchPreviewFile(pdfDoc, pageNum = 1, signal, renderCommand = null) {
+  // ②b：像素来源从 pdf.js 直绘改为「ImageHandle → drawImage」桥接（桥接逻辑不变）。
+  // 像素仍由旧 Renderer(pdf.js) 产生；documentEngine 仅提供 ImageHandle 值类型，不参与编排。
   const { dpi } = _globalPreviewCanvasConfig || {}
-  const v = await _renderToGlobalCanvas(async (ctx, contentW, contentH, marginL, marginT) => {
+  const v = await _renderToGlobalCanvas(async (ctx, _contentW, _contentH, _marginL, _marginT) => {
     if (signal?.aborted) return
-    const page = await pdfDoc.getPage(pageNum)
 
-    // ✅ 先算出旋转后的 viewport 尺寸，再用它算 scale，确保填满可打印区域
-    const rotatedViewport = page.getViewport({ scale: 1, rotation })
-    const scale = Math.min(contentW / rotatedViewport.width, contentH / rotatedViewport.height)
-    const renderViewport = page.getViewport({ scale, rotation })
-    const offsetX = marginL + (contentW - renderViewport.width) / 2
-    const offsetY = marginT + (contentH - renderViewport.height) / 2
-
-    // ── [1.2C Commit A] 双轨验证：比较旧算法最终绘制几何 vs RenderCommand.placement（仅日志，不切换）──
-    // 全局 Canvas 以 GLOBAL_PREVIEW_DPI(150) 渲染，RenderCommand 以 PREVIEW_DPI(300) 计算，差 2×；
-    // 故把 RenderCommand 几何按 (dpi/PREVIEW_DPI) 缩放到全局 Canvas 空间再比。
-    // 旧算法 scale 含 points→px 因子，与 RenderCommand.placement.scale 单位不同，故只比最终 draw 几何。
-    if (renderCommand && renderCommand.placement && renderCommand.rotatedBounds) {
-      const ratio = (dpi || PREVIEW_DPI) / PREVIEW_DPI
-      dualTrackAssertGeometry('pdf',
-        { offsetX, offsetY, drawW: renderViewport.width, drawH: renderViewport.height },
-        {
-          offsetX: renderCommand.placement.offsetX * ratio,
-          offsetY: renderCommand.placement.offsetY * ratio,
-          drawW: renderCommand.rotatedBounds.width * renderCommand.placement.scale * ratio,
-          drawH: renderCommand.rotatedBounds.height * renderCommand.placement.scale * ratio,
-        })
+    // [Commit B] 未就绪（Factory 返回空命令，rotatedBounds.width=0）或契约违例 → 跳过绘制。
+    if (!renderCommand || renderCommand.rotatedBounds.width <= 0) return
+    try {
+      validateRenderCommand(renderCommand)
+    } catch (e) {
+      console.error('[Commit B] switchPreviewFile: RenderCommand 契约违例，跳过绘制:', e.message)
+      return
     }
+    const contentRotation = renderCommand.contentRotation
+    // 全局 Canvas 以 GLOBAL_PREVIEW_DPI(150) 渲染，RenderCommand 以 PREVIEW_DPI(300) 计算，差 2×。
+    // 把 placement / rotatedBounds 几何按 ratio 缩放到全局 Canvas 空间。
+    const ratio = (dpi || PREVIEW_DPI) / PREVIEW_DPI
+    const offsetX = renderCommand.placement.offsetX * ratio
+    const offsetY = renderCommand.placement.offsetY * ratio
+    const drawW = renderCommand.rotatedBounds.width * renderCommand.placement.scale * ratio
+    const drawH = renderCommand.rotatedBounds.height * renderCommand.placement.scale * ratio
+
+    const page = await pdfDoc.getPage(pageNum)
+    // rotatedViewport（pt@72）：仅用于推算 pdf.js 的「栅格化缩放(rasterScale)」，与 Layout Scale 无关。
+    // Layout Scale 已在 Factory 的 placement.scale 中定死；此处 rasterScale = 目标绘制像素 / 内容固有点数，是渲染分辨率，不是布局决策。
+    const rotatedViewport = page.getViewport({ scale: 1, rotation: contentRotation })
+    const rasterScale = rotatedViewport.width > 0 ? drawW / rotatedViewport.width : 0
+    if (!rasterScale) return
+    const renderViewport = page.getViewport({ scale: rasterScale, rotation: contentRotation })
 
     // —— ②b 桥接：pdf.js 光栅到临时 canvas，包成 ImageHandle，再 drawImage 到全局 canvas ——
-    // 复用上面完全相同的 scale / offset，确保输出像素级不变。
     const tw = Math.max(1, Math.ceil(renderViewport.width))
     const th = Math.max(1, Math.ceil(renderViewport.height))
     // ✅ 复用模块级临时 canvas（M1 修复）：避免每次预览切换都 createElement + getContext（GC 抖动/卡顿）。
-    // 仅当尺寸变化时重新分配 backing store；同尺寸（同页切换）时零重分配。
     const tempCanvas = _getPreviewPdfTempCanvas(tw, th)
     const tctx = tempCanvas.getContext('2d')
-    // ✅ 修复（B-2.2 调查）：复用模块级 tempCanvas 前必须 reset 变换矩阵 + 清空旧像素。
-    //    pdf.js 的 page.render 在复用 ctx 上可能残留/叠加变换（取决于 pdf.js 版本），
-    //    且 pdf.js 不会主动 clearRect，旧文件像素会透出。两者都会造成「第一张正常、后续旋转/错位」。
-    //    仅当 tempCanvas 尺寸变化时 _getPreviewPdfTempCanvas 才会重置，同尺寸（同页/同分辨率切换）不重置 → 必须显式 reset。
+    // ✅ 修复（B-2.2 调查）：复用前必须 reset 变换矩阵 + 清空旧像素（pdf.js 不主动 clearRect）。
     tctx.setTransform(1, 0, 0, 1, 0, 0)
     tctx.clearRect(0, 0, tw, th)
     await page.render({ canvasContext: tctx, viewport: renderViewport }).promise
 
-    const ref = makeImageRef(`pdf_${pageNum}_${rotation}`, tw, th, dpi || 72, {
-      source: 'preview-pdf', page: pageNum, rotation,
+    const ref = makeImageRef(`pdf_${pageNum}_${contentRotation}`, tw, th, dpi || 72, {
+      source: 'preview-pdf', page: pageNum, rotation: contentRotation,
     })
     // 桥接层保留（documentEngine 的 ImageHandle 值类型契约，Engine 不感知 Canvas）。
-    // release 改为 no-op：画布已被模块级缓存复用，清零反而会在同尺寸重用时强制 backing store 重分配。
     const handle = new ConcreteImageHandle(ref, () => {})
     const pixel = new MemoryPixelHandle(ref, tempCanvas)
     const bitmap = await pixel.asBitmap()  // 浏览器端返回 tempCanvas（HTMLCanvasElement），可作 drawImage 源
@@ -1375,54 +1374,50 @@ export async function switchPreviewFile(pdfDoc, pageNum = 1, signal, rotation = 
 }
 
 /**
- * 切换图片/OFD 到全局 Canvas（双缓冲，防闪烁）
+ * 切换图片/OFD 到全局 Canvas（双缓冲，防闪烁）。
+ *
+ * [Commit B] Renderer 纯执行：仅消费 RenderCommand.placement / rotatedBounds / contentRotation。
+ * 旋转角来自 renderCommand.contentRotation（单一事实源），不再接受调用方传入的 rotation 参数。
+ *
  * @param {HTMLImageElement|HTMLCanvasElement} image - 已加载的图片元素
+ * @param {AbortSignal} signal
+ * @param {ReturnType<import('./layout/RenderLayoutFactory.js').buildRenderCommand>|null} renderCommand
  */
-export async function switchPreviewImage(image, signal, rotation = 0, renderCommand = null) {
+export async function switchPreviewImage(image, signal, renderCommand = null) {
   const { dpi } = _globalPreviewCanvasConfig || {}
-  return _renderToGlobalCanvas(async (ctx, contentW, contentH, marginL, marginT) => {
+  return _renderToGlobalCanvas(async (ctx, _contentW, _contentH, _marginL, _marginT) => {
     if (signal?.aborted) return
+
+    // [Commit B] 未就绪（空命令）或契约违例 → 跳过绘制。
+    if (!renderCommand || renderCommand.rotatedBounds.width <= 0) return
+    try {
+      validateRenderCommand(renderCommand)
+    } catch (e) {
+      console.error('[Commit B] switchPreviewImage: RenderCommand 契约违例，跳过绘制:', e.message)
+      return
+    }
+    const contentRotation = renderCommand.contentRotation
+    const ratio = (dpi || PREVIEW_DPI) / PREVIEW_DPI
+    const offsetX = renderCommand.placement.offsetX * ratio
+    const offsetY = renderCommand.placement.offsetY * ratio
+    const drawW = renderCommand.rotatedBounds.width * renderCommand.placement.scale * ratio
+    const drawH = renderCommand.rotatedBounds.height * renderCommand.placement.scale * ratio
 
     const imgW = image.naturalWidth || image.width
     const imgH = image.naturalHeight || image.height
-    // ✅ 先根据旋转交换尺寸，再算 scale，确保 fill 模式填满可打印区域
-    let fitW = imgW, fitH = imgH
-    if (rotation % 180 !== 0) { [fitW, fitH] = [fitH, fitW] }
-    const scale = Math.min(contentW / fitW, contentH / fitH)
-    const renderW = imgW * scale
-    const renderH = imgH * scale
-    // 旋转后实际的 canvas 尺寸（宽高交换）
-    let drawW = renderW, drawH = renderH
-    if (rotation % 180 !== 0) { [drawW, drawH] = [drawH, drawW] }
 
-    const offsetX = marginL + (contentW - drawW) / 2
-    const offsetY = marginT + (contentH - drawH) / 2
-
-    // ── [1.2C Commit A] 双轨验证（图片路径无 points→px 因子，仍按 DPI 比例对齐）──
-    if (renderCommand && renderCommand.placement && renderCommand.rotatedBounds) {
-      const ratio = (dpi || PREVIEW_DPI) / PREVIEW_DPI
-      dualTrackAssertGeometry('image',
-        { offsetX, offsetY, drawW, drawH },
-        {
-          offsetX: renderCommand.placement.offsetX * ratio,
-          offsetY: renderCommand.placement.offsetY * ratio,
-          drawW: renderCommand.rotatedBounds.width * renderCommand.placement.scale * ratio,
-          drawH: renderCommand.rotatedBounds.height * renderCommand.placement.scale * ratio,
-        })
-    }
-
-    if (rotation === 0) {
+    if (contentRotation === 0) {
       ctx.drawImage(image, offsetX, offsetY, drawW, drawH)
     } else {
       const tempCanvas = document.createElement('canvas')
       tempCanvas.width = drawW
       tempCanvas.height = drawH
       const tempCtx = tempCanvas.getContext('2d')
-
+      // drawW×drawH 已是最终落盘像素；rasterScale = 目标像素 / 内容固有像素，纯栅格化缩放（非 Layout Scale）。
+      const rasterScale = drawW / (contentRotation % 180 !== 0 ? imgH : imgW)
       tempCtx.translate(drawW / 2, drawH / 2)
-      tempCtx.rotate((rotation * Math.PI) / 180)
-      tempCtx.drawImage(image, -imgW * scale / 2, -imgH * scale / 2, imgW * scale, imgH * scale)
-
+      tempCtx.rotate((contentRotation * Math.PI) / 180)
+      tempCtx.drawImage(image, -imgW * rasterScale / 2, -imgH * rasterScale / 2, imgW * rasterScale, imgH * rasterScale)
       ctx.drawImage(tempCanvas, offsetX, offsetY)
     }
   }, signal)

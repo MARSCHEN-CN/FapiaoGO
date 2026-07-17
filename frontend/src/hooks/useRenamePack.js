@@ -10,6 +10,10 @@ export function useRenamePack({ files, settings, setFiles, parseFiles, electronA
   const [renamePreviewFiles, setRenamePreviewFiles] = useState([])
   const [renameResult, setRenameResult] = useState(null)
   const [alertModal, setAlertModal] = useState(null)
+  // 重命名完成后，供 App 重新导入（预览）该发票：记录首个重命名文件的 key，
+  // App 用它在最新 files 状态里找到带 docId 的解析后对象，避免拿到无 docId 的本地占位对象
+  // （无 docId 会让 Render Engine 预览 URL 缺失，回退 Canvas 路径，重演 Canvas/RE 视觉不一致）。
+  const [renamedPreviewKey, setRenamedPreviewKey] = useState(null)
   // 缓存预览阶段算好的文件名，重命名时直接复用，避免后端重复计算
   const computedNamesRef = useRef({})  // { [key]: newBaseName }
 
@@ -217,6 +221,9 @@ export function useRenamePack({ files, settings, setFiles, parseFiles, electronA
             }
           })
 
+          // 记录首个重命名文件 key，供 App 在重命名完成后重新导入其预览
+          setRenamedPreviewKey(newFiles[0]?.key || null)
+
           // 构建本地事务追踪：记录本次操作创建的文件 key 和已搬移的旧路径
           // 使用局部变量而非 React state 标记，避免并发调用时标记串扰
           const transactionKeys = new Set(newFiles.map(f => f.key))
@@ -347,6 +354,7 @@ export function useRenamePack({ files, settings, setFiles, parseFiles, electronA
     renamePreviewFiles, setRenamePreviewFiles,
     renameResult, setRenameResult,
     alertModal, closeAlert,
+    renamedPreviewKey,
     handleRename, handleRenameConfirm, handlePack,
   }
 }

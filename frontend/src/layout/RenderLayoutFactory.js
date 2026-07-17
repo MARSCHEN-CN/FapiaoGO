@@ -26,8 +26,7 @@ import { isPaperLayoutInvalid } from '../previewState.js'
  * @property {Size}    rotatedBounds  - 内容旋转后的包围盒（90/270 交换 natW/natH）
  * @property {0|90|180|270} contentRotation - 【Slice 1.1 契约】内容旋转角（= ContentRotation Fact）；Factory 单一决策点产出，Renderer/RE 在 Slice 1.2+ 才消费
  * @property {0}       rotation       - [LEGACY Wire] 兼容字段，Slice 1.1 恒为 0（避免提前改协议：rotation 暂不发给 RE）；Slice 1.2 起 = contentRotation
- * @property {number}  scale          - fit 缩放（基于 rotatedBounds）
- * @property {{x:number,y:number}} offset - 居中偏移（rotatedBounds 在 usableRect 内）
+ * @property {{scale:number,offsetX:number,offsetY:number}} placement - fit 缩放 + 居中偏移（基于 rotatedBounds，px@PREVIEW_DPI）
  * @property {boolean} paperLandscape - 有效纸张是否横向（= PaperOrientation Fact 派生）
  * @property {1}       version       - RenderCommand 契约版本（当前 1；未来 v2 引入 nupLayout/colorTransform 等升级时升版本，后端 validate_render_command 拒绝未知版本，杜绝前后端静默兼容）
  */
@@ -39,7 +38,7 @@ import { isPaperLayoutInvalid } from '../previewState.js'
  * @param {number} deg
  * @returns {0|90|180|270}
  */
-function normalizeRotation(deg) {
+export function normalizeRotation(deg) {
   const snapped = Math.round((deg || 0) / 90) * 90
   return (((snapped % 360) + 360) % 360)
 }
@@ -59,6 +58,44 @@ export function emptyRenderCommand() {
     paperLandscape: false,
     clip: { x: 0, y: 0, width: 0, height: 0 },
   }
+}
+
+/**
+ * [Commit B] Canvas Renderer 入口硬契约校验。
+ * 设计纪律：Renderer 纯执行、不决策。任何结构非法的 RenderCommand 都属上游（Factory）Bug，
+ * 必须在绘制前显式 fail-loud，而非默默画出错位 / NaN 几何。
+ *
+ * @param {ReturnType<typeof emptyRenderCommand>} cmd
+ * @returns {true} 校验通过
+ * @throws {Error} 结构非法
+ */
+export function validateRenderCommand(cmd) {
+  if (!cmd || typeof cmd !== 'object') {
+    throw new Error('[RenderCommand] 必须为对象（Renderer 不决策，必须由 Factory 产出）')
+  }
+  if (cmd.version !== 1) {
+    throw new Error(`[RenderCommand] 不支持的 version=${cmd.version}（期望 1；未知版本后端会 400 拒绝）`)
+  }
+  if (!cmd.placement || typeof cmd.placement !== 'object') {
+    throw new Error('[RenderCommand] placement 缺失（Renderer 需要 offsetX/offsetY/scale）')
+  }
+  const { scale, offsetX, offsetY } = cmd.placement
+  for (const [name, val] of [['placement.scale', scale], ['placement.offsetX', offsetX], ['placement.offsetY', offsetY]]) {
+    if (typeof val !== 'number' || !Number.isFinite(val)) {
+      throw new Error(`[RenderCommand] ${name} 非法: ${val}（必须为有限数）`)
+    }
+  }
+  const rb = cmd.rotatedBounds
+  if (!rb || typeof rb.width !== 'number' || typeof rb.height !== 'number' || rb.width <= 0 || rb.height <= 0) {
+    throw new Error(`[RenderCommand] rotatedBounds 非法（必须为正数，得到 ${JSON.stringify(rb)}）`)
+  }
+  if (typeof cmd.contentRotation !== 'number') {
+    throw new Error('[RenderCommand] contentRotation 缺失/undefined（Renderer 需要显式旋转角）')
+  }
+  if (!cmd.paper) {
+    throw new Error('[RenderCommand] paper 缺失（Renderer 需要 PaperLayout 上下文）')
+  }
+  return true
 }
 
 /**
@@ -115,7 +152,11 @@ export function buildRenderCommand(paperLayout, documentState) {
   const natW = documentState?.pageSize?.w || 0
   const natH = documentState?.pageSize?.h || 0
   if (!natW || !natH) {
-    console.warn(`[V16 WARN] buildRenderCommand: documentState pageSize missing/zero (natW=${natW}, natH=${natH}) — returning empty (scale=0).`)
+    // 期望中的「未就绪」态：首帧挂载时 documentStateRef 仍为 null（spread {} → pageSize undefined），
+    // 或文档解析完成前 pageSize=0。返回 emptyCommand(scale=0) 是正确行为，不是缺陷。
+    // 降级为 console.debug：避免 [V16 WARN] 噪音让开发者习惯性忽略，从而掩盖真正的缺陷
+    // （真正的缺陷 = 文档已加载完成、previewFile 已就绪，但 pageSize 仍缺失 —— 应由 documentState 初始化顺序保证）。
+    console.debug(`[init] buildRenderCommand: documentState pageSize missing/zero (natW=${natW}, natH=${natH}) — not ready, returning empty (scale=0).`)
     return emptyRenderCommand()
   }
 

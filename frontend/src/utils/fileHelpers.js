@@ -61,6 +61,17 @@ export async function processPdfFile(file, getPathFn) {
       const totalPages = pages.length
       console.log(`[App] 检测到 PDF: ${file.name}, ${totalPages} 页`)
 
+      // 🛡️ 过渡守卫（V17 原则）：单页 PDF 无需拆分，直接回落原文件（不带 _pX 后缀）。
+      //    正确架构: detectPdfInfo(pageCount) → 1页直接 buildFileObj，从不进 Split Pipeline。
+      //    等导入链路重构后，本函数应只面对 totalPages > 1（届时 assert），此守卫可删除。
+      if (totalPages <= 1) {
+        console.log(`[App] PDF ${file.name} 仅 ${totalPages} 页，无需拆分，按原文件处理`)
+        const fileObj = buildFileObj(file.file || file, file.name, getPathFn(file))
+        toAdd.push(fileObj)
+        toParse.push(fileObj)
+        return { toAdd, toParse, isMultiPage: false }
+      }
+
       for (let i = 0; i < totalPages; i += PDF_PAGES_BATCH_SIZE) {
         const batch = pages.slice(i, i + PDF_PAGES_BATCH_SIZE)
         console.log(`[App] 处理 PDF 批次: ${i + 1}-${Math.min(i + batch.length, totalPages)} / ${totalPages}`)

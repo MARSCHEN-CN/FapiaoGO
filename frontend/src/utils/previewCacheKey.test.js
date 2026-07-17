@@ -65,6 +65,17 @@ test('different customPaper (Custom) => different key', () => {
   assert.notEqual(c1, c2)
 })
 
+// 🔴 V17 不变式回归护栏：任何影响 RenderCommand 的 Fact 都必须进入缓存身份。
+// paperLandscape（由 PaperOrientation Fact 驱动 Canvas 绘制）不同 → key 必须不同，
+// 否则强制方向后 canvas 变了但键不变 → 命中陈旧快照显示错误方向。
+test('different paperLandscape (Fact) => different key', () => {
+  const base = { paperSize: 'A4', isLandscape: false, mergeMode: 'none', customPaper: null,
+    margins: { left: 3, right: 3, top: 3, bottom: 3 } }
+  const portrait = buildPreviewCacheKey(doc, { ...base, paperLandscape: false })
+  const landscape = buildPreviewCacheKey(doc, { ...base, paperLandscape: true })
+  assert.notEqual(portrait, landscape)
+})
+
 // 布局字段缺失也不应抛错，且非 Custom 时不产生 customPaper 片段（L3 收口）
 test('tolerates missing optional layout fields', () => {
   const key = buildPreviewCacheKey(doc, { paperSize: 'A4', isLandscape: false, mergeMode: 'none' })

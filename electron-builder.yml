@@ -2,18 +2,21 @@
 appId: com.marsprint.app
 productName: MarsPrint
 directories:
-  output: dist
+  output: release
   buildResources: resources
 files:
   - "electron/**/*"
   - "!electron/node_modules/**/*"
+  - "dist/**/*"
 # 打包时额外资源（SumatraPDF）
 extraResources:
-  - from: ../resources/sumatra
+  - from: resources/sumatra
     to: sumatra
 # Windows 打包配置
 win:
-  target: nsis
+  target:
+    - nsis
+    - portable
   icon: resources/icon.ico
 nsis:
   oneClick: false

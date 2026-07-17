@@ -1,3 +1,7 @@
+// [D1] 共享纯执行绘制例程（与单文件预览 / _renderDirect 同源；DOM-free，Worker 可直接 import）。
+//      仅消费主线程建好的 RenderCommand，绝不自算 fit/rotate/center/swap。
+import { drawRenderCommand } from './layout/renderDraw.js'
+
 console.log('[Worker] VERSION 10 — sources.close enabled')
 // ═══════════════════════════════════════════════════════════════
 // render.worker.js — Phase 2 合成专用 Worker
@@ -13,7 +17,10 @@ const DASH_PATTERN = [6, 4]
 self.postMessage({ type: 'ready' })
 
 // ── Phase 2 合成 ──
-function compositeCanvas(sources, layout, rotations, layoutOptions) {
+//     主线程已通过 buildMergeRenderCommands 把 slot + 内容尺寸 + 旋转 收敛为 RenderCommand[]，
+//     此处只做纯执行：逐条 drawRenderCommand（clip 到 slot、按 placement 落盘、按 contentRotation 旋转）。
+//     layout 仅用于画布尺寸(page) 与分隔线(area/slots)，不再参与任何 fit 数学。
+function compositeCanvas(sources, layout, commands, layoutOptions) {
   const { page, area, slots } = layout
   const canvas = new OffscreenCanvas(page.width, page.height)
   const ctx = canvas.getContext('2d')
@@ -21,35 +28,15 @@ function compositeCanvas(sources, layout, rotations, layoutOptions) {
   ctx.fillStyle = '#ffffff'
   ctx.fillRect(0, 0, canvas.width, canvas.height)
 
-  const fitMode = 'fit'
-
+  let _ci = 0
   for (let i = 0; i < slots.length; i++) {
     const slot = slots[i]
     const source = sources[i]
     if (!source) continue
-
-    const rotate = (rotations && rotations[slot.itemId]) || 0
-    const { width: contentW, height: contentH } = source
-
-    const isRotated90 = rotate === 90 || rotate === 270
-    const effectiveW = isRotated90 ? contentH : contentW
-    const effectiveH = isRotated90 ? contentW : contentH
-
-    const scale = fitMode === 'fill'
-      ? Math.max(slot.width / effectiveW, slot.height / effectiveH)
-      : Math.min(slot.width / effectiveW, slot.height / effectiveH)
-
-    ctx.save()
-    ctx.beginPath()
-    ctx.rect(slot.x, slot.y, slot.width, slot.height)
-    ctx.clip()
-
-    ctx.translate(slot.x + slot.width / 2, slot.y + slot.height / 2)
-    if (rotate) ctx.rotate(rotate * Math.PI / 180)
-    ctx.scale(scale, scale)
-    ctx.drawImage(source, -contentW / 2, -contentH / 2, contentW, contentH)
-
-    ctx.restore()
+    const cmd = commands[_ci++]
+    if (!cmd) continue
+    // ratio=1：Worker 画布与命令同 dpi（均 PREVIEW_DPI），无需缩放对齐
+    drawRenderCommand(ctx, cmd, source, source.width, source.height, 1)
   }
 
   // 分隔线

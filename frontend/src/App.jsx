@@ -85,11 +85,11 @@ function AppContent() {
     previewUrl,
     previewRenderVersion,
     previewLoading,
-    previewRotation, fileRotations, showLeftArrow, showRightArrow,
+    previewRotation, paperOrientation, autoActive, fileRotations, showLeftArrow, showRightArrow,
     paperLayout, contentLayout,
   } = preview.state
   const {
-    handlePreview, preloadHD, handleRotate, prevPage, nextPage,
+    handlePreview, preloadHD, handleRotate, handlePaperOrientationChange, prevPage, nextPage,
     handlePrevFile, handleNextFile, cleanupPreviewUrl,
     clearFilePreviewCache, clearAllPreviewCache,
   } = preview.actions
@@ -153,6 +153,7 @@ function AppContent() {
     packing, packProgress, packResult, setPackResult, setPacking,
     renamePreviewVisible, setRenamePreviewVisible,
     renamePreviewFiles, renameResult, setRenameResult,
+    renamedPreviewKey,
     alertModal: renamePackAlert, closeAlert: closeRenamePackAlert,
     handleRename, handleRenameConfirm, handlePack,
   } = useRenamePack({ files, settings, setFiles, parseFiles, electronAPIRef })
@@ -176,6 +177,20 @@ function AppContent() {
   filesRef.current = files
   const previewFileRef = useRef(previewFile)
   previewFileRef.current = previewFile
+
+  // ── 重命名完成后，重新导入（预览）该发票 ──
+  // 根因：重命名把新文件追加、再删除旧文件；usePreview 的自动导航只会跳到 files[0]，
+  // 批量重命名时那不是被重命名的文件 → 预览停留在骨架屏（contentReady=false，
+  // 用 paperLayout.displayRect 兜底 → 容器被撑得特别大）。此处用重命名时记录的 key，
+  // 在最新 files 状态里取出「已解析、带 docId」的对象重新导入，保证 Render Engine 预览正确。
+  useEffect(() => {
+    if (!renameResult?.success || !renamedPreviewKey) return
+    const f = filesRef.current.find(x => x.key === renamedPreviewKey)
+    if (f && f.status === 'parsed') {
+      skipAutoNavRef.current = true
+      handlePreview(f)
+    }
+  }, [renameResult, renamedPreviewKey, handlePreview, skipAutoNavRef])
 
   const removeFile = useCallback((key) => {
     // 先找到当前预览文件在列表中的位置（读取 ref 中的最新 files / previewFile）
@@ -627,6 +642,21 @@ function AppContent() {
                 <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
               </button>
             </div>
+
+            <div className="canvas-orient-control">
+              <span className="oco-label">纸张方向</span>
+              <div className="oco-segment">
+                <button className={`oco-btn ${autoActive ? 'active' : ''}`} onClick={() => handlePaperOrientationChange('auto')}>自动</button>
+                <button className={`oco-btn ${paperOrientation === 'landscape' ? 'active' : ''}`} onClick={() => handlePaperOrientationChange('landscape')}>横向</button>
+                <button className={`oco-btn ${paperOrientation === 'portrait' ? 'active' : ''}`} onClick={() => handlePaperOrientationChange('portrait')}>纵向</button>
+              </div>
+              <button className="tb-btn oco-rotate" onClick={() => handleRotate()} title={`旋转 (${previewRotation}°)`}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 12a9 9 0 11-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/>
+                  <path d="M21 3v5h-5"/>
+                </svg>
+              </button>
+            </div>
           </div>
         )}
 
@@ -815,6 +845,8 @@ function AppContent() {
           totalFiles={printableCount}
           mergeMode={isMergeMode(settings.mergeMode)}
           isOneNormalTwoSpecial={settings.extraSpecial || false}
+          paperOrientation={paperOrientation}
+          contentRotation={previewRotation}
           onConfirm={onPrintConfirm}
           onCancel={handlePrintCancel}
           onSettingsChange={updateSettings}

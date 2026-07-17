@@ -876,6 +876,65 @@ ipcMain.handle('load-print-settings', async () => {
   }
 })
 
+// ============================
+// 文档方向 Fact 持久化（Commit C）：per doc_id 的纸张方向 + 内容旋转
+// 落盘到 userData/DocFacts.json（map: factKey -> {paperOrientation, contentRotation}）
+// factKey = docId(内容哈希) || path(图片落盘路径)
+// "自动" = 持久层无该 factKey 记录。
+// ============================
+const docFactsPath = path.join(app.getPath('userData'), 'DocFacts.json')
+
+async function readDocFacts() {
+  try {
+    const data = await fs.promises.readFile(docFactsPath, 'utf-8')
+    const parsed = JSON.parse(data)
+    return parsed && typeof parsed === 'object' ? parsed : {}
+  } catch (_) {
+    return {}
+  }
+}
+
+async function writeDocFacts(map) {
+  const dir = path.dirname(docFactsPath)
+  await fs.promises.mkdir(dir, { recursive: true })
+  await fs.promises.writeFile(docFactsPath, JSON.stringify(map, null, 2), 'utf-8')
+}
+
+function normalizeDocRotation(deg) {
+  const r = Math.round(Number(deg) || 0) % 360
+  return r < 0 ? r + 360 : r
+}
+
+ipcMain.handle('load-doc-facts', async (event, factKey) => {
+  if (!factKey) return null
+  const map = await readDocFacts()
+  const rec = map[factKey]
+  if (!rec) return null
+  return {
+    paperOrientation: rec.paperOrientation === 'landscape' ? 'landscape' : 'portrait',
+    contentRotation: normalizeDocRotation(rec.contentRotation || 0),
+  }
+})
+
+ipcMain.handle('save-doc-facts', async (event, factKey, facts) => {
+  if (!factKey || !facts) return { success: false, error: 'invalid args' }
+  const map = await readDocFacts()
+  map[factKey] = {
+    paperOrientation: facts.paperOrientation === 'landscape' ? 'landscape' : 'portrait',
+    contentRotation: normalizeDocRotation(facts.contentRotation || 0),
+  }
+  await writeDocFacts(map)
+  return { success: true }
+})
+
+ipcMain.handle('clear-doc-facts', async (event, factKey) => {
+  if (!factKey) return { success: false, error: 'invalid args' }
+  const map = await readDocFacts()
+  if (factKey in map) delete map[factKey]
+  await writeDocFacts(map)
+  return { success: true }
+})
+
 ipcMain.handle('get-printers', async () => {
   if (!mainWindow || mainWindow.isDestroyed()) return []
   // ✅ 移除无意义的 500ms 延迟，直接获取打印机列表
