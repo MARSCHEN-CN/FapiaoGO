@@ -168,9 +168,9 @@ class PdfExportService:
             含有最终状态、进度、错误列表的 ExportTask。
         """
         if task is None:
-            task = self._task_registry.create(total=len(items))
+            task = self._task_registry.create(total=1)
         else:
-            task.total = len(items)
+            task.total = 1
             task.current = 0
 
         task.start()
@@ -188,17 +188,20 @@ class PdfExportService:
                                 task.id[:8], len(items) - task.current)
                     break
 
+                # 更新 currentFile 用于进度展示，但不推进计数
+                task.current_file = item.filename
+                task._notify()
+
                 handler = self.resolver.resolve(item.source, item.filename or 'unknown')
                 if handler is None:
                     msg = f"不支持的格式，跳过合并: {item.filename}"
                     logger.warning("[PdfExport] %s", msg)
                     if task is not None:
                         task.add_error(item.filename or 'unknown', msg)
-                        task.advance(item.filename)
                     continue
 
                 try:
-                    # 调用 Handler 的 export_merge（各 Handler 实现了不同格式的 merge）
+                    # 调用 Handler 的 export_merge
                     export_merge = getattr(handler, 'export_merge', None)
                     if export_merge is None:
                         raise NotImplementedError(
@@ -206,23 +209,25 @@ class PdfExportService:
                     insert_count = export_merge(item.source, item.filename, target_doc)
                     logger.info("[PdfExport] merge: %s → %d pages",
                                 item.filename, insert_count)
-                    if task is not None:
-                        task.advance(item.filename)
                 except Exception as e:
                     logger.error("[PdfExport] merge 失败: %s: %s", item.filename, e)
                     if task is not None:
                         task.add_error(item.filename, str(e))
-                        task.advance(item.filename)
             else:
-                # 循环未被 break（含全部 continue 跳过）才保存，
-                # 避免取消时写出半截 PDF。SSE 消费者据此得到干净终态。
-                target_doc.save(output_path, incremental=False, deflate=True)
-                total_pages = len(target_doc)
-                logger.info("[PdfExport] merge 完成: %s (%d pages)",
-                            output_path, total_pages)
-                if total_pages > 500:
-                    logger.warning("[PdfExport] 合并文件超过 500 页 (%d)，"
-                                  "建议分批导出以控制内存", total_pages)
+                # 循环未被 break，保存合并结果
+                # merge 视为 1 次操作（输出 1 个文件）
+                if len(target_doc) > 0:
+                    target_doc.save(output_path, incremental=False, deflate=True)
+                    total_pages = len(target_doc)
+                    logger.info("[PdfExport] merge 完成: %s (%d pages)",
+                                output_path, total_pages)
+                    if total_pages > 500:
+                        logger.warning("[PdfExport] 合并文件超过 500 页 (%d)，"
+                                      "建议分批导出以控制内存", total_pages)
+                else:
+                    logger.warning("[PdfExport] merge: 无有效页面，跳过保存")
+
+                task.advance('merged.pdf')
         except Exception as e:
             # 编排层不可恢复错误：标记失败，保证生命周期闭合
             logger.exception("[PdfExport] merge 任务 %s 编排失败: %s", task.id[:8], e)

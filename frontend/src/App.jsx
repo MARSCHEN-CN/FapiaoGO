@@ -244,35 +244,74 @@ function AppContent() {
     clearAllPreviewCache()
   }, [cleanupPreviewUrl, clearPrintState, clearAllPreviewCache])
 
-  const removeFailedFiles = useCallback((/* removeSource */) => {
-    setFiles(prev => {
-      const filtered = prev.filter(fileObj =>
-        !fileObj.failedFields?.length &&
-        !fileObj.parseMethod?.includes('数据缺失') &&
-        !fileObj.parseMethod?.includes('缺失')
-      )
-      // ✅ 移除 updater 内副作用 — usePreview 的 auto-nav useEffect 会在
-      // previewFile 被移除时自动处理导航和清理
-      // TODO: removeSource=true 时物理删除源文件（待 IPC 支持）
-      return filtered
-    })
-  }, [])
+  const removeFailedFiles = useCallback((removeSource = false) => {
+    // ✅ 先读取最新列表计算要删除的文件（不在 updater 内做副作用）
+    const liveFiles = filesRef.current
+    const toRemove = liveFiles.filter(fileObj =>
+      fileObj.failedFields?.length ||
+      fileObj.parseMethod?.includes('数据缺失') ||
+      fileObj.parseMethod?.includes('缺失')
+    )
+    // ✅ 物理删除源文件（异步，不阻塞 UI）
+    if (removeSource && toRemove.length > 0) {
+      const paths = toRemove.map(f => f.path).filter(Boolean)
+      const ipc = electronAPIRef.current?.ipcRenderer
+      if (paths.length > 0 && ipc) {
+        ipc.invoke('delete-files', paths).then(res => {
+          if (res.failed?.length) {
+            console.warn('[removeFailed] 部分文件删除失败:', res.failed)
+          }
+        }).catch(err => {
+          console.error('[removeFailed] 删除源文件出错:', err)
+        })
+      }
+    }
+    // 如果正在预览的是被移除的文件，清理预览（auto-nav useEffect 会处理导航）
+    const livePreview = previewFileRef.current
+    if (livePreview && toRemove.some(f => f.key === livePreview.key)) {
+      cleanupPreviewUrl()
+    }
+    setFiles(prev => prev.filter(fileObj =>
+      !fileObj.failedFields?.length &&
+      !fileObj.parseMethod?.includes('数据缺失') &&
+      !fileObj.parseMethod?.includes('缺失')
+    ))
+  }, [cleanupPreviewUrl])
 
   const removeDuplicateFiles = useCallback((removeSource = false) => {
-    setFiles(prev => {
-      const duplicates = detectDuplicateInvoices(prev)
-      const duplicateKeys = new Set()
-      duplicates.forEach((dupFiles) => {
-        dupFiles.forEach((file, idx) => {
-          if (removeSource ? idx === 0 : idx > 0) {
-            duplicateKeys.add(file.key)
-          }
-        })
+    // ✅ 先读取最新列表计算重复组（不在 updater 内做副作用）
+    const liveFiles = filesRef.current
+    const duplicates = detectDuplicateInvoices(liveFiles)
+    const duplicateKeys = new Set()
+    const pathsToDelete = []
+    duplicates.forEach((dupFiles) => {
+      dupFiles.forEach((file, idx) => {
+        if (idx > 0) {
+          duplicateKeys.add(file.key)
+          if (removeSource && file.path) pathsToDelete.push(file.path)
+        }
       })
-      // ✅ 移除 updater 内副作用 — usePreview 的 auto-nav useEffect 会自动处理
-      return prev.filter(fileObj => !duplicateKeys.has(fileObj.key))
     })
-  }, [])
+    // ✅ 物理删除源文件（异步，不阻塞 UI）
+    if (pathsToDelete.length > 0) {
+      const ipc = electronAPIRef.current?.ipcRenderer
+      if (ipc) {
+        ipc.invoke('delete-files', pathsToDelete).then(res => {
+          if (res.failed?.length) {
+            console.warn('[removeDup] 部分文件删除失败:', res.failed)
+          }
+        }).catch(err => {
+          console.error('[removeDup] 删除源文件出错:', err)
+        })
+      }
+    }
+    // 如果正在预览的是被移除的文件，清理预览（auto-nav useEffect 会处理导航）
+    const livePreview = previewFileRef.current
+    if (livePreview && duplicateKeys.has(livePreview.key)) {
+      cleanupPreviewUrl()
+    }
+    setFiles(prev => prev.filter(fileObj => !duplicateKeys.has(fileObj.key)))
+  }, [cleanupPreviewUrl])
 
   // ============================
   // mergeMode 同步到 FileContext（用于 printableCount 合并调整）
