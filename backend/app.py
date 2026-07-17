@@ -1330,6 +1330,32 @@ def api_export_pdf_cancel():
         return jsonify({"success": True})
     return jsonify({"success": False, "error": "任务不存在"}), 404
 
+
+@app.route('/api/export-pdf/events/<task_id>', methods=['GET'])
+def api_export_pdf_events(task_id):
+    """SSE 进度流（只读 TaskRegistry，不执行导出、不持有业务状态）。
+
+    与 POST /api/export-pdf 配合：POST 创建任务并在后台运行导出，
+    本端点按 taskId 流式推送进度。状态唯一来源是 ExportTask.to_dict()，
+    本函数不调用 Service / Handler / task.* 状态变更方法。
+    """
+    from services.export_stream import stream_export_progress
+
+    # 未知任务：HTTP 404（不进入 SSE 流），对应契约测试 test_sse_unknown_task
+    if task_registry.get(task_id) is None:
+        return jsonify({"success": False, "error": "任务不存在"}), 404
+
+    def generate():
+        for state in stream_export_progress(task_id, task_registry=task_registry):
+            yield f"data: {_json.dumps(state, ensure_ascii=False)}\n\n"
+
+    return Response(
+        stream_with_context(generate()),
+        mimetype='text/event-stream',
+        headers={'Cache-Control': 'no-cache', 'Connection': 'keep-alive', 'X-Accel-Buffering': 'no'},
+    )
+
+
 if __name__ == '__main__':
     logging.basicConfig(
         level=logging.DEBUG,

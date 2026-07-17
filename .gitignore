@@ -15,6 +15,7 @@ scripts/
 test_fixtures/
 **/tests/*
 !backend/tests/test_task_lifecycle.py
+!backend/tests/test_export_stream_contract.py
 mimo.exe
 
 # 前端依赖与构建产物
