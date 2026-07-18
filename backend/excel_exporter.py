@@ -222,6 +222,7 @@ class XlsxWriter:
             ('销售方名称', 'sellerName', 25),
             ('销售方税号', 'sellerTaxNo', 20),
             ('开票人', 'issuer', 10),
+            ('分类编码', 'classificationCode', 18),
             ('项目名称', 'xmmc', 35),
             ('规格型号', 'ggxh', 20),
             ('单位', 'unit', 8),
@@ -413,7 +414,7 @@ def export_csv(file_path, invoices, options, on_progress=None):
     if include_remark:
         headers.extend(['备注', '原文件名'])
     headers.extend([
-        '项目名称', '规格型号', '单位', '数量', '单价', '金额', '税率/征收率', '税额'
+        '分类编码', '项目名称', '规格型号', '单位', '数量', '单价', '金额', '税率/征收率', '税额'
     ])
 
     if on_progress:
@@ -448,6 +449,7 @@ def export_csv(file_path, invoices, options, on_progress=None):
                 if include_remark:
                     row.extend([inv.get('note', ''), inv.get('originalFilename', '')])
                 row.extend([
+                    inv.get('classificationCode', ''),
                     inv.get('xmmc', ''),
                     inv.get('ggxh', ''),
                     inv.get('unit', ''),

@@ -1,6 +1,6 @@
 import { PAPER_SIZE_MAP } from './config.js'
 import { ComposeSlotLayoutFactory, DEFAULT_SLOT_MARGIN_MM } from './compose/composeSlot.js'
-import { discretizeSlots } from './compose/slotDiscretizer.js'
+import { rasterizeSlots } from './compose/composeSlotRasterizer.js'
 
 /**
  * Layout Engine - 独立的布局计算层（WPS级架构）

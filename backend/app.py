@@ -186,6 +186,20 @@ def _db_record_to_export(rec: dict) -> list:
     优先使用 line_items_excel_rows（字符级通路的精确结果），
     回退到传统 line_items。
     """
+    CLASS_CODE_RE = re.compile(r'^\*[^*]+\*')
+
+    def _extract_class_code(row):
+        """从 xmmc 中提取 *xxx* 分类编码，清理后回填"""
+        raw = row.get('xmmc', '')
+        m = CLASS_CODE_RE.match(raw)
+        if m:
+            code = m.group().strip('*')
+            cleaned = raw[m.end():].lstrip()
+            row['classificationCode'] = code
+            row['xmmc'] = cleaned or raw
+        else:
+            row['classificationCode'] = ''
+
     def _build_header(serial_no=""):
         try:
             total_amount = float(rec.get('amount', 0) or 0)
@@ -239,6 +253,7 @@ def _db_record_to_export(rec: dict) -> list:
                 val = item.get(cn_key, '')
                 if val:
                     row[export_key] = val
+            _extract_class_code(row)
             results.append(row)
         return results
 
@@ -261,6 +276,7 @@ def _db_record_to_export(rec: dict) -> list:
         # 无明细行：返回单行，xmmc 从顶层字段取
         row = _build_header("")
         row["xmmc"] = rec.get('xmmc', '')
+        _extract_class_code(row)
         return [row]
 
     results = []
@@ -268,6 +284,7 @@ def _db_record_to_export(rec: dict) -> list:
         row = _build_header("")
         for db_key, export_key in _ITEM_MAP.items():
             row[export_key] = item.get(db_key, '')
+        _extract_class_code(row)
         results.append(row)
     return results
 
