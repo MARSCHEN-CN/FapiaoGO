@@ -35,12 +35,15 @@ test('ComposeSlot preserves merge3 remainder allocation', () => {
   assert.deepEqual(slots[1].paperRect, { x: 0, y: 70, width: 148, height: 70 })
   assert.deepEqual(slots[2].paperRect, { x: 0, y: 140, width: 148, height: 70 })
 
-  // 余数归属：用不可整除高度冻结「末 slot 吃余数」策略（镜像 layout.js:103）
+  // 逻辑来源：不再在 mm 层吃余数（余数由 SlotDiscretizer 在 px 边界处理）。
+  // 211/3 = 70.333… 三个 slot 等高（连续值）。
   const tall = { widthMM: 148, heightMM: 211, isLandscape: false }
   const r = ComposeSlotLayoutFactory({ paper: tall, mergeMode: 'merge3' })
-  assert.equal(r[0].paperRect.height, 70) // floor(211/3)
-  assert.equal(r[1].paperRect.height, 70)
-  assert.equal(r[2].paperRect.height, 71) // 211 - 140 余数
+  const partMm = 211 / 3
+  assert.ok(Math.abs(r[0].paperRect.height - partMm) < 1e-9)
+  assert.ok(Math.abs(r[1].paperRect.height - partMm) < 1e-9)
+  assert.ok(Math.abs(r[2].paperRect.height - partMm) < 1e-9)
+  // 末 slot 吃余数的 px characterization 已移交 slotDiscretizer.test（如 A4@300 merge3 = 1169/1169/1170）
 })
 
 test('ComposeSlot preserves merge4 grid ordering', () => {
@@ -53,14 +56,14 @@ test('ComposeSlot preserves merge4 grid ordering', () => {
   assert.deepEqual(slots[2].gridPosition, { col: 0, row: 1 })
   assert.deepEqual(slots[3].gridPosition, { col: 1, row: 1 })
 
-  // 末列/末行吃余数：297/2 → 148+149；210/2 → 105+105
-  assert.deepEqual(slots[0].paperRect, { x: 0, y: 0, width: 148, height: 105 })
-  assert.deepEqual(slots[1].paperRect, { x: 148, y: 0, width: 149, height: 105 })
-  assert.deepEqual(slots[2].paperRect, { x: 0, y: 105, width: 148, height: 105 })
-  assert.deepEqual(slots[3].paperRect, { x: 148, y: 105, width: 149, height: 105 })
+  // 逻辑来源：连续 mm（297/2 = 148.5，无末列吃余数；px 余数见 slotDiscretizer.test）
+  assert.deepEqual(slots[0].paperRect, { x: 0, y: 0, width: 148.5, height: 105 })
+  assert.deepEqual(slots[1].paperRect, { x: 148.5, y: 0, width: 148.5, height: 105 })
+  assert.deepEqual(slots[2].paperRect, { x: 0, y: 105, width: 148.5, height: 105 })
+  assert.deepEqual(slots[3].paperRect, { x: 148.5, y: 105, width: 148.5, height: 105 })
 
-  // 每张都有独立 contentRect（末列宽 149 → contentRect 宽 139）
-  assert.deepEqual(slots[1].contentRect, { x: 153, y: 5, width: 139, height: 95 })
+  // 每张都有独立 contentRect（末列宽 148.5 → contentRect 宽 138.5）
+  assert.deepEqual(slots[1].contentRect, { x: 153.5, y: 5, width: 138.5, height: 95 })
 })
 
 test('ComposeSlot creates independent contentRect', () => {

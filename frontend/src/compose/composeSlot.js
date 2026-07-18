@@ -5,9 +5,12 @@
  *   ❌ 禁止：dpi / px / canvas / image / RenderCommand / window / zoom / viewport
  *   ✅ 只允许：纸张坐标(mm) 的矩形计算
  *
- * 这是「现有 merge 几何语义的等价表达」（非新算法）：
- *   - vertical N 等分，末 slot 吃余数（镜像 layout.js:99-103）
- *   - grid 2×2，row-major（镜像 layout.js:115-150）
+ * 逻辑几何来源（非离散化层）：
+ *   - vertical N 等分 / grid 2×2，row-major（与旧 layout.js 分区同构）
+ *   - 仅产出 mm 连续值，不四舍五入、不在此吃余数
+ *   - 余数 / 像素化由 slotDiscretizer.js 在 dpi 边界统一处理（累计边界取整 + 末边界钉死），
+ *     从而保留旧 px characterization（如 A4@300 merge3 = 1169/1169/1170）
+ *
  * 坐标单位为 mm；本工厂接收「可打印区 origin（paperXMm/paperYMm，外层边距后的左上角）
  * + paper 尺寸」，默认 origin={0,0} 即整纸（与 B0 行为一致）。仅在每张虚拟纸内部再内缩
  * marginMm 得到 contentRect。C1 起为 ComposeSlotLayoutFactory（buildComposeSlots 保留别名）。
@@ -67,24 +70,24 @@ export function ComposeSlotLayoutFactory({ paper, mergeMode, marginMm = DEFAULT_
   const count = groupSize
   const slots = []
 
+  // C1 step2：本工厂只产出「逻辑 slot」（mm，连续值，不离散化）。
+  // 余数 / 像素化由 SlotDiscretizer 在 dpi 边界统一处理（累计边界取整 + 末边界钉死），
+  // 从而保留旧 createLayout 的 px characterization（如 A4@300 merge3 = 1169/1169/1170）。
   if (strategy === 'vertical') {
-    const partHeight = Math.floor(area.height / count)
+    const partHeight = area.height / count
     for (let index = 0; index < count; index++) {
-      const y = index * partHeight
-      const height = index === count - 1 ? area.height - y : partHeight
-      slots.push(makeSlot(index, area.x, area.y + y, area.width, height, marginMm))
+      const y = area.y + index * partHeight
+      slots.push(makeSlot(index, area.x, y, area.width, partHeight, marginMm))
     }
   } else {
-    const cellWidth = Math.floor(area.width / gridCols)
-    const cellHeight = Math.floor(area.height / gridRows)
+    const cellWidth = area.width / gridCols
+    const cellHeight = area.height / gridRows
     for (let index = 0; index < count; index++) {
       const col = index % gridCols
       const row = Math.floor(index / gridCols)
       const x = area.x + col * cellWidth
       const y = area.y + row * cellHeight
-      const width = col === gridCols - 1 ? area.width - col * cellWidth : cellWidth
-      const height = row === gridRows - 1 ? area.height - row * cellHeight : cellHeight
-      slots.push(makeSlot(index, x, y, width, height, marginMm, { col, row }))
+      slots.push(makeSlot(index, x, y, cellWidth, cellHeight, marginMm, { col, row }))
     }
   }
   return slots

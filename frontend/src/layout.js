@@ -1,4 +1,6 @@
 import { PAPER_SIZE_MAP } from './config.js'
+import { ComposeSlotLayoutFactory, DEFAULT_SLOT_MARGIN_MM } from './compose/composeSlot.js'
+import { discretizeSlots } from './compose/slotDiscretizer.js'
 
 /**
  * Layout Engine - 独立的布局计算层（WPS级架构）
@@ -88,68 +90,49 @@ export function getPrintableArea(pixels, margin = 0) {
 export function createLayout(items, paperKey, dpi, isLandscape = false, options = {}) {
   const { slotCount, strategy = 'vertical', margin = 0, gridCols = 2, gridRows = 2, customPaper } = options
 
-  
   const page = getPaperPixels(paperKey, dpi, isLandscape, customPaper)
-  const area = getPrintableArea(page, margin)
-  
+  const area = getPrintableArea(page, margin)   // px 可打印区（对外契约不变：mergeFactory / renderers 仍消费 px）
+
   const count = slotCount || items.length
-  
-  let slots = []
-  if (strategy === 'vertical') {
-    const partHeight = Math.floor(area.height / count)
-    
-    slots = items.map((item, index) => {
-      const y = index * partHeight
-      const height = (index === count - 1) ? area.height - y : partHeight
-      
-      return {
-        id: `slot-${item.id || index}`,
-        itemId: item.id,
-        index,
-        x: area.x,
-        y: area.y + y,
-        width: area.width,
-        height
-      }
-    })
-  } else if (strategy === 'grid') {
-    // ✅ 新增网格布局逻辑（2×2 或自定义）
-    const cellWidth = Math.floor(area.width / gridCols)
-    const cellHeight = Math.floor(area.height / gridRows)
-      
-    slots = items.map((item, index) => {
-      if (index >= gridCols * gridRows) {
-        // 超出网格容量的项忽略
-        return null
-      }
-        
-      const col = index % gridCols
-      const row = Math.floor(index / gridCols)
-        
-      // 计算 x 坐标（考虑最后一列的宽度补偿）
-      const x = area.x + col * cellWidth
-        
-      // 计算 y 坐标（考虑最后一行的高度补偿）
-      const y = area.y + row * cellHeight
-        
-      // 最后一列/最后一行补偿余数像素
-      const width = (col === gridCols - 1) ? area.width - (col * cellWidth) : cellWidth
-      const height = (row === gridRows - 1) ? area.height - (row * cellHeight) : cellHeight
-        
-      return {
-        id: `slot-${item.id || index}`,
-        itemId: item.id,
-        index,
-        x,
-        y,
-        width,
-        height,
-        // ✅ 新增网格位置信息（用于调试和扩展）
-        gridPosition: { col, row }
-      }
-    })
-  }
-  return { page, area, slots }
+
+  // ── C1 step2：slot 分区 OWNERSHIP 移交 ComposeSlotLayoutFactory（逻辑 mm 来源）──
+  // 1) 解析外层边距 → 可打印区 mm 尺寸 + origin（Factory 接收「已扣边距」的 paper + origin）
+  const mLeft = typeof margin === 'object' ? (margin.left || 0) : margin
+  const mTop = typeof margin === 'object' ? (margin.top || 0) : margin
+  const mRight = typeof margin === 'object' ? (margin.right || 0) : margin
+  const mBottom = typeof margin === 'object' ? (margin.bottom || 0) : margin
+  const printableWidthMm = page.widthMM - mLeft - mRight
+  const printableHeightMm = page.heightMM - mTop - mBottom
+  // page.widthMM/heightMM 已由 getPaperPixels 按 isLandscape 调整，故传给 Factory 时
+  // isLandscape:false，避免 Factory 内部二次旋转。
+  const paperMM = { widthMM: printableWidthMm, heightMM: printableHeightMm, isLandscape: false }
+  const mergeMode = strategy === 'grid' ? 'merge4' : `merge${count}`
+  // 与 renderer(_composeContentRectPx / internalMarginMm) 同源：单页不内缩，Merge 内缩 5mm。
+  // 这样 Discretizer 产出的 contentRect 与 renderer 当前行为一致，C2 切换字节级无感。
+  const internalMarginMm = count > 1 ? DEFAULT_SLOT_MARGIN_MM : 0
+
+  // 2) Factory 产出逻辑 slot（mm，连续值）→ 离散化交给 SlotDiscretizer（px + 余数保留）
+  const logicalSlots = ComposeSlotLayoutFactory({
+    paper: paperMM,
+    mergeMode,
+    marginMm: internalMarginMm,
+    paperXMm: mLeft,
+    paperYMm: mTop,
+  })
+  const pxSlots = discretizeSlots(logicalSlots, {
+    dpi,
+    areaPx: area,
+    areaMm: { width: printableWidthMm, height: printableHeightMm },
+    originMm: { x: mLeft, y: mTop },
+    gridCols,
+    gridRows,
+    marginMm: internalMarginMm,
+  })
+
+  // 3) itemId 按位置映射（Factory 不感知 items）
+  pxSlots.forEach((s, i) => { s.itemId = items[i] ? items[i].id : undefined })
+
+  return { page, area, slots: pxSlots }
 }
 
 export function createTransform(angle, cx, cy, scale = 1) {
