@@ -715,6 +715,48 @@ function _getWorker() {
   return _renderWorker
 }
 
+/**
+ * [Commit A] 主线程计算 Compose 几何，产出 RenderCommand[] 供 Worker 纯执行。
+ * 镜像 _renderDirect 的 inline fit/rotate/scale/clip 数学（L1068-1100），确保 Preview(Worker) 与
+ * Print(Direct) 几何一致。Commit B 将抽为共享 buildComposeLayout，并让 _renderDirect 也消费本产物。
+ *
+ * @param {object} layout - createLayout 产出（slots: [{itemId,x,y,width,height}, ...]）
+ * @param {Map<string,{source:*,width:number,height:number}>} contentSources - itemId → 真实内容尺寸
+ * @param {Object<string,number>} rotations - itemId → 旋转角(0/90/180/270)
+ * @param {object} [paper] - 满足 validateRenderCommand 的 paper 必填（传 layout.page）
+ * @returns {(object|null)[]} 与 slots 一一对应的 RenderCommand（缺内容源为 null）
+ */
+function _buildComposeCommands(layout, contentSources, rotations, paper) {
+  const { slots } = layout
+  const fitScale = (slot, effW, effH) => Math.min(slot.width / effW, slot.height / effH)
+  return slots.map((slot) => {
+    if (!slot) return null
+    const cs = contentSources.get(slot.itemId)
+    if (!cs) return null
+    const { width: contentW, height: contentH } = cs
+    const rotate = (rotations && rotations[slot.itemId]) || 0
+    const isRotated90 = rotate === 90 || rotate === 270
+    const effectiveW = isRotated90 ? contentH : contentW
+    const effectiveH = isRotated90 ? contentW : contentH
+    const scale = fitScale(slot, effectiveW, effectiveH)
+    const drawW = effectiveW * scale
+    const drawH = effectiveH * scale
+    return {
+      version: 1,
+      paper: paper || layout.page,
+      rotatedBounds: { width: effectiveW, height: effectiveH },
+      placement: {
+        scale,
+        offsetX: slot.x + slot.width / 2 - drawW / 2,
+        offsetY: slot.y + slot.height / 2 - drawH / 2,
+      },
+      contentRotation: rotate,
+      rotation: 0,
+      clip: { x: slot.x, y: slot.y, width: slot.width, height: slot.height },
+    }
+  })
+}
+
 async function _renderViaWorker(items, paperKey, dpi, isLandscape, rotations, slotCount, layoutOptions) {
   // L2 cache key（与 _renderDirect 一致，统一由 buildCacheKey 生成）
   const _cacheKey = buildCacheKey(items, paperKey, dpi, isLandscape, rotations, slotCount, layoutOptions)
@@ -802,6 +844,9 @@ async function _renderViaWorker(items, paperKey, dpi, isLandscape, rotations, sl
     margin: marginMm,
   })
 
+  // [Commit A] 主线程计算 Compose 几何 → RenderCommand[]（Worker 纯执行，绝不自算 fit/rotate）
+  const commands = _buildComposeCommands(layout, contentSources, rotations, layout.page)
+
   // ═══════════════════════════════════════════════════════
   // Phase 1.5: HTMLCanvasElement/Image → ImageBitmap
   // ═══════════════════════════════════════════════════════
@@ -868,7 +913,7 @@ async function _renderViaWorker(items, paperKey, dpi, isLandscape, rotations, sl
     worker.postMessage({
       sources: imageBitmaps,
       layout,
-      rotations,
+      commands,
       layoutOptions: { ...layoutOptions, _dpi: dpi },
       cacheKey: _cacheKey,
       id,
@@ -921,6 +966,10 @@ export async function renderMultipleItemsToCanvas(
   const cachedCanvas = renderResultCache.get(_cacheKey)
   if (cachedCanvas) return cachedCanvas
 
+  // [DIAG v4-Step0] 确认 Merge 真实执行路径（worker vs direct）。验证后删除。
+  console.log('[MERGE PATH]', (!isPrint && typeof OffscreenCanvas !== 'undefined') ? 'worker' : 'direct',
+    { isPrint, hasOffscreen: typeof OffscreenCanvas !== 'undefined' })
+
   // 打印路径或环境不支持 Worker → 直接渲染
   if (isPrint || typeof OffscreenCanvas === 'undefined') {
     return _renderDirect(items, paperKey, dpi, isLandscape, rotations, slotCount, isPrint, showSafeMargin, layoutOptions)
@@ -931,6 +980,7 @@ export async function renderMultipleItemsToCanvas(
     return await _renderViaWorker(items, paperKey, dpi, isLandscape, rotations, slotCount, layoutOptions)
   } catch (e) {
     console.warn('[renderMultipleItemsToCanvas] Worker 失败，回退到主线程:', e.message)
+    console.log('[MERGE PATH] worker-failed → fallback direct')  // [DIAG v4-Step0] 区分可能 B
     return _renderDirect(items, paperKey, dpi, isLandscape, rotations, slotCount, isPrint, showSafeMargin, layoutOptions)
   }
 }

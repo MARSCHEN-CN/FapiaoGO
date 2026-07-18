@@ -17,7 +17,7 @@ const DASH_PATTERN = [6, 4]
 self.postMessage({ type: 'ready' })
 
 // ── Phase 2 合成 ──
-//     主线程已通过 buildMergeRenderCommands 把 slot + 内容尺寸 + 旋转 收敛为 RenderCommand[]，
+//     主线程已通过 _buildComposeCommands（Commit A）把 slot + 内容尺寸 + 旋转 收敛为 RenderCommand[]，
 //     此处只做纯执行：逐条 drawRenderCommand（clip 到 slot、按 placement 落盘、按 contentRotation 旋转）。
 //     layout 仅用于画布尺寸(page) 与分隔线(area/slots)，不再参与任何 fit 数学。
 function compositeCanvas(sources, layout, commands, layoutOptions) {
@@ -83,10 +83,10 @@ function compositeCanvas(sources, layout, commands, layoutOptions) {
 
 // ── onmessage ──
 self.onmessage = async (e) => {
-  const { sources, layout, rotations, layoutOptions, cacheKey, id, version } = e.data
+  const { sources, layout, commands, layoutOptions, cacheKey, id, version } = e.data
 
   try {
-    const resultCanvas = compositeCanvas(sources, layout, rotations, layoutOptions)
+    const resultCanvas = compositeCanvas(sources, layout, commands, layoutOptions)
     const bitmap = resultCanvas.transferToImageBitmap()
 
     // ✅ 关闭输入的 ImageBitmap，释放 GPU 纹理
