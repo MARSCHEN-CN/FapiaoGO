@@ -24,11 +24,15 @@
   justify-content: flex-end;
   padding: 8px 16px;
   height: var(--topbar-height);
-  background: transparent;
+  background: var(--float-bg);
+  backdrop-filter: var(--float-blur);
+  -webkit-backdrop-filter: var(--float-blur);
+  border-bottom: 1px solid var(--float-border);
   flex-shrink: 0;
   z-index: 50;
   -webkit-app-region: drag;
   gap: 0;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
 }
 
 /* 按钮区域不可拖拽 */
@@ -688,11 +692,11 @@
 }
 
 [data-theme="dark"] .topbar {
-  background: transparent;
+  background: #1a1d27;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
-  border-bottom-color: transparent;
-  box-shadow: none;
+  border-bottom-color: rgba(255, 255, 255, 0.06);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.03);
 }
 
 [data-theme="dark"] .tb-btn:hover {

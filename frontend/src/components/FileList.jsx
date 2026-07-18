@@ -76,13 +76,22 @@ const FileCardRow = memo(({ index, style, files, previewFileKey, mergeActive, me
 
       <div className="fc-row-bottom">
         <span className={`fc-invoice-no${isFailedFile(fileObj) ? ' fc-failed-reason' : ''}`}
-              title={isFailedFile(fileObj) ? fileObj.failedFields?.map(f => f.label + '：' + f.reason).join('\n') : ''}>
+              title={isFailedFile(fileObj) ? fileObj.failedFields?.join('；') : ''}>
           {(() => {
             if (fileObj.status === 'parsing') return '解析中...'
             if (isFailedFile(fileObj)) {
-              const reasons = fileObj.failedFields?.filter(f => f.reason) || []
+              const FIELD_REASON_MAP = {
+                'fphm': '发票号码为空',
+                'kprq': '开票日期为空',
+                'gmfmc': '购买方名称为空',
+                'gmfsh': '购买方税号为空',
+                'xsfmc': '销售方名称为空',
+                'xsfsh': '销售方税号为空',
+              }
+              const fields = fileObj.failedFields || []
+              const reasons = fields.map(f => FIELD_REASON_MAP[f] || f).filter(Boolean)
               if (reasons.length === 0) return '解析失败'
-              return reasons.map(r => r.reason).join('；')
+              return reasons.join('；')
             }
             return fileObj.invoiceDate && fileObj.invoiceDate !== '未知日期' ? fileObj.invoiceDate : '未知日期'
           })()}

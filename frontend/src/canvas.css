@@ -395,18 +395,16 @@
 [data-theme="dark"] .paper {
   background: var(--paper-bg);
   box-shadow:
-    0 0 0 1px rgba(255, 255, 255, 0.06),
-    0 2px 8px rgba(0, 0, 0, 0.25),
-    0 8px 24px rgba(0, 0, 0, 0.30),
-    0 16px 40px rgba(0, 0, 0, 0.20);
+    0 0 0 1px rgba(255, 255, 255, 0.10),
+    0 8px 30px rgba(0, 0, 0, 0.5),
+    0 30px 80px rgba(0, 0, 0, 0.4);
 }
 
 [data-theme="dark"] .paper:hover {
   box-shadow:
-    0 0 0 1px rgba(255, 255, 255, 0.10),
-    0 4px 12px rgba(0, 0, 0, 0.30),
-    0 10px 28px rgba(0, 0, 0, 0.35),
-    0 20px 48px rgba(0, 0, 0, 0.25);
+    0 0 0 1px rgba(255, 255, 255, 0.14),
+    0 10px 36px rgba(0, 0, 0, 0.55),
+    0 36px 100px rgba(0, 0, 0, 0.45);
 }
 
 [data-theme="dark"] .canvas-empty .canvas-empty-title {

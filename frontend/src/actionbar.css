@@ -11,6 +11,11 @@
   flex-shrink: 0;
   z-index: 10;
   gap: 12px;
+  background: var(--float-bg);
+  backdrop-filter: var(--float-blur);
+  -webkit-backdrop-filter: var(--float-blur);
+  border-top: 1px solid var(--float-border);
+  box-shadow: 0 -1px 3px rgba(0, 0, 0, 0.03);
   animation: abFloatIn 0.4s 0.2s var(--ease) both;
 }
 
@@ -425,8 +430,16 @@
 }
 
 /* ================================================================
-   DARK MODE — actionbar · 质感升级
+   DARK MODE — actionbar · 深色沉浸（类Figma/PS）
    ================================================================ */
+[data-theme="dark"] .actionbar {
+  background: #1a1d27;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border-top-color: rgba(255, 255, 255, 0.06);
+  box-shadow: 0 -1px 0 rgba(255, 255, 255, 0.03);
+}
+
 [data-theme="dark"] .abm-amount-card {
   background: var(--float-bg);
   border-color: var(--float-border);
