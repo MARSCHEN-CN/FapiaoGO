@@ -11,6 +11,7 @@
   flex-direction: column;
   height: 100vh;
   min-width: 0;
+  overflow: hidden;
   /* main 作为统一背景承载层，所有子区域透明叠加 */
   background: linear-gradient(180deg, #f5f7fb 0%, #eef1f8 100%);
   animation: fadeInUp 0.4s var(--ease) 0.1s both;

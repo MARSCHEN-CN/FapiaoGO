@@ -16,8 +16,19 @@
   --border-hover: #b8c0d0;
   --hover-bg: #e8ecf4;
 
-  --canvas-float-bg: rgba(255, 255, 255, 0.96);
-  --canvas-float-border: rgba(0, 0, 0, 0.08);
+  /* 统一浮动控件毛玻璃规范 */
+  --float-bg: rgba(255, 255, 255, 0.82);
+  --float-bg-hover: rgba(255, 255, 255, 0.94);
+  --float-border: rgba(0, 0, 0, 0.06);
+  --float-border-hover: rgba(0, 0, 0, 0.10);
+  --float-shadow: 0 2px 12px rgba(0, 0, 0, 0.07), 0 0 0 0.5px rgba(0, 0, 0, 0.04);
+  --float-shadow-hover: 0 4px 16px rgba(0, 0, 0, 0.10), 0 0 0 0.5px rgba(0, 0, 0, 0.06);
+  --float-blur: blur(16px);
+  --float-radius: var(--r-lg);  /* 12px，统一圆角 */
+  --float-radius-pill: var(--r-2xl);  /* 20px，胶囊形（如状态指示器） */
+
+  --canvas-float-bg: var(--float-bg);
+  --canvas-float-border: var(--float-border);
 
   --accent: #4f7cff;
   --brand: #4f7cff;
@@ -129,8 +140,16 @@
   --glow-accent: 0 0 20px rgba(108, 138, 255, 0.10);
   --glow-accent-hover: 0 0 28px rgba(108, 138, 255, 0.16);
 
-  --canvas-float-bg: rgba(20, 23, 31, 0.96);
-  --canvas-float-border: rgba(255, 255, 255, 0.07);
+  /* 统一浮动控件毛玻璃规范（暗色） */
+  --float-bg: rgba(30, 33, 48, 0.85);
+  --float-bg-hover: rgba(38, 42, 56, 0.95);
+  --float-border: rgba(255, 255, 255, 0.07);
+  --float-border-hover: rgba(255, 255, 255, 0.12);
+  --float-shadow: 0 2px 12px rgba(0, 0, 0, 0.30), 0 0 0 0.5px rgba(255, 255, 255, 0.05);
+  --float-shadow-hover: 0 4px 20px rgba(0, 0, 0, 0.40), 0 0 0 0.5px rgba(255, 255, 255, 0.08);
+
+  --canvas-float-bg: var(--float-bg);
+  --canvas-float-border: var(--float-border);
 
   /* ── 强调色 · 冷静蓝 + 发光感 ── */
   --accent: #6c8aff;
