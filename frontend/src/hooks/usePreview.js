@@ -930,7 +930,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
         : (!!docOrient && docOrient !== paperOrient)
     const effW = swapped ? pl.paperRect.h : pl.paperRect.w
     const effH = swapped ? pl.paperRect.w : pl.paperRect.h
-    const SHADOW_PAD = 8  // 内容区内部额外阴影边距（CSS padding 通过 getComputedStyle 动态读取，各断点自适应）
+    const SHADOW_PAD = 8  // 内容区内部额外阴影边距（CSS padding 通过 getComputedStyle 动态读取；mask-image 做边缘消融）
     let paperScaleBase = 1
     if (containerSize.width && containerSize.height) {
       // 纸张铺满 canvas-scroll 内容区，SHADOW_PAD 在净内容区内再留一圈阴影缓冲

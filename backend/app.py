@@ -233,7 +233,7 @@ def _db_record_to_export(rec: dict) -> list:
         }
         results = []
         for idx, item in enumerate(excel_rows):
-            row = _build_header(str(idx + 1) if idx == 0 else "")
+            row = _build_header("")
             # 将中文键的值填入对应的导出键
             for cn_key, export_key in _EXCEL_KEY_MAP.items():
                 val = item.get(cn_key, '')
@@ -265,7 +265,7 @@ def _db_record_to_export(rec: dict) -> list:
 
     results = []
     for idx, item in enumerate(line_items):
-        row = _build_header(str(idx + 1) if idx == 0 else "")
+        row = _build_header("")
         for db_key, export_key in _ITEM_MAP.items():
             row[export_key] = item.get(db_key, '')
         results.append(row)

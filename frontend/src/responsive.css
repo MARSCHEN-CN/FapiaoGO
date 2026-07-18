@@ -12,9 +12,9 @@
    4K+ — spacious layout (complements min-width: 3000px in variables.css)
    ══════════════════════════════════════════════════ */
 @media (min-width: 3000px) {
-  /* Canvas paper preview: more breathing room for shadows */
+  /* Canvas paper preview: more breathing room */
   .canvas-scroll {
-    padding: 44px 56px 56px;
+    padding: 48px;
   }
 
   /* File list: larger gap for visual breathing */
@@ -51,9 +51,9 @@
    1080p — compact layout (complements max-width: 1400px in variables.css)
    ══════════════════════════════════════════════════ */
 @media (max-width: 1400px) {
-  /* Canvas: slightly less padding to maximize preview space; still enough for shadows */
+  /* Canvas: less padding to maximize preview space */
   .canvas-scroll {
-    padding: 24px 28px 28px;
+    padding: 20px;
   }
 
   /* File list: tighter gap */
@@ -144,8 +144,8 @@
    4K on narrower-than-expected windows (e.g. split screen)
    ══════════════════════════════════════════════════ */
 @media (min-width: 1920px) and (max-width: 2999px) {
-  /* Smooth transition zone between 2K baseline (36/44) and 4K (44/56) */
+  /* Smooth transition zone — clamp() handles most of the work */
   .canvas-scroll {
-    padding: clamp(28px, 2vw, 40px) clamp(32px, 2.5vw, 52px);
+    padding: clamp(20px, 1.5vw, 40px);
   }
 }

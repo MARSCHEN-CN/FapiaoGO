@@ -14,6 +14,14 @@ import os
 import csv
 import logging
 from pathlib import Path
+from decimal import Decimal
+from itertools import groupby
+
+# openpyxl 样式（仅在 XLSX 导出时使用）
+try:
+    from openpyxl.styles import Font, PatternFill, Border, Side
+except ImportError:
+    Font = PatternFill = Border = Side = None
 
 logger = logging.getLogger(__name__)
 
@@ -156,7 +164,7 @@ class XlsxWriter:
 
     def __init__(self, include_remark, on_progress, sanitize_fn):
         try:
-            from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+            from openpyxl.styles import Alignment
             from openpyxl.utils import get_column_letter
         except ImportError:
             raise RuntimeError("需要安装 openpyxl: pip install openpyxl")
@@ -273,7 +281,7 @@ class XlsxWriter:
                 for c, (_, key, _) in enumerate(cols, 1):
                     val = inv.get(key, '')
                     if key == 'serialNo':
-                        val = val if val else serial
+                        val = serial
                     elif key in self.money_keys:
                         val = self._safe_num(val)
                     elif key == 'quantity':
@@ -297,14 +305,12 @@ class XlsxWriter:
                     else:
                         cell.alignment = self.data_align
                 row_idx += 1
-                serial += 1
                 written += 1
 
                 if on_progress and written % update_interval == 0:
                     on_progress(15 + int(55 * written / max(sheet_total, 1)), 100,
                                f'写入{sheet_label} ({written}/{sheet_total})...')
-
-            # 同一发票多行时立即合并发票级字段，避免批量收集合并字符串
+            serial += 1  # 每张发票递增序号
             if row_count > 1:
                 end_row = start_row + row_count - 1
                 for ikey in invoice_level_keys:
@@ -312,6 +318,67 @@ class XlsxWriter:
                     if ci:
                         cl = get_col(ci)
                         ws.merge_cells(f'{cl}{start_row}:{cl}{end_row}')
+
+        # ── 写合计行 ──
+        seen_invoices = set()
+        total_amount_without_tax = Decimal('0')
+        total_tax_amount = Decimal('0')
+        total_total_amount = Decimal('0')
+        total_line_amount = Decimal('0')
+        total_line_tax = Decimal('0')
+
+        for group in group_map.values():
+            for inv in group:
+                inv_num = inv.get('invoiceNumber', '')
+                if inv_num not in seen_invoices:
+                    seen_invoices.add(inv_num)
+                    total_amount_without_tax += Decimal(str(
+                        self._safe_num(inv.get('amountWithoutTax', 0))))
+                    total_tax_amount += Decimal(str(
+                        self._safe_num(inv.get('taxAmount', 0))))
+                    total_total_amount += Decimal(str(
+                        self._safe_num(inv.get('totalAmount', 0))))
+                total_line_amount += Decimal(str(
+                    self._safe_num(inv.get('lineAmount', 0))))
+                total_line_tax += Decimal(str(
+                    self._safe_num(inv.get('lineTax', 0))))
+
+        # 列名→列号映射（防硬编码错位）
+        col_map = {cell.value: cell.column for cell in ws[1] if cell.value}
+
+        # 合计行样式
+        total_font = Font(bold=True, size=11)
+        total_fill = PatternFill(start_color='E2EFDA', end_color='E2EFDA', fill_type='solid')
+        total_border = Border(
+            top=Side(style='thin'),
+            bottom=Side(style='double'),
+        )
+
+        # 写入合计行
+        ws.cell(row=row_idx, column=1, value='合计')
+        ws.cell(row=row_idx, column=1).font = total_font
+        ws.cell(row=row_idx, column=1).fill = total_fill
+
+        # 按列名映射写入合计金额（不存在则跳过，不报错）
+        total_money_map = {
+            '税前金额': total_amount_without_tax,
+            '税额合计': total_tax_amount,
+            '价税合计': total_total_amount,
+            '金额': total_line_amount,
+            '税额': total_line_tax,
+        }
+        for col_name, amount in total_money_map.items():
+            if col_name in col_map:
+                cell = ws.cell(row=row_idx, column=col_map[col_name],
+                               value=float(round(amount, 2)))
+                cell.font = total_font
+                cell.fill = total_fill
+                cell.border = total_border
+                cell.number_format = self.money_fmt
+
+        # 合计行整行底部加粗边框
+        for col in range(1, len(cols) + 1):
+            ws.cell(row=row_idx, column=col).border = total_border
 
         # 冻结首行 + 自动筛选
         ws.freeze_panes = 'A2'
@@ -357,37 +424,46 @@ def export_csv(file_path, invoices, options, on_progress=None):
     with open(file_path, 'w', encoding='utf-8-sig', newline='') as f:
         writer = csv.writer(f)
         writer.writerow(headers)
-        for idx, inv in enumerate(invoices):
-            row = [
-                inv.get('serialNo', ''),
-                inv.get('invoiceType', ''),
-                inv.get('invoiceDate', ''),
-                inv.get('invoiceNumber', ''),
-                inv.get('amountWithoutTax', ''),
-                inv.get('taxAmount', ''),
-                inv.get('totalAmount', ''),
-                inv.get('buyerName', ''),
-                inv.get('buyerTaxNo', ''),
-                inv.get('sellerName', ''),
-                inv.get('sellerTaxNo', ''),
-            ]
-            if include_remark:
-                row.extend([inv.get('note', ''), inv.get('originalFilename', '')])
-            row.extend([
-                inv.get('xmmc', ''),
-                inv.get('ggxh', ''),
-                inv.get('unit', ''),
-                inv.get('quantity', ''),
-                inv.get('unitPrice', ''),
-                inv.get('lineAmount', ''),
-                inv.get('taxRate', ''),
-                inv.get('lineTax', ''),
-            ])
-            writer.writerow(sanitize_export_row(row))
 
-            if on_progress and idx % update_interval == 0:
-                pct = 10 + int(85 * (idx + 1) / max(total, 1))
-                on_progress(pct, 100, f'写入 CSV ({idx + 1}/{total})...')
+        # 按发票号排序（确保同发票行连续，序号统一）
+        sorted_invoices = sorted(invoices, key=lambda x: x.get('invoiceNumber', ''))
+        serial = 1
+        written = 0
+        for inv_num, group in groupby(sorted_invoices,
+                                       key=lambda x: x.get('invoiceNumber', '')):
+            for inv in group:
+                row = [
+                    serial,
+                    inv.get('invoiceType', ''),
+                    inv.get('invoiceDate', ''),
+                    inv.get('invoiceNumber', ''),
+                    inv.get('amountWithoutTax', ''),
+                    inv.get('taxAmount', ''),
+                    inv.get('totalAmount', ''),
+                    inv.get('buyerName', ''),
+                    inv.get('buyerTaxNo', ''),
+                    inv.get('sellerName', ''),
+                    inv.get('sellerTaxNo', ''),
+                ]
+                if include_remark:
+                    row.extend([inv.get('note', ''), inv.get('originalFilename', '')])
+                row.extend([
+                    inv.get('xmmc', ''),
+                    inv.get('ggxh', ''),
+                    inv.get('unit', ''),
+                    inv.get('quantity', ''),
+                    inv.get('unitPrice', ''),
+                    inv.get('lineAmount', ''),
+                    inv.get('taxRate', ''),
+                    inv.get('lineTax', ''),
+                ])
+                writer.writerow(sanitize_export_row(row))
+                written += 1
+
+                if on_progress and written % update_interval == 0:
+                    pct = 10 + int(85 * written / max(total, 1))
+                    on_progress(pct, 100, f'写入 CSV ({written}/{total})...')
+            serial += 1  # 每张发票递增序号
 
     if on_progress:
         on_progress(95, 100, 'CSV 写入完成')

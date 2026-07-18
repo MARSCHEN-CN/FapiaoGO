@@ -25,7 +25,9 @@
   display: flex;
   flex-direction: column;
   min-height: 0;
-  overflow: hidden;
+  /* 不设 overflow:hidden：允许纸张阴影自然溢出到上下控制栏/状态栏区域，
+     被毛玻璃背景半透覆盖，形成 Figma 式"工具栏浮在画布上方"效果。
+     .main 的 overflow:hidden 作为最外层兜底，防止内容溢出窗口 */
 }
 
 /* 滚动层 */
@@ -34,12 +36,22 @@
   min-height: 0;
   overflow: auto;
   display: flex;
-  /* 大 padding 给阴影留足渲染空间（上36/左右44/下44px），配合 .paper 柔化阴影，
-     默认自适应下阴影完全落在 padding 区域内，不被裁剪边界硬切 */
-  padding: 36px 44px 44px;
+  /* 大 padding 给阴影留足渲染空间（上16/左右20/下20px），
+     配合 .paper 柔化阴影 + mask-image 边缘渐变遮罩，
+     阴影到达滚动容器边界时自然"消融"淡出而非硬切 */
+  padding: 16px 20px 20px;
   cursor: grab;
   /* 始终预留滚动条槽位，避免滚动条出现/消失导致容器宽度振荡 */
   scrollbar-gutter: stable;
+  /* 边缘渐变遮罩：四边 24px 范围从透明渐变到不透明，阴影到达边界自然消融 */
+  -webkit-mask-image:
+    linear-gradient(to bottom, transparent 0%, #000 24px, #000 calc(100% - 24px), transparent 100%),
+    linear-gradient(to right, transparent 0%, #000 24px, #000 calc(100% - 24px), transparent 100%);
+  -webkit-mask-composite: intersect;
+  mask-image:
+    linear-gradient(to bottom, transparent 0%, #000 24px, #000 calc(100% - 24px), transparent 100%),
+    linear-gradient(to right, transparent 0%, #000 24px, #000 calc(100% - 24px), transparent 100%);
+  mask-composite: intersect;
 }
 
 /* 拖拽进行?*/
@@ -200,9 +212,9 @@
   background: var(--paper-bg);
   border-radius: 8px;
   box-shadow:
-    0 1px 3px rgba(0, 0, 0, 0.05),
-    0 8px 22px rgba(0, 0, 0, 0.07),
-    0 16px 40px rgba(0, 0, 0, 0.05),
+    0 2px 6px rgba(0, 0, 0, 0.04),
+    0 12px 32px rgba(0, 0, 0, 0.08),
+    0 24px 60px rgba(0, 0, 0, 0.06),
     0 0 0 1px rgba(0, 0, 0, 0.04);
   overflow: hidden;
   flex-shrink: 0;
@@ -216,9 +228,9 @@
 
 .paper:hover {
   box-shadow:
-    0 2px 6px rgba(0, 0, 0, 0.06),
-    0 10px 26px rgba(0, 0, 0, 0.09),
-    0 20px 48px rgba(0, 0, 0, 0.07),
+    0 2px 8px rgba(0, 0, 0, 0.05),
+    0 14px 36px rgba(0, 0, 0, 0.10),
+    0 28px 70px rgba(0, 0, 0, 0.08),
     0 0 0 1px rgba(0, 0, 0, 0.06);
 }
 
@@ -385,16 +397,16 @@
   box-shadow:
     0 0 0 1px rgba(255, 255, 255, 0.06),
     0 2px 8px rgba(0, 0, 0, 0.25),
-    0 10px 28px rgba(0, 0, 0, 0.30),
-    0 18px 44px rgba(0, 0, 0, 0.20);
+    0 8px 24px rgba(0, 0, 0, 0.30),
+    0 16px 40px rgba(0, 0, 0, 0.20);
 }
 
 [data-theme="dark"] .paper:hover {
   box-shadow:
     0 0 0 1px rgba(255, 255, 255, 0.10),
     0 4px 12px rgba(0, 0, 0, 0.30),
-    0 12px 32px rgba(0, 0, 0, 0.35),
-    0 22px 52px rgba(0, 0, 0, 0.25);
+    0 10px 28px rgba(0, 0, 0, 0.35),
+    0 20px 48px rgba(0, 0, 0, 0.25);
 }
 
 [data-theme="dark"] .canvas-empty .canvas-empty-title {
