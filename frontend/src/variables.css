@@ -27,8 +27,8 @@
   --float-radius: var(--r-lg);  /* 12px，统一圆角 */
   --float-radius-pill: var(--r-2xl);  /* 20px，胶囊形（如状态指示器） */
 
-  --canvas-float-bg: var(--float-bg);
-  --canvas-float-border: var(--float-border);
+  --canvas-float-bg: rgba(255, 255, 255, 0.96);
+  --canvas-float-border: rgba(0, 0, 0, 0.08);
 
   --accent: #4f7cff;
   --brand: #4f7cff;
@@ -148,8 +148,8 @@
   --float-shadow: 0 2px 12px rgba(0, 0, 0, 0.30), 0 0 0 0.5px rgba(255, 255, 255, 0.05);
   --float-shadow-hover: 0 4px 20px rgba(0, 0, 0, 0.40), 0 0 0 0.5px rgba(255, 255, 255, 0.08);
 
-  --canvas-float-bg: var(--float-bg);
-  --canvas-float-border: var(--float-border);
+  --canvas-float-bg: rgba(20, 23, 31, 0.96);
+  --canvas-float-border: rgba(255, 255, 255, 0.07);
 
   /* ── 强调色 · 冷静蓝 + 发光感 ── */
   --accent: #6c8aff;

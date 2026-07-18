@@ -90,6 +90,14 @@ MIN_MERGE_CODES = 2           # 拆行所需分类编码出现次数
 # 索引 0-6 对应 7 个列边界：[规, 单, 位, 量, 价, 额, 率]
 COL_BOUNDARY_ADJUSTMENTS = [-0.5, -0.5, 3.0, 0.2, 3.0, 3.0, 3.0]
 
+# 六列边界微调偏移量（像素），索引 0-4 对应 5 个边界：[称-价, 价-量, 量-额, 额-率, 率-税]
+# Stage 1 先用 0 值跑样本集，统计系统偏差后校准
+_COL_BOUNDARY_ADJUSTMENTS_6COL = [0.0, 0.0, 0.0, 0.0, 0.0]
+
+# Feature Flag：六列旅客运输发票解析开关
+# Stage 1 打开灰度，确认准确率后可全局开启
+ENABLE_6COL_LINE_ITEM = True
+
 # ── 简易聚类 ──────────────────────────────────────────────
 
 
@@ -1184,6 +1192,76 @@ def _make_header_search_helpers(items, key_fn: Callable, *, strict_before: bool 
     return _first, _last, _first_before, _first_after, _gap_mid
 
 
+# 六列旅客运输发票的关键字集合
+_6COL_KEYWORDS = ['项目', '名称', '单价', '数量', '金额', '税率', '税额']
+_6COL_DETECT_THRESHOLD = 5  # 7 个关键字命中 5 个即判定
+
+# 六列 OCR 模糊判定用归一化函数
+def _normalize_header_text(text: str) -> str:
+    """去换行、去空格，归一化表头文本"""
+    return text.replace('\n', '').replace(' ', '').replace('\t', '')
+
+
+def detect_column_format(header_text: str) -> str:
+    """检测发票明细表头是 8 列还是 6 列格式。
+
+    判定逻辑（必须同时满足）：
+      ① 表头中不存在"规格"或"单位"等八列专属列标识
+      ② 六列关键命中数 >= 5/7
+      ③ "价"出现在"量"之前（单价列在数量列之前）
+
+    Args:
+        header_text: 表头行拼接文本（已按 x 排序）
+
+    Returns:
+        '8col' | '6col' | 'unknown'
+    """
+    if not ENABLE_6COL_LINE_ITEM:
+        return 'unknown'
+
+    text = _normalize_header_text(header_text)
+    if not text:
+        return 'unknown'
+
+    # ── 条件①：八列专有关键词检测 ──
+    # "规格型号"是八列独占列（六列完全没有）
+    # "单位"也是八列独占（六列没有）
+    # 使用模糊匹配应对 OCR 缺字
+    # OCR 常见变体：规格型亏、规恪型号 → 检查"规格"连续出现即可
+    has_spec_8col = '规格' in text or ('规' in text and '格' in text)
+    # "单位"检查：同时出现"单"和"位"且位置相邻或接近
+    has_unit_8col = ('单位' in text) or ('单' in text and '位' in text)
+
+    if has_spec_8col:
+        logger.debug("[FormatDetect] 检测到'规格' → 8col")
+        return '8col'
+    if has_unit_8col:
+        logger.debug("[FormatDetect] 检测到'单位' → 8col")
+        return '8col'
+
+    # ── 条件②：六列关键字集合匹配 ──
+    six_col_hits = sum(1 for kw in _6COL_KEYWORDS if kw in text)
+    if six_col_hits < _6COL_DETECT_THRESHOLD:
+        logger.debug("[FormatDetect] 6列关键字不足(%d<%d) → unknown",
+                     six_col_hits, _6COL_DETECT_THRESHOLD)
+        return 'unknown'
+
+    # ── 条件③：确认"价"在"量"之前（单价在数量之前） ──
+    # 六列的列顺序是：项目名称 → 单价 → 数量 → 金额 → 税率 → 税额
+    # 八列的列顺序是：项目名称 → 规格型号 → 单位 → 数量 → 单价 → 金额 → 税率 → 税额
+    # 通过字符在文本中的索引判断相对顺序
+    idx_jia = text.find('价')
+    idx_liang = text.find('量')
+    if idx_jia >= 0 and idx_liang >= 0 and idx_jia < idx_liang:
+        logger.info("[FormatDetect] detected=6col hits=%d/%d jia(价)@%d < liang(量)@%d text=%s",
+                    six_col_hits, len(_6COL_KEYWORDS), idx_jia, idx_liang, text[:60])
+        return '6col'
+
+    logger.debug("[FormatDetect] 价不在量之前(idx_jia=%d, idx_liang=%d) → unknown",
+                 idx_jia, idx_liang)
+    return 'unknown'
+
+
 def _header_guided_raw_boundaries(_first, _last, _first_before, _first_after):
     """计算标准 8 列表头的 7 个原始边界值（间距中点法）"""
     return [
@@ -1203,6 +1281,38 @@ def _header_guided_raw_boundaries(_first, _last, _first_before, _first_after):
          if _first_after('价', '额') > 0 else -1),
         # 边界7: 以最后一个"率"（征收率末尾）的右边缘为锚点
         ('tax-taxamt', _last('率', use_x1=True) if _first('率') > 0 else -1),
+    ]
+
+
+def _header_guided_raw_boundaries_6col(_first, _last, _first_before, _first_after, _gap_mid):
+    """计算六列表头的 5 个原始边界值（间距中点法）
+
+    锚点字符对照：
+        项目名称 | 单价 | 数量 | 金额 | 税率/征收率 | 税额
+               称    价    量    额    率            税
+
+    边界2-5 与八列等价边界共享完全相同的基础锚点。
+    """
+    # 边界1: 项目名称-单价
+    # 优先用 "称" 的右边缘（项目名称列末尾），加小偏移
+    # 如果 "称" 未识别到，回退到 称-价 间距中点
+    b1 = -1
+    if _first('称') > 0:
+        b1 = _last('称', use_x1=True) + 2.0
+    if b1 <= 0:
+        b1 = _gap_mid('称', '价') if (_first('称') > 0 and _first('价') > 0) else -1
+
+    return [
+        ('name-price', b1),
+        # 边界2: 单价-数量 → 等价于八列的 _last('价')
+        ('price-qty', _last('价', use_x1=True) if _first('价') > 0 else -1),
+        # 边界3: 数量-金额 → 等价于八列的 _last('量')
+        ('qty-amount', _last('量', use_x1=True) if _first('量') > 0 else -1),
+        # 边界4: 金额-税率 → 等价于八列的 _first_after('价', '额')
+        ('amount-rate', _first_after('价', '额', use_x1=True)
+         if _first_after('价', '额') > 0 else -1),
+        # 边界5: 税率-税额 → 等价于八列的 _last('率')
+        ('rate-tax', _last('率', use_x1=True) if _first('率') > 0 else -1),
     ]
 
 
@@ -1267,7 +1377,34 @@ def _build_header_guided_boundaries(
     _first, _last, _first_before, _first_after, _gap_mid = \
         _make_header_search_helpers(hdr_chars, lambda c: c.char, strict_before=True)
 
-    # ── 间距中点法计算 7 个列边界 ──
+    # ── 格式检测 → 六列/八列分支 ──
+    fmt = detect_column_format(hdr_text)
+
+    if fmt == '6col':
+        raw = _header_guided_raw_boundaries_6col(_first, _last, _first_before, _first_after, _gap_mid)
+        boundaries = []
+        for i, (label, val) in enumerate(raw):
+            if val > 0:
+                boundaries.append(val)
+                logger.debug("[CharBoundaries/6col] 边界%d '%s': %.1f", i + 1, label, val)
+            else:
+                logger.warning("[CharBoundaries/6col] 边界%d '%s' 未找到, val=%.1f",
+                               i + 1, label, val)
+
+        if len(boundaries) >= 3:
+            logger.info("[CharBoundaries/6col] 6 列边界: %s",
+                        [f'{b:.1f}' for b in boundaries])
+            adj = _COL_BOUNDARY_ADJUSTMENTS_6COL
+            boundaries = [b + adj[i] if i < len(adj) else b for i, b in enumerate(boundaries)]
+            logger.debug("[CharBoundaries/6col] 微调后: %s",
+                         [f'{b:.1f}' for b in boundaries])
+            return boundaries
+
+        # 六列边界不足 → 直接回退到 6 等分，不经过八列边界
+        logger.warning("[CharBoundaries/6col] 边界不足(%d/5), 回退6等分", len(boundaries))
+        return _fallback_even_boundaries(chars, n_cols=6)
+
+    # ── 间距中点法计算 7 个列边界（8 列） ──
     raw = _header_guided_raw_boundaries(_first, _last, _first_before, _first_after)
 
     boundaries = []
@@ -1292,12 +1429,12 @@ def _build_header_guided_boundaries(
     return boundaries
 
 
-def _fallback_even_boundaries(chars: List[Char]) -> List[float]:
-    """回退：将文档 x 范围 8 等分"""
+def _fallback_even_boundaries(chars: List[Char], n_cols: int = 8) -> List[float]:
+    """回退：将文档 x 范围 n 等分"""
     x_min = min(c.x0 for c in chars) if chars else 0
     x_max = max(c.x1 for c in chars) if chars else 800
-    w = (x_max - x_min) / 8.0
-    return [x_min + w * (i + 1) for i in range(7)]
+    w = (x_max - x_min) / n_cols
+    return [x_min + w * (i + 1) for i in range(n_cols - 1)]
 
 
 def _cluster_token_columns(tokens) -> List[float]:
@@ -1643,10 +1780,41 @@ def build_header_boundaries_from_tokens(tokens) -> List[float]:
     if len(hdr_tokens) < 3:
         return []
 
+    # 构建格式检测用的表头文本
+    hdr_text = ''.join(t.text for t in hdr_tokens)
+
     # ── 关键字查找（公共工厂，Token 级用子串匹配 + 非严格 before） ──
     _first, _last, _first_before, _first_after, _gap_mid = \
         _make_header_search_helpers(hdr_tokens, lambda t: t.text, strict_before=False)
 
+    # ── 格式检测 → 六列分支 ──
+    fmt = detect_column_format(hdr_text)
+
+    if fmt == '6col':
+        raw_6col = _header_guided_raw_boundaries_6col(
+            _first, _last, _first_before, _first_after, _gap_mid)
+        boundaries = []
+        for label, val in raw_6col:
+            if val > 0:
+                boundaries.append(val)
+
+        if len(boundaries) >= 3:
+            logger.info("[TokenBoundaries/6col] 6 列边界: %s",
+                        [f'{b:.1f}' for b in boundaries])
+            adj = _COL_BOUNDARY_ADJUSTMENTS_6COL
+            boundaries = [b + adj[i] if i < len(adj) else b for i, b in enumerate(boundaries)]
+            logger.debug("[TokenBoundaries/6col] 微调后: %s",
+                         [f'{b:.1f}' for b in boundaries])
+            return boundaries
+
+        # 六列边界不足 → 回退 6 等分
+        logger.warning("[TokenBoundaries/6col] 边界不足(%d/5), 回退6等分", len(boundaries))
+        x_min = min(t.x0 for t in tokens)
+        x_max = max(t.x1 for t in tokens)
+        w = (x_max - x_min) / 6.0
+        return [x_min + w * (i + 1) for i in range(5)]
+
+    # ── 原有 8 列逻辑 ──
     raw = _header_guided_raw_boundaries(_first, _last, _first_before, _first_after)
 
     boundaries = []
@@ -1906,6 +2074,60 @@ def grid_to_excel_rows(
         logger.warning("[GridToExcel] 提前返回: 表头构建失败")
         return []
     logger.info("[GridToExcel] 列标题(清洗后): %s", headers)
+
+    # ── Phase 2.5: 六列 → 八列补空 ──
+    # 检测是否六列格式（无规格型号/单位），补成标准 8 列结构
+    # 确保批量输出列结构一致，下游无需感知格式差异
+    _6COL_TARGET_HEADERS = [
+        ('项目名称', 0),
+        ('规格型号', None),  # 空列
+        ('单位', None),      # 空列
+        ('数量', 3),
+        ('单价', 1),
+        ('金额', 2),         # 六列中金额在 index 2/3
+        ('税率/征收率', 4),
+        ('税额', 5),
+    ]
+    _EIGHT_COL_HEADERS = ['项目名称', '规格型号', '单位', '数量',
+                           '单价', '金额', '税率/征收率', '税额']
+
+    # 通过 HEADER_NAME_MAPPING 归一化后判断是否为六列
+    normalized_headers = [HEADER_NAME_MAPPING.get(h, h) for h in headers]
+    has_ggxh = '规格型号' in normalized_headers
+    has_dw = '单位' in normalized_headers
+    n_headers = len(normalized_headers)
+
+    if not has_ggxh and not has_dw and 5 <= n_headers <= 7:
+        # 可能是六列 → 检查是否有足够六列列名
+        six_col_present = [h for h in normalized_headers
+                           if h in ('项目名称', '单价', '数量', '金额',
+                                    '税率/征收率', '税额')]
+        if len(six_col_present) >= 5:
+            logger.info("[GridToExcel] 检测到六列格式(%d列), 补为8列标准结构", n_headers)
+
+            # 构建六列列名到八列位置的映射
+            six_to_eight = {}
+            for h in _EIGHT_COL_HEADERS:
+                # 找 h 在 normalized_headers 中的位置
+                for j, nh in enumerate(normalized_headers):
+                    if nh == h:
+                        six_to_eight[j] = _EIGHT_COL_HEADERS.index(h)
+                        break
+
+            # 重建 headers 为 8 列标准顺序
+            old_headers = headers
+            old_merged = merged_cells
+            headers = list(_EIGHT_COL_HEADERS)
+            merged_cells = []
+            for cells in old_merged:
+                new_cells = [''] * 8
+                for old_idx, eight_idx in six_to_eight.items():
+                    if old_idx < len(cells):
+                        new_cells[eight_idx] = cells[old_idx]
+                merged_cells.append(new_cells)
+
+            logger.info("[GridToExcel] 六列→八列: headers=%s, 映射=%s",
+                        headers, six_to_eight)
 
     # ── Phase 3: 合并后的行 → 字典 ──
     rows: List[Dict[str, str]] = []

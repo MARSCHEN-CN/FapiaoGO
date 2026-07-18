@@ -930,12 +930,14 @@ export function usePreview({ files, settings, electronAPIRef }) {
         : (!!docOrient && docOrient !== paperOrient)
     const effW = swapped ? pl.paperRect.h : pl.paperRect.w
     const effH = swapped ? pl.paperRect.w : pl.paperRect.h
-    const SHADOW_PAD = 8
+    const SHADOW_PAD = 8  // 内容区内部额外阴影边距（CSS padding 通过 getComputedStyle 动态读取，各断点自适应）
     let paperScaleBase = 1
     if (containerSize.width && containerSize.height) {
-      // 纸张铺满 canvas-scroll 内容区（与 CSS .canvas-scroll 的 padding:8px 对应，留出阴影空间）
-      let availW = containerSize.width - SHADOW_PAD * 2
-      let availH = containerSize.height - SHADOW_PAD * 2
+      // 纸张铺满 canvas-scroll 内容区，SHADOW_PAD 在净内容区内再留一圈阴影缓冲
+      // 减 2px 安全缓冲，避免浮点/Math.round 误差导致纸张刚好贴边触发滚动条
+      // 注意：.canvas-scroll 已设 scrollbar-gutter: stable，滚动条槽位始终预留，不会因滚动条出现/消失导致宽度振荡
+      let availW = containerSize.width - SHADOW_PAD * 2 - 2
+      let availH = containerSize.height - SHADOW_PAD * 2 - 2
       if (availW > 0 && availH > 0) {
         paperScaleBase = Math.min(availW / effW, availH / effH)
       }
