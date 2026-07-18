@@ -277,39 +277,6 @@ function registerFileOpsHandlers(ctx) {
       return { success: false, error: error.message }
     }
   })
-
-  // ==========================================
-  // ✅ 物理删除源文件（带重试，解决 EBUSY）
-  // ==========================================
-  ipcMain.handle('delete-files', async (_event, filePaths) => {
-    if (!Array.isArray(filePaths) || filePaths.length === 0) {
-      return { success: true, deleted: [], failed: [] }
-    }
-
-    async function unlinkWithRetry(filePath, maxRetries = 3) {
-      for (let attempt = 1; attempt <= maxRetries; attempt++) {
-        try {
-          await fs.promises.unlink(filePath)
-          return { path: filePath, ok: true }
-        } catch (e) {
-          if (e.code === 'EBUSY' || e.code === 'EPERM' || e.code === 'ENOENT') {
-            if (e.code === 'ENOENT') return { path: filePath, ok: true }
-            if (attempt < maxRetries) {
-              await new Promise(r => setTimeout(r, 150 * attempt))
-              continue
-            }
-          }
-          return { path: filePath, ok: false, error: e.message }
-        }
-      }
-    }
-
-    const results = await Promise.all(filePaths.map(p => unlinkWithRetry(p)))
-    const deleted = results.filter(r => r.ok).map(r => r.path)
-    const failed = results.filter(r => !r.ok).map(r => ({ path: r.path, error: r.error }))
-
-    return { success: failed.length === 0, deleted, failed }
-  })
 }
 
 module.exports = { registerFileOpsHandlers }

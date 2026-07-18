@@ -653,7 +653,7 @@ function AppContent() {
               </button>
               <div className="sort-dropdown-container" ref={zoomDropdownRef}>
                 <button className="tb-zoom-trigger" onClick={() => setZoomMenuOpen(!zoomMenuOpen)}>
-                  {zoomMode === 'adaptive' ? '自适应' : `${zoomPercent}%`}
+                  {zoomMode === 'adaptive' ? '自适应' : `${Math.round(zoomPercent)}%`}
                 </button>
                 {(zoomMenuOpen || zoomMenuClosing) && (
                   <div className={`sort-dropdown zoom-dropdown ${zoomMenuClosing ? 'closing' : ''}`}>

@@ -24,6 +24,7 @@ export default defineConfig({
   build: {
     target: 'chrome150',
     outDir: '../../dist',  // 输出到项目根目录 dist/，匹配 electron/main.js 加载路径
+    emptyOutDir: true,     // ✅ 构建前自动清空 dist，避免旧产物堆积
     // 代码分割优化（Vite 8 使用 Rolldown codeSplitting）
     rolldownOptions: {
       output: {

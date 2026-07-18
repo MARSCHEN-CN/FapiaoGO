@@ -128,6 +128,7 @@ export default function TopBarMenu({
               { label: '上一个', key: '\u2190' },
               { label: '下一个', key: '\u2192' },
               { label: '取消', key: 'Esc' },
+              { label: '缩放预览', key: 'Ctrl + 滚轮' },
             ].map(({ label, key }) => (
               <div className="tb-shortcut-item" key={label}>
                 <span className="tb-shortcut-label">{label}</span>

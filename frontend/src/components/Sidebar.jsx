@@ -364,69 +364,53 @@ export default React.memo(function Sidebar({
       {/* ---- 统计 ---- */}
       {files.length > 0 && (
         <div className="sb-stats">
+          <div className="sb-stat">
+            <div className={`sb-stat-icon ${hasFailedFiles ? 'red' : (duplicateGroupCount > 0 ? 'orange' : 'blue')}`}>
+              {hasFailedFiles ? ICONS.failed : (duplicateGroupCount > 0 ? ICONS.trash : ICONS.file)}
+            </div>
+            <span className={`sb-stat-val${poppingStats.count ? ' pop' : ''} ${hasFailedFiles ? 'error' : (duplicateGroupCount > 0 ? 'orange' : '')}`}>
+              {hasFailedFiles ? failedFilesCount : (duplicateGroupCount > 0 ? duplicateGroupCount : files.length)}
+            </span>
+            <span className="sb-stat-label">{hasFailedFiles ? '解析失败' : (duplicateGroupCount > 0 ? '重复组' : '文件数')}</span>
+          </div>
           {hasFailedFiles ? (
-            <>
-              <div className="sb-stat-summary">
-                共 <b>{files.length}</b> 个文件 · 其中 <span className="sb-stat-summary-error">{failedFilesCount} 个解析失败</span>
-              </div>
-              <div className="sb-seg-control">
-                <button
-                  className="sb-seg-btn sb-seg-btn-danger"
-                  onClick={(e) => { e.stopPropagation(); removeFailedFiles(removeSourceFile) }}
-                  title="移除失败文件"
-                >
-                  {ICONS.trash}
-                  <span>移除失败</span>
-                </button>
-                <label className="sb-seg-option">
-                  <input type="checkbox" checked={removeSourceFile} onChange={(e) => setRemoveSourceFile(e.target.checked)} />
-                  <span className="sb-seg-toggle-track">
-                    <span className="sb-seg-toggle-thumb"></span>
-                  </span>
-                  <span className="sb-seg-option-label">删源文件</span>
-                </label>
-              </div>
-            </>
+            <div className="sb-stat sb-stat-remove-failed">
+              <button 
+                className="sb-stat-failed-btn"
+                onClick={(e) => { e.stopPropagation(); removeFailedFiles() }}
+                title="移除解析失败的文件"
+              >
+                {ICONS.trash}
+              </button>
+              <span className="sb-stat-failed-label">移除失败文件</span>
+            </div>
           ) : duplicateGroupCount > 0 ? (
-            <>
-              <div className="sb-stat-summary">
-                共 <b>{files.length}</b> 个文件 · 其中 <span className="sb-stat-summary-warn">{duplicateGroupCount} 组重复</span>
-              </div>
-              <div className="sb-seg-control">
-                <button
-                  className="sb-seg-btn sb-seg-btn-primary"
-                  onClick={(e) => { e.stopPropagation(); removeDuplicateFiles(removeSourceFile) }}
-                  title="移除重复文件"
-                >
-                  {ICONS.trash}
-                  <span>移除重复</span>
-                </button>
-                <label className="sb-seg-option">
+            <div className="sb-stat sb-stat-remove-duplicate">
+              <button 
+                className="sb-stat-duplicate-btn"
+                onClick={(e) => { e.stopPropagation(); removeDuplicateFiles(removeSourceFile) }}
+                title="一键去重"
+              >
+                {ICONS.trash}
+              </button>
+              <span className="sb-stat-duplicate-label">一键去重</span>
+              <div className="sb-stat-duplicate-switch">
+                <label className="toggle-switch">
                   <input type="checkbox" checked={removeSourceFile} onChange={(e) => setRemoveSourceFile(e.target.checked)} />
-                  <span className="sb-seg-toggle-track">
-                    <span className="sb-seg-toggle-thumb"></span>
-                  </span>
-                  <span className="sb-seg-option-label">删源文件</span>
+                  <span className="toggle-track"></span>
+                  <span className="toggle-thumb"></span>
                 </label>
+                <span className="sb-stat-duplicate-switch-label">删除源文件</span>
               </div>
-            </>
+            </div>
           ) : (
-            <>
-              <div className="sb-stat">
-                <div className="sb-stat-icon blue">
-                  {ICONS.file}
-                </div>
-                <span className={`sb-stat-val${poppingStats.count ? ' pop' : ''}`}>{files.length}</span>
-                <span className="sb-stat-label">文件数</span>
+            <div className="sb-stat">
+              <div className="sb-stat-icon green">
+                {ICONS.check}
               </div>
-              <div className="sb-stat">
-                <div className="sb-stat-icon green">
-                  {ICONS.check}
-                </div>
-                <span className={`sb-stat-val${poppingStats.amount ? ' pop' : ''} brand`}>¥{totalAmount.toFixed(2)}</span>
-                <span className="sb-stat-label">总金额</span>
-              </div>
-            </>
+              <span className={`sb-stat-val${poppingStats.amount ? ' pop' : ''} brand`}>¥{totalAmount.toFixed(2)}</span>
+              <span className="sb-stat-label">总金额</span>
+            </div>
           )}
         </div>
       )}
