@@ -95,9 +95,10 @@ const FileCardRow = memo(({ index, style, files, previewFileKey, mergeActive, me
               const fields = fileObj.failedFields || []
               const reasons = fields.map(f => FIELD_REASON_MAP[f] || f).filter(Boolean)
               if (reasons.length === 0) return '解析失败'
-              const KEY_FIELDS = ['fphm', 'kprq', 'amountHj', 'invoiceNumber', 'invoiceDate', 'amount']
-              const allKeyFieldsMissing = KEY_FIELDS.filter(f => fields.includes(f)).length >= 3
-              if (allKeyFieldsMissing && !fileObj.invoiceNumber && !fileObj.invoiceDate && !fileObj.amount) {
+              const fphmMissing = fields.includes('fphm') || fields.includes('invoiceNumber')
+              const kprqMissing = fields.includes('kprq') || fields.includes('invoiceDate')
+              const amountMissing = fields.includes('amount') || fields.includes('amountHj')
+              if (fphmMissing && kprqMissing && amountMissing && !fileObj.invoiceNumber && !fileObj.invoiceDate && !fileObj.amount) {
                 return '非发票文件，请检查'
               }
               return reasons.join('；')
