@@ -7,6 +7,7 @@ import { PREVIEW_DPI } from './config'
 import { rotateContentOnPaper } from './utils/canvasUtils'
 import { createLayout, normalizeLayoutItem, normalizeLayoutItems, getPaperPixels, PRINT_SAFE_MARGIN_MM, PRINTER_PROFILES, getPrintableArea } from './layout'
 import { isDocumentEngineEnabled, makeImageRef, ConcreteImageHandle, MemoryPixelHandle } from './documentEngine.js'  // P2C 统一入口门面（v12 契约 JS 实现；路线见 v14 §6/§13）+ ②b 桥接用 ImageHandle 值类型（facade 单向依赖，Law #2 允许）
+import { createPlacement } from './compose/composePlacement.js'  // [B1 p2] Virtual Paper 几何（contentRect fit）：Preview/Print 共用唯一几何来源
 // ✅ renderModel.js 为死代码，renderMultipleItemsToCanvas 直接做 transform，不经过 RenderModel
 // import { createRenderModels, applyTransformToContext, restoreContext } from './renderModel'
 
@@ -715,12 +716,53 @@ function _getWorker() {
   return _renderWorker
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// [B1 p2] Compose Placement 接线：Preview(_renderViaWorker) 与 Print(_renderDirect)
+// 共用 createPlacement 作为唯一几何来源，不再各自内联 fit/offset/clip 数学。
+//
+// Virtual Paper 内部安全边距（mm）：与 B0 buildComposeSlots 默认 marginMm=5 同源。
+// 仅 Merge(slotCount>1) 应用；单页走整页 margin，内部不叠加，避免单页意外缩小。
+// 单页 contentRect === slot（与接线路一致）；Merge contentRect = slot 内缩 COMPOSE_SLOT_MARGIN_MM。
+// C 阶段将由 ComposeSlotLayoutFactory 统一产出 contentRect，届时删此常量与 helper。
+const COMPOSE_SLOT_MARGIN_MM = 5
+
+// 把 px slot 内缩为 contentRect(px)。internalMarginMm=0 时原样返回（单页）。
+function _composeContentRectPx(slot, dpi, internalMarginMm) {
+  if (!internalMarginMm) return { x: slot.x, y: slot.y, width: slot.width, height: slot.height }
+  const inset = (internalMarginMm * dpi) / 25.4
+  return {
+    x: slot.x + inset,
+    y: slot.y + inset,
+    width: Math.max(0, slot.width - 2 * inset),
+    height: Math.max(0, slot.height - 2 * inset),
+  }
+}
+
+// 单一 Compose 几何来源：px slot + 内容源尺寸 + 旋转 → RenderCommand。
+// 与 Worker 端 drawRenderCommand 像素级同构（offset 为左上角、clip=contentRect、
+// rotatedBounds 为旋转后内容尺寸、scale 不烘焙进尺寸）。本函数只做几何→命令组装。
+function _buildComposeCommand(slot, cs, rotate, paper, dpi, internalMarginMm) {
+  if (!slot || !cs) return null
+  const { width: contentW, height: contentH } = cs
+  const contentRect = _composeContentRectPx(slot, dpi, internalMarginMm)
+  const p = createPlacement({ contentRect, sourceWidth: contentW, sourceHeight: contentH, rotation: rotate })
+  return {
+    version: 1,
+    paper: paper || null,
+    rotatedBounds: p.rotatedBounds,
+    placement: { scale: p.scale, offsetX: p.offsetX, offsetY: p.offsetY },
+    contentRotation: rotate,
+    rotation: 0,
+    clip: p.clip,
+  }
+}
+
 /**
- * [Commit A] 主线程计算 Compose 几何，产出 RenderCommand[] 供 Worker 纯执行。
- * 镜像 _renderDirect 的 inline fit/rotate/scale/clip 数学（L1068-1100），确保 Preview(Worker) 与
- * Print(Direct) 几何一致。Commit B 将抽为共享 buildComposeLayout，并让 _renderDirect 也消费本产物。
+ * [B1 p2] 用 ComposePlacementFactory 产出 RenderCommand[] 供 Worker 纯执行。
+ * 几何由 createPlacement 唯一计算；本函数只做「slot + 内容源 + 旋转 → RenderCommand」遍历组装。
+ * 单页(slots.length===1) 不应用内部边距 → contentRect===slot，与接线路行为一致。
  *
- * @param {object} layout - createLayout 产出（slots: [{itemId,x,y,width,height}, ...]）
+ * @param {object} layout - createLayout 产出（slots: [{itemId,x,y,width,height}, ...]，page.dpi 用于 mm→px）
  * @param {Map<string,{source:*,width:number,height:number}>} contentSources - itemId → 真实内容尺寸
  * @param {Object<string,number>} rotations - itemId → 旋转角(0/90/180/270)
  * @param {object} [paper] - 满足 validateRenderCommand 的 paper 必填（传 layout.page）
@@ -728,32 +770,12 @@ function _getWorker() {
  */
 function _buildComposeCommands(layout, contentSources, rotations, paper) {
   const { slots } = layout
-  const fitScale = (slot, effW, effH) => Math.min(slot.width / effW, slot.height / effH)
+  const dpi = layout.page?.dpi || PREVIEW_DPI
+  const internalMarginMm = slots.filter(Boolean).length > 1 ? COMPOSE_SLOT_MARGIN_MM : 0
   return slots.map((slot) => {
-    if (!slot) return null
-    const cs = contentSources.get(slot.itemId)
-    if (!cs) return null
-    const { width: contentW, height: contentH } = cs
-    const rotate = (rotations && rotations[slot.itemId]) || 0
-    const isRotated90 = rotate === 90 || rotate === 270
-    const effectiveW = isRotated90 ? contentH : contentW
-    const effectiveH = isRotated90 ? contentW : contentH
-    const scale = fitScale(slot, effectiveW, effectiveH)
-    const drawW = effectiveW * scale
-    const drawH = effectiveH * scale
-    return {
-      version: 1,
-      paper: paper || layout.page,
-      rotatedBounds: { width: effectiveW, height: effectiveH },
-      placement: {
-        scale,
-        offsetX: slot.x + slot.width / 2 - drawW / 2,
-        offsetY: slot.y + slot.height / 2 - drawH / 2,
-      },
-      contentRotation: rotate,
-      rotation: 0,
-      clip: { x: slot.x, y: slot.y, width: slot.width, height: slot.height },
-    }
+    const cs = slot ? contentSources.get(slot.itemId) : null
+    const rotate = (slot && rotations && rotations[slot.itemId]) || 0
+    return _buildComposeCommand(slot, cs, rotate, paper || layout.page, dpi, internalMarginMm)
   })
 }
 
@@ -1106,39 +1128,39 @@ async function _renderDirect(
   ctx.fillStyle = '#ffffff'
   ctx.fillRect(0, 0, canvas.width, canvas.height)
 
-  const fitMode = 'fit'
+  // dpi 已是本函数入参（调用方传入的工作 dpi，= layout.page.dpi）
+  const internalMarginMm = (slotCount > 1) ? COMPOSE_SLOT_MARGIN_MM : 0
 
   for (const slot of slots) {
     const cs = contentSources.get(slot.itemId)
     if (!cs) continue
-
     const rotate = (rotations && rotations[slot.itemId]) || 0
-    const { source, width: contentW, height: contentH } = cs
 
-    // 旋转时交换宽高以匹配旋转后的包围盒
-    const isRotated90 = rotate === 90 || rotate === 270
-    const effectiveW = isRotated90 ? contentH : contentW
-    const effectiveH = isRotated90 ? contentW : contentH
+    // [B1 p2] 与 Preview(_buildComposeCommands) 共用唯一几何来源 createPlacement。
+    const cmd = _buildComposeCommand(slot, cs, rotate, page, dpi, internalMarginMm)
+    if (!cmd) continue
 
-    // 缩放比例
-    const scale = fitMode === 'fill'
-      ? Math.max(slot.width / effectiveW, slot.height / effectiveH)
-      : Math.min(slot.width / effectiveW, slot.height / effectiveH)
+    // 消费同一 placement：与 Worker 端 drawRenderCommand 像素级同构
+    // （offset 左上角、clip=contentRect、旋转绕落盘中心、scale 不烘焙）。
+    const { offsetX, offsetY, scale } = cmd.placement
+    const drawW = cmd.rotatedBounds.width * scale
+    const drawH = cmd.rotatedBounds.height * scale
+    const clip = cmd.clip
+    const source = cs.source
 
-    // clip 到 slot 区域
     ctx.save()
-    ctx.beginPath()
-    ctx.rect(slot.x, slot.y, slot.width, slot.height)
-    ctx.clip()
-
-    // slot 中心 → 旋转 → 缩放 → 绘制
-    ctx.translate(slot.x + slot.width / 2, slot.y + slot.height / 2)
-    if (rotate) {
-      ctx.rotate(rotate * Math.PI / 180)
+    if (clip && typeof clip.width === 'number' && clip.width > 0) {
+      ctx.beginPath()
+      ctx.rect(clip.x, clip.y, clip.width, clip.height)
+      ctx.clip()
     }
-    ctx.scale(scale, scale)
-    ctx.drawImage(source, -contentW / 2, -contentH / 2, contentW, contentH)
-
+    if (!rotate) {
+      ctx.drawImage(source, offsetX, offsetY, drawW, drawH)
+    } else {
+      ctx.translate(offsetX + drawW / 2, offsetY + drawH / 2)
+      ctx.rotate((rotate * Math.PI) / 180)
+      ctx.drawImage(source, -drawW / 2, -drawH / 2, drawW, drawH)
+    }
     ctx.restore()
   }
 
