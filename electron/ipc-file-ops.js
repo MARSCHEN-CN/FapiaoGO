@@ -1,6 +1,6 @@
 'use strict'
 
-const { ipcMain, dialog } = require('electron')
+const { ipcMain, dialog, shell } = require('electron')
 const path = require('path')
 const fs = require('fs')
 const { FILE_DIALOG_FILTERS, SUPPORTED_EXTENSIONS } = require('./constants')
@@ -276,6 +276,36 @@ function registerFileOpsHandlers(ctx) {
     } catch (error) {
       return { success: false, error: error.message }
     }
+  })
+
+  // ==========================================
+  // ✅ 删除文件（移至系统回收站，安全可恢复）
+  // ==========================================
+  ipcMain.handle('delete-files', async (event, filePaths) => {
+    const deleted = []
+    const failed = []
+
+    if (!Array.isArray(filePaths)) {
+      return { success: false, error: 'filePaths must be an array', deleted, failed }
+    }
+
+    for (const filePath of filePaths) {
+      if (!filePath || typeof filePath !== 'string') {
+        failed.push({ path: filePath, error: 'Invalid path' })
+        continue
+      }
+      try {
+        // 检查文件是否存在
+        await fs.promises.access(filePath, fs.constants.F_OK)
+        // 移至回收站（Windows: 回收站, macOS: 废纸篓, Linux: 桌面垃圾桶）
+        await shell.trashItem(filePath)
+        deleted.push(filePath)
+      } catch (err) {
+        failed.push({ path: filePath, error: err.message })
+      }
+    }
+
+    return { success: failed.length === 0, deleted, failed }
   })
 }
 

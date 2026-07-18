@@ -720,31 +720,21 @@ function _getWorker() {
 // [B1 p2] Compose Placement 接线：Preview(_renderViaWorker) 与 Print(_renderDirect)
 // 共用 createPlacement 作为唯一几何来源，不再各自内联 fit/offset/clip 数学。
 //
-// Virtual Paper 内部安全边距（mm）：与 B0 buildComposeSlots 默认 marginMm=5 同源。
-// 仅 Merge(slotCount>1) 应用；单页走整页 margin，内部不叠加，避免单页意外缩小。
-// 单页 contentRect === slot（与接线路一致）；Merge contentRect = slot 内缩 COMPOSE_SLOT_MARGIN_MM。
-// C 阶段将由 ComposeSlotLayoutFactory 统一产出 contentRect，届时删此常量与 helper。
-const COMPOSE_SLOT_MARGIN_MM = 5
-
-// 把 px slot 内缩为 contentRect(px)。internalMarginMm=0 时原样返回（单页）。
-function _composeContentRectPx(slot, dpi, internalMarginMm) {
-  if (!internalMarginMm) return { x: slot.x, y: slot.y, width: slot.width, height: slot.height }
-  const inset = (internalMarginMm * dpi) / 25.4
-  return {
-    x: slot.x + inset,
-    y: slot.y + inset,
-    width: Math.max(0, slot.width - 2 * inset),
-    height: Math.max(0, slot.height - 2 * inset),
-  }
-}
+// [C2-a] Compose 几何所有权已上移：slot.contentRect 由 ComposeSlotLayoutFactory +
+// ComposeSlotRasterizer（冻结的旧 px 分区 + 内缩 marginMm）统一产出。本文件只消费
+// slot.contentRect（见 _buildComposeCommand），不再计算、不再持有 COMPOSE_SLOT_MARGIN_MM。
+// 铁律（C 阶段）：Derived geometry 只跨越所有权边界一次（Layout → Renderer 单向）。
 
 // 单一 Compose 几何来源：px slot + 内容源尺寸 + 旋转 → RenderCommand。
 // 与 Worker 端 drawRenderCommand 像素级同构（offset 为左上角、clip=contentRect、
 // rotatedBounds 为旋转后内容尺寸、scale 不烘焙进尺寸）。本函数只做几何→命令组装。
-function _buildComposeCommand(slot, cs, rotate, paper, dpi, internalMarginMm) {
+// [C2-a] 导出仅用于单测（composeCommandContentRect.test.js）：锁死本函数消费 slot.contentRect，
+// 防止未来有人重新在 renderer 内重算 Compose 几何（ownership 泄漏）。
+export function _buildComposeCommand(slot, cs, rotate, paper) {
   if (!slot || !cs) return null
   const { width: contentW, height: contentH } = cs
-  const contentRect = _composeContentRectPx(slot, dpi, internalMarginMm)
+  // slot.contentRect 已是 px（含内缩安全边距），由上游冻结产出；此处直接消费，不重算。
+  const contentRect = slot.contentRect
   const p = createPlacement({ contentRect, sourceWidth: contentW, sourceHeight: contentH, rotation: rotate })
   return {
     version: 1,

@@ -189,14 +189,11 @@ def _db_record_to_export(rec: dict) -> list:
     CLASS_CODE_RE = re.compile(r'^\*[^*]+\*')
 
     def _extract_class_code(row):
-        """从 xmmc 中提取 *xxx* 分类编码，清理后回填"""
+        """从 xmmc 中提取 *xxx* 分类编码，不修改 xmmc 原始值"""
         raw = row.get('xmmc', '')
         m = CLASS_CODE_RE.match(raw)
         if m:
-            code = m.group().strip('*')
-            cleaned = raw[m.end():].lstrip()
-            row['classificationCode'] = code
-            row['xmmc'] = cleaned or raw
+            row['classificationCode'] = m.group().strip('*')
         else:
             row['classificationCode'] = ''
 

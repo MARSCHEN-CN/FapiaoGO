@@ -87,10 +87,19 @@ const FileCardRow = memo(({ index, style, files, previewFileKey, mergeActive, me
                 'gmfsh': '购买方税号为空',
                 'xsfmc': '销售方名称为空',
                 'xsfsh': '销售方税号为空',
+                'invoiceNumber': '发票号码为空',
+                'invoiceDate': '开票日期为空',
+                'amount': '金额为空',
+                'amountHj': '金额为空',
               }
               const fields = fileObj.failedFields || []
               const reasons = fields.map(f => FIELD_REASON_MAP[f] || f).filter(Boolean)
               if (reasons.length === 0) return '解析失败'
+              const KEY_FIELDS = ['fphm', 'kprq', 'amountHj', 'invoiceNumber', 'invoiceDate', 'amount']
+              const allKeyFieldsMissing = KEY_FIELDS.filter(f => fields.includes(f)).length >= 3
+              if (allKeyFieldsMissing && !fileObj.invoiceNumber && !fileObj.invoiceDate && !fileObj.amount) {
+                return '非发票文件，请检查'
+              }
               return reasons.join('；')
             }
             return fileObj.invoiceDate && fileObj.invoiceDate !== '未知日期' ? fileObj.invoiceDate : '未知日期'
