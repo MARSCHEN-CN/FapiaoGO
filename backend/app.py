@@ -1163,8 +1163,32 @@ def parse_batch():
 
                 extra = svc_result.get('extra_fields', {}) or {}
                 raw_failed = extra.get('failed_fields', [])
-                failed_ids = [f.get('field', '') for f in raw_failed
-                              if isinstance(f, dict) and f.get('field')] if raw_failed else []
+
+                # 兼容新旧格式：新格式是完整 FieldIssue 对象 ({field, label, reason, ...})
+                # 旧格式（老数据库记录）只存了字段名字符串 ['fphm', 'gmfmc']
+                _FIELD_REASON_MAP = {
+                    'fphm': '发票号码为空',
+                    'kprq': '开票日期为空',
+                    'gmfmc': '购买方名称为空',
+                    'gmfsh': '购买方税号为空',
+                    'xsfmc': '销售方名称为空',
+                    'xsfsh': '销售方税号为空',
+                }
+                if isinstance(raw_failed, list):
+                    normalized = []
+                    for f in raw_failed:
+                        if isinstance(f, dict):
+                            normalized.append(f)
+                        elif isinstance(f, str):
+                            normalized.append({
+                                'field': f,
+                                'label': _FIELD_REASON_MAP.get(f, '').replace('为空', '') or f,
+                                'reason': _FIELD_REASON_MAP.get(f, f'字段{f}异常'),
+                                'severity': 'error',
+                                'value': '',
+                                'confidence': 0,
+                            })
+                    raw_failed = normalized
 
                 item['data'] = {
                     'db_record': svc_result.get('db_record'),
@@ -1175,7 +1199,7 @@ def parse_batch():
                     'new_name': svc_result.get('safe_filename', ''),
                     'parse_method': svc_result.get('parse_method', ''),
                     'file_format': svc_result.get('file_format', ''),
-                    'failed_fields': failed_ids,
+                    'failed_fields': raw_failed if isinstance(raw_failed, list) else [],
                     'preview_image': svc_result.get('preview_image', '') if svc_result.get('file_format') == 'ofd' else '',
                     'invoice_fields': extra,
                     'from_cache': svc_result.get('from_cache', False),

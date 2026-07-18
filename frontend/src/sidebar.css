@@ -678,6 +678,17 @@
 
 .fc-failed { color: #ef4444 !important; font-size: 11px; opacity: 0.85; }
 
+.fc-failed-reason {
+  font-size: 10.5px;
+  color: #ef4444;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex-shrink: 1;
+  min-width: 0;
+  margin-right: 6px;
+}
+
 /* -- Sidebar stats — 渐变卡片式（方案4） -- */
 .sb-stats {
   flex-shrink: 0;

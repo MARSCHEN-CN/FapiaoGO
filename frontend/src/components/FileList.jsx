@@ -75,10 +75,17 @@ const FileCardRow = memo(({ index, style, files, previewFileKey, mergeActive, me
       </div>
 
       <div className="fc-row-bottom">
-        <span className="fc-invoice-no">
-          {fileObj.status === 'parsing'
-            ? '解析中...'
-            : (fileObj.invoiceDate && fileObj.invoiceDate !== '未知日期' ? fileObj.invoiceDate : '未知日期')}
+        <span className={`fc-invoice-no${isFailedFile(fileObj) ? ' fc-failed-reason' : ''}`}
+              title={isFailedFile(fileObj) ? fileObj.failedFields?.map(f => f.label + '：' + f.reason).join('\n') : ''}>
+          {(() => {
+            if (fileObj.status === 'parsing') return '解析中...'
+            if (isFailedFile(fileObj)) {
+              const reasons = fileObj.failedFields?.filter(f => f.reason) || []
+              if (reasons.length === 0) return '解析失败'
+              return reasons.map(r => r.reason).join('；')
+            }
+            return fileObj.invoiceDate && fileObj.invoiceDate !== '未知日期' ? fileObj.invoiceDate : '未知日期'
+          })()}
         </span>
         {(() => {
           if (fileObj.status === 'parsing') return null
