@@ -208,6 +208,18 @@ function createWindow() {
     const zoomFactor = Math.max(0.85, Math.round((width / 2560) * 100) / 100)
     mainWindow.webContents.setZoomFactor(zoomFactor)
   })
+
+  // 关闭主窗口时一并关闭子窗口
+  mainWindow.on('closed', () => {
+    if (settingsWindow && !settingsWindow.isDestroyed()) {
+      settingsWindow.close()
+      settingsWindow = null
+    }
+    if (calculatorWindow && !calculatorWindow.isDestroyed()) {
+      calculatorWindow.close()
+      calculatorWindow = null
+    }
+  })
 }
 
 function createSettingsWindow() {
