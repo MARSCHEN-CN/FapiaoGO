@@ -1,6 +1,7 @@
 // [D1] 共享纯执行绘制例程（与单文件预览 / _renderDirect 同源；DOM-free，Worker 可直接 import）。
 //      仅消费主线程建好的 RenderCommand，绝不自算 fit/rotate/center/swap。
 import { drawRenderCommand } from './layout/renderDraw.js'
+import { iterateSlots } from './composeExecutor.js'
 
 console.log('[Worker] VERSION 10 — sources.close enabled')
 // ═══════════════════════════════════════════════════════════════
@@ -20,7 +21,7 @@ self.postMessage({ type: 'ready' })
 //     主线程已通过 _buildComposeCommands（Commit A）把 slot + 内容尺寸 + 旋转 收敛为 RenderCommand[]，
 //     此处只做纯执行：逐条 drawRenderCommand（clip 到 slot、按 placement 落盘、按 contentRotation 旋转）。
 //     layout 仅用于画布尺寸(page) 与分隔线(area/slots)，不再参与任何 fit 数学。
-function compositeCanvas(sources, layout, commands, layoutOptions) {
+export function compositeCanvas(sources, layout, commands, layoutOptions) {
   const { page, area, slots } = layout
   const canvas = new OffscreenCanvas(page.width, page.height)
   const ctx = canvas.getContext('2d')
@@ -28,16 +29,8 @@ function compositeCanvas(sources, layout, commands, layoutOptions) {
   ctx.fillStyle = '#ffffff'
   ctx.fillRect(0, 0, canvas.width, canvas.height)
 
-  let _ci = 0
-  for (let i = 0; i < slots.length; i++) {
-    const slot = slots[i]
-    const source = sources[i]
-    if (!source) continue
-    const cmd = commands[_ci++]
-    if (!cmd) continue
-    // ratio=1：Worker 画布与命令同 dpi（均 PREVIEW_DPI），无需缩放对齐
-    drawRenderCommand(ctx, cmd, source, source.width, source.height, 1)
-  }
+  // ratio=1：Worker 画布与命令同 dpi（均 PREVIEW_DPI），无需缩放对齐
+  iterateSlots(ctx, slots, sources, commands, drawRenderCommand)
 
   // 分隔线
   if (slots.length > 1) {
