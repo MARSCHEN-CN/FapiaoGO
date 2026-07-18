@@ -108,10 +108,11 @@ export function createLayout(items, paperKey, dpi, isLandscape = false, options 
   const paperMM = { widthMM: printableWidthMm, heightMM: printableHeightMm, isLandscape: false }
   const mergeMode = strategy === 'grid' ? 'merge4' : `merge${count}`
   // 与 renderer(_composeContentRectPx / internalMarginMm) 同源：单页不内缩，Merge 内缩 5mm。
-  // 这样 Discretizer 产出的 contentRect 与 renderer 当前行为一致，C2 切换字节级无感。
+  // 这样 Rasterizer 产出的 contentRect 与 renderer 当前行为一致，C2 切换字节级无感。
   const internalMarginMm = count > 1 ? DEFAULT_SLOT_MARGIN_MM : 0
 
-  // 2) Factory 产出逻辑 slot（mm，连续值）→ 离散化交给 SlotDiscretizer（px + 余数保留）
+  // 2) Factory 产出逻辑 slot（mm，连续值）→ 离散执行层 ComposeSlotRasterizer 套用
+  //    冻结的旧 px 分区公式（floor 基数 + 末格/末列/末行吃余数），与重构前 createLayout 字节级一致。
   const logicalSlots = ComposeSlotLayoutFactory({
     paper: paperMM,
     mergeMode,
@@ -119,11 +120,9 @@ export function createLayout(items, paperKey, dpi, isLandscape = false, options 
     paperXMm: mLeft,
     paperYMm: mTop,
   })
-  const pxSlots = discretizeSlots(logicalSlots, {
+  const pxSlots = rasterizeSlots(logicalSlots, {
     dpi,
     areaPx: area,
-    areaMm: { width: printableWidthMm, height: printableHeightMm },
-    originMm: { x: mLeft, y: mTop },
     gridCols,
     gridRows,
     marginMm: internalMarginMm,

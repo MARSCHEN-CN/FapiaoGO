@@ -64,13 +64,10 @@ export function rasterizeSlots(logicalSlots, opts) {
     const col = s.gridPosition ? s.gridPosition.col : 0
     const row = s.gridPosition ? s.gridPosition.row : s.index
 
-    // 末列/末行吃余数；其余用 floor 基数。vertical 时 cols=1 → 整宽整高。
-    const x = areaPx.x + (cols > 1
-      ? (col === cols - 1 ? areaPx.width - col * baseW : col * baseW)
-      : 0)
-    const y = areaPx.y + (rows > 1
-      ? (row === rows - 1 ? areaPx.height - row * baseH : row * baseH)
-      : 0)
+    // 末列/末行吃余数（仅尺寸吸收）；起始坐标始终走 col*baseW / row*baseH 规律，
+    // 与重构前 createLayout 一致（余数不回灌到坐标起点，否则相邻 slot 重叠）。
+    const x = areaPx.x + col * baseW
+    const y = areaPx.y + row * baseH
     const width = cols > 1
       ? (col === cols - 1 ? areaPx.width - col * baseW : baseW)
       : areaPx.width

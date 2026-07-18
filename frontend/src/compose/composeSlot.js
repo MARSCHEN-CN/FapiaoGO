@@ -8,8 +8,8 @@
  * 逻辑几何来源（非离散化层）：
  *   - vertical N 等分 / grid 2×2，row-major（与旧 layout.js 分区同构）
  *   - 仅产出 mm 连续值，不四舍五入、不在此吃余数
- *   - 余数 / 像素化由 slotDiscretizer.js 在 dpi 边界统一处理（累计边界取整 + 末边界钉死），
- *     从而保留旧 px characterization（如 A4@300 merge3 = 1169/1169/1170）
+ *   - px 离散化由 composeSlotRasterizer.js 负责，冻结旧 createLayout 的 px 分区公式
+ *     （floor 基数 + 末格/末列/末行吃余数），保留旧 px characterization（A4@300 merge3 = 1169/1169/1170）
  *
  * 坐标单位为 mm；本工厂接收「可打印区 origin（paperXMm/paperYMm，外层边距后的左上角）
  * + paper 尺寸」，默认 origin={0,0} 即整纸（与 B0 行为一致）。仅在每张虚拟纸内部再内缩
@@ -71,8 +71,8 @@ export function ComposeSlotLayoutFactory({ paper, mergeMode, marginMm = DEFAULT_
   const slots = []
 
   // C1 step2：本工厂只产出「逻辑 slot」（mm，连续值，不离散化）。
-  // 余数 / 像素化由 SlotDiscretizer 在 dpi 边界统一处理（累计边界取整 + 末边界钉死），
-  // 从而保留旧 createLayout 的 px characterization（如 A4@300 merge3 = 1169/1169/1170）。
+  // px 离散化交由 composeSlotRasterizer.js，冻结旧 createLayout 的 px 分区公式
+  // （floor 基数 + 末格/末列/末行吃余数），保留旧 px characterization（如 A4@300 merge3 = 1169/1169/1170）。
   if (strategy === 'vertical') {
     const partHeight = area.height / count
     for (let index = 0; index < count; index++) {

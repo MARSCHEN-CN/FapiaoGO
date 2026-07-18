@@ -2,12 +2,12 @@
  * layout-compose-delegation.test.js — C1 step2 护栏
  *
  * 锁定 createLayout 已将 slot 分区 OWNERSHIP 移交给 ComposeSlotLayoutFactory
- * （逻辑 mm 来源）+ SlotDiscretizer（px 离散化 + 余数保留）。
+ * （逻辑 mm 来源）+ composeSlotRasterizer（px 离散执行层，冻结旧 px 分区公式）。
  *
  * 重点：验收「委托后仍保旧 px characterization」——即与重构前 createLayout 的
  * px 输出字节级一致（Preview≡Print 不漂移）。特别是：
  *   - merge2 边界亚 mm 级无漂移（旧 1695/1695，非 mm-floor 的 1689/1701）
- *   - merge3 余数 1169/1169/1170（A4@300 整页高 3508px → floor(3508/3) 余数落在某 slot）
+ *   - merge3 余数 1169/1169/1170（A4@300 整页高 3508px → floor(3508/3) 余数落在末 slot，与重构前一致）
  *   - merge4 row-major 2×2 且铺满整页
  *
  * 纯 Node 可跑；不依赖 config / renderers / Electron。
@@ -51,9 +51,10 @@ test('merge3 (A4 portrait, margin 0): 余数 1169/1169/1170', () => {
   const layout = createLayout(items, 'A4', DPI, false, { slotCount: 3, strategy: 'vertical' })
   assert.equal(layout.slots.length, 3)
 
-  // 整页高 3508px：floor(3508/3)=1169，末 slot 吃余数 → 1169/1169/1170（顺序无关，集合锁）
-  const hs = heights(layout).slice().sort((a, b) => a - b)
-  assert.deepEqual(hs, [1169, 1169, 1170])
+  // 整页高 3508px：floor(3508/3)=1169，末 slot 吃余数 → 顺序锁定 [1169,1169,1170]（冻结旧 px 分区）
+  assert.deepEqual(heights(layout), [1169, 1169, 1170])
+  // 边界锁死：slot 起点 y 必须 [0, 1169, 2338]，否则 clip / placement 偏移（字节级兼容）
+  assert.deepEqual(layout.slots.map((s) => s.y), [0, 1169, 2338])
 
   // 全宽（portrait 整页宽 2480px @300dpi，单反倒角钉死）
   assert.deepEqual(widths(layout), [2480, 2480, 2480])

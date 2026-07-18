@@ -35,7 +35,7 @@ test('ComposeSlot preserves merge3 remainder allocation', () => {
   assert.deepEqual(slots[1].paperRect, { x: 0, y: 70, width: 148, height: 70 })
   assert.deepEqual(slots[2].paperRect, { x: 0, y: 140, width: 148, height: 70 })
 
-  // 逻辑来源：不再在 mm 层吃余数（余数由 SlotDiscretizer 在 px 边界处理）。
+  // 逻辑来源：不在 mm 层吃余数（px 余数由 composeSlotRasterizer 冻结旧公式处理，见 layout-compose-delegation.test.js）。
   // 211/3 = 70.333… 三个 slot 等高（连续值）。
   const tall = { widthMM: 148, heightMM: 211, isLandscape: false }
   const r = ComposeSlotLayoutFactory({ paper: tall, mergeMode: 'merge3' })
@@ -43,7 +43,7 @@ test('ComposeSlot preserves merge3 remainder allocation', () => {
   assert.ok(Math.abs(r[0].paperRect.height - partMm) < 1e-9)
   assert.ok(Math.abs(r[1].paperRect.height - partMm) < 1e-9)
   assert.ok(Math.abs(r[2].paperRect.height - partMm) < 1e-9)
-  // 末 slot 吃余数的 px characterization 已移交 slotDiscretizer.test（如 A4@300 merge3 = 1169/1169/1170）
+  // 末 slot 吃余数的 px characterization 由 composeSlotRasterizer 冻结旧公式产出，验收见 layout-compose-delegation.test.js（如 A4@300 merge3 = 1169/1169/1170）
 })
 
 test('ComposeSlot preserves merge4 grid ordering', () => {
@@ -56,7 +56,7 @@ test('ComposeSlot preserves merge4 grid ordering', () => {
   assert.deepEqual(slots[2].gridPosition, { col: 0, row: 1 })
   assert.deepEqual(slots[3].gridPosition, { col: 1, row: 1 })
 
-  // 逻辑来源：连续 mm（297/2 = 148.5，无末列吃余数；px 余数见 slotDiscretizer.test）
+  // 逻辑来源：连续 mm（297/2 = 148.5，无末列吃余数；px 余数见 composeSlotRasterizer + layout-compose-delegation.test.js）
   assert.deepEqual(slots[0].paperRect, { x: 0, y: 0, width: 148.5, height: 105 })
   assert.deepEqual(slots[1].paperRect, { x: 148.5, y: 0, width: 148.5, height: 105 })
   assert.deepEqual(slots[2].paperRect, { x: 0, y: 105, width: 148.5, height: 105 })
