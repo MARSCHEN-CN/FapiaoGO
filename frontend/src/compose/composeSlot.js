@@ -8,8 +8,9 @@
  * 这是「现有 merge 几何语义的等价表达」（非新算法）：
  *   - vertical N 等分，末 slot 吃余数（镜像 layout.js:99-103）
  *   - grid 2×2，row-major（镜像 layout.js:115-150）
- * 坐标单位为 mm；外层 page margin 由调用方在外部处理（本工厂固定 pageMargin=0），
- * 仅在每张虚拟纸内部再内缩 marginMm 得到 contentRect。
+ * 坐标单位为 mm；本工厂接收「可打印区 origin（paperXMm/paperYMm，外层边距后的左上角）
+ * + paper 尺寸」，默认 origin={0,0} 即整纸（与 B0 行为一致）。仅在每张虚拟纸内部再内缩
+ * marginMm 得到 contentRect。C1 起为 ComposeSlotLayoutFactory（buildComposeSlots 保留别名）。
  *
  * 输入为「已解析」的纸张 mm 尺寸 + mergeMode（不读 config / 不解析 paperKey），
  * 因此可在纯 Node 下单测，不依赖 Vite / Electron。
@@ -41,20 +42,26 @@ function makeSlot(index, x, y, width, height, marginMm, gridPosition) {
 }
 
 /**
- * 构建 Virtual Paper Slot 列表（mm，DPI 无关）。
+ * 构建 Virtual Paper Slot 列表（mm，DPI 无关）—— C1 起为 ComposeSlotLayoutFactory。
+ * 接收「可打印区 origin（paperXMm/paperYMm，由调用方扣完外层边距后的左上角）+ paper 尺寸」，
+ * 默认 origin={0,0} 即整纸（与 B0 characterization 测试一致）。仅每张虚拟纸内部再内缩 marginMm。
+ *
  * @param {Object} params
  * @param {Object} params.paper - 已解析纸张尺寸：{ widthMM, heightMM, isLandscape }
  * @param {string} params.mergeMode - 'merge2' | 'merge3' | 'merge4'
  * @param {number} [params.marginMm=5] - 每张虚拟纸内部安全边距（mm）
+ * @param {number} [params.paperXMm=0] - 可打印区左上角 x 偏移（mm，相对纸张原点）
+ * @param {number} [params.paperYMm=0] - 可打印区左上角 y 偏移（mm，相对纸张原点）
  * @returns {ComposeSlot[]}
  */
-export function buildComposeSlots({ paper, mergeMode, marginMm = DEFAULT_SLOT_MARGIN_MM }) {
+export function ComposeSlotLayoutFactory({ paper, mergeMode, marginMm = DEFAULT_SLOT_MARGIN_MM, paperXMm = 0, paperYMm = 0 }) {
   if (!paper || typeof paper.widthMM !== 'number' || typeof paper.heightMM !== 'number') {
-    throw new Error('buildComposeSlots: paper.widthMM/heightMM required (mm, already resolved)')
+    throw new Error('ComposeSlotLayoutFactory: paper.widthMM/heightMM required (mm, already resolved)')
   }
   const w = paper.isLandscape ? paper.heightMM : paper.widthMM
   const h = paper.isLandscape ? paper.widthMM : paper.heightMM
-  const area = { x: 0, y: 0, width: w, height: h }
+  // 可打印区 origin：调用方扣完外层边距后的左上角（mm）。默认 {0,0}=整纸（与 B0 一致）。
+  const area = { x: paperXMm, y: paperYMm, width: w, height: h }
 
   const { groupSize, strategy, gridCols, gridRows } = resolveMergeSpec(mergeMode)
   const count = groupSize
@@ -83,5 +90,5 @@ export function buildComposeSlots({ paper, mergeMode, marginMm = DEFAULT_SLOT_MA
   return slots
 }
 
-// C 阶段命名收敛别名
-export const ComposeSlotLayoutFactory = buildComposeSlots
+// 向后兼容别名：C1 之前名为 buildComposeSlots。C2 接线后统一改用 ComposeSlotLayoutFactory。
+export const buildComposeSlots = ComposeSlotLayoutFactory
