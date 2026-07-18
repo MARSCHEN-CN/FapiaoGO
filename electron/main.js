@@ -212,10 +212,12 @@ function createWindow() {
   // 关闭主窗口时一并关闭子窗口
   mainWindow.on('closed', () => {
     if (settingsWindow && !settingsWindow.isDestroyed()) {
+      settingsWindow.removeAllListeners('closed')  // 防止触发 settingsWindow.on('closed') 调用 mainWindow.webContents.send
       settingsWindow.close()
       settingsWindow = null
     }
     if (calculatorWindow && !calculatorWindow.isDestroyed()) {
+      calculatorWindow.removeAllListeners('closed')
       calculatorWindow.close()
       calculatorWindow = null
     }
