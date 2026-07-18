@@ -886,7 +886,12 @@ export function usePreview({ files, settings, electronAPIRef }) {
     let ticking = false
     const update = () => {
       ticking = false
-      setContainerSize({ width: el.clientWidth, height: el.clientHeight })
+      // 测量 viewport 真正内容区（clientWidth 已含 padding，必须减掉，
+      // 否则 paperDisplayRect 恒超尺寸 → 自适应模式恒弹出滚动条）
+      const style = getComputedStyle(el)
+      const padX = Number.parseFloat(style.paddingLeft) + Number.parseFloat(style.paddingRight)
+      const padY = Number.parseFloat(style.paddingTop) + Number.parseFloat(style.paddingBottom)
+      setContainerSize({ width: el.clientWidth - padX, height: el.clientHeight - padY })
     }
     const observer = new ResizeObserver(() => {
       if (!ticking) {
@@ -915,15 +920,20 @@ export function usePreview({ files, settings, electronAPIRef }) {
     // 合并模式强制方向由 renderers 内部处理，此处回退旧 orientation 逻辑避免影响合并预览。
     const isMerge = isMergeMode(settings.mergeMode)
     // 🆕 V17：容器方向由 paperLandscape 决定（纸随内容），不再读 renderCommand.rotation
+    // 🆕 合并模式：容器方向必须跟随「强制纸张方向」(merge2/3=竖向, merge4=横向)，
+    //    不依赖 paperOrientation 状态（可能为单文件模式遗留的 landscape），否则 2/3 票被错误翻成横向。
+    const mergeForcedLandscape = isMerge ? getForcedLandscape(settings.mergeMode, false) : false
     const swapped = (renderCommandReady && !isMerge)
       ? !!renderCommand.paperLandscape
-      : (!!docOrient && docOrient !== paperOrient)
+      : isMerge
+        ? mergeForcedLandscape
+        : (!!docOrient && docOrient !== paperOrient)
     const effW = swapped ? pl.paperRect.h : pl.paperRect.w
     const effH = swapped ? pl.paperRect.w : pl.paperRect.h
+    const SHADOW_PAD = 8
     let paperScaleBase = 1
     if (containerSize.width && containerSize.height) {
       // 纸张铺满 canvas-scroll 内容区（与 CSS .canvas-scroll 的 padding:8px 对应，留出阴影空间）
-      const SHADOW_PAD = 8
       let availW = containerSize.width - SHADOW_PAD * 2
       let availH = containerSize.height - SHADOW_PAD * 2
       if (availW > 0 && availH > 0) {
@@ -970,6 +980,20 @@ export function usePreview({ files, settings, electronAPIRef }) {
         h: Math.round(srcH * fitScale),
       }
     }
+    // 🛡️ DEV 断言：paperDisplayRect 不应超出 viewport 预留空间
+    // 预留空间 = containerSize 内容区 - SHADOW_PAD*2（阴影预留）
+    // paperDisplayW > 预留空间 → padding/阴影计算不一致 → 自适应模式弹出滚动条
+    if (
+      import.meta.env.DEV &&
+      containerSize.width > 0 &&
+      paperDisplayW > containerSize.width - SHADOW_PAD * 2
+    ) {
+      console.warn(
+        `[Viewport] paperDisplayRect.w (${paperDisplayW}) exceeds viewport reserved (${containerSize.width - SHADOW_PAD * 2})`,
+        { effW, paperScale, containerSize, paperDisplayRect: { w: paperDisplayW, h: paperDisplayH } }
+      )
+    }
+
     return {
       ready: true,
       fitScale,
