@@ -606,6 +606,7 @@
   width: 3px;
   background: var(--accent);
   border-radius: 0 3px 3px 0;
+  z-index: 4;
 }
 
 .file-card.active .fc-amount { color: var(--accent); }
@@ -1038,24 +1039,25 @@
 
 .merge-tag { background: #f59e0b; color: #fff; }
 
-.merge-group-first::before {
+.file-card:not(.active):not(.has-failed):not(.duplicate).merge-group-first::before {
   content: '';
   position: absolute;
-  left: 0; top: 0; bottom: 0;
+  left: 0; top: 10px; bottom: 10px;
   width: 3px;
-  background: var(--accent);
-  border-radius: 3px 0 0 3px;
+  background: var(--purple);
+  border-radius: 0 3px 3px 0;
+  z-index: 1;
 }
 .file-card.has-failed { overflow: hidden; }
 
-.file-card.has-failed::before {
+.file-card:not(.active).has-failed::before {
   content: '';
   position: absolute;
-  left: 0; top: 0; bottom: 0;
+  left: 0; top: 10px; bottom: 10px;
   width: 3px;
   background: #dc2626;
-  opacity: 0.75;
-  border-radius: 3px 0 0 3px;
+  border-radius: 0 3px 3px 0;
+  z-index: 3;
 }
 
 /* -- 重复发票标记 -- */
@@ -1063,11 +1065,16 @@
 
 .duplicate-bar {
   position: absolute;
-  left: 0; top: 0; bottom: 0;
+  left: 0; top: 10px; bottom: 10px;
   width: 3px;
   background: #f59e0b;
-  border-radius: 3px 0 0 3px;
+  border-radius: 0 3px 3px 0;
   z-index: 2;
+}
+
+.file-card.active .duplicate-bar,
+.file-card.has-failed .duplicate-bar {
+  display: none;
 }
 
 .duplicate-label {

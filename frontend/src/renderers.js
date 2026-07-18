@@ -726,9 +726,6 @@ function _getWorker() {
 // C 阶段将由 ComposeSlotLayoutFactory 统一产出 contentRect，届时删此常量与 helper。
 const COMPOSE_SLOT_MARGIN_MM = 5
 
-// ══ TEMP [PLACEMENT DIAG] 开关 ── B1 验收 Electron trace 完成后删除（连同下方 DIAG 日志与 _buildComposeCommand 中对它的引用） ══
-const __PLACEMENT_DIAG__ = true
-
 // 把 px slot 内缩为 contentRect(px)。internalMarginMm=0 时原样返回（单页）。
 function _composeContentRectPx(slot, dpi, internalMarginMm) {
   if (!internalMarginMm) return { x: slot.x, y: slot.y, width: slot.width, height: slot.height }
@@ -744,25 +741,11 @@ function _composeContentRectPx(slot, dpi, internalMarginMm) {
 // 单一 Compose 几何来源：px slot + 内容源尺寸 + 旋转 → RenderCommand。
 // 与 Worker 端 drawRenderCommand 像素级同构（offset 为左上角、clip=contentRect、
 // rotatedBounds 为旋转后内容尺寸、scale 不烘焙进尺寸）。本函数只做几何→命令组装。
-function _buildComposeCommand(slot, cs, rotate, paper, dpi, internalMarginMm, slotIndex) {
+function _buildComposeCommand(slot, cs, rotate, paper, dpi, internalMarginMm) {
   if (!slot || !cs) return null
   const { width: contentW, height: contentH } = cs
   const contentRect = _composeContentRectPx(slot, dpi, internalMarginMm)
   const p = createPlacement({ contentRect, sourceWidth: contentW, sourceHeight: contentH, rotation: rotate })
-  // ══ TEMP [PLACEMENT DIAG] — 仅打印几何，不打印 image/canvas/worker/command。B1 gate 关闭后删除。 ══
-  if (typeof __PLACEMENT_DIAG__ !== 'undefined' && __PLACEMENT_DIAG__) {
-    console.log('[PLACEMENT DIAG]', JSON.stringify({
-      slotIndex,
-      sourceId: slot?.itemId ?? null,
-      slotPx: { x: Math.round(slot.x), y: Math.round(slot.y), w: Math.round(slot.width), h: Math.round(slot.height) },
-      contentRectPx: { x: Math.round(contentRect.x), y: Math.round(contentRect.y), w: Math.round(contentRect.width), h: Math.round(contentRect.height) },
-      rotation: rotate,
-      scale: Number(p.scale.toFixed(4)),
-      drawSize: { w: Math.round(p.rotatedBounds.width * p.scale), h: Math.round(p.rotatedBounds.height * p.scale) },
-      offset: { x: Math.round(p.offsetX), y: Math.round(p.offsetY) },
-      clip: { x: Math.round(p.clip.x), y: Math.round(p.clip.y), w: Math.round(p.clip.width), h: Math.round(p.clip.height) },
-    }))
-  }
   return {
     version: 1,
     paper: paper || null,
@@ -789,10 +772,10 @@ function _buildComposeCommands(layout, contentSources, rotations, paper) {
   const { slots } = layout
   const dpi = layout.page?.dpi || PREVIEW_DPI
   const internalMarginMm = slots.filter(Boolean).length > 1 ? COMPOSE_SLOT_MARGIN_MM : 0
-  return slots.map((slot, idx) => {
+  return slots.map((slot) => {
     const cs = slot ? contentSources.get(slot.itemId) : null
     const rotate = (slot && rotations && rotations[slot.itemId]) || 0
-    return _buildComposeCommand(slot, cs, rotate, paper || layout.page, dpi, internalMarginMm, idx)
+    return _buildComposeCommand(slot, cs, rotate, paper || layout.page, dpi, internalMarginMm)
   })
 }
 
@@ -1148,14 +1131,13 @@ async function _renderDirect(
   // dpi 已是本函数入参（调用方传入的工作 dpi，= layout.page.dpi）
   const internalMarginMm = (slotCount > 1) ? COMPOSE_SLOT_MARGIN_MM : 0
 
-  for (let si = 0; si < slots.length; si++) {
-    const slot = slots[si]
+  for (const slot of slots) {
     const cs = contentSources.get(slot.itemId)
     if (!cs) continue
     const rotate = (rotations && rotations[slot.itemId]) || 0
 
     // [B1 p2] 与 Preview(_buildComposeCommands) 共用唯一几何来源 createPlacement。
-    const cmd = _buildComposeCommand(slot, cs, rotate, page, dpi, internalMarginMm, si)
+    const cmd = _buildComposeCommand(slot, cs, rotate, page, dpi, internalMarginMm)
     if (!cmd) continue
 
     // 消费同一 placement：与 Worker 端 drawRenderCommand 像素级同构
