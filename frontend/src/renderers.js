@@ -728,9 +728,9 @@ function _getWorker() {
 // 单一 Compose 几何来源：px slot + 内容源尺寸 + 旋转 → RenderCommand。
 // 与 Worker 端 drawRenderCommand 像素级同构（offset 为左上角、clip=contentRect、
 // rotatedBounds 为旋转后内容尺寸、scale 不烘焙进尺寸）。本函数只做几何→命令组装。
-// [C2-a] 导出仅用于单测（composeCommandContentRect.test.js）：锁死本函数消费 slot.contentRect，
-// 防止未来有人重新在 renderer 内重算 Compose 几何（ownership 泄漏）。
-export function _buildComposeCommand(slot, cs, rotate, paper) {
+// [C2-a] 直接消费 slot.contentRect（已含内缩安全边距，由上游 ComposeSlotRasterizer 冻结产出），
+// 不在 renderer 内重算 Compose 几何（ownership 泄漏）。
+function _buildComposeCommand(slot, cs, rotate, paper) {
   if (!slot || !cs) return null
   const { width: contentW, height: contentH } = cs
   // slot.contentRect 已是 px（含内缩安全边距），由上游冻结产出；此处直接消费，不重算。
@@ -750,9 +750,10 @@ export function _buildComposeCommand(slot, cs, rotate, paper) {
 /**
  * [B1 p2] 用 ComposePlacementFactory 产出 RenderCommand[] 供 Worker 纯执行。
  * 几何由 createPlacement 唯一计算；本函数只做「slot + 内容源 + 旋转 → RenderCommand」遍历组装。
- * 单页(slots.length===1) 不应用内部边距 → contentRect===slot，与接线路行为一致。
+ * slot.contentRect 已含内缩安全边距（单页 === slot，Merge 内缩），由上游 ComposeSlotRasterizer 冻结产出；
+ * 本函数不重算 margin / dpi（C2-a：Derived geometry 只跨越所有权边界一次）。
  *
- * @param {object} layout - createLayout 产出（slots: [{itemId,x,y,width,height}, ...]，page.dpi 用于 mm→px）
+ * @param {object} layout - createLayout 产出（slots: [{itemId,x,y,width,height,contentRect}, ...]）
  * @param {Map<string,{source:*,width:number,height:number}>} contentSources - itemId → 真实内容尺寸
  * @param {Object<string,number>} rotations - itemId → 旋转角(0/90/180/270)
  * @param {object} [paper] - 满足 validateRenderCommand 的 paper 必填（传 layout.page）
@@ -760,12 +761,11 @@ export function _buildComposeCommand(slot, cs, rotate, paper) {
  */
 function _buildComposeCommands(layout, contentSources, rotations, paper) {
   const { slots } = layout
-  const dpi = layout.page?.dpi || PREVIEW_DPI
-  const internalMarginMm = slots.filter(Boolean).length > 1 ? COMPOSE_SLOT_MARGIN_MM : 0
+  // [C2-a] 不再计算 margin / dpi：contentRect 已含内缩，由上游产出。本函数只遍历组装。
   return slots.map((slot) => {
     const cs = slot ? contentSources.get(slot.itemId) : null
     const rotate = (slot && rotations && rotations[slot.itemId]) || 0
-    return _buildComposeCommand(slot, cs, rotate, paper || layout.page, dpi, internalMarginMm)
+    return _buildComposeCommand(slot, cs, rotate, paper || layout.page)
   })
 }
 
@@ -1118,16 +1118,14 @@ async function _renderDirect(
   ctx.fillStyle = '#ffffff'
   ctx.fillRect(0, 0, canvas.width, canvas.height)
 
-  // dpi 已是本函数入参（调用方传入的工作 dpi，= layout.page.dpi）
-  const internalMarginMm = (slotCount > 1) ? COMPOSE_SLOT_MARGIN_MM : 0
-
+  // dpi 已是本函数入参（调用方传入的工作 dpi，= layout.page.dpi）；margin 由上游 slot.contentRect 承载，本函数不重算。
   for (const slot of slots) {
     const cs = contentSources.get(slot.itemId)
     if (!cs) continue
     const rotate = (rotations && rotations[slot.itemId]) || 0
 
-    // [B1 p2] 与 Preview(_buildComposeCommands) 共用唯一几何来源 createPlacement。
-    const cmd = _buildComposeCommand(slot, cs, rotate, page, dpi, internalMarginMm)
+    // [B1 p2 / C2-a] 与 Preview(_buildComposeCommands) 共用唯一几何来源 createPlacement；直接消费 slot.contentRect。
+    const cmd = _buildComposeCommand(slot, cs, rotate, page)
     if (!cmd) continue
 
     // 消费同一 placement：与 Worker 端 drawRenderCommand 像素级同构
