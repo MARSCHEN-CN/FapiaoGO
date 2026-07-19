@@ -12,7 +12,11 @@ Ownership contract (D3-1 / D3-3a / D3-3b-0 audits):
     fit / fit_scale. The backend only TRANSLATES geometry into fitz draw ops.
 
 Input : RenderCommand (dict) + source bytes
-Output: appends a fitz page to the given doc; returns the page.
+Output: draw_render_command(page, command, source_bytes) draws onto an EXISTING
+        page (the caller owns page creation, so multiple commands share one page
+        -- D3-3d same-sheet). render_command_to_page(doc, command, source_bytes)
+        is the backward-compatible single-command wrapper that creates its own
+        page (unchanged behaviour for the live service).
 """
 
 import math
@@ -67,20 +71,20 @@ def _rotation_matrix(scale: float, rotation: int) -> 'fitz.Matrix':
     )
 
 
-def render_command_to_page(doc, command: dict, source_bytes: bytes):
-    """Draw a single RenderCommand onto a NEW page appended to `doc`.
+def draw_render_command(page, command: dict, source_bytes: bytes):
+    """Draw a single RenderCommand onto an EXISTING fitz page (D3-3d same-sheet).
 
-    Pure executor: translates the frontend's already-resolved geometry into
-    fitz draw ops. Never recomputes fit / scale / center / rotation.
+    Pure executor: translates the frontend's already-resolved geometry into fitz
+    draw ops. Never recomputes fit / scale / center / rotation. The CALLER owns
+    page creation, so multiple commands can share one page — each command's
+    offset / clip are absolute coordinates on that shared page (resolved by the
+    frontend's createPlacement over the whole paper).
 
-    Returns the created fitz page.
+    The page size is the caller's responsibility (typically paper_px from the
+    command's paper spec); this function only draws at the given offset.
     """
     if fitz is None:
         raise RuntimeError("PyMuPDF (fitz) is not available")
-
-    paper = command['paper']
-    pw, ph = paper_px(paper)
-    page = doc.new_page(width=pw, height=ph)
 
     placement = command['placement']
     scale = float(placement['scale'])
@@ -99,7 +103,7 @@ def render_command_to_page(doc, command: dict, source_bytes: bytes):
 
     # degenerate: frontend scale=0 / collapsed contentRect → nothing to draw.
     if scale <= 0 or draw_w <= 0 or draw_h <= 0:
-        return page
+        return
 
     # clip is CONSUMED defensively. The fit model guarantees the drawn rect is
     # within clip (createPlacement centers into contentRect == clip). If a future
@@ -133,4 +137,20 @@ def render_command_to_page(doc, command: dict, source_bytes: bytes):
     # insert using the pixmap's own (post-transform) size → pixel-exact placement
     target = fitz.Rect(offset_x, offset_y, offset_x + pix.width, offset_y + pix.height)
     page.insert_image(target, pixmap=pix)
+
+
+def render_command_to_page(doc, command: dict, source_bytes: bytes):
+    """Backward-compatible: create a NEW page, draw one command, return the page.
+
+    Kept for the single-command export paths so the existing service wiring is
+    untouched (D3-3d-1 changes only the executor contract, not the service). For
+    same-sheet composition (multiple commands on one page), callers should create
+    the page once and call draw_render_command repeatedly instead.
+    """
+    if fitz is None:
+        raise RuntimeError("PyMuPDF (fitz) is not available")
+    paper = command['paper']
+    pw, ph = paper_px(paper)
+    page = doc.new_page(width=pw, height=ph)
+    draw_render_command(page, command, source_bytes)
     return page
