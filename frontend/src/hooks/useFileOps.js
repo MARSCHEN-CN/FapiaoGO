@@ -175,7 +175,7 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
   const parseFiles = useCallback(async (filesToParse) => {
     if (filesToParse.length === 0) return
     setParsing(true)
-    completedRef.current = 0  // ✅ 重置完成计数器
+    let fallbackDoneCount = 0
     setParseProgress({ current: 0, total: filesToParse.length })
 
     // ✅ 降低并发限制，避免过多 OCR 任务同时运行
@@ -204,7 +204,7 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
           return
         } catch (batchErr) {
           console.warn('[parseFiles] 批量解析失败，回退逐个解析:', batchErr)
-          completedRef.current = 0  // 重置计数器，准备逐个解析
+          fallbackDoneCount = 0  // 重置计数器，准备逐个解析
           setParseProgress({ current: 0, total: filesToParse.length })
           // 继续执行下方的逐个解析逻辑
         }
@@ -237,9 +237,9 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
           )
         }
 
-        // 更新解析进度
-        completedRef.current += 1
-        setParseProgress({ current: completedRef.current, total: filesToParse.length })
+        // 更新解析进度（本地计数器，不依赖全局 ref）
+        fallbackDoneCount += 1
+        setParseProgress({ current: fallbackDoneCount, total: filesToParse.length })
       }, CONCURRENCY_LIMIT)
 
       setFiles((prev) => {
