@@ -107,11 +107,8 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
     }
   }, [])
 
-  const printProgressRef = useRef({})
   const printTimeoutRef = useRef(null)
   const printFilesRef = useRef([])
-  // ✅ 完成计数 ref，避免 O(n) 遍历检查是否全部完成
-  const completedCountRef = useRef(0)
   // URL 内存泄漏修复：追踪所有创建的 blob URL
   const pendingBlobUrlsRef = useRef([])
   // 打印队列 refs
@@ -383,7 +380,6 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
     }
     setPrintProgress({})
     setPrinting(true)
-    completedCountRef.current = 0
     isPrintingRef.current = true
 
     setFiles((prev) =>
