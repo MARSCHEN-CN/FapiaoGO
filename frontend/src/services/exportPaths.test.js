@@ -28,6 +28,7 @@ globalThis.fetch = async (url, opts) => {
 }
 
 const { startRenderExport, startPdfExport } = await import('../services/ExportService.js')
+const { isRenderExportEligible } = await import('../layout/exportCapabilities.js')
 
 const SAMPLE_COMMAND = {
   version: 1,
@@ -63,4 +64,33 @@ test('kill-switch: EXPORT_RENDER_ENABLED=false forces flag off (safety valve)', 
   const { EXPORT_RENDER_ENABLED } = await import('../layout/exportConstants.js')
   assert.equal(EXPORT_RENDER_ENABLED, false)
   delete process.env.EXPORT_RENDER_ENABLED
+})
+
+// ── D4-2.1: 能力守卫驱动的路由（决策 -> 正确端点）──
+test('routing: PDF files -> /api/export-render', async () => {
+  const eligible = isRenderExportEligible({ enabled: true, previewState: {}, settings: {}, files: [{ fileFormat: 'pdf' }] })
+  assert.equal(eligible, true)
+  await startRenderExport([SAMPLE_COMMAND], {})
+  assert.ok(lastRequest.url.endsWith('/api/export-render'))
+})
+
+test('routing: IMAGE files -> /api/export-render', async () => {
+  const eligible = isRenderExportEligible({ enabled: true, previewState: {}, settings: {}, files: [{ fileFormat: 'image' }] })
+  assert.equal(eligible, true)
+  await startRenderExport([SAMPLE_COMMAND], {})
+  assert.ok(lastRequest.url.endsWith('/api/export-render'))
+})
+
+test('routing: OFD files -> /api/export-pdf (legacy fallback)', async () => {
+  const eligible = isRenderExportEligible({ enabled: true, previewState: {}, settings: {}, files: [{ fileFormat: 'ofd' }] })
+  assert.equal(eligible, false)
+  await startPdfExport({ mode: 'single', files: [{ name: 'a', path: '/a.ofd' }] }, {})
+  assert.ok(lastRequest.url.endsWith('/api/export-pdf'))
+})
+
+test('routing: mixed PDF+OFD -> /api/export-pdf (legacy fallback, whole batch)', async () => {
+  const eligible = isRenderExportEligible({ enabled: true, previewState: {}, settings: {}, files: [{ fileFormat: 'pdf' }, { fileFormat: 'ofd' }] })
+  assert.equal(eligible, false)
+  await startPdfExport({ mode: 'single', files: [{ name: 'a', path: '/a.ofd' }] }, {})
+  assert.ok(lastRequest.url.endsWith('/api/export-pdf'))
 })

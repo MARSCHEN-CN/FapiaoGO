@@ -2,6 +2,7 @@ import { useState, useCallback, useRef, useSyncExternalStore } from 'react'
 import { exportExcel, startPdfExport, startRenderExport, cancelPdfExport } from '../services/ExportService'
 import { EXPORT_RENDER_ENABLED } from '../layout/exportConstants.js'
 import { buildExportSnapshot } from '../layout/exportSnapshotBuilder.js'
+import { isRenderExportEligible } from '../layout/exportCapabilities.js'
 import { createExportTask, EXPORT_TYPE, EXPORT_MODE } from '../models/ExportTask'
 import { createSuccessfulExport, createFailedExport, createCancelledExport } from '../models/ExportResult'
 import { isTerminalStatus } from '../models/ExportSession'
@@ -134,13 +135,18 @@ export function useExport({ files, electronAPIRef, previewState, settings }) {
       let backendTaskId = null
       let close = () => {}
 
-      if (EXPORT_RENDER_ENABLED && previewState && settings) {
+      // 有效导出文件集（render 与 legacy 分支共用）：
+      // config.files 优先（ActionBar 指定子集），否则取已解析文件。
+      // 合成兜底对象补 fileFormat 默认 'pdf'，避免未命中时能力判断误判为不支持。
+      const byPath = new Map(files.map(f => [f.path, f]))
+      const exportFiles = (config.files && config.files.length)
+        ? config.files.map(cf => byPath.get(cf.path) || { key: cf.path, path: cf.path, name: cf.name, status: 'parsed', fileFormat: cf.fileFormat || 'pdf' })
+        : files.filter(f => f.status === 'parsed')
+
+      if (isRenderExportEligible({ enabled: EXPORT_RENDER_ENABLED, previewState, settings, files: exportFiles })) {
         // 新管线（D2-2-c1）：几何由 Preview 状态经薄桥组装，ExportService 保持几何无关。
-        // 仅当 flag 开启且 Preview 几何状态可用时启用；否则回落 legacy /api/export-pdf。
-        const byPath = new Map(files.map(f => [f.path, f]))
-        const exportFiles = (config.files && config.files.length)
-          ? config.files.map(cf => byPath.get(cf.path) || { key: cf.path, path: cf.path, name: cf.name, status: 'parsed' })
-          : files.filter(f => f.status === 'parsed')
+        // 仅当 flag 开启、Preview 几何状态可用、且所有文件格式受 render 管线支持时启用；
+        // 否则（含 OFD 等不被支持的类型）回落 legacy /api/export-pdf。
         const commands = buildExportSnapshot({
           files: exportFiles,
           documentState: previewState.documentState,
