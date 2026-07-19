@@ -9,6 +9,7 @@ import { renderPrintContent } from '../utils/printRenderer'
 import { buildRenderModel } from '../utils/renderModelBuilder'
 import { validateRenderModel } from '../utils/renderModelValidator'
 import { detectDocumentOrientation } from '../utils/detectOrientation'
+import { printSingleSourceFile as printSingleSource } from '../services/PrintService'
 
 // ✅ 懒加载 PDF 渲染模块，避免首屏加载 1.4 MB 的 pdfjs-dist + react-pdf
 let _printRenderers = null
@@ -680,42 +681,16 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
     const ipc = electronAPIRef.current?.ipcRenderer
     if (!ipc) return { success: false, error: 'IPC 不可用' }
 
-    const filePath = f.printPath || f.path
-    const ext = getExtension(f.name)
-    let fileFormat = f.fileFormat || 'pdf'
-    if (!fileFormat || fileFormat === 'unknown') {
-      if (ext === 'ofd') fileFormat = 'ofd'
-      else if (['jpg', 'jpeg', 'png', 'bmp', 'tiff', 'tif', 'gif'].includes(ext)) fileFormat = 'image'
-      else fileFormat = 'pdf'
+    // 合并 settings + printSettings 作为 userSettings
+    const userSettings = { ...settings, ...(printSettings || {}) }
+
+    const result = await printSingleSource(f, ipc, userSettings, fileRotations, detectDocumentOrientation)
+
+    return {
+      success: result.success,
+      message: result.error || '',
+      error: result.error || null,
     }
-
-    const hasReliableOrient = f._pdfPageWidth > 0 && f._pdfPageHeight > 0
-    const contentOrientation = detectDocumentOrientation(f)
-    const fileRotation = fileRotations?.[f.key] || 0
-    const ps = {
-      rotation: fileRotation,
-      paperkind: settings.paperkind || printSettings?.paperkind,
-      paper: printSettings?.paperSize || settings.paperSize || PRINT_SETTINGS_DEFAULTS.paper,
-      fit: printSettings?.fit || PRINT_SETTINGS_DEFAULTS.fit,
-      ...(hasReliableOrient ? { contentOrientation } : {}),
-      duplex: printSettings?.duplex ?? PRINT_SETTINGS_DEFAULTS.duplex,
-      grayscale: printSettings?.grayscale ?? settings.grayscale ?? PRINT_SETTINGS_DEFAULTS.grayscale,
-      copies: printSettings?.copies ?? settings.copies ?? PRINT_SETTINGS_DEFAULTS.copies,
-      marginLeft: settings.marginLeft ?? 3,
-      marginRight: settings.marginRight ?? 3,
-      marginTop: settings.marginTop ?? 3,
-      marginBottom: settings.marginBottom ?? 3,
-      customPaper: settings.customPaper,
-    }
-
-    const printerName = printSettings?.printerName || printSettings?.printer || settings.printerName || ''
-    if (!printerName) return { success: false, error: '请选择打印机' }
-
-    return await ipc.invoke('print-source-file', {
-      target: { printer: printerName, filePath, fileFormat },
-      settings: ps,
-      pipeline: { backend: 'sumatra' },
-    })
   }, [settings, fileRotations, electronAPIRef, detectDocumentOrientation])
 
   /**
