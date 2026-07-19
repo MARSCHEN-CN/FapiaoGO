@@ -963,7 +963,8 @@ function buildCacheKey(items, paperKey, dpi, isLandscape, rotations, slotCount, 
 export async function renderMultipleItemsToCanvas(
   items, paperKey, dpi = PREVIEW_DPI, isLandscape = false, rotations = {}, slotCount, isPrint = false,
   showSafeMargin = false,
-  layoutOptions = {}
+  layoutOptions = {},
+  paperLayout = null  // V16 slotted path: provide to use MultiTicketComposer+buildRenderCommand instead of createLayout
 ) {
   // P2C 统一入口槽位（USE_DOCUMENT_ENGINE 默认 false，生命周期仅限 P2C）：开启后应委派
   // documentEngine 的 getImage×N + compose，而非在此自建 L2 缓存与合成。当前 compose 路径
@@ -980,15 +981,16 @@ export async function renderMultipleItemsToCanvas(
 
   // 打印路径或环境不支持 Worker → 直接渲染
   if (isPrint || typeof OffscreenCanvas === 'undefined') {
-    return _renderDirect(items, paperKey, dpi, isLandscape, rotations, slotCount, isPrint, showSafeMargin, layoutOptions)
+    return _renderDirect(items, paperKey, dpi, isLandscape, rotations, slotCount, isPrint, showSafeMargin, layoutOptions, paperLayout)
   }
 
   // 预览路径 → Worker 渲染（失败自动回退到主线程）
   try {
+    // NOTE: Worker 路径暂不支持 paperLayout 外部 slot，回退 createLayout（向后兼容）
     return await _renderViaWorker(items, paperKey, dpi, isLandscape, rotations, slotCount, layoutOptions)
   } catch (e) {
     console.warn('[renderMultipleItemsToCanvas] Worker 失败，回退到主线程:', e.message)
-    return _renderDirect(items, paperKey, dpi, isLandscape, rotations, slotCount, isPrint, showSafeMargin, layoutOptions)
+    return _renderDirect(items, paperKey, dpi, isLandscape, rotations, slotCount, isPrint, showSafeMargin, layoutOptions, paperLayout)
   }
 }
 
@@ -1002,7 +1004,8 @@ export async function renderMultipleItemsToCanvas(
 async function _renderDirect(
   items, paperKey, dpi = PREVIEW_DPI, isLandscape = false, rotations = {}, slotCount, isPrint = false,
   showSafeMargin = false,
-  layoutOptions = {}
+  layoutOptions = {},
+  paperLayout = null  // V16: when provided, use MultiTicketComposer+buildRenderCommand per ticket (skips createLayout)
 ) {
   // ═══════════════════════════════════════════════
   // ✅ 渲染结果缓存（L2）：预览和打印使用相同参数时直接命中
@@ -1089,20 +1092,65 @@ async function _renderDirect(
   })
 
   // ═══════════════════════════════════════════════
-  // Layout: 基于真实内容尺寸计算 slot
+  // Layout: 基于内容尺寸计算 slot（V16 或 createLayout）
   // ═══════════════════════════════════════════════
-  // 用户边距 → createLayout margin 参数（缩小内容区域，纸张大小不变）
-  const _userMargins = layoutOptions.userMargins
-  const _marginMm = _userMargins ? {
-    top: _userMargins.top || 0, bottom: _userMargins.bottom || 0,
-    left: _userMargins.left || 0, right: _userMargins.right || 0,
-  } : 0
+  // V16 路径（paperLayout 提供，且非 grid 布局）：MultiTicketComposer + buildRenderCommand 产出每票 RenderCommand，
+  // 替代 createLayout + _buildComposeCommands 的老路径，使用同一套 createPlacement 几何。
+  // grid 布局（merge4）仍用 createLayout 旧路径（新 SlotLayout 当前仅支持竖向等分）。
+  let layout, commands, slotPositions
+  if (paperLayout && layoutOptions.strategy !== 'grid') {
+    const { compose } = await import('./layout/MultiTicketComposer.js')
+    const { computeTicketSlots } = await import('./layout/SlotLayout.js')
 
-  const layout = createLayout(normalizedItems, paperKey, dpi, isLandscape, {
-    slotCount,
-    ...layoutOptions,
-    margin: (isPrint && slotCount > 1) ? PRINT_SAFE_MARGIN_MM : _marginMm,
-  })
+    // 构造 DocumentState 数组；paperOrientation 跟随合并模式强制方向（isLandscape），
+    // 使 buildRenderCommand 正确设置 paperLandscape 并做 slot→landscape 轴交换。
+    const forcedOrient = isLandscape ? 'landscape' : 'portrait'
+    const documents = items.map((item, i) => {
+      const id = item.id || item.key
+      const cs = contentSources.get(id)
+      const w = cs ? cs.width : (item.width || 0)
+      const h = cs ? cs.height : (item.height || 0)
+      return {
+        pageSize: { w, h },
+        pageOrientation: (w >= h) ? 'landscape' : 'portrait',
+        paperOrientation: forcedOrient,
+        rotation: (rotations && rotations[id]) || 0,
+      }
+    })
+
+    const result = compose({ paperLayout, documents })
+    commands = result.map(r => r.renderCommand)
+    slotPositions = computeTicketSlots(paperLayout, items.length)
+
+    // 构造最小 layout 对象供后续使用（canvas 尺寸 + 可打印区域 + slot 参考）
+    const effW = isLandscape ? paperLayout.paperRect.h : paperLayout.paperRect.w
+    const effH = isLandscape ? paperLayout.paperRect.w : paperLayout.paperRect.h
+    layout = {
+      page: { width: effW, height: effH },
+      area: {
+        x: slotPositions[0]?.x ?? 0,
+        y: slotPositions[0]?.y ?? 0,
+        width: slotPositions[0]?.width ?? effW,
+        height: slotPositions.reduce((sum, s) => sum + s.height, 0),
+      },
+      slots: slotPositions,
+    }
+  } else {
+    // 用户边距 → createLayout margin 参数（缩小内容区域，纸张大小不变）
+    const _userMargins = layoutOptions.userMargins
+    const _marginMm = _userMargins ? {
+      top: _userMargins.top || 0, bottom: _userMargins.bottom || 0,
+      left: _userMargins.left || 0, right: _userMargins.right || 0,
+    } : 0
+
+    layout = createLayout(normalizedItems, paperKey, dpi, isLandscape, {
+      slotCount,
+      ...layoutOptions,
+      margin: (isPrint && slotCount > 1) ? PRINT_SAFE_MARGIN_MM : _marginMm,
+    })
+    commands = _buildComposeCommands(layout, contentSources, rotations, layout.page)
+    slotPositions = layout.slots
+  }
   const { page, area, slots } = layout
 
   // ═══════════════════════════════════════════════
@@ -1114,14 +1162,16 @@ async function _renderDirect(
   ctx.fillRect(0, 0, canvas.width, canvas.height)
 
   // dpi 已是本函数入参（调用方传入的工作 dpi，= layout.page.dpi）；margin 由上游 slot.contentRect 承载，本函数不重算。
-  for (const slot of slots) {
-    const cs = contentSources.get(slot.itemId)
-    if (!cs) continue
-    const rotate = (rotations && rotations[slot.itemId]) || 0
-
-    // [B1 p2] 与 Preview(_buildComposeCommands) 共用唯一几何来源 createPlacement；直接消费 slot.contentRect。
-    const cmd = _buildComposeCommand(slot, cs, rotate, page)
+  // 绘制命令数组（V16 路径 commands 已由 MultiTicketComposer 预组；旧路径由 _buildComposeCommands 组）。
+  // 两种路径最终都消费 drawRenderCommand，与 Preview / Worker 同构。
+  for (let i = 0; i < commands.length; i++) {
+    const cmd = commands[i]
     if (!cmd) continue
+    // 按位置匹配内容源（V16 path: sources 按 items[i] 顺序；old path: slot.itemId 匹配）
+    const slot = slots[i] || {}
+    const itemId = slot.itemId || (items[i] && (items[i].id || items[i].key))
+    const cs = itemId ? contentSources.get(itemId) : null
+    if (!cs) continue
 
     // 与 Worker 路径统一 executor：cmd 已含 clip/旋转/scale 全部几何（ratio=1：Print dpi===cmd dpi）。
     drawRenderCommand(ctx, cmd, cs.source)

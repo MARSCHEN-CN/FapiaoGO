@@ -759,7 +759,8 @@ export function usePreview({ files, settings, electronAPIRef }) {
               mergeModeGroupSize,
               false,
               false,  // showSafeMargin
-              { strategy: mergeLayoutStrategy, gridCols: 2, gridRows: 2, userMargins, customPaper: settings.customPaper }
+              { strategy: mergeLayoutStrategy, gridCols: 2, gridRows: 2, userMargins, customPaper: settings.customPaper },
+              paperLayout  // V16 slotted path: provide for MultiTicketComposer+buildRenderCommand
             )
           } else {
             // ✅ 单文件：统一使用全局 Canvas（PDF / 图片 / OFD 都走此路径）
