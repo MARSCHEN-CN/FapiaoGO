@@ -433,33 +433,17 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
     const autoOrient = settingsRef.current.autoOrient ?? false
 
     // ── Step 1: 为每个文件生成占位项，立即显示 ──────────────
-    const placeholders = []
-    for (const f of files) {
-      let fileData = f.file
-
-      if (!fileData && f.path && ipc) {
-        const result = await ipc.invoke('read-file', f.path)
-        if (result.success) {
-          const ext = getExtension(f.name)
-          const mimeType = getMimeType(ext)
-          const blob = new Blob([new Uint8Array(result.data)], { type: mimeType })
-          fileData = new File([blob], f.name, { type: mimeType })
-        } else {
-          console.error('[processFilesForAddition] IPC read-file failed:', f.path, result.error)
-        }
-      }
-
-      const key = generateFileKey(f.name)
-      placeholders.push({
-        key,
-        name: f.name,
-        path: f.path,
-        file: fileData,
-        status: 'uploading',
-        fileFormat: getFileFormat(f.name),
-        searchText: buildSearchText({ name: f.name }),
-      })
-    }
+    // lazy file loading: 不在此阶段 IPC 读取文件内容（参见 Import Pipeline Contract v1.1）
+    // parseWorker 等下游在需要时通过 printPath / path 读取
+    const placeholders = files.map((f) => ({
+      key: generateFileKey(f.name),
+      name: f.name,
+      path: f.path,
+      file: f.file || null, // browser drag 有 File，dialog/folder 路径为 null
+      status: 'uploading',
+      fileFormat: getFileFormat(f.name),
+      searchText: buildSearchText({ name: f.name }),
+    }))
 
     // 所有占位一步添加到列表
     setFiles((prev) => {
