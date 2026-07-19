@@ -1,30 +1,67 @@
-import { useState, useCallback, useRef } from 'react'
+import { useState, useCallback, useRef, useSyncExternalStore } from 'react'
 import { exportExcel, startPdfExport, cancelPdfExport } from '../services/ExportService'
+import { createExportTask, EXPORT_TYPE, EXPORT_MODE } from '../models/ExportTask'
+import { createSuccessfulExport, createFailedExport, createCancelledExport } from '../models/ExportResult'
+import { isTerminalStatus } from '../models/ExportSession'
+import {
+  createExportSession, startExport, updateProgress, completeExport,
+  failExport, cancelExport, clearActiveSession, getActiveSession, subscribe,
+} from '../stores/ExportSessionStore'
 
 /**
- * 导出 Excel/CSV + PDF hook
- *
- * 内聚导出相关 React state 和 UI 回调。
- * 执行逻辑（IPC/fetch/EventSource/SSE 消费）委托 ExportService。
- *
- * PDF 导出：handleExportPdf(config) 接收 PdfExportConfirmModal 的配置，
- * 通过 ExportService 启动任务 + 消费 SSE，更新 pdfExportTask 状态。
- *
- * Phase 5-2：IPC/fetch/EventSource/SSE 逻辑迁移至 ExportService。
- *   useExport.js: 390 → ~155 行。
+ * 导出 Excel/CSV + PDF hook（Phase 5-3）。
+ * 4 个业务 useState 迁移至 ExportSessionStore，通过 useSyncExternalStore 派生。
+ * 保留 setExporting/setExportResult/setExportProgress 兼容 shim（App.jsx 零改动）。
  */
+
+/** session → PdfExportTaskModal props 形状（仅 PDF session）。 */
+function sessionToPdfTaskView(session) {
+  if (!session || session.task.type !== EXPORT_TYPE.PDF) return null
+  return {
+    visible: true,
+    taskId: session.details.backendTaskId,
+    status: session.status === 'created' ? 'starting' : session.status,
+    current: session.details.current,
+    total: session.details.total,
+    percent: session.progress,
+    currentFile: session.details.currentFile,
+    stage: session.stage,
+    successCount: session.details.successCount,
+    failCount: session.details.failCount,
+    errors: session.details.errors,
+  }
+}
+
 export function useExport({ files, electronAPIRef }) {
-  const [exporting, setExporting] = useState(false)
-  const [exportProgress, setExportProgress] = useState({ current: 0, total: 0, stage: '' })
-  const [exportResult, setExportResult] = useState(null)
   const [exportAlert, setExportAlert] = useState(null)
   const closeExportAlert = useCallback(() => setExportAlert(null), [])
-
-  // ── PDF 导出任务状态（与后端 ExportTask.to_dict() 对齐） ──
-  const [pdfExportTask, setPdfExportTask] = useState(null)
-
-  // EventSource close 函数（用于取消/关闭时清理）
   const pdfCloseRef = useRef(null)
+
+  // ── 订阅 store，派生业务视图 ──
+  const activeSession = useSyncExternalStore(subscribe, getActiveSession)
+
+  const exporting = activeSession?.task.type === EXPORT_TYPE.EXCEL
+    && !isTerminalStatus(activeSession.status)
+
+  const exportProgress = activeSession
+    ? { current: activeSession.details.current, total: activeSession.details.total, stage: activeSession.stage }
+    : { current: 0, total: 0, stage: '' }
+
+  const exportResult = activeSession?.task.type === EXPORT_TYPE.EXCEL ? activeSession.result : null
+  const pdfExportTask = sessionToPdfTaskView(activeSession)
+
+  // ── 兼容 setter shim（App.jsx 外部调用 → 转 store 操作） ──
+  const setExporting = useCallback((v) => { if (v === false) clearActiveSession() }, [])
+  const setExportResult = useCallback((v) => { if (v === null) clearActiveSession() }, [])
+  const setExportProgress = useCallback((data) => {
+    const s = getActiveSession()
+    if (s && data) {
+      updateProgress(s.id, {
+        current: data.current, total: data.total, stage: data.stage,
+        progress: data.total ? Math.round((data.current / data.total) * 100) : 0,
+      })
+    }
+  }, [])
 
   // ── Excel 导出 ──
   const handleExportExcel = useCallback(async () => {
@@ -37,165 +74,98 @@ export function useExport({ files, electronAPIRef }) {
       return
     }
 
-    setExporting(true)
-    setExportProgress({ current: 0, total: 100, stage: '准备中' })
-    setExportResult(null)
+    const task = createExportTask({
+      type: EXPORT_TYPE.EXCEL,
+      files: parsedFiles.map(f => ({ name: f.name, path: f.path })),
+    })
+    const session = createExportSession(task)
+    startExport(session.id, '准备中')
 
     try {
       const result = await exportExcel({
-        files: parsedFiles,
-        ipc,
-        taskId: Date.now(),
-        onProgress: (p) => setExportProgress(p),
+        files: parsedFiles, ipc, taskId: task.id,
+        onProgress: (p) => {
+          updateProgress(session.id, {
+            current: p.current, total: p.total, stage: p.stage,
+            progress: p.total ? Math.round((p.current / p.total) * 100) : 0,
+          })
+        },
       })
-
-      // 用户取消保存对话框 → 静默返回（保持原行为）
-      if (result.status === 'cancelled') return
-
-      setExportResult(result)
+      if (result.status === 'cancelled') { cancelExport(session.id, result); return }
+      if (result.success) completeExport(session.id, result)
+      else failExport(session.id, result)
     } catch (err) {
       console.error('Excel 导出异常:', err)
-      setExportResult({ success: false, error: err.message || '导出异常' })
-    } finally {
-      setExporting(false)
-      setExportProgress({ current: 0, total: 0, stage: '' })
+      failExport(session.id, createFailedExport({ taskId: task.id, error: err.message || '导出异常' }))
     }
   }, [files, electronAPIRef])
 
   // ── PDF 导出 ──
-
-  /**
-   * 发起 PDF 导出任务。
-   * @param {object} config - 来自 PdfExportConfirmModal.onConfirm
-   *   { mode, outputType, folderPath, fileName, files: [{path, name}] }
-   */
+  /** @param {object} config - { mode, outputType, folderPath, fileName, files } */
   const handleExportPdf = useCallback(async (config) => {
-    // 初始化任务状态
-    setPdfExportTask({
-      visible: true,
-      taskId: null,
-      status: 'starting',
-      current: 0,
-      total: config.files.length,
-      percent: 0,
-      currentFile: '',
-      stage: '准备中',
-      successCount: 0,
-      failCount: 0,
-      errors: [],
+    const task = createExportTask({
+      type: EXPORT_TYPE.PDF,
+      mode: config.mode === 'merge' ? EXPORT_MODE.MERGE : EXPORT_MODE.SINGLE,
+      files: config.files.map(f => ({ name: f.name, path: f.path })),
+      outputPath: config.mode === 'merge' ? (config.fileName || 'invoice_export.pdf') : '',
     })
+    const session = createExportSession(task)
+    startExport(session.id, '准备中')
+    updateProgress(session.id, { total: config.files.length })
 
     try {
-      const { taskId, close } = await startPdfExport(config, {
+      const { taskId: backendTaskId, close } = await startPdfExport(config, {
         onProgress: (msg) => {
-          setPdfExportTask(prev => {
-            if (!prev) return prev
-            // 'pending'：任务已建立但尚未 start（GET 流可能在 start 前就连上）；按运行态展示
-            if (msg.status === 'pending' || msg.status === 'running') {
-              return {
-                ...prev,
-                taskId: msg.taskId ?? prev.taskId,
-                status: 'running',
-                current: msg.current ?? prev.current,
-                total: msg.total ?? prev.total,
-                percent: msg.percent ?? prev.percent,
-                currentFile: msg.currentFile ?? prev.currentFile,
-                stage: msg.stage || '正在导出',
-              }
-            }
-            return prev
+          updateProgress(session.id, {
+            backendTaskId: msg.taskId ?? backendTaskId ?? undefined,
+            current: msg.current, total: msg.total, currentFile: msg.currentFile,
+            successCount: msg.successCount, failCount: msg.failCount,
+            progress: msg.percent, stage: msg.stage || '正在导出',
           })
         },
         onTerminal: (msg) => {
-          setPdfExportTask(prev => {
-            if (!prev) return prev
-            const stageText = msg.status === 'completed' ? '导出完成'
-              : msg.status === 'cancelled' ? '已取消' : '导出失败'
-            return {
-              ...prev,
-              status: msg.status,
-              current: msg.current ?? prev.current,
-              total: msg.total ?? prev.total,
-              percent: msg.percent ?? prev.percent,
-              currentFile: msg.currentFile ?? prev.currentFile,
-              successCount: msg.successCount ?? prev.successCount,
-              failCount: msg.failCount ?? prev.failCount,
-              errors: msg.errors ?? prev.errors,
-              stage: stageText,
-            }
-          })
+          const btid = msg.taskId ?? backendTaskId ?? null
+          const meta = { backendTaskId: btid, total: msg.total, successCount: msg.successCount, failCount: msg.failCount, fileErrors: msg.errors }
+          if (msg.status === 'completed') {
+            completeExport(session.id, createSuccessfulExport({ taskId: task.id, metadata: meta }))
+          } else if (msg.status === 'cancelled') {
+            cancelExport(session.id, createCancelledExport({ taskId: task.id, metadata: meta }))
+          } else {
+            failExport(session.id, createFailedExport({ taskId: task.id, error: msg.stage || '导出失败', metadata: meta }))
+          }
         },
         onError: () => {
-          setPdfExportTask(prev => {
-            if (!prev) return prev
-            if (['completed', 'cancelled', 'failed'].includes(prev.status)) return prev
-            return { ...prev, status: 'failed', stage: '连接中断', errors: [{ file: '', error: 'SSE 连接中断' }] }
-          })
+          failExport(session.id, createFailedExport({ taskId: task.id, error: 'SSE 连接中断' }))
         },
       })
 
-      // 保存 close 函数（供 cancel/closePdfExportTask 清理）
       pdfCloseRef.current = close
-
-      // 更新 taskId（POST 返回的后端 UUID）
-      if (taskId) {
-        setPdfExportTask(prev => prev ? { ...prev, taskId } : null)
-      }
+      if (backendTaskId) updateProgress(session.id, { backendTaskId })
     } catch (err) {
       console.error('PDF 导出异常:', err)
-      setPdfExportTask(prev => prev ? {
-        ...prev,
-        status: 'completed',
-        stage: err.message || '导出异常',
-        errors: [{ file: '', error: err.message || '导出异常' }],
-      } : null)
+      failExport(session.id, createFailedExport({ taskId: task.id, error: err.message || '导出异常' }))
     }
   }, [])
 
   // ── 取消导出 ──
   const handleCancelPdfExport = useCallback(async () => {
-    setPdfExportTask(prev => {
-      if (!prev?.taskId) return prev
-      // 先乐观更新 UI
-      return { ...prev, status: 'cancelled', stage: '正在取消...' }
-    })
-
-    // 关闭 EventSource
-    if (pdfCloseRef.current) {
-      pdfCloseRef.current()
-      pdfCloseRef.current = null
-    }
-
-    // 发送取消请求到后端
-    const taskId = pdfExportTask?.taskId
-    if (taskId) {
-      await cancelPdfExport(taskId)
-    }
-  }, [pdfExportTask])
+    const s = getActiveSession()
+    if (!s) return
+    if (pdfCloseRef.current) { pdfCloseRef.current(); pdfCloseRef.current = null }
+    if (s.details.backendTaskId) await cancelPdfExport(s.details.backendTaskId)
+    cancelExport(s.id, createCancelledExport({ taskId: s.task.id, metadata: { backendTaskId: s.details.backendTaskId } }))
+  }, [])
 
   // ── 关闭任务面板 ──
   const closePdfExportTask = useCallback(() => {
-    if (pdfCloseRef.current) {
-      pdfCloseRef.current()
-      pdfCloseRef.current = null
-    }
-    setPdfExportTask(null)
+    if (pdfCloseRef.current) { pdfCloseRef.current(); pdfCloseRef.current = null }
+    clearActiveSession()
   }, [])
 
   return {
-    exporting,
-    exportProgress,
-    exportResult,
-    exportAlert,
-    closeExportAlert,
-    setExporting,
-    setExportResult,
-    setExportProgress,
-    handleExportExcel,
-    handleExportPdf,
-    // PDF 导出
-    pdfExportTask,
-    cancelPdfExport: handleCancelPdfExport,
-    closePdfExportTask,
+    exporting, exportProgress, exportResult, exportAlert, closeExportAlert,
+    setExporting, setExportResult, setExportProgress,
+    handleExportExcel, handleExportPdf,
+    pdfExportTask, cancelPdfExport: handleCancelPdfExport, closePdfExportTask,
   }
 }
