@@ -490,9 +490,9 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
     enqueueSplit(splitJobs)
     let parsePipelineDone = false
 
-    // 解析进度计数（用对象 ref 规避闭包陷阱，parseWorker 并发累加）
-    const totalParseJobsRef = { current: 0 }
-    const doneParseJobsRef = { current: 0 }
+    // 进度计数（同步写入 ImportSessionStore）
+    let progressTotal = 0
+    let progressDone = 0
 
     // Parse 流水线（执行委托给 parseRunner，UI 更新在 orchestrator）
     async function parseWorker() {
@@ -515,10 +515,11 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
           console.error(`[App] 解析失败: ${fileObj.name}`, err)
           queueUpdate(fileObj.key, 'error')
         } finally {
-          doneParseJobsRef.current += 1
+          progressDone += 1
+          updateProgress(session.id, { completed: progressDone, total: progressTotal })
           setParseProgress({
-            current: doneParseJobsRef.current,
-            total: totalParseJobsRef.current,
+            current: progressDone,
+            total: progressTotal,
           })
         }
       }
@@ -540,7 +541,7 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
             if (toAdd.length === 1) {
               const toAddRest = stripIdentity(toAdd[0])
               queueUpdate(p.key, 'ready', toAddRest)
-              totalParseJobsRef.current += 1
+              progressTotal += 1
               const readyFile = { ...p, ...toAddRest }
               enqueueParse([{ fileObj: readyFile }])
             } else if (toAdd.length > 1) {
@@ -549,19 +550,19 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
                 status: 'ready',
               }))
               replaceWithItems(p.key, pageItems)
-              totalParseJobsRef.current += pageItems.length
+              progressTotal += pageItems.length
               for (const pageObj of pageItems) {
                 enqueueParse([{ fileObj: pageObj }])
               }
             } else {
               queueUpdate(p.key, 'ready', { key: p.key })
-              totalParseJobsRef.current += 1
+              progressTotal += 1
               enqueueParse([{ fileObj: { ...p, key: p.key } }])
             }
           } else {
             const fileObjRest = stripIdentity(result.fileObj)
             queueUpdate(p.key, 'ready', fileObjRest)
-            totalParseJobsRef.current += 1
+            progressTotal += 1
             const readyFile = { ...p, ...fileObjRest }
             enqueueParse([{ fileObj: readyFile }])
           }
