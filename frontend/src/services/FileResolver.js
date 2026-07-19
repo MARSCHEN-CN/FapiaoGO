@@ -52,7 +52,9 @@ import { getExtension, getMimeType } from '../utils'
  */
 export async function resolveFile(input, ipc) {
   // 1. 已有 File 对象 → 直接返回（browser drag、已缓存）
-  if (input.file instanceof File) {
+  //    注意：不使用 instanceof File（Electron 跨 realm 时可能失效），
+  //    改检测 arrayBuffer 方法判断是否为 Blob/File
+  if (input.file && typeof input.file.arrayBuffer === 'function') {
     return input.file
   }
 

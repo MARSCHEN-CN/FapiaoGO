@@ -7,6 +7,7 @@ import {
 } from '../utils'
 import { buildFileObj, generateFileKey, processPdfFile, stripIdentity } from '../utils/fileHelpers'
 import { createPlaceholders } from '../utils/placeholderGenerator'
+import { resolveFile } from '../services/FileResolver'
 import { db } from '../db'
 
 // ── 状态迁移规则 ─────────────────────────────────────────
@@ -759,31 +760,14 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
       const result = await api.ipcRenderer.invoke('scan-dropped-paths', { paths })
       if (!result.success || !result.files.length) return
 
-      // 转换为 processFilesForAddition 需要的格式
-      // PDF 文件需要提前读取（processPdfFile 需要实际文件内容）
-      const droppedFiles = []
-      for (const f of result.files) {
-        const isPDF = f.name.toLowerCase().endsWith('.pdf')
-        let fileData = null
-
-        if (isPDF) {
-          try {
-            const readResult = await api.ipcRenderer.invoke('read-file', f.path)
-            if (readResult.success) {
-              const blob = new Blob([new Uint8Array(readResult.data)], { type: 'application/pdf' })
-              fileData = new File([blob], f.name, { type: 'application/pdf' })
-            }
-          } catch (err) {
-            console.error('[handleNativeDrop] PDF 读取失败:', f.name, err)
-          }
-        }
-
-        droppedFiles.push({
-          name: f.name,
-          path: f.path,
-          file: fileData,
+      // 统一通过 FileResolver 读取文件内容
+      // 入口只产生 { name, path }，不再拥有文件读取策略
+      const droppedFiles = await Promise.all(
+        result.files.map(async (f) => {
+          const fileObj = await resolveFile({ name: f.name, path: f.path }, api.ipcRenderer)
+          return { name: f.name, path: f.path, file: fileObj }
         })
-      }
+      )
 
       await processFilesForAddition(droppedFiles)
     } catch (err) {
@@ -850,36 +834,13 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
     const result = await ipc.invoke('open-file-dialog')
     if (!result.success || result.files.length === 0) return
 
-    const filesToAdd = []
-
-    for (const file of result.files) {
-      const isPDF = file.name.toLowerCase().endsWith('.pdf')
-
-      if (isPDF) {
-        try {
-          const fileData = await ipc.invoke('read-file', file.path)
-          if (fileData.success) {
-            const blob = new Blob([new Uint8Array(fileData.data)], { type: 'application/pdf' })
-            const pdfFile = new File([blob], file.name, { type: 'application/pdf' })
-            filesToAdd.push({
-              file: pdfFile,
-              name: file.name,
-              path: file.path
-            })
-            continue
-          }
-        } catch (err) {
-          console.error('[App] 多页 PDF 检测/拆分失败:', err)
-        }
-      }
-
-      // 非 PDF 文件或 PDF 读取失败
-      filesToAdd.push({
-        file: null,
-        name: file.name,
-        path: file.path
+    // 统一通过 FileResolver 读取文件内容（入口只负责发现文件）
+    const filesToAdd = await Promise.all(
+      result.files.map(async (file) => {
+        const fileObj = await resolveFile({ name: file.name, path: file.path }, ipc)
+        return { file: fileObj, name: file.name, path: file.path }
       })
-    }
+    )
 
     await processFilesForAddition(filesToAdd)
   }, [electronAPIRef, processFilesForAddition])
@@ -893,35 +854,13 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
     const result = await ipc.invoke('open-folder-dialog')
     if (!result.success || result.files.length === 0) return
 
-    const filesToAdd = []
-
-    for (const file of result.files) {
-      const isPDF = file.name.toLowerCase().endsWith('.pdf')
-
-      if (isPDF) {
-        try {
-          const fileData = await ipc.invoke('read-file', file.path)
-          if (fileData.success) {
-            const blob = new Blob([new Uint8Array(fileData.data)], { type: 'application/pdf' })
-            const pdfFile = new File([blob], file.name, { type: 'application/pdf' })
-            filesToAdd.push({
-              file: pdfFile,
-              name: file.name,
-              path: file.path
-            })
-            continue
-          }
-        } catch (err) {
-          console.error('[App] 多页 PDF 检测/拆分失败:', err)
-        }
-      }
-
-      filesToAdd.push({
-        file: null,
-        name: file.name,
-        path: file.path
+    // 统一通过 FileResolver 读取文件内容
+    const filesToAdd = await Promise.all(
+      result.files.map(async (file) => {
+        const fileObj = await resolveFile({ name: file.name, path: file.path }, ipc)
+        return { file: fileObj, name: file.name, path: file.path }
       })
-    }
+    )
 
     await processFilesForAddition(filesToAdd)
   }, [electronAPIRef, processFilesForAddition])
