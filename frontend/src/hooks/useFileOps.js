@@ -106,17 +106,9 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
     for (const fileObj of filesToParse) {
       if (fileObj.file) {
         preparedFiles.push(fileObj.file)
-      } else if (fileObj.printPath && ipc) {
-        const fileData = await ipc.invoke('read-file', fileObj.printPath)
-        if (fileData.success) {
-          const ext = getExtension(fileObj.name)
-          const mimeType = getMimeType(ext)
-
-          const blob = new Blob([new Uint8Array(fileData.data)], { type: mimeType })
-          preparedFiles.push(new File([blob], fileObj.name, { type: mimeType }))
-        } else {
-          preparedFiles.push(null)
-        }
+      } else if ((fileObj.printPath || fileObj.path) && ipc) {
+        const file = await resolveFile(fileObj, ipc)
+        preparedFiles.push(file)
       } else {
         preparedFiles.push(null)
       }
@@ -344,29 +336,21 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
               )
 
               resp = await fetch(`${BACKEND_URL}/parse_invoice`, { method: 'POST', body: formData })
-            } else if (fileObj.printPath && ipc) {
-              const fileData = await ipc.invoke('read-file', fileObj.printPath)
-              if (fileData.success) {
-                const ext = getExtension(fileObj.name)
-                const mimeType = getMimeType(ext)
+            } else if ((fileObj.printPath || fileObj.path) && ipc) {
+              const file = await resolveFile(fileObj, ipc)
+              if (!file) throw new Error('IPC read-file failed: ' + fileObj.name)
+              const formData = new FormData()
+              formData.append('file', file)
+              formData.append('autoOrient', autoOrient ? '1' : '0')
+              formData.append('mode', 'batch')
 
-                const blob = new Blob([new Uint8Array(fileData.data)], { type: mimeType })
-                const file = new File([blob], fileObj.name, { type: mimeType })
-                const formData = new FormData()
-                formData.append('file', file)
-                formData.append('autoOrient', autoOrient ? '1' : '0')
-                formData.append('mode', 'batch')
-
-                setFiles((prev) =>
-                  prev.map((f) =>
-                    f.key === fileObj.key ? { ...f, status: 'uploading' } : f
-                  )
+              setFiles((prev) =>
+                prev.map((f) =>
+                  f.key === fileObj.key ? { ...f, status: 'uploading' } : f
                 )
+              )
 
-                resp = await fetch(`${BACKEND_URL}/parse_invoice`, { method: 'POST', body: formData })
-              } else {
-                throw new Error(fileData.error)
-              }
+              resp = await fetch(`${BACKEND_URL}/parse_invoice`, { method: 'POST', body: formData })
             }
 
             if (!resp) {
@@ -565,24 +549,15 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
               throw fetchErr
             }
           } else if ((f.printPath || f.path) && ipc) {
-            console.log('[parseWorker] Using printPath/path branch')
-            const filePath = f.printPath || f.path
-            const fileData = await ipc.invoke('read-file', filePath)
-            if (fileData.success) {
-              const ext = getExtension(f.name)
-              const mimeType = getMimeType(ext)
-              const blob = new Blob([new Uint8Array(fileData.data)], { type: mimeType })
-              const file = new File([blob], f.name, { type: mimeType })
-              const fd = new FormData()
-              fd.append('file', file)
-              fd.append('autoOrient', autoOrient ? '1' : '0')
-              fd.append('mode', 'batch')
-              resp = await fetch(`${BACKEND_URL}/parse_invoice`, {
-                method: 'POST', body: fd,
-              })
-            } else {
-              throw new Error(fileData.error)
-            }
+            const file = await resolveFile(f, ipc)
+            if (!file) throw new Error('IPC read-file failed: ' + f.name)
+            const fd = new FormData()
+            fd.append('file', file)
+            fd.append('autoOrient', autoOrient ? '1' : '0')
+            fd.append('mode', 'batch')
+            resp = await fetch(`${BACKEND_URL}/parse_invoice`, {
+              method: 'POST', body: fd,
+            })
           }
 
           if (!resp) throw new Error('无法读取文件')
