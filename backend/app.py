@@ -783,6 +783,9 @@ def split_pdf():
     file_bytes = file.read()
     if not file_bytes:
         return jsonify({"success": False, "error": "空文件"}), 400
+
+    descriptor_only = request.form.get('descriptor_only', '0') == '1'
+
     try:
         # 生成文件哈希作为 page_id 基础（保持向后兼容）
         file_hash = hashlib.sha256(file_bytes).hexdigest()[:16]
@@ -795,6 +798,27 @@ def split_pdf():
 
         # 惰性清理 + LRU 硬上限（过期项与超限 LRU 驱逐，联动清理 registry）
         _page_cache_evict()
+
+        if descriptor_only:
+            for i in range(doc.page_count):
+                page_num = i + 1
+                page_id = f"{file_hash}_{i}"
+                with _page_registry_lock:
+                    _page_registry[page_id] = {"doc_id": doc.doc_id, "page": page_num}
+                pages.append({
+                    "id": page_id,
+                    "page_index": page_num,
+                    "source_doc_id": doc.doc_id,
+                    "page_size": {"width": 0, "height": 0},
+                    "status": "ready",
+                })
+            return jsonify({
+                "success": True,
+                "doc_id": doc.doc_id,
+                "total_pages": len(pages),
+                "pages": pages,
+                "expires_in": _page_cache_ttl,
+            })
 
         # 单页任务：拆页 + 200dpi 预览渲染 + base64。
         # fitz.Document 不可跨线程共享，因此每个 worker 用独立副本打开。
