@@ -2,16 +2,16 @@ import { useState, useCallback, useRef, useEffect } from 'react'
 import { useDropzone } from 'react-dropzone'
 import { BACKEND_URL, SUPPORTED_EXTENSIONS } from '../config'
 import {
-  getElectronAPI, getFilePath, getFileFormat, getExtension, getExtensionWithDot,
-  getMimeType, concurrentBatch, applySort, buildSearchText, detectDuplicateInvoices,
+  getElectronAPI, getFilePath, getExtension, getExtensionWithDot,
+  getMimeType, concurrentBatch, applySort, detectDuplicateInvoices,
 } from '../utils'
-import { buildFileObj, generateFileKey, processPdfFile, stripIdentity } from '../utils/fileHelpers'
+import { stripIdentity } from '../utils/fileHelpers'
 import { createPlaceholders } from '../utils/placeholderGenerator'
 import { resolveFile } from '../services/FileResolver'
 import { prepareBatchRequest } from '../services/ParseBatchClient'
 import { consumeBatchStream } from '../services/StreamConsumer'
-import { createTask, setTaskAbortController, updateTaskStatus, cancelTask, getTask } from '../services/TaskRegistry'
-import { createQueues, enqueueSplit, enqueueParse, startSplitWorkers, startParseWorkers, getSplitQueueLength, isQueueEmpty, clearQueues } from '../services/TaskScheduler'
+import { createTask, setTaskAbortController, updateTaskStatus, getTask } from '../services/TaskRegistry'
+import { createQueues, enqueueSplit, enqueueParse, getSplitQueueLength } from '../services/TaskScheduler'
 import { runParseTask } from '../runners/parseRunner'
 import { runSplitTask } from '../runners/splitRunner'
 import { runFallbackParseTask } from '../runners/fallbackParseRunner'
@@ -20,7 +20,6 @@ import { createImportSession, addFilesToSession, replaceFileItems, updateProgres
 import { processImportedFiles } from '../processors/invoicePostProcessor'
 import { consumeParseResult } from '../consumers/parseResultConsumer'
 import { createParseResult } from '../models/ParseResult'
-import { db } from '../db'
 
 // ── 状态迁移规则 ─────────────────────────────────────────
 // 仅允许正向状态迁移，阻止回退（Import Pipeline Contract v1.1）
@@ -38,7 +37,6 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
   const [importing, setImporting] = useState(false)   // 整个导入流程（处理+解析）
   const [parsing, setParsing] = useState(false)
   const [parseProgress, setParseProgress] = useState({ current: 0, total: 0 })
-  const completedRef = useRef(0)  // ✅ 跟踪已完成文件数（避免闭包陷阱）
 
   // ✅ 修复闭包陷阱：使用 ref 保存最新 settings
   const settingsRef = useRef(settings)
@@ -181,7 +179,6 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
     // ✅ 降低并发限制，避免过多 OCR 任务同时运行
     const CONCURRENCY_LIMIT = 2
     const MAX_RETRY = 1
-    const RETRY_DELAY_MS = 2000
 
     try {
       const ipc = electronAPIRef.current?.ipcRenderer
