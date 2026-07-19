@@ -14,7 +14,7 @@
  * 永不进本工厂（I1：RenderCommand 永远描述纸张，不描述屏幕）。
  */
 
-import { calculateFitScale, calculateCenteredPosition } from '../layout.js'
+import { createPlacement } from '../compose/composePlacement.js'
 import { isPaperLayoutInvalid } from '../previewState.js'
 
 /**
@@ -160,11 +160,8 @@ export function buildRenderCommand(paperLayout, documentState) {
     return emptyRenderCommand()
   }
 
-  // 旋转后的内容包围盒（90/270 交换 natW/natH；0/180 不交换）。Renderer 不再旋转内容。
-  const rotated = contentRotation % 180 !== 0
-  const rotatedBounds = rotated
-    ? { width: natH, height: natW }
-    : { width: natW, height: natH }
+  // 旋转后的内容包围盒（90/270 交换 natW/natH；0/180 不交换）由 createPlacement 统一产出，
+  // 不再本地重算（D2-1：createPlacement 成为唯一几何 owner）。
 
   // 有效 usableRect：paperLandscape 时按新纸坐标重生（margins 物理值不变，仅 w/h 依据新纸重算）。
   //   margins 属于 Paper 坐标（Top 仍是物理上边、Left 仍是物理左边），绝不随内容旋转。
@@ -177,10 +174,15 @@ export function buildRenderCommand(paperLayout, documentState) {
     ? { x: mL, y: mT, w: paperRect.h - mL - mR, h: paperRect.w - mT - mB }
     : naturalUsable
 
-  // Fit + Center 在 rotatedBounds 上做（Renderer 不重算）。
-  const slot = { x: usableRect.x, y: usableRect.y, width: usableRect.w, height: usableRect.h }
-  const fitScale = calculateFitScale(slot, rotatedBounds)
-  const pos = calculateCenteredPosition(slot, rotatedBounds, fitScale)
+  // Fit + Center 委托 createPlacement（D2-1：消除第二套 fit 源，createPlacement 成为唯一几何 owner）。
+  // 注意 usableRect 是 {x,y,w,h} 形状，createPlacement 期望 {x,y,width,height}，必须转换，
+  // 否则 width 为 undefined → scale=0 静默退化（此陷阱由 renderLayoutFactoryPlacement.test.js 锁死）。
+  const placement = createPlacement({
+    contentRect: { x: usableRect.x, y: usableRect.y, width: usableRect.w, height: usableRect.h },
+    sourceWidth: natW,
+    sourceHeight: natH,
+    rotation: contentRotation,
+  })
 
   // 有效纸张像素尺寸（paperLandscape 时交换），供 Renderer 直接使用，无需再次 swap。
   const effPaperRect = paperLandscape
@@ -193,11 +195,11 @@ export function buildRenderCommand(paperLayout, documentState) {
     paper: paperLayout,
     paperRect: effPaperRect,
     usableRect,
-    rotatedBounds,
+    rotatedBounds: placement.rotatedBounds,
     placement: {
-      scale: fitScale,
-      offsetX: pos.x,
-      offsetY: pos.y,
+      scale: placement.scale,
+      offsetX: placement.offsetX,
+      offsetY: placement.offsetY,
     },
     rotation: 0, // [LEGACY Wire] Slice 1.1 恒 0：协议不变（rotation 暂不发给 RE）；Slice 1.2 起 = contentRotation
     contentRotation, // 【契约】内容旋转角，Factory 唯一决策点产出；Renderer/RE 在 Slice 1.2+ 消费
