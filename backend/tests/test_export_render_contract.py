@@ -13,21 +13,46 @@
 import json
 import os
 import re
+import tempfile
 import time
 
+import fitz
 import pytest
 
-# 复用真实 app（含 D3-3a 新增路由）
+# 复用真实 app（含 D3-3a 新增路由 + D3-3b-3 真实执行器）
 import app as backend_app
 
 _BACKEND_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
+# D3-3b-3 起 _run_export_render_task 真正读源、生成 PDF。契约测试的 sourceRef
+# 必须指向一个真实存在的图片，否则任务会 fail（不再是 no-op skeleton）。
+# 这里用 fitz 造一张真实的 PNG 作为 fixture（与导出源同构）。
+_PNG_FIXTURE = None
+
+
+def _real_png_path():
+    global _PNG_FIXTURE
+    if _PNG_FIXTURE is None:
+        doc = fitz.open()
+        doc.new_page(width=200, height=280)
+        doc[0].draw_rect(fitz.Rect(0, 0, 200, 280), color=(1, 0, 0), fill=(1, 0, 0))
+        fd, path = tempfile.mkstemp(suffix='.png')
+        with os.fdopen(fd, 'wb') as fh:
+            fh.write(doc[0].get_pixmap().tobytes('png'))
+        doc.close()
+        _PNG_FIXTURE = path
+    return _PNG_FIXTURE
+
+
 def _valid_command(idx=0):
-    """构造一个完全合规的 RenderCommand（几何来自前端 producer，后端只消费）。"""
+    """构造一个完全合规的 RenderCommand（几何来自前端 producer，后端只消费）。
+
+    sourceRef 指向一张真实存在的 PNG（D3-3b-3 真实执行器会读取并绘制）。
+    """
     return {
         "version": 1,
-        "sourceRef": {"path": f"/tmp/export_src_{idx}.png", "page": 0},
+        "sourceRef": {"path": _real_png_path(), "page": 0},
         "paper": {"widthMm": 210.0, "heightMm": 297.0, "dpi": 300},
         "placement": {"scale": 0.5, "offsetX": 10.0, "offsetY": 20.0},
         "rotatedBounds": {"width": 1000, "height": 1414},
@@ -122,6 +147,29 @@ def test_sse_reaches_completed_for_valid(client):
     assert events[-1]['current'] == events[-1]['total'] == 3
 
 
+# ── 契约 6b：D3-3b-3 真实 PDF 产出（source → executor → PDF writer 闭环）──
+def test_export_render_produces_real_pdf(client):
+    """D3-3b-3 验收 1+2：任务完成后磁盘上真的有 PDF，且页尺寸 == paper_px。
+
+    这是 D3-3 真正闭环点的端到端证据：不再只是 task.complete，而是
+    output.pdf 存在且页尺寸与前端 paper_px 同构（A4@300dpi -> 2480x3508）。
+    """
+    resp = client.post('/api/export-render', json=_valid_body(n=1))
+    task_id = resp.get_json()['taskId']
+    sse = client.get(f'/api/export-render/events/{task_id}')
+    events = _parse_sse(sse.get_data(as_text=True))
+    assert events[-1]['status'] == 'completed', events[-1]
+
+    out_path = os.path.join(tempfile.gettempdir(), f'export-render-{task_id}.pdf')
+    assert os.path.isfile(out_path), "D3-3b-3 未生成真实 PDF（闭环断裂）"
+    doc = fitz.open(out_path)
+    try:
+        assert len(doc) == 1
+        assert (int(doc[0].rect.width), int(doc[0].rect.height)) == (2480, 3508)
+    finally:
+        doc.close()
+
+
 # ── 契约 7：未知 task → 404 ──
 def test_sse_unknown_task_returns_404(client):
     resp = client.get('/api/export-render/events/does-not-exist')
@@ -159,6 +207,7 @@ def test_executor_path_has_no_backend_fit():
     forbidden = ('_apply_margins', 'calculateFit', 'fit_scale')
     targets = [
         os.path.join(_BACKEND_ROOT, 'services', 'export_render_schema.py'),
+        os.path.join(_BACKEND_ROOT, 'services', 'export_render_service.py'),
         os.path.join(_BACKEND_ROOT, 'app.py'),
     ]
     for path in targets:

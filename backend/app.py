@@ -8,6 +8,7 @@ import re
 import threading
 import time
 import traceback
+import tempfile
 from logging.handlers import RotatingFileHandler
 
 from flask import Flask, request, jsonify, Response, stream_with_context
@@ -1365,16 +1366,31 @@ def api_export_pdf_cancel():
 # ============================
 
 from services.export_render_schema import validate_export_render_request
+from services.export_render_service import execute_export_render
 
 _export_render_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix='export-render')
 
 
-def _run_export_render_task(task_id, commands):
-    """D3-3a skeleton executor — 仅做契约级结构通过，不渲染、不生成 PDF。
+def _export_render_output_path(task_id):
+    """Deterministic on-disk location for the generated PDF.
 
-    真实光栅/PDF 执行器在 D3-3b 接入（command → fitz paper canvas → pdf）。
-    本函数**严禁**计算 fit / scale / center / rotation —— 几何所有权在前端
-    RenderCommand（createPlacement）。Grep 禁令：_apply_margins / calculateFit / fit_scale。
+    D3-3b-3 keeps the request envelope unchanged (no outputPath field), so the
+    produced file lands at a task-id-derived temp path. Client delivery
+    (download endpoint / caller-provided outputPath) is an explicit out-of-scope
+    follow-up; the file's existence is what closes the source -> executor -> PDF
+    loop and what the tests assert.
+    """
+    return os.path.join(tempfile.gettempdir(), f'export-render-{task_id}.pdf')
+
+
+def _run_export_render_task(task_id, commands):
+    """D3-3b-3 real executor — command -> fitz page -> merged PDF on disk.
+
+    Orchestration is delegated to services.export_render_service.execute_export_render
+    (Source/Geometry/Output layers stay separate, mirroring export-pdf). This
+    function only owns the task lifecycle + persistence. It MUST NOT compute
+    fit / scale / center / rotation -- geometry ownership is the frontend's
+    RenderCommand. Grep ban: _apply_margins / calculateFit / fit_scale.
 
     Args:
         task_id:  任务 ID。
@@ -1388,18 +1404,14 @@ def _run_export_render_task(task_id, commands):
 
     try:
         task.start()
-        for cmd in commands:
-            if task.cancelled:
-                logger.info("[Export Render] task %s 已取消", task_id[:8])
-                break
-            # D3-3a: 命令结构已校验。D3-3b 在此用 cmd['sourceRef'] + cmd['paper']
-            # 解析源、建立 fitz 画布并落盘。此处仅推进进度以闭合任务生命周期。
-            label = (cmd.get('sourceRef') or {}).get('path', 'command')
-            task.advance(label)
+        pdf_bytes = execute_export_render(commands, progress=lambda lbl: task.advance(lbl))
+        out_path = _export_render_output_path(task_id)
+        with open(out_path, 'wb') as fh:
+            fh.write(pdf_bytes)
         task.complete()
-    except Exception:
-        logger.exception("[Export Render] task %s 异常", task_id[:8])
-        task.fail("export-render skeleton failure")
+    except Exception as e:
+        logger.exception("[Export Render] task %s 生成异常", task_id[:8])
+        task.fail(str(e) or "export-render generation failure")
 
 
 @app.route('/api/export-render', methods=['POST'])
