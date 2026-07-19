@@ -6,7 +6,7 @@ import pdfjsWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import { PREVIEW_DPI } from './config'
 import { rotateContentOnPaper } from './utils/canvasUtils'
 import { createLayout, normalizeLayoutItem, normalizeLayoutItems, getPaperPixels, PRINT_SAFE_MARGIN_MM, PRINTER_PROFILES, getPrintableArea } from './layout'
-import { isDocumentEngineEnabled, makeImageRef, ConcreteImageHandle, MemoryPixelHandle } from './documentEngine.js'  // P2C 统一入口门面（v12 契约 JS 实现；路线见 v14 §6/§13）+ ②b 桥接用 ImageHandle 值类型（facade 单向依赖，Law #2 允许）
+import { isDocumentEngineEnabled } from './documentEngine.js'  // P2C 统一入口门面（v12 契约 JS 实现；路线见 v14 §6/§13）
 import { createPlacement } from './compose/composePlacement.js'  // [B1 p2] Virtual Paper 几何（contentRect fit）：Preview/Print 共用唯一几何来源
 import { drawRenderCommand } from './layout/renderDraw.js'  // [C3-2] 与 Worker 共用唯一 executor（drawRenderCommand 纯执行、DOM-free）
 import { buildSingleFileRenderCommand } from './layout/singleFileRenderCommand.js'  // [D1-2] 单文件预览 RenderCommand Producer（与 Compose/Print 同契约）
