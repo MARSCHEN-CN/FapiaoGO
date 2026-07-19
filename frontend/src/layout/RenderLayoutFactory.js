@@ -16,6 +16,7 @@
 
 import { createPlacement } from '../compose/composePlacement.js'
 import { isPaperLayoutInvalid } from '../previewState.js'
+import { slotToLandscape } from './SlotLayout.js'
 
 /**
  * @typedef {Object} RenderCommand
@@ -106,9 +107,12 @@ export function validateRenderCommand(cmd) {
  * @param {import('../previewState.js').DocumentState} documentState
  *   仅作输入：工厂内读取 pageOrientation / pageSize / rotation 等事实意图，
  *   **输出不得反向持有该对象**（评审修正①）。
+ * @param {{x:number,y:number,width:number,height:number}} [slotRect]
+ *   票位矩形（来自 SlotLayout.computeTicketSlots），坐标落在 paperLayout 自然（未旋转纸张）空间。
+ *   提供时，fit/居中作用于该票位而非整页；null/缺省退化为整页单票（向后兼容）。
  * @returns {ReturnType<typeof emptyRenderCommand>}
  */
-export function buildRenderCommand(paperLayout, documentState) {
+export function buildRenderCommand(paperLayout, documentState, slotRect = null) {
   // V16 F1/F2 守卫：非法/坍缩的 PaperLayout 不应进入 Render 派生层。
   // 不变量校验收口到 isPaperLayoutInvalid（previewState.js 单一来源）：
   //   • 信任 Layout 不变量（contentRect.w/h>0）而非一个可能过期的 valid 字段；
@@ -174,11 +178,22 @@ export function buildRenderCommand(paperLayout, documentState) {
     ? { x: mL, y: mT, w: paperRect.h - mL - mR, h: paperRect.w - mT - mB }
     : naturalUsable
 
+  // ── 票位（N-Up）支持 ──
+  // slotRect 来自 SlotLayout.computeTicketSlots，落在 paperLayout 自然空间。
+  // 提供时，fit/居中作用于该票位而非整页 usableRect；否则退回整页单票（向后兼容）。
+  // 横向纸张按与 usableRect 同一轴交换约定映射到同空间（slotToLandscape）。
+  const hasSlot = isFiniteRect(slotRect)
+  let targetRect = { x: usableRect.x, y: usableRect.y, width: usableRect.w, height: usableRect.h }
+  if (hasSlot) {
+    const natural = { x: slotRect.x, y: slotRect.y, width: slotRect.width, height: slotRect.height }
+    targetRect = paperLandscape ? slotToLandscape(natural, { mL, mT }) : natural
+  }
+
   // Fit + Center 委托 createPlacement（D2-1：消除第二套 fit 源，createPlacement 成为唯一几何 owner）。
   // 注意 usableRect 是 {x,y,w,h} 形状，createPlacement 期望 {x,y,width,height}，必须转换，
   // 否则 width 为 undefined → scale=0 静默退化（此陷阱由 renderLayoutFactoryPlacement.test.js 锁死）。
   const placement = createPlacement({
-    contentRect: { x: usableRect.x, y: usableRect.y, width: usableRect.w, height: usableRect.h },
+    contentRect: targetRect,
     sourceWidth: natW,
     sourceHeight: natH,
     rotation: contentRotation,
@@ -189,12 +204,29 @@ export function buildRenderCommand(paperLayout, documentState) {
     ? { w: paperRect.h, h: paperRect.w }
     : { w: paperRect.w, h: paperRect.h }
 
+  // ── 输出组装 ──
+  // slotted 时，usableRect 缩为票位（executor 用 clip 裁剪），clip 锁票位（防邻票渗色）。
+  const outUsableRect = hasSlot
+    ? { x: targetRect.x, y: targetRect.y, w: targetRect.width, h: targetRect.height }
+    : usableRect
+
+  const outClip = hasSlot
+    ? { x: targetRect.x, y: targetRect.y, width: targetRect.width, height: targetRect.height }
+    : paperLandscape
+      ? { x: 0, y: 0, width: paperRect.h, height: paperRect.w }
+      : {
+          x: clipRect?.x ?? 0,
+          y: clipRect?.y ?? 0,
+          width: clipRect?.w ?? paperRect.w,
+          height: clipRect?.h ?? paperRect.h,
+        }
+
   return {
     version: 1,
     // PaperLayout 是 Derived（非 Facts），可持有引用（自然纸坐标；有效纸见 paperRect）
     paper: paperLayout,
     paperRect: effPaperRect,
-    usableRect,
+    usableRect: outUsableRect,
     rotatedBounds: placement.rotatedBounds,
     placement: {
       scale: placement.scale,
@@ -204,13 +236,18 @@ export function buildRenderCommand(paperLayout, documentState) {
     rotation: 0, // [LEGACY Wire] Slice 1.1 恒 0：协议不变（rotation 暂不发给 RE）；Slice 1.2 起 = contentRotation
     contentRotation, // 【契约】内容旋转角，Factory 唯一决策点产出；Renderer/RE 在 Slice 1.2+ 消费
     paperLandscape,
-    clip: paperLandscape
-      ? { x: 0, y: 0, width: paperRect.h, height: paperRect.w }
-      : {
-          x: clipRect?.x ?? 0,
-          y: clipRect?.y ?? 0,
-          width: clipRect?.w ?? paperRect.w,
-          height: clipRect?.h ?? paperRect.h,
-        },
+    clip: outClip,
   }
+}
+
+/**
+ * 判断 slotRect 结构是否有效（有限非负坐标）。
+ * @param {*} r
+ * @returns {boolean}
+ */
+function isFiniteRect(r) {
+  if (!r || typeof r !== 'object') return false
+  return [r.x, r.y, r.width, r.height].every(
+    (v) => typeof v === 'number' && Number.isFinite(v) && v >= 0
+  )
 }
