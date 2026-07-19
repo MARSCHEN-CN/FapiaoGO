@@ -1,12 +1,17 @@
-import { useState, useCallback } from 'react'
-import { BACKEND_URL } from '../config'
+import { useState, useCallback, useRef } from 'react'
+import { exportExcel, startPdfExport, cancelPdfExport } from '../services/ExportService'
 
 /**
  * 导出 Excel/CSV + PDF hook
- * 
- * 内聚导出相关状态和 SSE 流式处理。
+ *
+ * 内聚导出相关 React state 和 UI 回调。
+ * 执行逻辑（IPC/fetch/EventSource/SSE 消费）委托 ExportService。
+ *
  * PDF 导出：handleExportPdf(config) 接收 PdfExportConfirmModal 的配置，
- * 消费 SSE 更新 pdfExportTask 状态，不直接控制弹窗。
+ * 通过 ExportService 启动任务 + 消费 SSE，更新 pdfExportTask 状态。
+ *
+ * Phase 5-2：IPC/fetch/EventSource/SSE 逻辑迁移至 ExportService。
+ *   useExport.js: 390 → ~155 行。
  */
 export function useExport({ files, electronAPIRef }) {
   const [exporting, setExporting] = useState(false)
@@ -18,6 +23,10 @@ export function useExport({ files, electronAPIRef }) {
   // ── PDF 导出任务状态（与后端 ExportTask.to_dict() 对齐） ──
   const [pdfExportTask, setPdfExportTask] = useState(null)
 
+  // EventSource close 函数（用于取消/关闭时清理）
+  const pdfCloseRef = useRef(null)
+
+  // ── Excel 导出 ──
   const handleExportExcel = useCallback(async () => {
     const ipc = electronAPIRef.current?.ipcRenderer
     if (!ipc) return
@@ -32,100 +41,18 @@ export function useExport({ files, electronAPIRef }) {
     setExportProgress({ current: 0, total: 100, stage: '准备中' })
     setExportResult(null)
 
-    // 只传文件名列表，后端从数据库读取完整数据
-    const fileNames = parsedFiles.map(f => f.name || f.path || f.fileName || '').filter(Boolean)
-    if (fileNames.length === 0) {
-      setExportAlert({ visible: true, title: '提示', message: '无法获取文件名', type: 'warning' })
-      setExporting(false)
-      return
-    }
-
     try {
-      // 第一步：通过 Electron 获取保存路径
-      let savePath = ''
-      let isCsv = false
-
-      if (ipc) {
-        const dialogResult = await ipc.invoke('select-save-path', {
-          defaultName: `发票汇总_${new Date().toISOString().slice(0, 10).replace(/-/g, '')}`,
-          filters: [
-            { name: 'Excel 文件', extensions: ['xlsx'] },
-            { name: 'CSV 文件', extensions: ['csv'] },
-          ]
-        })
-        if (!dialogResult || dialogResult.canceled || !dialogResult.filePath) {
-          setExporting(false)
-          setExportProgress({ current: 0, total: 0, stage: '' })
-          return
-        }
-        savePath = dialogResult.filePath
-        isCsv = savePath.toLowerCase().endsWith('.csv')
-      } else {
-        setExportResult({ success: false, error: 'Electron API 不可用' })
-        setExporting(false)
-        setExportProgress({ current: 0, total: 0, stage: '' })
-        return
-      }
-
-      // 第二步：SSE 流式调用后端，实时接收进度
-      const response = await fetch(`${BACKEND_URL}/api/export-excel-sse`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          filePath: savePath,
-          fileNames,
-          options: { includeRemark: true, splitByType: false },
-          format: isCsv ? 'csv' : 'xlsx',
-        }),
+      const result = await exportExcel({
+        files: parsedFiles,
+        ipc,
+        taskId: Date.now(),
+        onProgress: (p) => setExportProgress(p),
       })
 
-      // 检查非 2xx 响应，从 JSON 体中提取错误信息
-      if (!response.ok) {
-        let errorMsg = `服务器返回 ${response.status}`
-        try {
-          const errBody = await response.json()
-          if (errBody.error) errorMsg = errBody.error
-        } catch (_) {}
-        setExportResult({ success: false, error: errorMsg })
-        setExporting(false)
-        return
-      }
+      // 用户取消保存对话框 → 静默返回（保持原行为）
+      if (result.status === 'cancelled') return
 
-      // 消费 SSE 事件流
-      const reader = response.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
-
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-
-        buffer += decoder.decode(value, { stream: true })
-        const lines = buffer.split('\n')
-        buffer = lines.pop() || ''
-
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            try {
-              const msg = JSON.parse(line.slice(6))
-              if (msg.error) {
-                setExportResult({ success: false, error: msg.error })
-              } else if (msg.result) {
-                setExportProgress(prev => ({ ...prev, current: 100, stage: '完成' }))
-                setExportResult(msg.result)
-              } else {
-                setExportProgress({
-                  current: msg.current || 0,
-                  total: msg.total || 100,
-                  stage: msg.stage || '处理中',
-                })
-              }
-            } catch (e) {
-              // 跳过无法解析的行（心跳等）
-            }
-          }
-        }
-      }
+      setExportResult(result)
     } catch (err) {
       console.error('Excel 导出异常:', err)
       setExportResult({ success: false, error: err.message || '导出异常' })
@@ -136,45 +63,6 @@ export function useExport({ files, electronAPIRef }) {
   }, [files, electronAPIRef])
 
   // ── PDF 导出 ──
-
-  /** 生成 yymmdd 格式日期字符串 */
-  const _dateSuffix = () => {
-    const d = new Date()
-    return String(d.getFullYear()).slice(2) +
-      String(d.getMonth() + 1).padStart(2, '0') +
-      String(d.getDate()).padStart(2, '0')
-  }
-
-  /**
-   * 为文件生成输出路径。
-   * single 模式：每个文件独立路径（用源文件目录 + basename_export_YYMMDD.pdf）。
-   * merge 模式：单一路径（输出目录 + config.fileName）。
-   */
-  const _resolveOutputPath = (file, config) => {
-    // 确定输出目录
-    let outputDir = ''
-    if (config.outputType === 'source' && file.path) {
-      outputDir = file.path.split(/[\\/]/).slice(0, -1).join('/')
-    } else if (config.outputType === 'folder' && config.folderPath) {
-      outputDir = config.folderPath
-    }
-
-    if (!outputDir) {
-      outputDir = '.'
-    }
-
-    if (config.mode === 'merge') {
-      // 合并模式：输出目录 + 用户指定的文件名
-      const fname = config.fileName || 'invoice_export.pdf'
-      return `${outputDir}/${fname}`
-    }
-
-    // 单独导出：源文件目录 + basename_export_YYMMDD.pdf
-    const name = file.name || file.path?.split(/[\\/]/).pop() || 'export'
-    const baseName = name.replace(/\.[^.]+$/, '')
-    const suffix = _dateSuffix()
-    return `${outputDir}/${baseName}_export_${suffix}.pdf`
-  }
 
   /**
    * 发起 PDF 导出任务。
@@ -197,102 +85,61 @@ export function useExport({ files, electronAPIRef }) {
       errors: [],
     })
 
-    // ── 构建 POST body ──
-    let body
-
-    if (config.mode === 'merge') {
-      // 合并模式：源文件列表 + 顶层 outputPath
-      const firstFile = config.files[0]
-      const mergeOutput = _resolveOutputPath(firstFile, config)
-      const filesPayload = config.files.map(f => ({
-        name: f.name || f.path?.split(/[\\/]/).pop() || '',
-        path: f.path || '',
-      }))
-      body = {
-        mode: 'merge',
-        files: filesPayload,
-        outputPath: mergeOutput,
-      }
-    } else {
-      // 单独导出：每个文件独立输出路径
-      const filesPayload = config.files.map(f => ({
-        name: f.name || f.path?.split(/[\\/]/).pop() || '',
-        path: f.path || '',
-        outputPath: _resolveOutputPath(f, config),
-      }))
-      body = {
-        mode: 'single',
-        files: filesPayload,
-      }
-    }
-
     try {
-      // ── POST 创建任务 → 获取 taskId ──
-      const response = await fetch(`${BACKEND_URL}/api/export-pdf`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
+      const { taskId, close } = await startPdfExport(config, {
+        onProgress: (msg) => {
+          setPdfExportTask(prev => {
+            if (!prev) return prev
+            // 'pending'：任务已建立但尚未 start（GET 流可能在 start 前就连上）；按运行态展示
+            if (msg.status === 'pending' || msg.status === 'running') {
+              return {
+                ...prev,
+                taskId: msg.taskId ?? prev.taskId,
+                status: 'running',
+                current: msg.current ?? prev.current,
+                total: msg.total ?? prev.total,
+                percent: msg.percent ?? prev.percent,
+                currentFile: msg.currentFile ?? prev.currentFile,
+                stage: msg.stage || '正在导出',
+              }
+            }
+            return prev
+          })
+        },
+        onTerminal: (msg) => {
+          setPdfExportTask(prev => {
+            if (!prev) return prev
+            const stageText = msg.status === 'completed' ? '导出完成'
+              : msg.status === 'cancelled' ? '已取消' : '导出失败'
+            return {
+              ...prev,
+              status: msg.status,
+              current: msg.current ?? prev.current,
+              total: msg.total ?? prev.total,
+              percent: msg.percent ?? prev.percent,
+              currentFile: msg.currentFile ?? prev.currentFile,
+              successCount: msg.successCount ?? prev.successCount,
+              failCount: msg.failCount ?? prev.failCount,
+              errors: msg.errors ?? prev.errors,
+              stage: stageText,
+            }
+          })
+        },
+        onError: () => {
+          setPdfExportTask(prev => {
+            if (!prev) return prev
+            if (['completed', 'cancelled', 'failed'].includes(prev.status)) return prev
+            return { ...prev, status: 'failed', stage: '连接中断', errors: [{ file: '', error: 'SSE 连接中断' }] }
+          })
+        },
       })
 
-      if (!response.ok) {
-        let errorMsg = `服务器返回 ${response.status}`
-        try {
-          const errBody = await response.json()
-          if (errBody.error) errorMsg = errBody.error
-        } catch (_) {}
-        setPdfExportTask(prev => prev ? {
-          ...prev,
-          status: 'completed',
-          stage: errorMsg,
-          failCount: prev.total || 0,
-          errors: [{ file: '', error: errorMsg }],
-        } : null)
-        return
-      }
+      // 保存 close 函数（供 cancel/closePdfExportTask 清理）
+      pdfCloseRef.current = close
 
-      const { taskId } = await response.json()
-      if (!taskId) {
-        setPdfExportTask(prev => prev ? {
-          ...prev,
-          status: 'completed',
-          stage: '未返回 taskId',
-        } : null)
-        return
-      }
-
-      // 更新 taskId
-      setPdfExportTask(prev => prev ? { ...prev, taskId } : null)
-
-      // ── EventSource 消费 SSE ──
-      const es = new EventSource(`${BACKEND_URL}/api/export-pdf/events/${taskId}`)
-
-      es.onmessage = (event) => {
-        try {
-          const msg = JSON.parse(event.data)
-          // 首次收到 running 时补全 taskId
-          if (msg.status === 'running' && !msg.taskId) {
-            msg.taskId = taskId
-          }
-          handleSseMessage(msg)
-
-          // 终态 → 关闭 EventSource
-          if (msg.status === 'completed' || msg.status === 'cancelled' || msg.status === 'failed') {
-            es.close()
-          }
-        } catch (e) {
-          // 跳过无法解析的数据
-        }
-      }
-
-      es.onerror = () => {
-        // 流断开（网络错误或非预期关闭）。若已收到终态则不再覆盖；
-        // 否则标记连接中断（失败态），避免 UI 卡在 running。
-        es.close()
-        setPdfExportTask(prev => {
-          if (!prev) return prev
-          if (['completed', 'cancelled', 'failed'].includes(prev.status)) return prev
-          return { ...prev, status: 'failed', stage: '连接中断', errors: [{ file: '', error: 'SSE 连接中断' }] }
-        })
+      // 更新 taskId（POST 返回的后端 UUID）
+      if (taskId) {
+        setPdfExportTask(prev => prev ? { ...prev, taskId } : null)
       }
     } catch (err) {
       console.error('PDF 导出异常:', err)
@@ -305,69 +152,33 @@ export function useExport({ files, electronAPIRef }) {
     }
   }, [])
 
-  // ── SSE 消息处理 ──
-  const handleSseMessage = useCallback((msg) => {
-    setPdfExportTask(prev => {
-      if (!prev) return prev
-
-      // 'pending'：任务已建立但尚未 start（GET 流可能在 start 前就连上）；按运行态展示
-      if (msg.status === 'pending' || msg.status === 'running') {
-        return {
-          ...prev,
-          taskId: msg.taskId ?? prev.taskId,
-          status: 'running',
-          current: msg.current ?? prev.current,
-          total: msg.total ?? prev.total,
-          percent: msg.percent ?? prev.percent,
-          currentFile: msg.currentFile ?? prev.currentFile,
-          stage: msg.stage || '正在导出',
-        }
-      }
-
-      // 终态：completed / cancelled / failed
-      if (msg.status === 'completed' || msg.status === 'cancelled' || msg.status === 'failed') {
-        const stageText = msg.status === 'completed' ? '导出完成'
-          : msg.status === 'cancelled' ? '已取消' : '导出失败'
-        return {
-          ...prev,
-          status: msg.status,
-          current: msg.current ?? prev.current,
-          total: msg.total ?? prev.total,
-          percent: msg.percent ?? prev.percent,
-          currentFile: msg.currentFile ?? prev.currentFile,
-          successCount: msg.successCount ?? prev.successCount,
-          failCount: msg.failCount ?? prev.failCount,
-          errors: msg.errors ?? prev.errors,
-          stage: stageText,
-        }
-      }
-
-      return prev
-    })
-  }, [])
-
   // ── 取消导出 ──
-  const cancelPdfExport = useCallback(async () => {
+  const handleCancelPdfExport = useCallback(async () => {
     setPdfExportTask(prev => {
       if (!prev?.taskId) return prev
       // 先乐观更新 UI
       return { ...prev, status: 'cancelled', stage: '正在取消...' }
     })
 
-    // 发送取消请求
-    try {
-      await fetch(`${BACKEND_URL}/api/export-pdf/cancel`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ taskId: pdfExportTask?.taskId }),
-      })
-    } catch (err) {
-      console.error('取消导出失败:', err)
+    // 关闭 EventSource
+    if (pdfCloseRef.current) {
+      pdfCloseRef.current()
+      pdfCloseRef.current = null
+    }
+
+    // 发送取消请求到后端
+    const taskId = pdfExportTask?.taskId
+    if (taskId) {
+      await cancelPdfExport(taskId)
     }
   }, [pdfExportTask])
 
   // ── 关闭任务面板 ──
   const closePdfExportTask = useCallback(() => {
+    if (pdfCloseRef.current) {
+      pdfCloseRef.current()
+      pdfCloseRef.current = null
+    }
     setPdfExportTask(null)
   }, [])
 
@@ -384,7 +195,7 @@ export function useExport({ files, electronAPIRef }) {
     handleExportPdf,
     // PDF 导出
     pdfExportTask,
-    cancelPdfExport,
+    cancelPdfExport: handleCancelPdfExport,
     closePdfExportTask,
   }
 }
