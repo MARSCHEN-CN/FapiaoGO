@@ -8,6 +8,8 @@ import {
 import { buildFileObj, generateFileKey, processPdfFile, stripIdentity } from '../utils/fileHelpers'
 import { createPlaceholders } from '../utils/placeholderGenerator'
 import { resolveFile } from '../services/FileResolver'
+import { consumeBatchStream } from '../services/StreamConsumer'
+import { createTask, setTaskAbortController, updateTaskStatus, cancelTask, getTask } from '../services/TaskRegistry'
 import { db } from '../db'
 
 // ── 状态迁移规则 ─────────────────────────────────────────
@@ -131,52 +133,21 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
       )
     )
 
-    const res = await fetch(`${BACKEND_URL}/parse_batch`, {
-      method: 'POST',
-      body: formData,
+    // 通过 StreamConsumer + TaskRegistry 消费 SSE 流
+    // SSE 生命周期由 TaskRegistry 管理（AbortController 统一取消）
+    const abortController = new AbortController()
+    const task = createTask(filesToParse.map((f) => f.key))
+    setTaskAbortController(task.id, abortController)
+
+    const batchResult = await consumeBatchStream(`${BACKEND_URL}/parse_batch`, formData, {
+      signal: abortController.signal,
+      onProgress: (msg) => {
+        completedRef.current = msg.current
+        setParseProgress({ current: msg.current, total: msg.total })
+      },
     })
 
-    if (!res.ok) {
-      throw new Error(`批量解析失败: HTTP ${res.status}`)
-    }
-
-    // 消费 SSE 事件流，实时更新进度
-    const reader = res.body.getReader()
-    const decoder = new TextDecoder()
-    let buffer = ''
-    let batchResult = null
-
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-
-      buffer += decoder.decode(value, { stream: true })
-      const lines = buffer.split('\n')
-      buffer = lines.pop() || ''
-
-      for (const line of lines) {
-        if (line.startsWith('data: ')) {
-          try {
-            const msg = JSON.parse(line.slice(6))
-            // 有 items 字段 → 最终结果
-            if (msg.items) {
-              batchResult = msg
-            } else if (msg.current !== undefined) {
-              // 进度事件 — 仅更新 ProgressStore（Commit 2b）
-              // 不修改 files[]：文件状态已在 POST 前统一设为 'uploading'，
-              // 此处重复 setFiles 是纯冗余渲染（status 条件恒等于当前值）。
-              // Progress 是 telemetry，不是业务状态（Import Pipeline Contract v1.1）。
-              completedRef.current = msg.current
-              setParseProgress({ current: msg.current, total: msg.total })
-            }
-          } catch (_) { /* ignore parse errors */ }
-        }
-      }
-    }
-
-    if (!batchResult || !batchResult.success) {
-      throw new Error(batchResult?.error || '批量解析失败')
-    }
+    updateTaskStatus(task.id, 'completed')
 
     // 收集所有更新，单次应用（避免 O(n²) 数组复制）
     const updates = new Map()
