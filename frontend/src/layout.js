@@ -142,39 +142,6 @@ export function createTransform(angle, cx, cy, scale = 1) {
   }
 }
 
-export function calculateFitScale(slot, contentBounds) {
-  if (!contentBounds || !contentBounds.width || !contentBounds.height) {
-    return 1
-  }
-  return Math.min(
-    slot.width / contentBounds.width,
-    slot.height / contentBounds.height
-  )
-}
-
-export function calculateCenteredPosition(slot, contentBounds, scale) {
-  if (!contentBounds || !contentBounds.width || !contentBounds.height) {
-    return { x: slot.x, y: slot.y }
-  }
-  
-  const scaledWidth = contentBounds.width * scale
-  const scaledHeight = contentBounds.height * scale
-  return {
-    x: slot.x + (slot.width - scaledWidth) / 2,
-    y: slot.y + (slot.height - scaledHeight) / 2
-  }
-}
-
-export function calculateRotatedBounds(contentBounds, angle) {
-  const rad = (angle * Math.PI) / 180
-  const cosA = Math.abs(Math.cos(rad))
-  const sinA = Math.abs(Math.sin(rad))
-  return {
-    width: contentBounds.width * cosA + contentBounds.height * sinA,
-    height: contentBounds.width * sinA + contentBounds.height * cosA
-  }
-}
-
 export const LAYOUT_STRATEGIES = {
   VERTICAL: 'vertical',
   GRID: 'grid'

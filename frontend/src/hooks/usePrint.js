@@ -3,7 +3,6 @@ import { PREVIEW_DPI, PRINT_PIPELINE, PRINT_SETTINGS_DEFAULTS } from '../config'
 import {
   isMergeMode, b64toBlob, getExtension,
 } from '../utils'
-import { rotateContentOnPaper } from '../utils/canvasUtils'
 import { getForcedLandscape } from '../utils/mergeMode'
 import { renderPrintContent } from '../utils/printRenderer'
 import { buildRenderModel } from '../utils/renderModelBuilder'

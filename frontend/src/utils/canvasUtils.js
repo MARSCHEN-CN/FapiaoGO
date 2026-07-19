@@ -80,57 +80,6 @@ export function findContentBounds(canvas) {
 }
 
 /**
- * 将画布内容按指定角度旋转（纸张固定，内容自适应）
- * @param {HTMLCanvasElement} sourceCanvas - 源画布（只读，不修改）
- * @param {number} angle - 旋转角度（度）
- * @returns {HTMLCanvasElement} - 旋转后的新画布
- * 
- * ✅ 设计原则：
- * - 纸张尺寸固定不变，内容旋转后等比缩放居中放置
- * - 不做 bitmap 重绘，保持 DPI 保真度
- * - 不修改纸张方向，只有内容旋转
- */
-export function rotateContentOnPaper(sourceCanvas, angle) {
-  if (sourceCanvas.width === 0 || sourceCanvas.height === 0) {
-    return sourceCanvas
-  }
-
-  if (angle == null || angle === 0) return sourceCanvas
-  if (typeof angle !== 'number' || isNaN(angle)) {
-    return sourceCanvas
-  }
-
-  // ✅ 纸张尺寸固定不变
-  const result = document.createElement('canvas')
-  result.width = sourceCanvas.width
-  result.height = sourceCanvas.height
-
-  const ctx = result.getContext('2d')
-  ctx.fillStyle = '#ffffff'
-  ctx.fillRect(0, 0, result.width, result.height)
-
-  const rad = (angle * Math.PI) / 180
-
-  // 计算旋转后内容的包围盒尺寸
-  const cosA = Math.abs(Math.cos(rad))
-  const sinA = Math.abs(Math.sin(rad))
-  const rotatedW = sourceCanvas.width * cosA + sourceCanvas.height * sinA
-  const rotatedH = sourceCanvas.width * sinA + sourceCanvas.height * cosA
-
-  // 缩放旋转后内容，使其完整放入纸张
-  const scale = Math.min(result.width / rotatedW, result.height / rotatedH)
-
-  ctx.save()
-  ctx.translate(result.width / 2, result.height / 2)
-  ctx.rotate(rad)
-  ctx.scale(scale, scale)
-  ctx.drawImage(sourceCanvas, -sourceCanvas.width / 2, -sourceCanvas.height / 2)
-  ctx.restore()
-
-  return result
-}
-
-/**
  * 清空画布
  * @param {HTMLCanvasElement} canvas - 目标画布
  * @param {string} [color='#ffffff'] - 背景色
