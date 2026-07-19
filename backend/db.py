@@ -1167,12 +1167,17 @@ def _resolve_invoice_with_fallback(filename: str) -> Optional[Dict]:
             return found
 
     # Step 3: legacy _p\d+ page suffix fallback
-    page_stripped = normalize_filename(_strip_page_suffix(basename))
-    if page_stripped != pure_name:
-        found = _resolve_invoice_by_key(page_stripped)
-        if found:
-            return found
-
+    # Query filename (e.g. 'xxx.pdf') does NOT carry _p suffix, but the DB key
+    # (e.g. 'xxx_p1.pdf') might. Iterate index keys containing '_p' and check
+    # if the stripped version matches the query. O(N) over _p-containing keys,
+    # acceptable for rarely-triggered fallback.
+    for key, idx in _invoice_index_by_filename.items():
+        if '_p' not in key:
+            continue
+        stripped_key = normalize_filename(_strip_page_suffix(key))
+        if stripped_key == target or stripped_key == pure_name:
+            if not _invoices[idx].get('deleted_at'):
+                return _invoices[idx].copy()
     return None
 
 
