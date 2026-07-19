@@ -1,15 +1,15 @@
 /**
  * mergeFactory — Slice 1.3 (D1) Merge/N-Up 唯一布局派生点
  *
- * 收敛目标（与 buildRenderCommand 同源，消灭 Merge 路径上的「第三套」fit/rotate/center 数学）：
+ * 收敛目标（C3-1 起与 live _buildComposeCommand 同源：共用 compose/composePlacement.js 的 createPlacement，不再自带 fit 数学）：
  *   • 单文件预览：buildRenderCommand 在 RenderLayoutFactory.js（Renderer 纯执行）。
  *   • Merge 主线程：renderers.js::_renderDirect（L1070-1093 旧内联数学 → 本工厂）。
  *   • Merge Worker：render.worker.js::compositeCanvas（L34-52 旧内联数学 → 本工厂产出 + drawRenderCommand 纯执行）。
  *
  * 设计纪律（对齐 V17 + D1 收敛不变式）：
  *  • 纯函数（F5）：仅依赖入参（layout / contentMeta / rotations / options），无 DOM / electron / React。
- *  • 复用 layout.js 的 calculateFitScale / calculateCenteredPosition 与 RenderLayoutFactory 的
- *    normalizeRotation —— 与单文件 buildRenderCommand 同源，杜绝「同一公式两份实现」漂移。
+ *  • 几何由 createPlacement（compose/composePlacement.js）唯一计算，与 Preview/Print 的 live 路径逐字同源；
+ *    本工厂只消费 slot.contentRect，不重算 fit/居中（Renderer 不拥有 Layout）。
  *  • 产出的 RenderCommand 与单文件 RenderCommand 同构（version/placement/rotatedBounds/contentRotation/
  *    paperLandscape/clip），因此 drawRenderCommand / validateRenderCommand 三处渲染位置通用。
  *  • 本工厂只做布局数学；像素光栅化（PDF pdf.js / 图片 decode）仍在 renderers Phase 1 完成，不在此层。
@@ -21,8 +21,14 @@
  *   4. 调用本工厂得到 commands[]，逐条喂 drawRenderCommand(ctx, cmd, source, ...)。
  */
 
-import { calculateFitScale, calculateCenteredPosition } from '../layout.js'
-import { normalizeRotation, emptyRenderCommand } from './RenderLayoutFactory.js'
+import { createPlacement } from '../compose/composePlacement.js'
+
+// 与 RenderLayoutFactory.normalizeRotation 同源（纯函数，无 config 依赖）；就地内联以保持本模块 node-safe，
+// 不经由 RenderLayoutFactory.js → layout.js → config.js 拉入 import.meta.env。
+function normalizeRotation(deg) {
+  const snapped = Math.round((deg || 0) / 90) * 90
+  return (((snapped % 360) + 360) % 360)
+}
 
 /**
  * 由 createLayout 产出的 page/area 构造一个最小 composite paperLayout，
@@ -51,7 +57,7 @@ function makeCompositePaperLayout(page, area) {
  * @param {{isLandscape?:boolean, paperLayout?:object}} [options]
  *        isLandscape: 合成纸张是否横向（由调用方 getForcedLandscape 决定，是 PaperOrientation Fact 派生）
  *        paperLayout: 可选，覆盖默认 composite paperLayout（用于注入真实 PaperLayout 上下文）
- * @returns {Array<ReturnType<typeof emptyRenderCommand>>} 与 slots 对齐的 RenderCommand[]（跳过无内容的 slot）
+ * @returns {Array<object>} 与 slots 对齐的 RenderCommand[]（跳过无内容的 slot）
  */
 export function buildMergeRenderCommands(layout, contentMeta, rotations = {}, options = {}) {
   const { page, area, slots } = layout || {}
@@ -76,32 +82,31 @@ export function buildMergeRenderCommands(layout, contentMeta, rotations = {}, op
     const natW = meta.width
     const natH = meta.height
 
-    // 旋转后内容包围盒（90/270 交换 natW/natH；0/180 不交换）。与 buildRenderCommand 同源逻辑。
-    const rotated = contentRotation % 180 !== 0
-    const rotatedBounds = rotated
-      ? { width: natH, height: natW }
-      : { width: natW, height: natH }
-
-    // Fit + Center 在 slot（= 该项 usableRect）上做（Renderer 不重算）。
-    const slotBox = { x: slot.x, y: slot.y, width: slot.width, height: slot.height }
-    const fitScale = calculateFitScale(slotBox, rotatedBounds)
-    const pos = calculateCenteredPosition(slotBox, rotatedBounds, fitScale)
+    // 几何由 createPlacement 唯一计算（与 live _buildComposeCommand 同源）：
+    // 消费 slot.contentRect（含内缩安全边距），绝不再用裸 slot.x/y/w/h 作为 fit 输入。
+    // clip 必须 === slot.contentRect（ownership 锁，防未来有人 slot.x+margin 重算）。
+    const p = createPlacement({
+      contentRect: slot.contentRect,
+      sourceWidth: natW,
+      sourceHeight: natH,
+      rotation: contentRotation,
+    })
 
     commands.push({
       version: 1,
       paper: paperLayout,
       paperRect: { w: page.width, h: page.height },
       usableRect: { x: area.x, y: area.y, w: area.width, h: area.height },
-      rotatedBounds,
+      rotatedBounds: p.rotatedBounds,
       placement: {
-        scale: fitScale,
-        offsetX: pos.x,
-        offsetY: pos.y,
+        scale: p.scale,
+        offsetX: p.offsetX,
+        offsetY: p.offsetY,
       },
       rotation: 0, // [LEGACY Wire] Slice 1.1 恒 0（与 buildRenderCommand 一致）
       contentRotation,
       paperLandscape,
-      clip: { x: slot.x, y: slot.y, width: slot.width, height: slot.height },
+      clip: p.clip,
     })
   }
   return commands

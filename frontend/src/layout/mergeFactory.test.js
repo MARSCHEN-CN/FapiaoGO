@@ -1,44 +1,48 @@
 /**
- * mergeFactory.test.js — D1 收敛护栏（golden）
+ * mergeFactory.test.js — C3-1 contract 护栏（node-safe，不依赖 config / createLayout）
  *
- * 锁定 buildMergeRenderCommands 对「具体输入」产出的精确 placement / rotatedBounds，
- * 防止 Merge 路径回归到旧内联 fit/rotate/center 数学（renderers.js L1070-1093 / render.worker.js L34-52）。
+ * 锁定 buildMergeRenderCommands 对「具体输入」产出的精确 placement / rotatedBounds / clip，
+ * 并锁定几何 ownership：mergeFactory 必须 fit 进 slot.contentRect，绝不用裸 slot.x/y/w/h。
  *
- * 不变量：Renderer / Worker 严禁重算 fit/居中；它们必须原样消费本 RenderCommand。
- * 因此本 golden 也是「Merge 布局唯一来源」的契约守门员。
+ * 不变量：mergeFactory 是 Export 的几何来源，必须与 Preview(live _buildComposeCommand) 共用
+ * 同一套 slot.contentRect → createPlacement → RenderCommand 契约，否则 Preview≠Export。
  *
- * oracle 函数逐字复刻旧内联算法（fitMode='fit' 的 min 分支 + 90/270 宽高交换 + 居中偏移），
- * 与工厂输出逐一比对；任一漂移即测试失败。
+ * 手工构造 layout（makeLayout）而非走 createLayout，避免经 layout.js → config.js 拉入
+ * import.meta.env（纯 node 不可跑）；与 C2 的 composeSlotRasterContract 测试同思路。
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { createLayout } from '../layout.js'
 import { buildMergeRenderCommands } from './mergeFactory.js'
-import { validateRenderCommand } from './RenderLayoutFactory.js'
 
-const DPI = 300
-
-// ── Oracle：冻结旧 Merge 内联绘制数学（与 _renderDirect / worker 同源）──
-function oracleSlot(slot, contentW, contentH, rotate) {
+// ── Oracle：冻结「fit 进 contentRect」的居中数学（与 createPlacement 逐字同源）──
+function oracleSlot(rect, contentW, contentH, rotate) {
   const isRotated90 = rotate === 90 || rotate === 270
   const effectiveW = isRotated90 ? contentH : contentW
   const effectiveH = isRotated90 ? contentW : contentH
-  const scale = Math.min(slot.width / effectiveW, slot.height / effectiveH)
+  const scale = Math.min(rect.width / effectiveW, rect.height / effectiveH)
   const rotatedBounds = isRotated90
     ? { width: contentH, height: contentW }
     : { width: contentW, height: contentH }
   const drawW = rotatedBounds.width * scale
   const drawH = rotatedBounds.height * scale
-  const offsetX = slot.x + (slot.width - drawW) / 2
-  const offsetY = slot.y + (slot.height - drawH) / 2
+  const offsetX = rect.x + (rect.width - drawW) / 2
+  const offsetY = rect.y + (rect.height - drawH) / 2
   return { scale, rotatedBounds, offsetX, offsetY }
 }
 
-function buildContentMeta(layout, dims) {
+// 用手工 slot 组装最小 layout（不依赖 config.js / createLayout，保证 node 可跑）
+function makeLayout(slots, pageW = 2000, pageH = 2000) {
+  return {
+    page: { width: pageW, height: pageH },
+    area: { x: 0, y: 0, width: pageW, height: pageH },
+    slots,
+  }
+}
+
+function buildContentMeta(slots, dims) {
   const m = new Map()
-  for (const slot of layout.slots) {
-    if (!slot) continue
+  for (const slot of slots) {
     const d = dims[slot.itemId]
     if (d) m.set(slot.itemId, { width: d[0], height: d[1] })
   }
@@ -49,94 +53,118 @@ function assertClose(a, b, msg, eps = 1e-6) {
   assert.ok(Math.abs(a - b) <= eps, `${msg}: 期望 ${b}, 得到 ${a}`)
 }
 
-test('merge2 vertical portrait: 0° 与非旋转包围盒', () => {
-  const items = [{ id: 'a' }, { id: 'b' }]
-  const layout = createLayout(items, 'A4', DPI, false, { slotCount: 2, strategy: 'vertical' })
+// ── Golden：merge2 vertical，0° ──
+test('merge2 vertical: 0° fit 进 contentRect，clip===slot.contentRect', () => {
+  const slots = [
+    { itemId: 'a', x: 0, y: 0, width: 1000, height: 500, contentRect: { x: 20, y: 20, width: 960, height: 460 } },
+    { itemId: 'b', x: 0, y: 500, width: 1000, height: 500, contentRect: { x: 20, y: 520, width: 960, height: 460 } },
+  ]
+  const layout = makeLayout(slots)
   const dims = { a: [600, 800], b: [600, 800] }
-  const contentMeta = buildContentMeta(layout, dims)
-  const rotations = { a: 0, b: 0 }
-
-  const cmds = buildMergeRenderCommands(layout, contentMeta, rotations, { isLandscape: false })
-  assert.equal(cmds.length, 2, '两项都应产出命令')
-
-  for (let i = 0; i < cmds.length; i++) {
+  const cmds = buildMergeRenderCommands(layout, buildContentMeta(slots, dims), { a: 0, b: 0 }, { isLandscape: false })
+  assert.equal(cmds.length, 2)
+  for (let i = 0; i < 2; i++) {
     const cmd = cmds[i]
-    const slot = layout.slots[i]
+    const slot = slots[i]
     const [w, h] = dims[slot.itemId]
-    const exp = oracleSlot(slot, w, h, 0)
-
-    assert.deepEqual(cmd.rotatedBounds, exp.rotatedBounds, `${i}: rotatedBounds 必须匹配非旋转包围盒`)
+    const exp = oracleSlot(slot.contentRect, w, h, 0)
+    assert.deepEqual(cmd.rotatedBounds, exp.rotatedBounds, `${i}: rotatedBounds`)
     assertClose(cmd.placement.scale, exp.scale, `${i}.scale`)
     assertClose(cmd.placement.offsetX, exp.offsetX, `${i}.offsetX`)
     assertClose(cmd.placement.offsetY, exp.offsetY, `${i}.offsetY`)
     assert.equal(cmd.contentRotation, 0)
     assert.equal(cmd.paperLandscape, false)
-    // clip 必须等于 slot 矩形
-    assert.deepEqual(cmd.clip, { x: slot.x, y: slot.y, width: slot.width, height: slot.height }, `${i}: clip = slot`)
-    // 通过硬契约
-    assert.doesNotThrow(() => validateRenderCommand(cmd))
+    // C3-1 ownership 锁：clip 必须 === slot.contentRect（非裸 slot）
+    assert.deepEqual(cmd.clip, slot.contentRect, `${i}: clip 必须 === slot.contentRect`)
   }
 })
 
-test('merge2 vertical: 90° 必须交换 rotatedBounds 且 fit 重算', () => {
-  const items = [{ id: 'a' }]
-  const layout = createLayout(items, 'A4', DPI, false, { slotCount: 2, strategy: 'vertical' })
-  const dims = { a: [600, 800] }
-  const contentMeta = buildContentMeta(layout, dims)
-  const rotations = { a: 90 }
-
-  const cmds = buildMergeRenderCommands(layout, contentMeta, rotations, { isLandscape: false })
+// ── Golden：90° 交换 rotatedBounds ──
+test('merge2: 90° 必须交换 rotatedBounds 且 fit 重算', () => {
+  const slots = [
+    { itemId: 'a', x: 0, y: 0, width: 1000, height: 500, contentRect: { x: 20, y: 20, width: 960, height: 460 } },
+  ]
+  const layout = makeLayout(slots)
+  const cmds = buildMergeRenderCommands(layout, buildContentMeta(slots, { a: [600, 800] }), { a: 90 }, { isLandscape: false })
   assert.equal(cmds.length, 1)
   const cmd = cmds[0]
-  const slot = layout.slots[0]
-  const exp = oracleSlot(slot, 600, 800, 90)
-
+  const exp = oracleSlot(slots[0].contentRect, 600, 800, 90)
   assert.equal(cmd.rotatedBounds.width, 800, 'rotatedBounds 必须交换 w/h')
   assert.equal(cmd.rotatedBounds.height, 600)
   assertClose(cmd.placement.scale, exp.scale, 'scale')
   assertClose(cmd.placement.offsetX, exp.offsetX, 'offsetX')
   assertClose(cmd.placement.offsetY, exp.offsetY, 'offsetY')
   assert.equal(cmd.contentRotation, 90)
+  assert.deepEqual(cmd.clip, slots[0].contentRect, 'clip === contentRect')
 })
 
-test('merge4 grid landscape: 多 item 混合旋转 + 纸张横向派生', () => {
-  const ids = ['a', 'b', 'c', 'd']
-  const items = ids.map((id) => ({ id }))
-  const layout = createLayout(items, 'A4', DPI, true, {
-    slotCount: 4, strategy: 'grid', gridCols: 2, gridRows: 2,
-  })
+// ── Golden：merge4 grid 横向，混合旋转 ──
+test('merge4 grid landscape: 多 item 混合旋转 + paperLandscape 派生', () => {
+  const slots = [
+    { itemId: 'a', x: 0, y: 0, width: 1000, height: 1000, contentRect: { x: 20, y: 20, width: 960, height: 960 } },
+    { itemId: 'b', x: 1000, y: 0, width: 1000, height: 1000, contentRect: { x: 1020, y: 20, width: 960, height: 960 } },
+    { itemId: 'c', x: 0, y: 1000, width: 1000, height: 1000, contentRect: { x: 20, y: 1020, width: 960, height: 960 } },
+    { itemId: 'd', x: 1000, y: 1000, width: 1000, height: 1000, contentRect: { x: 1020, y: 1020, width: 960, height: 960 } },
+  ]
+  const layout = makeLayout(slots, 2000, 2000)
   const dims = { a: [600, 800], b: [400, 400], c: [800, 600], d: [500, 900] }
-  const contentMeta = buildContentMeta(layout, dims)
   const rotations = { a: 0, b: 90, c: 180, d: 270 }
-
-  const cmds = buildMergeRenderCommands(layout, contentMeta, rotations, { isLandscape: true })
+  const cmds = buildMergeRenderCommands(layout, buildContentMeta(slots, dims), rotations, { isLandscape: true })
   assert.equal(cmds.length, 4)
   assert.equal(cmds[0].paperLandscape, true, 'paperLandscape 应由 isLandscape 派生')
-
-  for (let i = 0; i < ids.length; i++) {
+  for (let i = 0; i < 4; i++) {
     const cmd = cmds[i]
-    const slot = layout.slots[i]
-    const [w, h] = dims[ids[i]]
-    const exp = oracleSlot(slot, w, h, rotations[ids[i]])
-
-    assert.deepEqual(cmd.rotatedBounds, exp.rotatedBounds, `${ids[i]}: rotatedBounds`)
-    assertClose(cmd.placement.scale, exp.scale, `${ids[i]}.scale`)
-    assertClose(cmd.placement.offsetX, exp.offsetX, `${ids[i]}.offsetX`)
-    assertClose(cmd.placement.offsetY, exp.offsetY, `${ids[i]}.offsetY`)
-    assert.equal(cmd.contentRotation, rotations[ids[i]])
-    assert.doesNotThrow(() => validateRenderCommand(cmd))
+    const slot = slots[i]
+    const [w, h] = dims[slot.itemId]
+    const exp = oracleSlot(slot.contentRect, w, h, rotations[slot.itemId])
+    assert.deepEqual(cmd.rotatedBounds, exp.rotatedBounds, `${slot.itemId}: rotatedBounds`)
+    assertClose(cmd.placement.scale, exp.scale, `${slot.itemId}.scale`)
+    assertClose(cmd.placement.offsetX, exp.offsetX, `${slot.itemId}.offsetX`)
+    assertClose(cmd.placement.offsetY, exp.offsetY, `${slot.itemId}.offsetY`)
+    assert.equal(cmd.contentRotation, rotations[slot.itemId])
+    // C3-1 ownership 锁：clip 必须 === slot.contentRect
+    assert.deepEqual(cmd.clip, slot.contentRect, `${slot.itemId}: clip === contentRect`)
   }
 })
 
+// ── 缺失内容尺寸 → 跳过 ──
 test('缺失内容尺寸的 slot 被跳过（命令数 < slot 数）', () => {
-  const items = [{ id: 'a' }, { id: 'b' }]
-  const layout = createLayout(items, 'A4', DPI, false, { slotCount: 2, strategy: 'vertical' })
-  const contentMeta = new Map() // 全缺
-  const cmds = buildMergeRenderCommands(layout, contentMeta, {}, { isLandscape: false })
+  const slots = [
+    { itemId: 'a', x: 0, y: 0, width: 1000, height: 500, contentRect: { x: 20, y: 20, width: 960, height: 460 } },
+    { itemId: 'b', x: 0, y: 500, width: 1000, height: 500, contentRect: { x: 20, y: 520, width: 960, height: 460 } },
+  ]
+  const layout = makeLayout(slots)
+  const cmds = buildMergeRenderCommands(layout, new Map(), {}, { isLandscape: false })
   assert.equal(cmds.length, 0, '无内容 → 无命令')
 })
 
+// ── 空 layout → 空数组 ──
 test('空 layout → 空数组', () => {
   assert.deepEqual(buildMergeRenderCommands(null, new Map(), {}, {}), [])
   assert.deepEqual(buildMergeRenderCommands({ page: {}, slots: [] }, new Map(), {}, {}), [])
+})
+
+// ── C3-1 ownership 锁（用户指定形态：slot.x/y/w/h 变动不影响几何）──
+test('C3-1 ownership lock: clip===slot.contentRect 且不受 slot.x/y/w/h 变动影响', () => {
+  const slot = {
+    itemId: 'a',
+    x: 0, y: 0, width: 1000, height: 1000,
+    contentRect: { x: 50, y: 50, width: 900, height: 900 },
+  }
+  const layout = makeLayout([slot])
+  const contentMeta = new Map([['a', { width: 600, height: 800 }]])
+  const rotations = { a: 0 }
+
+  const cmds = buildMergeRenderCommands(layout, contentMeta, rotations, { isLandscape: false })
+  assert.equal(cmds.length, 1)
+  // ① clip 必须 === slot.contentRect（ownership 锁）
+  assert.deepEqual(cmds[0].clip, slot.contentRect, 'clip 必须 === slot.contentRect（非裸 slot）')
+
+  // ② 有人偷偷改 slot.x/y（模拟 slot.x + margin 重算尝试）：contentRect 不变 → clip 与几何不变
+  slot.x = 999
+  slot.y = 888
+  const cmds2 = buildMergeRenderCommands(layout, contentMeta, rotations, { isLandscape: false })
+  assert.deepEqual(cmds2[0].clip, slot.contentRect, 'slot.x/y 变动后 clip 仍 === slot.contentRect')
+  assertClose(cmds2[0].placement.offsetX, cmds[0].placement.offsetX, 'offsetX 不受 slot.x 影响（来自 contentRect.x）')
+  assertClose(cmds2[0].placement.offsetY, cmds[0].placement.offsetY, 'offsetY 不受 slot.y 影响（来自 contentRect.y）')
 })
