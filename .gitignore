@@ -22,6 +22,7 @@ test_fixtures/
 !backend/tests/test_source_adapter.py
 !backend/tests/test_export_render_service.py
 !backend/tests/test_render_executor_samesheet.py
+!backend/tests/test_export_render_service_sheet.py
 mimo.exe
 
 # 前端依赖与构建产物

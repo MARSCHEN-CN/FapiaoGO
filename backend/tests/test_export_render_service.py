@@ -12,7 +12,8 @@ Locks five things:
      verify the orchestration link.
   4. missing source file -> raises (route maps this to task.fail; the service
      must NOT swallow source errors).
-  5. multiple commands -> multiple pages (1 command -> 1 output page).
+  5. multiple IMAGE commands -> ONE shared sheet page (scheme B: one request
+     == one sheet), while a PDF command still inserts its own passthrough page.
 """
 
 import os
@@ -129,14 +130,17 @@ def test_missing_source_file_raises():
         execute_export_render([cmd])
 
 
-def test_multiple_commands_produce_multiple_pages():
+def test_multiple_image_commands_share_one_sheet_page():
+    # Scheme B (D3-3d-2): one request == one sheet. Two image commands drawn
+    # onto a SINGLE shared sheet page, NOT two pages.
     p1 = _make_png()
     p2 = _make_png()
     try:
         data = execute_export_render([_image_command(p1), _image_command(p2)])
         doc = fitz.open(stream=data)
         try:
-            assert len(doc) == 2
+            assert len(doc) == 1
+            assert (int(doc[0].rect.width), int(doc[0].rect.height)) == (2480, 3508)
         finally:
             doc.close()
     finally:
