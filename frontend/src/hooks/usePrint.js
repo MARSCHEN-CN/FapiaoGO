@@ -9,7 +9,7 @@ import { renderPrintContent } from '../utils/printRenderer'
 import { buildRenderModel } from '../utils/renderModelBuilder'
 import { validateRenderModel } from '../utils/renderModelValidator'
 import { detectDocumentOrientation } from '../utils/detectOrientation'
-import { printSingleSourceFile as printSingleSource } from '../services/PrintService'
+import { printSingleSourceFile as printSingleSource, printMergedImages } from '../services/PrintService'
 
 // ✅ 懒加载 PDF 渲染模块，避免首屏加载 1.4 MB 的 pdfjs-dist + react-pdf
 let _printRenderers = null
@@ -496,12 +496,8 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
       // ✅ 队列渲染完成：一次性发送所有 PNG 到主进程
       if (allRenderedData.length > 0) {
         try {
-          // ✅ 方向用 forcedLandscape（合并模式强制），纸张用用户设置
           const printOptions = { ...settings, landscape: forcedLandscape }
-          const result = await ipc.invoke('print-merged-images', {
-            images: allRenderedData,
-            settings: printOptions,
-          })
+          const result = await printMergedImages(allRenderedData, ipc, printOptions)
           if (!result?.success) {
             console.error('[usePrint] print-merged-images failed:', result?.error)
           }
@@ -640,15 +636,8 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
       console.log('[PRINT] Source pipeline: file=%s format=%s printer=%s', filePath, fileFormat, printerName)
       console.log('[PRINT] PrintSettings:', JSON.stringify(ps))
 
-      const result = await ipc.invoke('print-source-file', {
-        target: {
-          printer: printerName,
-          filePath: filePath,
-          fileFormat: fileFormat,
-        },
-        settings: ps,
-        pipeline: { backend: 'sumatra' },
-      })
+      const userSettings = { ...settings, ...(printSettings || {}) }
+      const result = await printSingleSource(file, ipc, userSettings, fileRotations, detectDocumentOrientation)
 
       console.log('[PRINT] Source pipeline result:', result)
 

@@ -21,6 +21,14 @@ import { createSuccessfulResult, createFailedResult } from '../models/PrintResul
 import { getExtension } from '../utils'
 
 /**
+ * PrintTask mode constants.
+ */
+const PRINT_MODE = {
+  SOURCE: 'source',
+  MERGED: 'merged',
+}
+
+/**
  * 确定文件的实际可打印格式。
  * @param {{ fileFormat?: string, name: string }} file
  * @returns {string} 'pdf' | 'image' | 'ofd'
@@ -132,5 +140,77 @@ export async function printSingleSourceFile(file, ipc, userSettings, fileRotatio
     })
   } catch (err) {
     return createFailedResult({ taskId: file.key, printer: printerName, error: err?.message || '打印异常' })
+  }
+}
+
+/**
+ * 合并打印：发送渲染后的 PNG 数据到主进程打印。
+ *
+ * @param {Uint8Array[]} images - 渲染后的 PNG 数据数组
+ * @param {object} ipc - Electron ipcRenderer
+ * @param {object} printOptions - 打印选项
+ * @returns {Promise<object>} PrintResult
+ */
+export async function printMergedImages(images, ipc, printOptions) {
+  if (!images || images.length === 0) {
+    return createFailedResult({ taskId: 'merged', error: '没有可打印的渲染数据' })
+  }
+  if (!ipc) return createFailedResult({ taskId: 'merged', error: 'Electron IPC 不可用' })
+
+  try {
+    const result = await ipc.invoke('print-merged-images', {
+      images,
+      settings: printOptions || {},
+    })
+
+    if (result?.success) {
+      return createSuccessfulResult({
+        taskId: 'merged',
+        pagesPrinted: images.length,
+      })
+    }
+
+    return createFailedResult({
+      taskId: 'merged',
+      error: result?.error || '合并打印失败',
+    })
+  } catch (err) {
+    return createFailedResult({
+      taskId: 'merged',
+      error: err?.message || '合并打印异常',
+    })
+  }
+}
+
+/**
+ * 统一打印入口 — 根据 task.mode 路由到对应执行路径。
+ *
+ * @param {object} task - PrintTask 对象
+ * @param {object} ipc - Electron ipcRenderer
+ * @param {object} context - 上下文（含 userSettings, fileRotations, detectFn, images 等）
+ * @returns {Promise<object>} PrintResult
+ */
+export async function print(task, ipc, context) {
+  if (!task) return createFailedResult({ taskId: 'unknown', error: '打印任务为空' })
+  if (!ipc) return createFailedResult({ taskId: task.id || 'unknown', error: 'Electron IPC 不可用' })
+
+  const mode = task.mode || 'source'
+
+  switch (mode) {
+    case 'source': {
+      const { userSettings, fileRotations, detectFn } = context || {}
+      return printSingleSourceFile(task.file || task, ipc, userSettings || {}, fileRotations, detectFn)
+    }
+
+    case 'merged': {
+      const { images, printOptions } = context || {}
+      return printMergedImages(images || [], ipc, printOptions)
+    }
+
+    default:
+      return createFailedResult({
+        taskId: task.id || 'unknown',
+        error: `不支持打印模式: ${mode}`,
+      })
   }
 }
