@@ -320,7 +320,7 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
         queueUpdate(fileObj.key, 'parsing')
 
         try {
-          const result = await runParseTask(job, { ipc, autoOrient })
+          const result = await runParseTask(job, { ipc, autoOrient, sessionId: session.id })
           const update = consumeParseResult(result, fileObj, session.id)
           queueUpdate(fileObj.key, result.status, update)
         } catch (err) {

@@ -25,6 +25,7 @@
 
 import { BACKEND_URL } from '../config'
 import { resolveFile } from '../services/FileResolver'
+import { materializePage } from '../services/PageMaterializer'
 import { createParseResult } from '../models/ParseResult'
 
 /**
@@ -38,15 +39,22 @@ import { createParseResult } from '../models/ParseResult'
  * @returns {Promise<Object>} 解析结果数据（原始 API 响应）
  * @throws {Error} 解析失败
  */
-export async function runParseTask(job, { ipc, autoOrient }) {
+export async function runParseTask(job, { ipc, autoOrient, sessionId }) {
   const { fileObj: f } = job
   let resp
+  let file = f.file
 
-  console.log('[parseRunner] Processing:', f.name, 'file:', !!f.file, 'printPath:', !!f.printPath, 'path:', !!f.path)
+  console.log('[parseRunner] Processing:', f.name, 'file:', !!f.file, 'printPath:', !!f.printPath, 'path:', !!f.path, 'descriptor:', !!f._pageDescriptor)
 
-  if (f.file) {
+  if (f._pageDescriptor && !file) {
+    file = await materializePage(f._pageDescriptor, sessionId)
+    f.file = file
+    f._pageDescriptor = null
+  }
+
+  if (file) {
     const fd = new FormData()
-    fd.append('file', f.file)
+    fd.append('file', file)
     fd.append('autoOrient', autoOrient ? '1' : '0')
     fd.append('mode', 'batch')
 
@@ -54,7 +62,7 @@ export async function runParseTask(job, { ipc, autoOrient }) {
       method: 'POST', body: fd,
     })
   } else if ((f.printPath || f.path) && ipc) {
-    const file = await resolveFile(f, ipc)
+    file = await resolveFile(f, ipc)
     if (!file) throw new Error('IPC read-file failed: ' + f.name)
     const fd = new FormData()
     fd.append('file', file)

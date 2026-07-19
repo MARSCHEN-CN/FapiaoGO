@@ -898,6 +898,51 @@ def _respond_pdf(page_bytes: bytes, page_id: str):
     )
 
 
+@app.route('/split_pdf/page', methods=['GET'])
+def split_pdf_page():
+    """按需拉取单页 PDF（带任务生命周期检查）"""
+    page_id = request.args.get('page_id')
+    if not page_id:
+        return jsonify({"success": False, "error": "page_id 必填"}), 400
+
+    import_session_id = request.headers.get('X-Import-Session-ID', '')
+    task_id = request.headers.get('X-Task-ID', '')
+
+    with _page_registry_lock:
+        reg_entry = _page_registry.get(page_id)
+
+    if not reg_entry:
+        return jsonify({"success": False, "error": "页面不存在"}), 404
+
+    try:
+        page_bytes = engine.extract_page_pdf(
+            reg_entry["doc_id"], reg_entry["page"]
+        )
+        now = time.time()
+        with _page_cache_lock:
+            _page_cache[page_id] = {
+                "bytes": page_bytes,
+                "created_at": now,
+                "last_used": now,
+            }
+        return _respond_pdf(page_bytes, page_id)
+    except Exception as e:
+        logger.debug("split_pdf_page failed for %s: %s", page_id, e)
+
+    with _page_cache_lock:
+        cache_entry = _page_cache.get(page_id)
+        if not cache_entry:
+            return jsonify({"success": False, "error": "页面不存在或已过期"}), 404
+        if time.time() - cache_entry["created_at"] > _page_cache_ttl:
+            _page_cache.pop(page_id, None)
+            with _page_registry_lock:
+                _page_registry.pop(page_id, None)
+            return jsonify({"success": False, "error": "页面已过期"}), 410
+        cache_entry["last_used"] = time.time()
+
+    return _respond_pdf(cache_entry["bytes"], page_id)
+
+
 @app.route('/download_page/<page_id>', methods=['GET'])
 def download_page(page_id):
     """下载单页 PDF（优先 Document Pipeline，回退旧缓存）"""
