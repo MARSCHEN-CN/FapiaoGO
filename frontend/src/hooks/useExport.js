@@ -9,9 +9,12 @@ import {
 } from '../stores/ExportSessionStore'
 
 /**
- * 导出 Excel/CSV + PDF hook（Phase 5-3）。
- * 4 个业务 useState 迁移至 ExportSessionStore，通过 useSyncExternalStore 派生。
- * 保留 setExporting/setExportResult/setExportProgress 兼容 shim（App.jsx 零改动）。
+ * 导出 Excel/CSV + PDF hook（Phase 5-3 → 5-4-3）。
+ * 业务状态（exporting/exportProgress/exportResult/pdfExportTask）全部由
+ * ExportSessionStore 持有，通过 useSyncExternalStore 派生。本 hook 只保留
+ * React 层 ephemeral 状态（exportAlert 警告弹窗）。
+ * 历史兼容 setter 已在 5-4-3 移除，Modal 清理改由 App.jsx 的
+ * useExportSession().clearExportSession() 完成。
  */
 
 /** session → PdfExportTaskModal props 形状（仅 PDF session）。 */
@@ -49,19 +52,6 @@ export function useExport({ files, electronAPIRef }) {
 
   const exportResult = activeSession?.task.type === EXPORT_TYPE.EXCEL ? activeSession.result : null
   const pdfExportTask = sessionToPdfTaskView(activeSession)
-
-  // ── 兼容 setter shim（App.jsx 外部调用 → 转 store 操作） ──
-  const setExporting = useCallback((v) => { if (v === false) clearActiveSession() }, [])
-  const setExportResult = useCallback((v) => { if (v === null) clearActiveSession() }, [])
-  const setExportProgress = useCallback((data) => {
-    const s = getActiveSession()
-    if (s && data) {
-      updateProgress(s.id, {
-        current: data.current, total: data.total, stage: data.stage,
-        progress: data.total ? Math.round((data.current / data.total) * 100) : 0,
-      })
-    }
-  }, [])
 
   // ── Excel 导出 ──
   const handleExportExcel = useCallback(async () => {
@@ -164,7 +154,6 @@ export function useExport({ files, electronAPIRef }) {
 
   return {
     exporting, exportProgress, exportResult, exportAlert, closeExportAlert,
-    setExporting, setExportResult, setExportProgress,
     handleExportExcel, handleExportPdf,
     pdfExportTask, cancelPdfExport: handleCancelPdfExport, closePdfExportTask,
   }

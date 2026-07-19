@@ -32,6 +32,7 @@ import { usePrint } from './hooks/usePrint'
 import { usePrintIntent } from './hooks/usePrintIntent'
 import { useRenamePack } from './hooks/useRenamePack'
 import { useExport } from './hooks/useExport'
+import { useExportSession } from './hooks/useExportSession'
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts'
 import { useAlertQueue } from './hooks/useAlertQueue'
 
@@ -398,13 +399,15 @@ function AppContent() {
   // ============================
   const {
     exporting, exportProgress, exportResult, exportAlert,
-    closeExportAlert, setExporting, setExportResult, setExportProgress,
+    closeExportAlert,
     handleExportExcel,
     handleExportPdf,
     pdfExportTask,
     cancelPdfExport,
     closePdfExportTask,
   } = useExport({ files, electronAPIRef })
+
+  const { clearExportSession } = useExportSession()
 
   const handleSelectAll = useCallback(() => {
     const parsed = files.filter(f => f.status === 'parsed')
@@ -930,8 +933,8 @@ function AppContent() {
           visible={exporting || exportResult !== null}
           progress={exportProgress}
           result={exportResult}
-          onCancel={() => { setExporting(false); setExportResult(null); setExportProgress({ current: 0, total: 0, stage: '' }) }}
-          onClose={() => { setExporting(false); setExportResult(null); setExportProgress({ current: 0, total: 0, stage: '' }) }}
+          onCancel={clearExportSession}
+          onClose={clearExportSession}
         />
         <AlertModal
           visible={!!currentAlert}
