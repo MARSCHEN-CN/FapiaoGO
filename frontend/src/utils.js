@@ -200,6 +200,79 @@ export function getDuplicateGroupInfo(files) {
   return fileInfo
 }
 
+// ============================
+// 往年发票检测（derived flag，不污染 File 数据结构）
+// ============================
+
+/**
+ * 从发票日期字符串中提取 4 位年份。
+ * 支持格式：2024-01-01 / 2024年01月01日 / 2024/01/01 / 2024.01.01 / 未知日期 / 空。
+ * @param {string|null|undefined} invoiceDate
+ * @returns {number|null} 提取到的年份，无法识别时返回 null
+ */
+export function extractInvoiceYear(invoiceDate) {
+  if (!invoiceDate || typeof invoiceDate !== 'string' || invoiceDate === '未知日期') return null
+  const m = invoiceDate.match(/(?:19|20)\d{2}/)
+  return m ? parseInt(m[0], 10) : null
+}
+
+/**
+ * 判断单文件是否为往年发票（已解析且开票年份早于当前年）。
+ * @param {Object} file - 文件对象
+ * @param {number} [currentYear] - 当前年份，默认取系统年（便于测试注入）
+ * @returns {boolean}
+ */
+export function isPreviousYearFile(file, currentYear = new Date().getFullYear()) {
+  if (!file || file.status !== 'parsed') return false
+  const y = extractInvoiceYear(file.invoiceDate)
+  return y != null && y < currentYear
+}
+
+/**
+ * 获取文件列表的往年发票信息（与 getDuplicateGroupInfo 同构，返回 Map）。
+ * 仅已解析文件参与判定；未解析/无年份文件语义干净（year:null, isPreviousYear:false）。
+ * @param {Array} files - 文件列表
+ * @param {number} [currentYear] - 当前年份，默认取系统年（便于测试注入）
+ * @returns {Map} key为文件key，value为 { year, isPreviousYear }
+ */
+export function getPreviousYearInfo(files, currentYear = new Date().getFullYear()) {
+  const map = new Map()
+  for (const f of (files || [])) {
+    if (f.status !== 'parsed') {
+      map.set(f.key, { year: null, isPreviousYear: false })
+      continue
+    }
+    const y = extractInvoiceYear(f.invoiceDate)
+    map.set(f.key, { year: y, isPreviousYear: y != null && y < currentYear })
+  }
+  return map
+}
+
+// ============================
+// 侧栏告警优先级（解析失败 > 往年发票 > 重复组）
+// ============================
+
+/**
+ * 告警优先级（从高到低）。后续扩展（红冲/作废/缺税号/金额异常）追加到此数组即可。
+ */
+export const FILE_ALERT_PRIORITY = [
+  'failed',
+  'previousYear',
+  'duplicate',
+]
+
+/**
+ * 解析侧栏统计区应展示的告警模式。
+ * @param {{ hasFailed: boolean, previousYearCount: number, duplicateCount: number }} args
+ * @returns {'failed'|'previousYear'|'duplicate'|'normal'}
+ */
+export function resolveStatsMode({ hasFailed, previousYearCount, duplicateCount }) {
+  if (hasFailed) return 'failed'
+  if (previousYearCount) return 'previousYear'
+  if (duplicateCount) return 'duplicate'
+  return 'normal'
+}
+
 /**
  * 检查文件是否解析失败
  */
@@ -211,17 +284,20 @@ export function isFailedFile(file) {
   return false
 }
 
-export function applySort(list, field, order, duplicateInfo = null) {
+export function applySort(list, field, order, duplicateInfo = null, previousYearInfo = null) {
   const dir = order === 'desc' ? -1 : 1
 
-  // 单次遍历分区：失败文件、重复组、正常文件
+  // 单次遍历分区：失败文件、往年发票、重复组、正常文件（优先级由高到低）
   const failedFiles = []
+  const previousYearFiles = []
   const duplicateGroups = new Map()
   const normalFiles = []
   for (let i = 0; i < list.length; i++) {
     const file = list[i]
     if (isFailedFile(file)) {
       failedFiles.push(file)
+    } else if (previousYearInfo && previousYearInfo.get(file.key)?.isPreviousYear) {
+      previousYearFiles.push(file)
     } else if (duplicateInfo && duplicateInfo.has(file.key)) {
       const groupIndex = duplicateInfo.get(file.key).groupIndex
       if (!duplicateGroups.has(groupIndex)) {
@@ -281,6 +357,7 @@ export function applySort(list, field, order, duplicateInfo = null) {
 
   // 分别对各分区应用排序
   failedFiles.sort(sortFn)
+  previousYearFiles.sort(sortFn)
   
   // 重复组：先按组索引升序排列组，组内按用户选定字段排序
   const sortedDuplicateGroups = []
@@ -293,8 +370,8 @@ export function applySort(list, field, order, duplicateInfo = null) {
   
   normalFiles.sort(sortFn)
 
-  // 合并：失败文件在前，然后是重复组，最后是非重复文件
-  return [...failedFiles, ...sortedDuplicateGroups, ...normalFiles]
+  // 合并：失败文件在前，然后是往年发票，然后是重复组，最后是非重复文件
+  return [...failedFiles, ...previousYearFiles, ...sortedDuplicateGroups, ...normalFiles]
 }
 
 // ============================

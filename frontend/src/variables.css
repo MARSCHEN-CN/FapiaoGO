@@ -52,6 +52,10 @@
   --purple: #7c3aed;
   --purple-soft: rgba(124, 58, 237, 0.10);
 
+  /* 往年发票提示色（teal，区别于红/橙/紫，语义：非错误，仅提醒） */
+  --year: #0d9488;
+  --year-soft: rgba(13, 148, 136, 0.12);
+
   --success: #16a34a;
   --success-bg: rgba(22, 163, 74, 0.10);
   --info: #4f7cff;
@@ -175,6 +179,10 @@
   --red-soft: rgba(248, 113, 113, 0.10);
   --purple: #a78bfa;
   --purple-soft: rgba(167, 139, 250, 0.10);
+
+  /* 往年发票提示色（暗色提亮保持辨识度） */
+  --year: #2dd4bf;
+  --year-soft: rgba(45, 212, 191, 0.12);
 
   --success: #4ade80;
   --success-bg: rgba(74, 222, 128, 0.10);

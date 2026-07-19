@@ -3,7 +3,7 @@ import { useDropzone } from 'react-dropzone'
 import { BACKEND_URL, SUPPORTED_EXTENSIONS } from '../config'
 import {
   getElectronAPI, getFilePath, getExtension, getExtensionWithDot,
-  getMimeType, concurrentBatch, applySort, detectDuplicateInvoices,
+  getMimeType, concurrentBatch, applySort, detectDuplicateInvoices, getPreviousYearInfo,
 } from '../utils'
 import { stripIdentity } from '../utils/fileHelpers'
 import { applyFileUpdate } from '../utils/fileStateTransitions'
@@ -188,7 +188,7 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
                 duplicateInfo.set(file.key, { groupIndex, isFirst: idx === 0 })
               })
             })
-            return applySort(prev, sortByRef.current, sortOrderRef.current, duplicateInfo)
+            return applySort(prev, sortByRef.current, sortOrderRef.current, duplicateInfo, getPreviousYearInfo(prev))
           })
           return
         } catch (batchErr) {
@@ -239,7 +239,7 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
             duplicateInfo.set(file.key, { groupIndex, isFirst: idx === 0 })
           })
         })
-        return applySort(prev, sortByRef.current, sortOrderRef.current, duplicateInfo)
+        return applySort(prev, sortByRef.current, sortOrderRef.current, duplicateInfo, getPreviousYearInfo(prev))
       })
     } finally {
       setParsing(false)

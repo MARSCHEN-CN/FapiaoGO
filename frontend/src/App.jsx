@@ -19,7 +19,7 @@ const CalculatorWindow = lazy(() => import('./components/CalculatorWindow'))
 import { PREVIEW_DPI, SUPPORTED_EXTENSIONS, ZOOM_STEPS, PUBLIC_BASE } from './config'
 import {
   getElectronAPI, getFilePath, getFileFormat, isMergeMode, getMergeGroupStart,
-  detectDuplicateInvoices,
+  detectDuplicateInvoices, getPreviousYearInfo,
 } from './utils'
 import { generateFileKey } from './utils/fileHelpers'
 import { getForcedLandscape } from './utils/mergeMode'
@@ -345,6 +345,45 @@ function AppContent() {
     setFiles(prev => prev.filter(fileObj => !duplicateKeys.has(fileObj.key)))
   }, [cleanupPreviewUrl])
 
+  const removePreviousYearFiles = useCallback((removeSource = false) => {
+    // ✅ 先读取最新列表计算往年发票集合（不在 updater 内做副作用）
+    const liveFiles = filesRef.current
+    const prevYearInfo = getPreviousYearInfo(liveFiles)
+    const prevYearKeys = new Set()
+    const pathsToDelete = []
+    prevYearInfo.forEach((info, key) => {
+      if (info.isPreviousYear) {
+        prevYearKeys.add(key)
+        if (removeSource) {
+          const f = liveFiles.find(x => x.key === key)
+          if (f?.path) pathsToDelete.push(f.path)
+        }
+      }
+    })
+    // ✅ 物理删除源文件（异步，不阻塞 UI）
+    if (pathsToDelete.length > 0) {
+      const ipc = electronAPIRef.current?.ipcRenderer
+      if (ipc) {
+        ipc.invoke('delete-files', pathsToDelete).then(res => {
+          if (res.failed?.length) {
+            console.warn('[removePrevYear] 部分文件删除失败:', res.failed)
+          }
+        }).catch(err => {
+          console.error('[removePrevYear] 删除源文件出错:', err)
+        })
+      }
+    }
+    // 如果正在预览的是被移除的文件，清理预览（auto-nav useEffect 会处理导航）
+    const livePreview = previewFileRef.current
+    if (livePreview && prevYearKeys.has(livePreview.key)) {
+      cleanupPreviewUrl()
+    }
+    setFiles(prev => prev.filter(fileObj => {
+      const info = prevYearInfo.get(fileObj.key)
+      return !(info && info.isPreviousYear)
+    }))
+  }, [cleanupPreviewUrl])
+
   // ============================
   // mergeMode 同步到 FileContext（用于 printableCount 合并调整）
   // ============================
@@ -644,6 +683,7 @@ function AppContent() {
         clearFiles={clearFiles}
         removeFailedFiles={removeFailedFiles}
         removeDuplicateFiles={removeDuplicateFiles}
+        removePreviousYearFiles={removePreviousYearFiles}
         handleRotate={handleRotate}
         // sort
         sortBy={sortBy}

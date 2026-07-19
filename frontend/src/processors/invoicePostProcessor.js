@@ -12,7 +12,7 @@
  * @module processors/invoicePostProcessor
  */
 
-import { detectDuplicateInvoices, applySort } from '../utils'
+import { detectDuplicateInvoices, applySort, getPreviousYearInfo } from '../utils'
 
 /**
  * @typedef {Object} PostProcessResult
@@ -37,7 +37,7 @@ export function processImportedFiles(files, sortBy, sortOrder) {
     })
   })
   return {
-    files: applySort(files, sortBy, sortOrder, duplicateInfo),
+    files: applySort(files, sortBy, sortOrder, duplicateInfo, getPreviousYearInfo(files)),
     duplicateInfo,
   }
 }

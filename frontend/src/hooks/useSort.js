@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
-import { applySort, detectDuplicateInvoices } from '../utils'
+import { applySort, detectDuplicateInvoices, getPreviousYearInfo } from '../utils'
 
 export function useSort(setFiles, files) {
   const [sortBy, setSortBy] = useState(() => {
@@ -33,9 +33,11 @@ export function useSort(setFiles, files) {
   }, [sortBy, sortOrder])
 
   const duplicateInfo = useRef(null)
+  const previousYearInfo = useRef(null)
   useEffect(() => {
     if (!files || files.length === 0) {
       duplicateInfo.current = null
+      previousYearInfo.current = null
       return
     }
     const duplicates = detectDuplicateInvoices(files)
@@ -46,12 +48,13 @@ export function useSort(setFiles, files) {
       })
     })
     duplicateInfo.current = info
+    previousYearInfo.current = getPreviousYearInfo(files)
   }, [files])
 
   useEffect(() => {
     setFiles(current => {
       if (current.length <= 1) return current
-      return applySort(current, sortBy, sortOrder, duplicateInfo.current)
+      return applySort(current, sortBy, sortOrder, duplicateInfo.current, previousYearInfo.current)
     })
   }, [sortBy, sortOrder, setFiles])
 

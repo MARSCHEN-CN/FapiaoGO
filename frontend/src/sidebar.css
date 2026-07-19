@@ -656,6 +656,7 @@
 .fc-dot.pending { background: var(--orange); box-shadow: 0 0 0 3px var(--orange-soft); }
 .fc-dot.failed { background: var(--red); box-shadow: 0 0 0 3px var(--red-soft); }
 .fc-dot.duplicate { background: var(--orange); box-shadow: 0 0 0 3px var(--orange-soft); }
+.fc-dot.prevyear { background: var(--year); box-shadow: 0 0 0 3px var(--year-soft); }
 
 .fc-row-bottom {
   display: flex;
@@ -801,6 +802,10 @@
   color: var(--danger);
   font-weight: 700;
 }
+.sb-stat-summary-year {
+  color: var(--year);
+  font-weight: 700;
+}
 
 /* ── 分段控件（iOS UISegmentedControl 风格） ── */
 .sb-seg-control {
@@ -866,6 +871,17 @@
 .sb-seg-btn.sb-seg-btn-danger:active {
   transform: translateY(0);
 }
+.sb-seg-btn.sb-seg-btn-year {
+  background: linear-gradient(135deg, #14b8a6 0%, #0d9488 100%);
+  box-shadow: 0 2px 6px rgba(13, 148, 136, 0.30);
+}
+.sb-seg-btn.sb-seg-btn-year:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 3px 10px rgba(13, 148, 136, 0.40);
+}
+.sb-seg-btn.sb-seg-btn-year:active {
+  transform: translateY(0);
+}
 
 /* 选项段（toggle + 标签） */
 .sb-seg-option {
@@ -913,6 +929,10 @@
 /* 失败场景：toggle 选中态为红色 */
 .sb-seg-control:has(.sb-seg-btn-danger) .sb-seg-option input:checked + .sb-seg-toggle-track {
   background: var(--danger);
+}
+/* 往年场景：toggle 选中态为 teal */
+.sb-seg-control:has(.sb-seg-btn-year) .sb-seg-option input:checked + .sb-seg-toggle-track {
+  background: var(--year);
 }
 .sb-seg-option input:checked + .sb-seg-toggle-track .sb-seg-toggle-thumb {
   transform: translateX(12px);
@@ -1091,6 +1111,40 @@
 
 .merge-group-first ~ .duplicate-label,
 .file-card:has(.merge-group-label) .duplicate-label {
+  right: 80px;
+}
+
+/* -- 往年发票标记 -- */
+.file-card.previous-year { position: relative; overflow: hidden; }
+
+.prev-year-bar {
+  position: absolute;
+  left: 0; top: 10px; bottom: 10px;
+  width: 3px;
+  background: var(--year);
+  border-radius: 0 3px 3px 0;
+  z-index: 2;
+}
+
+.file-card.active .prev-year-bar {
+  display: none;
+}
+
+.prev-year-label {
+  position: absolute;
+  top: -1px; right: 28px;
+  font-size: 9px;
+  background: var(--year);
+  color: #fff;
+  padding: 1px 6px;
+  border-radius: 0 0 4px 4px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  z-index: 1;
+}
+
+.merge-group-first ~ .prev-year-label,
+.file-card:has(.merge-group-label) .prev-year-label {
   right: 80px;
 }
 
@@ -1351,8 +1405,15 @@
   background: linear-gradient(135deg, #f87171 0%, #ef4444 100%);
   box-shadow: 0 2px 8px rgba(248, 113, 113, 0.30);
 }
+[data-theme="dark"] .sb-seg-btn.sb-seg-btn-year {
+  background: linear-gradient(135deg, #2dd4bf 0%, #14b8a6 100%);
+  box-shadow: 0 2px 8px rgba(45, 212, 191, 0.30);
+}
 [data-theme="dark"] .sb-seg-control:has(.sb-seg-btn-danger) .sb-seg-option input:checked + .sb-seg-toggle-track {
   background: var(--danger);
+}
+[data-theme="dark"] .sb-seg-control:has(.sb-seg-btn-year) .sb-seg-option input:checked + .sb-seg-toggle-track {
+  background: var(--year);
 }
 [data-theme="dark"] .sb-seg-option-label {
   color: var(--text-3);

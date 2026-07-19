@@ -1,5 +1,5 @@
 import React, { useMemo, useRef, useCallback, useEffect, useState } from 'react'
-import { isMergeMode, getDuplicateGroupInfo, getElectronAPI } from '../utils'
+import { isMergeMode, getDuplicateGroupInfo, getPreviousYearInfo, resolveStatsMode, getElectronAPI } from '../utils'
 import { useFileContext } from '../contexts/FileContext'
 import { PUBLIC_BASE } from '../config'
 import FileList from './FileList'
@@ -54,7 +54,7 @@ export default React.memo(function Sidebar({
   getRootProps, getInputProps, isDragActive,
   // actions
   handleOpenDialog, handleOpenFolder, handlePreview, handleHoverFile, removeFile, clearFiles,
-  removeFailedFiles, removeDuplicateFiles, handleRotate,
+  removeFailedFiles, removeDuplicateFiles, removePreviousYearFiles, handleRotate,
   // sort
   sortBy, sortOrder, toggleSort,
 }) {
@@ -98,9 +98,28 @@ export default React.memo(function Sidebar({
     return groups.size
   }, [duplicateInfo])
 
+  // 往年发票检测（与 duplicateInfo 同构）
+  const previousYearInfo = useMemo(() => getPreviousYearInfo(files), [files])
+  const previousYearCount = useMemo(() => {
+    let c = 0
+    previousYearInfo.forEach(info => { if (info.isPreviousYear) c++ })
+    return c
+  }, [previousYearInfo])
+  const hasPreviousYear = previousYearCount > 0
+
   // ── 统计区动画：仅值变化时触发 countPop ──
-  const countDisplay = hasFailedFiles ? failedFilesCount : (duplicateInfo.size > 0 ? duplicateGroupCount : files.length)
-  const statsMode = hasFailedFiles ? 'failed' : (duplicateInfo.size > 0 ? 'duplicate' : 'normal')
+  const countDisplay = hasFailedFiles
+    ? failedFilesCount
+    : hasPreviousYear
+      ? previousYearCount
+      : duplicateInfo.size > 0
+        ? duplicateGroupCount
+        : files.length
+  const statsMode = resolveStatsMode({
+    hasFailed: hasFailedFiles,
+    previousYearCount,
+    duplicateCount: duplicateInfo.size > 0,
+  })
   const prevStatsRef = useRef({ count: 0, amount: 0, mode: 'normal' })
   const [poppingStats, setPoppingStats] = useState({ count: false, amount: false })
   useEffect(() => {
@@ -350,6 +369,7 @@ export default React.memo(function Sidebar({
                   previewFile={previewFile}
                   paperSize={paperSize}
                   duplicateInfo={duplicateInfo}
+                  previousYearInfo={previousYearInfo}
                   fileRotations={fileRotations}
                   onPreview={handlePreview}
                   onHoverFile={handleHoverFile}
@@ -377,6 +397,29 @@ export default React.memo(function Sidebar({
                 >
                   {ICONS.trash}
                   <span>移除失败</span>
+                </button>
+                <label className="sb-seg-option">
+                  <input type="checkbox" checked={removeSourceFile} onChange={(e) => setRemoveSourceFile(e.target.checked)} />
+                  <span className="sb-seg-toggle-track">
+                    <span className="sb-seg-toggle-thumb"></span>
+                  </span>
+                  <span className="sb-seg-option-label">删源文件</span>
+                </label>
+              </div>
+            </>
+          ) : hasPreviousYear ? (
+            <>
+              <div className="sb-stat-summary">
+                共 <b>{files.length}</b> 个文件 · 其中 <span className="sb-stat-summary-year">{previousYearCount} 个往年发票</span>
+              </div>
+              <div className="sb-seg-control">
+                <button
+                  className="sb-seg-btn sb-seg-btn-year"
+                  onClick={(e) => { e.stopPropagation(); removePreviousYearFiles(removeSourceFile) }}
+                  title="移除往年发票"
+                >
+                  {ICONS.trash}
+                  <span>移除往年</span>
                 </button>
                 <label className="sb-seg-option">
                   <input type="checkbox" checked={removeSourceFile} onChange={(e) => setRemoveSourceFile(e.target.checked)} />
