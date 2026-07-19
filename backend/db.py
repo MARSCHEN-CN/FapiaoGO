@@ -80,6 +80,38 @@ def normalize_filename(name: object) -> str:
     return s
 
 
+# ── Legacy page suffix resolution ──
+# 历史数据中，早期分页落库的文件名会带 `_p1` / `_p2` 等页后缀
+# （如 '24442000000123331548_2024年03月28日_p1.pdf'），
+# 而当前查询侧（前端 FileState 文件名）不带该后缀。
+# normalize_filename 无法匹配两者，需在查询时附加一个
+# 「去 _p\d+ 后缀」回退步骤。
+
+_PAGE_SUFFIX_RE = re.compile(r'_p\d+\.([^.]+)$')
+
+def _strip_page_suffix(name: str) -> str:
+    """移除文件名中的 legacy 页后缀 _p\\d+。
+    
+    e.g.:
+      'xxx_p1.pdf'   → 'xxx.pdf'
+      'xxx_p2.pdf'   → 'xxx.pdf'
+      'xxx_p10.pdf'  → 'xxx.pdf'
+      'xxx.pdf'      → 'xxx.pdf'  （无变化）
+    """
+    return _PAGE_SUFFIX_RE.sub(r'.\1', name)
+
+
+def _resolve_invoice_by_key(key: str) -> Optional[Dict]:
+    """按已 normalize 的 key 查找发票（含 deleted 过滤）。
+    
+    返回深拷贝或 None。调用方应已持有 _rw_lock。
+    """
+    idx = _invoice_index_by_filename.get(key)
+    if idx is not None and not _invoices[idx].get('deleted_at'):
+        return _invoices[idx].copy()
+    return None
+
+
 def _resolve_db_dir() -> str:
     """按优先级解析数据库目录"""
     env_path = os.environ.get('MARSPRINT_DB_PATH', '').strip()
@@ -1090,7 +1122,13 @@ def update_invoice_fields(invoice_id: str, fields: Dict) -> Optional[Dict]:
 
 
 def get_invoice_by_filename(filename: str) -> Optional[Dict]:
-    """按文件名（file_name）查找发票记录
+    """按文件名（file_name）查找发票记录，带 identity 回退链。
+    
+    回退优先级（与 resolve_invoice_identity 一致）：
+      1. normalize_filename 精确匹配
+      2. basename 归一匹配
+      3. 去 legacy _p\\d+ 页后缀后匹配
+      4. 返回 None
     
     Args:
         filename: 文件名（含路径或纯文件名均可）
@@ -1102,31 +1140,50 @@ def get_invoice_by_filename(filename: str) -> Optional[Dict]:
         return None
     _ensure_loaded()
     with _rw_lock.gen_rlock():
-        target = normalize_filename(filename)
+        result = _resolve_invoice_with_fallback(filename)
+        return result
 
-        # 先尝试精确匹配（索引查找）
-        idx = _invoice_index_by_filename.get(target)
-        if idx is not None and not _invoices[idx].get('deleted_at'):
-            return _invoices[idx].copy()
 
-        # 再尝试纯文件名匹配（路径提取后）
-        pure_name = normalize_filename(filename.split('/')[-1].split('\\')[-1])
-        if pure_name != target:
-            idx = _invoice_index_by_filename.get(pure_name)
-            if idx is not None and not _invoices[idx].get('deleted_at'):
-                return _invoices[idx].copy()
+def _resolve_invoice_with_fallback(filename: str) -> Optional[Dict]:
+    """resolve_invoice_identity 的内部实现（调用方需持有 _rw_lock 读锁）。
+    
+    回退链（按优先级）：
+      1. exact: normalize_filename(filename)
+      2. basename: normalize_filename(basename)
+      3. legacy_page_suffix: normalize_filename(strip_p_suffix(basename))
+    """
+    # Step 1: exact match
+    target = normalize_filename(filename)
+    found = _resolve_invoice_by_key(target)
+    if found:
+        return found
 
-        return None
+    # Step 2: basename match
+    basename = filename.split('/')[-1].split('\\')[-1]
+    pure_name = normalize_filename(basename)
+    if pure_name != target:
+        found = _resolve_invoice_by_key(pure_name)
+        if found:
+            return found
+
+    # Step 3: legacy _p\d+ page suffix fallback
+    page_stripped = normalize_filename(_strip_page_suffix(basename))
+    if page_stripped != pure_name:
+        found = _resolve_invoice_by_key(page_stripped)
+        if found:
+            return found
+
+    return None
 
 
 def get_invoices_by_filenames(filenames: List[str]) -> List[Dict]:
-    """批量按文件名查找发票（使用索引，O(K) 替代 O(N×K)）
+    """批量按文件名查找发票（使用 _resolve_invoice_with_fallback，O(K) 替代 O(N×K)）
 
     Args:
         filenames: 文件名列表
 
     Returns:
-        匹配的发票记录列表（保持 filenames 传入顺序）
+        匹配的发票记录列表（保持 filenames 传入顺序），未匹配的条目跳过
     """
     if not filenames:
         return []
@@ -1137,18 +1194,9 @@ def get_invoices_by_filenames(filenames: List[str]) -> List[Dict]:
         for fname in filenames:
             if not fname:
                 continue
-            key = normalize_filename(fname)
-            # 先尝试精确匹配
-            idx = _invoice_index_by_filename.get(key)
-            if idx is not None and not _invoices[idx].get('deleted_at'):
-                results.append(_invoices[idx].copy())
-                continue
-            # 再尝试纯文件名匹配
-            pure_name = normalize_filename(fname.split('/')[-1].split('\\')[-1])
-            if pure_name != key:
-                idx = _invoice_index_by_filename.get(pure_name)
-                if idx is not None and not _invoices[idx].get('deleted_at'):
-                    results.append(_invoices[idx].copy())
+            found = _resolve_invoice_with_fallback(fname)
+            if found:
+                results.append(found)
     return results
 
 
