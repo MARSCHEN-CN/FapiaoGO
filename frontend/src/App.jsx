@@ -111,7 +111,7 @@ function AppContent() {
     previewRenderVersion,
     previewLoading,
     previewRotation, paperOrientation, autoActive, fileRotations, showLeftArrow, showRightArrow,
-    paperLayout, contentLayout,
+    paperLayout, contentLayout, containerSize,
   } = preview.state
   const {
     handlePreview, preloadHD, handleRotate, handlePaperOrientationChange, prevPage, nextPage,
@@ -832,6 +832,7 @@ function AppContent() {
               contentLayout={contentLayout}
               previewRotation={previewRotation}
               previewLoading={previewLoading}
+              containerSize={containerSize}
             />
           </div>
 
