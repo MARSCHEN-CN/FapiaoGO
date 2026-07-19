@@ -12,6 +12,7 @@ import { consumeBatchStream } from '../services/StreamConsumer'
 import { createTask, setTaskAbortController, updateTaskStatus, cancelTask, getTask } from '../services/TaskRegistry'
 import { createQueues, enqueueSplit, enqueueParse, startSplitWorkers, startParseWorkers, getSplitQueueLength, isQueueEmpty, clearQueues } from '../services/TaskScheduler'
 import { runParseTask } from '../runners/parseRunner'
+import { runSplitTask } from '../runners/splitRunner'
 import { db } from '../db'
 
 // ── 状态迁移规则 ─────────────────────────────────────────
@@ -543,7 +544,7 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
       }
     }
 
-    // Split worker — queue 所有权在 TaskScheduler（Phase 1b-3-2）
+    // Split worker — 执行委托给 splitRunner，UI 更新在 orchestrator
     async function splitWorker() {
       while (getSplitQueueLength() > 0) {
         const job = dequeueSplit()
@@ -552,50 +553,35 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
         queueUpdate(p.key, 'splitting')
 
         try {
-          if (f.name.toLowerCase().endsWith('.pdf')) {
-            const { toAdd, toParse: newToParse } = await processPdfFile(
-              { file: p.file, name: f.name },
-              () => f.path
-            )
+          const result = await runSplitTask(job)
 
+          if (result.isPDF) {
+            const { toAdd } = result
             if (toAdd.length === 1) {
-              // 单页 PDF — 原地更新占位项为 ready
-              // ✅ 防御性：剥离 toAdd[0] 自带的身份字段（key 等），
-              //    用 p.key 作为唯一身份，避免身份被覆盖导致 parse 结果丢失（Blocker 2）
               const toAddRest = stripIdentity(toAdd[0])
               queueUpdate(p.key, 'ready', toAddRest)
               totalParseJobsRef.current += 1
-
-              // 立即加入 parse 队列（key 由 ...p 提供 = p.key，身份不被 toAdd 覆盖）
               const readyFile = { ...p, ...toAddRest }
               enqueueParse([{ fileObj: readyFile }])
             } else if (toAdd.length > 1) {
-              // 多页 PDF — 用拆出的页项替换占位（pageItems 自带独立 key，与 parse 队列一致）
               const pageItems = toAdd.map((pageObj) => ({
                 ...pageObj,
                 status: 'ready',
               }))
               replaceWithItems(p.key, pageItems)
-
-              // 全部加入 parse 队列
               totalParseJobsRef.current += pageItems.length
               for (const pageObj of pageItems) {
                 enqueueParse([{ fileObj: pageObj }])
               }
             } else {
-              // split 产出为空 — 兜底：直接把原始占位项送去解析
               queueUpdate(p.key, 'ready', { key: p.key })
               totalParseJobsRef.current += 1
               enqueueParse([{ fileObj: { ...p, key: p.key } }])
             }
           } else {
-            // 非 PDF — 直接 ready（同样保留占位 key，避免被 fileObj 自带 key 覆盖）
-            const fileObj = buildFileObj(p.file, f.name, f.path)
-            // ✅ 防御性：剥离 fileObj 自带身份字段，用 p.key 作为唯一身份
-            const fileObjRest = stripIdentity(fileObj)
+            const fileObjRest = stripIdentity(result.fileObj)
             queueUpdate(p.key, 'ready', fileObjRest)
             totalParseJobsRef.current += 1
-
             const readyFile = { ...p, ...fileObjRest }
             enqueueParse([{ fileObj: readyFile }])
           }
