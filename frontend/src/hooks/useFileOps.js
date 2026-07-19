@@ -6,6 +6,7 @@ import {
   getMimeType, concurrentBatch, applySort, detectDuplicateInvoices,
 } from '../utils'
 import { stripIdentity } from '../utils/fileHelpers'
+import { applyFileUpdate } from '../utils/fileStateTransitions'
 import { createPlaceholders } from '../utils/placeholderGenerator'
 import { resolveFile } from '../services/FileResolver'
 import { prepareBatchRequest } from '../services/ParseBatchClient'
@@ -22,15 +23,8 @@ import { consumeParseResult } from '../consumers/parseResultConsumer'
 import { createParseResult } from '../models/ParseResult'
 
 // ── 状态迁移规则 ─────────────────────────────────────────
-// 仅允许正向状态迁移，阻止回退（Import Pipeline Contract v1.1）
-const VALID_TRANSITION = {
-  uploading: ['splitting', 'ready', 'parsing'],
-  splitting: ['ready', 'error'],
-  ready: ['parsing', 'error'],
-  parsing: ['parsed', 'error'],
-  parsed: [],
-  error: ['parsing'],
-}
+// 仅允许正向状态迁移，阻止回退（Import Pipeline Contract v1.2）
+// 规则定义已迁至 ../utils/fileStateTransitions（与 applyFileUpdate 同模块，单一事实源）
 
 export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sortOrderRef }) {
   const [isNativeDragActive, setIsNativeDragActive] = useState(false)
@@ -64,10 +58,8 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
       prev.map((f) => {
         const update = pending.get(f.key)
         if (!update) return f
-        const { newStatus, extra } = update
-        const allowed = VALID_TRANSITION[f.status]
-        if (allowed && !allowed.includes(newStatus)) return f
-        return { ...f, ...extra, status: newStatus }
+        // payload 与状态迁移解耦：数据永远合并，状态仅在合法迁移时更新
+        return applyFileUpdate(f, update)
       })
     )
   }, [])
