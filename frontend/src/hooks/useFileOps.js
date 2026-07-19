@@ -10,6 +10,7 @@ import { createPlaceholders } from '../utils/placeholderGenerator'
 import { resolveFile } from '../services/FileResolver'
 import { consumeBatchStream } from '../services/StreamConsumer'
 import { createTask, setTaskAbortController, updateTaskStatus, cancelTask, getTask } from '../services/TaskRegistry'
+import { createQueues, enqueueSplit, enqueueParse, startSplitWorkers, startParseWorkers, getSplitQueueLength, isQueueEmpty, clearQueues } from '../services/TaskScheduler'
 import { db } from '../db'
 
 // ── 状态迁移规则 ─────────────────────────────────────────
@@ -472,7 +473,12 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
 
     // ── Step 2: 并发 split_pdf + parse 流水线 ────────────
     const SPLIT_CONCURRENCY = 4
-    const splitQueue = placeholders.map((p, i) => ({ p, file: files[i] }))
+    const PARSE_CONCURRENCY = 2
+
+    // 队列所有权已迁移至 TaskScheduler（Phase 1b-3-2）
+    createQueues()
+    const splitJobs = placeholders.map((p, i) => ({ p, file: files[i] }))
+    enqueueSplit(splitJobs)
     const parseQueue = []
     let parsePipelineDone = false
 
@@ -481,8 +487,6 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
     const doneParseJobsRef = { current: 0 }
 
     // Parse 流水线（从 parseQueue 消费，并发 2）
-    const PARSE_CONCURRENCY = 2
-
     async function parseWorker() {
       while (true) {
         if (parseQueue.length === 0 && parsePipelineDone) break
@@ -588,10 +592,11 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
       }
     }
 
-    // Split worker
+    // Split worker — queue 所有权在 TaskScheduler（Phase 1b-3-2）
     async function splitWorker() {
-      while (splitQueue.length > 0) {
-        const job = splitQueue.shift()
+      while (getSplitQueueLength() > 0) {
+        const job = dequeueSplit()
+        if (!job) continue
         const { p, file: f } = job
         queueUpdate(p.key, 'splitting')
 
@@ -650,7 +655,7 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
       }
     }
 
-    // 启动 split workers + parse workers
+    // 启动 split workers（通过 TaskScheduler 管理队列）+ parse workers
     const splitWorkers = []
     for (let i = 0; i < Math.min(SPLIT_CONCURRENCY, placeholders.length); i++) {
       splitWorkers.push(splitWorker())
