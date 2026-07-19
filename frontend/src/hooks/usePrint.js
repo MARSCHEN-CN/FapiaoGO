@@ -10,6 +10,7 @@ import { buildRenderModel } from '../utils/renderModelBuilder'
 import { validateRenderModel } from '../utils/renderModelValidator'
 import { detectDocumentOrientation } from '../utils/detectOrientation'
 import { printSingleSourceFile as printSingleSource, printMergedImages } from '../services/PrintService'
+import { runMergedPrintTasks } from '../runners/printRunner'
 
 // ✅ 懒加载 PDF 渲染模块，避免首屏加载 1.4 MB 的 pdfjs-dist + react-pdf
 let _printRenderers = null
@@ -429,82 +430,43 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
       setFiles((prev) => prev.map((f) => f.status === 'printing' ? { ...f, status: 'parsed' } : f))
     }, 120000) // 2分钟超时
 
-    const renderTask = async (task) => {
-      if (signal.aborted) return null
-      try {
-        let result
-        if (isMerge) {
-          result = await renderMergeGroupToPrintImage(task.data, ipc, groupSize)
-        } else {
-          // renderFileToPrintImage 已返回 { key, name, data, printPath }
-          result = await renderFileToPrintImage(task.data, ipc)
-        }
-        return result
-      } catch (error) {
-        console.error('渲染失败:', task.data.name, error)
-        return null
-      }
-    }
-
-    // ── 队列处理循环 ──
+    // ── 队列处理循环（通过 PrintRunner 编排执行） ──
     const processQueue = async () => {
       const queue = printQueueRef.current
-      // ✅ 收集所有渲染成功的 PNG 数据，队列完成后一次性发送
-      const allRenderedData = []
-
-      while (queue.pending.length > 0 && isPrintingRef.current && !signal.aborted) {
-        // 取下一批次
-        const batchSize = Math.min(PRINT_BATCH_SIZE, queue.pending.length)
-        const batch = queue.pending.splice(0, batchSize)
-        queue.printing.push(...batch)
-        updateQueueStatus()
-
-        // 并发处理当前批次
-        const results = await Promise.all(
-          batch.map(task => renderTask(task))
-        )
-
-        // 处理结果
-        for (const result of results) {
-          if (result?.data) {
-            queue.completed.push(result)
-            allRenderedData.push(result.data)
-          } else {
-            // result 为 null（合并模式全部加载失败）或没有 data
-            // 标记为失败，避免静默丢弃
-            queue.failed.push(result || { key: 'unknown', name: '未知文件' })
-          }
+      // 包装渲染函数（与 React state 解耦的纯执行）
+      const renderFn = async (task) => {
+        if (signal.aborted) return null
+        try {
+          const result = isMerge
+            ? await renderMergeGroupToPrintImage(task.data || task, ipc, groupSize)
+            : await renderFileToPrintImage(task.data || task, ipc)
+          return result
+        } catch (error) {
+          console.error('渲染失败:', task.name || task.data?.name, error)
+          return null
         }
-        // 按任务 ID 精确移除已处理项
-        const batchIds = new Set(batch.map(t => t.id))
-        queue.printing = queue.printing.filter(t => !batchIds.has(t.id))
-        updateQueueStatus()
-
-        // 更新进度
-        setPrintProgress(prev => ({
-          ...prev,
-          completed: queue.completed.length,
-          total: queue.completed.length + queue.pending.length + queue.printing.length + queue.failed.length,
-        }))
-
-        // 让出主线程
-        await new Promise(resolve => setTimeout(resolve, 0))
       }
+      // 包装合并打印函数
+      const mergedPrintFn = async (images, ctx) => {
+        const printOptions = { ...settings, landscape: forcedLandscape }
+        return await printMergedImages(images, ipc, printOptions)
+      }
+
+      // 委托给 PrintRunner 执行
+      const { results, mergedResult } = await runMergedPrintTasks(
+        queue.pending,
+        renderFn,
+        mergedPrintFn,
+        { signal, batchSize: PRINT_BATCH_SIZE }
+      )
 
       if (signal.aborted) return
 
-      // ✅ 队列渲染完成：一次性发送所有 PNG 到主进程
-      if (allRenderedData.length > 0) {
-        try {
-          const printOptions = { ...settings, landscape: forcedLandscape }
-          const result = await printMergedImages(allRenderedData, ipc, printOptions)
-          if (!result?.success) {
-            console.error('[usePrint] print-merged-images failed:', result?.error)
-          }
-        } catch (err) {
-          console.error('[usePrint] print-merged-images invoke error:', err)
-        }
-      }
+      // 处理结果 → React 状态
+      const completed = results.filter(r => r.success)
+      const failed = results.filter(r => !r.success)
+      queue.completed = completed
+      queue.failed = failed
 
       // 队列完成
       if (printTimeoutRef.current) clearTimeout(printTimeoutRef.current)
@@ -521,12 +483,13 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
       }))
 
       // 显示结果摘要
-      const { completed, failed } = printQueueRef.current
-      if (failed.length > 0) {
+      const compLen = queue.completed ? queue.completed.length : 0
+      const failLen = queue.failed ? queue.failed.length : 0
+      if (failLen > 0) {
         setAlertModal({
           visible: true,
           title: '打印完成（部分失败）',
-          message: `成功: ${completed.length} 个，失败: ${failed.length} 个`,
+          message: `成功: ${compLen} 个，失败: ${failLen} 个`,
           type: 'warning',
         })
       } else if (completed.length > 0) {
