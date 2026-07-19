@@ -475,26 +475,25 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
     const SPLIT_CONCURRENCY = 4
     const PARSE_CONCURRENCY = 2
 
-    // 队列所有权已迁移至 TaskScheduler（Phase 1b-3-2）
+    // 队列所有权已迁移至 TaskScheduler（Phase 1b-3-2/3）
     createQueues()
     const splitJobs = placeholders.map((p, i) => ({ p, file: files[i] }))
     enqueueSplit(splitJobs)
-    const parseQueue = []
     let parsePipelineDone = false
 
     // 解析进度计数（用对象 ref 规避闭包陷阱，parseWorker 并发累加）
     const totalParseJobsRef = { current: 0 }
     const doneParseJobsRef = { current: 0 }
 
-    // Parse 流水线（从 parseQueue 消费，并发 2）
+    // Parse 流水线（从 TaskScheduler parseQueue 消费，并发 2）
     async function parseWorker() {
       while (true) {
-        if (parseQueue.length === 0 && parsePipelineDone) break
-        if (parseQueue.length === 0) {
+        if (getParseQueueLength() === 0 && parsePipelineDone) break
+        if (getParseQueueLength() === 0) {
           await new Promise((r) => setTimeout(r, 50))
           continue
         }
-        const job = parseQueue.shift()
+        const job = dequeueParse()
         if (!job) continue
 
         const { fileObj } = job
@@ -617,7 +616,7 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
 
               // 立即加入 parse 队列（key 由 ...p 提供 = p.key，身份不被 toAdd 覆盖）
               const readyFile = { ...p, ...toAddRest }
-              parseQueue.push({ fileObj: readyFile })
+              enqueueParse([{ fileObj: readyFile }])
             } else if (toAdd.length > 1) {
               // 多页 PDF — 用拆出的页项替换占位（pageItems 自带独立 key，与 parse 队列一致）
               const pageItems = toAdd.map((pageObj) => ({
@@ -629,13 +628,13 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
               // 全部加入 parse 队列
               totalParseJobsRef.current += pageItems.length
               for (const pageObj of pageItems) {
-                parseQueue.push({ fileObj: pageObj })
+                enqueueParse([{ fileObj: pageObj }])
               }
             } else {
               // split 产出为空 — 兜底：直接把原始占位项送去解析
               queueUpdate(p.key, 'ready', { key: p.key })
               totalParseJobsRef.current += 1
-              parseQueue.push({ fileObj: { ...p, key: p.key } })
+              enqueueParse([{ fileObj: { ...p, key: p.key } }])
             }
           } else {
             // 非 PDF — 直接 ready（同样保留占位 key，避免被 fileObj 自带 key 覆盖）
@@ -646,7 +645,7 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
             totalParseJobsRef.current += 1
 
             const readyFile = { ...p, ...fileObjRest }
-            parseQueue.push({ fileObj: readyFile })
+            enqueueParse([{ fileObj: readyFile }])
           }
         } catch (err) {
           console.error(`[App] 文件处理失败: ${f.name}`, err)
