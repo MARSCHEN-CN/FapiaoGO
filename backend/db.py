@@ -41,6 +41,8 @@ from typing import Optional, Dict, List, Any
 import threading
 import logging
 from readerwriterlock import rwlock
+import re
+import unicodedata
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +56,28 @@ ALLOWED_UPDATE_FIELDS = [
     'buyer', 'seller', 'buyer_tax', 'seller_tax', 'note',
     'issuer', 'payee', 'reviewer', 'tax_amount', 'file_name',
 ]
+
+
+def normalize_filename(name: object) -> str:
+    """统一发票文件名索引键，消除写入/查询侧不一致导致的 404。
+
+    历史问题：某次会话上传时文件名被写入内部空格（如
+    '2024年03 月28日.pdf'），而查询侧用干净名（'2024年03月28日.pdf'）查找，
+    精确匹配失败且 basename 兜底分支被跳过 -> 静默 404。单纯「折叠连续空白」
+    无法修复此类单空格（'03 月'），必须去除全部空白才能使两端 key 一致。
+
+    归一步骤（顺序固定）：
+      1. Unicode NFC 归一（统一合成/兼容字符变体）
+      2. 去除所有空白字符（含全角空格，修复内部空格导致的 key 不一致）
+      3. 转小写
+      4. 去首尾空白
+    """
+    if not name:
+        return ''
+    s = unicodedata.normalize('NFC', str(name))
+    s = re.sub(r'\s+', '', s)   # 去除全部空白（不止折叠连续空白）
+    s = s.strip().lower()
+    return s
 
 
 def _resolve_db_dir() -> str:
@@ -287,7 +311,7 @@ def _rebuild_indexes() -> None:
         if inv.get("hash_sha256"):
             _invoice_index_by_hash[inv["hash_sha256"]] = i
         if inv.get("file_name"):
-            _invoice_index_by_filename[str(inv["file_name"]).strip().lower()] = i
+            _invoice_index_by_filename[normalize_filename(inv["file_name"])] = i
         if inv.get("number"):
             num = str(inv["number"])
             _invoice_index_by_number.setdefault(num, []).append(i)
@@ -472,7 +496,7 @@ def _replay_oplog() -> None:
                         if data.get("hash_sha256"):
                             _invoice_index_by_hash[data["hash_sha256"]] = _idx
                         if data.get("file_name"):
-                            _invoice_index_by_filename[str(data["file_name"]).strip().lower()] = _idx
+                            _invoice_index_by_filename[normalize_filename(data["file_name"])] = _idx
                         if data.get("number"):
                             _invoice_index_by_number.setdefault(str(data["number"]), []).append(_idx)
 
@@ -817,6 +841,12 @@ def upsert_invoice(row: Dict) -> Dict:
     _ensure_loaded()
     now_str = now().isoformat()
 
+    # 文件名 canonical 归一，消除历史空格/大小写/Unicode 变体导致的查找 404
+    # （不修改调用方传入的 dict）
+    row = dict(row)
+    if row.get('file_name'):
+        row['file_name'] = normalize_filename(row['file_name'])
+
     with _rw_lock.gen_wlock():
         # 按 hash 去重（使用索引）
         hash_val = row.get('hash_sha256')
@@ -884,6 +914,15 @@ def batch_upsert_invoices(rows: List[Dict]) -> List[Dict]:
     _ensure_loaded()
     now_str = now().isoformat()
     results = []
+
+    # 文件名 canonical 归一（不修改调用方传入的 dict）
+    norm_rows = []
+    for r in rows:
+        nr = dict(r)
+        if nr.get('file_name'):
+            nr['file_name'] = normalize_filename(nr['file_name'])
+        norm_rows.append(nr)
+    rows = norm_rows
 
     with _rw_lock.gen_wlock():
         for row in rows:
@@ -989,7 +1028,7 @@ def hard_delete_invoice(invoice_id: str) -> Optional[Dict]:
                 _invoice_index_by_hash.pop(inv['hash_sha256'], None)
 
             if inv.get('file_name'):
-                _invoice_index_by_filename.pop(str(inv['file_name']).strip().lower(), None)
+                _invoice_index_by_filename.pop(normalize_filename(inv['file_name']), None)
 
             if inv.get('number'):
                 num = str(inv['number'])
@@ -1063,7 +1102,7 @@ def get_invoice_by_filename(filename: str) -> Optional[Dict]:
         return None
     _ensure_loaded()
     with _rw_lock.gen_rlock():
-        target = filename.strip().lower()
+        target = normalize_filename(filename)
 
         # 先尝试精确匹配（索引查找）
         idx = _invoice_index_by_filename.get(target)
@@ -1071,7 +1110,7 @@ def get_invoice_by_filename(filename: str) -> Optional[Dict]:
             return _invoices[idx].copy()
 
         # 再尝试纯文件名匹配（路径提取后）
-        pure_name = target.split('/')[-1].split('\\')[-1]
+        pure_name = normalize_filename(filename.split('/')[-1].split('\\')[-1])
         if pure_name != target:
             idx = _invoice_index_by_filename.get(pure_name)
             if idx is not None and not _invoices[idx].get('deleted_at'):
@@ -1098,14 +1137,14 @@ def get_invoices_by_filenames(filenames: List[str]) -> List[Dict]:
         for fname in filenames:
             if not fname:
                 continue
-            key = fname.strip().lower()
+            key = normalize_filename(fname)
             # 先尝试精确匹配
             idx = _invoice_index_by_filename.get(key)
             if idx is not None and not _invoices[idx].get('deleted_at'):
                 results.append(_invoices[idx].copy())
                 continue
             # 再尝试纯文件名匹配
-            pure_name = key.split('/')[-1].split('\\')[-1]
+            pure_name = normalize_filename(fname.split('/')[-1].split('\\')[-1])
             if pure_name != key:
                 idx = _invoice_index_by_filename.get(pure_name)
                 if idx is not None and not _invoices[idx].get('deleted_at'):
