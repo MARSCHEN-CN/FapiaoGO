@@ -8,6 +8,7 @@ import { rotateContentOnPaper } from './utils/canvasUtils'
 import { createLayout, normalizeLayoutItem, normalizeLayoutItems, getPaperPixels, PRINT_SAFE_MARGIN_MM, PRINTER_PROFILES, getPrintableArea } from './layout'
 import { isDocumentEngineEnabled, makeImageRef, ConcreteImageHandle, MemoryPixelHandle } from './documentEngine.js'  // P2C 统一入口门面（v12 契约 JS 实现；路线见 v14 §6/§13）+ ②b 桥接用 ImageHandle 值类型（facade 单向依赖，Law #2 允许）
 import { createPlacement } from './compose/composePlacement.js'  // [B1 p2] Virtual Paper 几何（contentRect fit）：Preview/Print 共用唯一几何来源
+import { drawRenderCommand } from './layout/renderDraw.js'  // [C3-2] 与 Worker 共用唯一 executor（drawRenderCommand 纯执行、DOM-free）
 // ✅ renderModel.js 为死代码，renderMultipleItemsToCanvas 直接做 transform，不经过 RenderModel
 // import { createRenderModels, applyTransformToContext, restoreContext } from './renderModel'
 
@@ -1122,28 +1123,8 @@ async function _renderDirect(
     const cmd = _buildComposeCommand(slot, cs, rotate, page)
     if (!cmd) continue
 
-    // 消费同一 placement：与 Worker 端 drawRenderCommand 像素级同构
-    // （offset 左上角、clip=contentRect、旋转绕落盘中心、scale 不烘焙）。
-    const { offsetX, offsetY, scale } = cmd.placement
-    const drawW = cmd.rotatedBounds.width * scale
-    const drawH = cmd.rotatedBounds.height * scale
-    const clip = cmd.clip
-    const source = cs.source
-
-    ctx.save()
-    if (clip && typeof clip.width === 'number' && clip.width > 0) {
-      ctx.beginPath()
-      ctx.rect(clip.x, clip.y, clip.width, clip.height)
-      ctx.clip()
-    }
-    if (!rotate) {
-      ctx.drawImage(source, offsetX, offsetY, drawW, drawH)
-    } else {
-      ctx.translate(offsetX + drawW / 2, offsetY + drawH / 2)
-      ctx.rotate((rotate * Math.PI) / 180)
-      ctx.drawImage(source, -drawW / 2, -drawH / 2, drawW, drawH)
-    }
-    ctx.restore()
+    // 与 Worker 路径统一 executor：cmd 已含 clip/旋转/scale 全部几何（ratio=1：Print dpi===cmd dpi）。
+    drawRenderCommand(ctx, cmd, cs.source)
   }
 
   // ═══════════════════════════════════════════════
