@@ -55,13 +55,26 @@ export function computeTicketSlots(paperLayout, ticketCount) {
     return [{ x: safe.x, y: safe.y, width: safe.w, height: safe.h, index: 0 }]
   }
 
-  const slotH = safe.h / count
+  // ── 与 createLayout 对齐的 slot 几何 ──
+  // 1) 基数用 Math.floor（非 float 等分），避免 Flt 累积
+  // 2) 末 slot 吃余数，保证 sum(slots.height) === usable.h
+  // 3) 每 slot 内缩 safeInsetPx（由 paperLayout.slotSafeInset 提供，
+  //    对应 old DEFAULT_SLOT_MARGIN_MM / PRINT_SAFE_MARGIN_MM 的 px 当量），
+  //    使 fit/居中在「留四周安全边距的 contentRect」内进行，与 createLayout 的同构。
+  const inset = (paperLayout && paperLayout.slotSafeInset) || 0
+  const baseH = Math.floor(safe.h / count)
   const slots = []
+  let accY = safe.y
   for (let i = 0; i < count; i++) {
-    const y = safe.y + i * slotH
-    // 末位精确吃到 usable 底边，杜绝浮点累积导致越界
-    const height = i === count - 1 ? (safe.y + safe.h - y) : slotH
-    slots.push({ x: safe.x, y, width: safe.w, height, index: i })
+    // 末 slot 精确收口到底边（吃余数）
+    const height = (i === count - 1) ? (safe.y + safe.h - accY) : baseH
+    const rawSlot = { x: safe.x, y: accY, width: safe.w, height }
+    // 内缩 safeInset（用于 createPlacement 的 contentRect）
+    const insetSlot = inset > 0
+      ? { x: rawSlot.x + inset, y: rawSlot.y + inset, width: rawSlot.width - 2 * inset, height: rawSlot.height - 2 * inset }
+      : { ...rawSlot }
+    slots.push({ ...insetSlot, index: i })
+    accY += height
   }
   return slots
 }

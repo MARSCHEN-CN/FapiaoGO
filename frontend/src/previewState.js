@@ -217,6 +217,10 @@ export function computePaperLayout(spec) {
     // 摆放原点由 usableRect 承担 —— 见 RenderLayoutFactory 的 slot 桥接
     // （修复「图绕纸张中心而非安全区居中」：offset 必须 = mLeft + (innerW-drawW)/2）。
     usableRect: { x: mLeft, y: mTop, w: innerW, h: innerH },
+    // slotSafeInset：每张虚拟纸内部安全边距（px，对应 PRINT_SAFE_MARGIN_MM=5mm）。
+    // SlotLayout 消费此值对每个 slot 做内缩 → contentRect，使 V16 slot 几何与
+    // createLayout（ComposeSlotLayoutFactory）的 slot 内缩行为一致。
+    slotSafeInset: Math.round(5 / 25.4 * dpi),
     displayRect: { w: paperW, h: paperH },            // 纯纸张，无 doc swap（swap → RenderCommand，Stage 1）
     clipRect: { w: paperW, h: paperH },               // 纸张坐标，非 viewport（I1）
     // orientation 字段已废弃（Stage 0.5 删除）：由 paperRect.width > height 推导

@@ -72,7 +72,7 @@ test('P0 Case 1: 一票 → single command, clip === usableRect', () => {
 // ═══════════════════════════════════════════════
 // Case 2: 两票 A4
 // ═══════════════════════════════════════════════
-test('P0 Case 2: 两票 → two commands, y 递增, ≈等分', () => {
+test('P0 Case 2: 两票 → two commands, y 递增, ≈等分 + safeInset', () => {
   const paperLayout = makePaperLayout()
   const documents = [makeDoc(), makeDoc({ w: 1240, h: 1754 })] // 两竖向发票
   const result = compose({ paperLayout, documents })
@@ -87,24 +87,28 @@ test('P0 Case 2: 两票 → two commands, y 递增, ≈等分', () => {
   assert.ok(clip0.y < clip1.y, 'cmd[0].clip.y < cmd[1].clip.y')
 
   const u = paperLayout.usableRect
-  // ≈ 等分
-  const halfH = u.h / 2
-  assert.ok(Math.abs(clip0.height - halfH) < EPS, 'cmd[0].clip.height ≈ usable.h / 2')
-  assert.ok(Math.abs(clip1.height - halfH) < EPS, 'cmd[1].clip.height ≈ usable.h / 2 (or remainder)')
+  const inset = paperLayout.slotSafeInset || 0
+  // clip 内缩 safeInset（对齐 createLayout contentRect）
+  assert.equal(clip0.x, u.x + inset, 'clip0.x = usable.x + inset')
+  assert.equal(clip1.x, u.x + inset, 'clip1.x = usable.x + inset')
+  assert.equal(clip0.width, u.w - 2 * inset, 'clip0.width = usable.w - 2*inset')
+  // clip0.y = usable.y + inset
+  assert.equal(clip0.y, u.y + inset, 'clip0.y = usable.y + inset')
+  // clip1.y = usable.y + baseH + inset
+  const baseH = Math.floor(u.h / 2)
+  assert.equal(clip1.y, u.y + baseH + inset, 'clip1.y = usable.y + baseH + inset')
+  // clip.height = baseH - 2*inset
+  assert.equal(clip0.height, baseH - 2 * inset, 'clip0.height = baseH - 2*inset')
 
   // 两票都不超 margin
   assertNoClip(r0.renderCommand, clip0, 'ticket0')
   assertNoClip(r1.renderCommand, clip1, 'ticket1')
-
-  // slot x 一致（左对齐）
-  assert.equal(clip0.x, u.x)
-  assert.equal(clip1.x, u.x)
 })
 
 // ═══════════════════════════════════════════════
 // Case 3: 三票
 // ═══════════════════════════════════════════════
-test('P0 Case 3: 三票 → last slot bottom === usableRect.bottom', () => {
+test('P0 Case 3: 三票 → last contentRect bottom === usable.h - inset', () => {
   const paperLayout = makePaperLayout()
   const documents = [makeDoc(), makeDoc(), makeDoc({ w: 1240, h: 1754 })]
   const result = compose({ paperLayout, documents })
@@ -112,15 +116,14 @@ test('P0 Case 3: 三票 → last slot bottom === usableRect.bottom', () => {
   assert.equal(result.length, 3, 'commands.length === 3')
 
   const u = paperLayout.usableRect
+  const inset = paperLayout.slotSafeInset || 0
   const last = result[2].renderCommand.clip
 
-  // 最后一个 slot 不出界
-  assert.ok(last.y + last.height <= u.y + u.h + EPS,
-    `last slot bottom (${last.y + last.height}) ≈ usable bottom (${u.y + u.h})`)
-
-  // 等于（末位吃余应为精确覆盖）
-  assert.ok(Math.abs(last.y + last.height - (u.y + u.h)) < EPS,
-    `last slot exactly ends at usable bottom`)
+  // 最后一个 slot contentRect 不出界：底边 = usable.h - inset
+  assert.ok(last.y + last.height <= u.y + u.h - inset + EPS,
+    `last slot bottom (${last.y + last.height}) ≤ usable bottom - inset (${u.y + u.h - inset})`)
+  assert.ok(Math.abs(last.y + last.height - (u.y + u.h - inset)) < EPS,
+    `last contentRect bottom exactly = usable.h - inset (${inset}px safe margin)`)
 
   // 所有票无裁切
   for (let i = 0; i < 3; i++) {

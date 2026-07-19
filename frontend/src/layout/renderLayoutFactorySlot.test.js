@@ -72,20 +72,28 @@ function assertFitNoClip(cmd, targetRect, label) {
 // ════════════════════════════════════════════
 // Group A: A4 two tickets
 // ════════════════════════════════════════════
-test('A4 two tickets: slot geometry (equal height, cover usable)', () => {
+test('A4 two tickets: slot geometry (inset, floor+remainder)', () => {
   const paperLayout = computePaperLayout({ paperSize: 'A4', margins: { top: 0, right: 0, bottom: 0, left: 0 } })
   const slots = computeTicketSlots(paperLayout, 2)
   assert.equal(slots.length, 2)
-  // 等高
-  assert.ok(Math.abs(slots[0].height - slots[1].height) < EPS, 'slots equal height')
-  // 覆盖全 usable
   const u = paperLayout.usableRect
-  assert.equal(slots[0].x, u.x)
-  assert.equal(slots[0].y, u.y)
-  assert.equal(slots[0].width, u.w)
-  assert.equal(slots[0].y + slots[0].height, slots[1].y, 'slot0 bottom == slot1 top')
-  // 末位收口
-  assert.ok(Math.abs(slots[1].y + slots[1].height - (u.y + u.h)) < EPS, 'last slot bottom == usable bottom')
+  const inset = paperLayout.slotSafeInset || 0
+  const baseH = Math.floor(u.h / 2)
+
+  // 内缩 inset
+  assert.equal(slots[0].x, u.x + inset, 'slot0.x = usable.x + inset')
+  assert.equal(slots[0].y, u.y + inset, 'slot0.y = usable.y + inset')
+  assert.equal(slots[0].width, u.w - 2 * inset, 'slot0.width = usable.w - 2*inset')
+  // height = baseH - 2*inset
+  assert.equal(slots[0].height, baseH - 2 * inset, 'slot0.height = baseH - 2*inset')
+  // slot1 位置
+  assert.equal(slots[1].x, u.x + inset)
+  assert.equal(slots[1].y, u.y + baseH + inset, 'slot1.y = usable.y + baseH + inset')
+  // 末位收口：last content bottom = usable.h - inset
+  assert.ok(Math.abs(slots[1].y + slots[1].height - (u.y + u.h - inset)) < EPS,
+    'last slot content bottom == usable.h - inset')
+  // 两 slot 间 gap = 2*inset（raw 边界处留安全空隙）
+  assert.equal(slots[1].y - (slots[0].y + slots[0].height), 2 * inset, 'gap between slots = 2*inset')
 })
 
 test('A4 two tickets: invoice A in slot0 — no clip, centered', () => {
