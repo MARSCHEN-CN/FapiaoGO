@@ -315,6 +315,76 @@ export async function startPdfExport(config, handlers = {}) {
 }
 
 /**
+ * 启动 RenderCommand 管线 PDF 导出任务（D2-2-c1）。
+ *
+ * 流程：POST /api/export-render（commands: RenderCommand[]）→ EventSource 消费 SSE。
+ * 与 startPdfExport 协议同构，仅端点 / body 不同；本函数不触碰任何几何
+ * （commands 已由 caller 经 buildExportSnapshot 组好，几何完全由前端 producer 拥有）。
+ *
+ * @param {Array} commands - RenderCommand[]（来自 buildExportSnapshot）
+ * @param {object} [handlers]
+ * @param {(msg: object) => void} [handlers.onProgress] - SSE 消息回调（含 running/pending）
+ * @param {(msg: object) => void} [handlers.onTerminal] - 终态回调（completed/cancelled/failed）
+ * @param {() => void} [handlers.onError] - 连接中断回调
+ * @returns {Promise<{taskId: string, close: () => void}>}
+ */
+export async function startRenderExport(commands, handlers = {}) {
+  const { onProgress, onTerminal, onError } = handlers
+
+  const body = { commands: Array.isArray(commands) ? commands : [] }
+
+  const response = await fetch(`${BACKEND_URL}/api/export-render`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+
+  if (!response.ok) {
+    const errorMsg = await _extractError(response)
+    onTerminal?.({
+      status: 'failed',
+      stage: errorMsg,
+      errors: [{ file: '', error: errorMsg }],
+    })
+    return { taskId: null, close: () => {} }
+  }
+
+  const { taskId } = await response.json()
+
+  if (!taskId) {
+    onTerminal?.({ status: 'failed', stage: '未返回 taskId' })
+    return { taskId: null, close: () => {} }
+  }
+
+  // ── EventSource 消费 SSE ──
+  const close = consumeEventStream(
+    `${BACKEND_URL}/api/export-render/events/${taskId}`,
+    {
+      onMessage: (msg, closeStream) => {
+        if (msg.status === 'running' && !msg.taskId) {
+          msg.taskId = taskId
+        }
+        onProgress?.(msg)
+
+        if (['completed', 'cancelled', 'failed'].includes(msg.status)) {
+          closeStream()
+          onTerminal?.(msg)
+        }
+      },
+      onError: () => {
+        onTerminal?.({
+          status: 'failed',
+          stage: '连接中断',
+          errors: [{ file: '', error: 'SSE 连接中断' }],
+        })
+      },
+    }
+  )
+
+  return { taskId, close }
+}
+
+/**
  * 取消 PDF 导出任务。
  *
  * @param {string} taskId - 后端任务 ID

@@ -1,5 +1,7 @@
 import { useState, useCallback, useRef, useSyncExternalStore } from 'react'
-import { exportExcel, startPdfExport, cancelPdfExport } from '../services/ExportService'
+import { exportExcel, startPdfExport, startRenderExport, cancelPdfExport } from '../services/ExportService'
+import { EXPORT_RENDER_ENABLED } from '../layout/exportConstants.js'
+import { buildExportSnapshot } from '../layout/exportSnapshotBuilder.js'
 import { createExportTask, EXPORT_TYPE, EXPORT_MODE } from '../models/ExportTask'
 import { createSuccessfulExport, createFailedExport, createCancelledExport } from '../models/ExportResult'
 import { isTerminalStatus } from '../models/ExportSession'
@@ -35,7 +37,7 @@ function sessionToPdfTaskView(session) {
   }
 }
 
-export function useExport({ files, electronAPIRef }) {
+export function useExport({ files, electronAPIRef, previewState, settings }) {
   const [exportAlert, setExportAlert] = useState(null)
   const closeExportAlert = useCallback(() => setExportAlert(null), [])
   const pdfCloseRef = useRef(null)
@@ -103,31 +105,57 @@ export function useExport({ files, electronAPIRef }) {
     startExport(session.id, '准备中')
     updateProgress(session.id, { total: config.files.length })
 
+    const handlers = {
+      onProgress: (msg) => {
+        updateProgress(session.id, {
+          backendTaskId: msg.taskId ?? undefined,
+          current: msg.current, total: msg.total, currentFile: msg.currentFile,
+          successCount: msg.successCount, failCount: msg.failCount,
+          progress: msg.percent, stage: msg.stage || '正在导出',
+        })
+      },
+      onTerminal: (msg) => {
+        const btid = msg.taskId ?? null
+        const meta = { backendTaskId: btid, total: msg.total, successCount: msg.successCount, failCount: msg.failCount, fileErrors: msg.errors }
+        if (msg.status === 'completed') {
+          completeExport(session.id, createSuccessfulExport({ taskId: task.id, metadata: meta }))
+        } else if (msg.status === 'cancelled') {
+          cancelExport(session.id, createCancelledExport({ taskId: task.id, metadata: meta }))
+        } else {
+          failExport(session.id, createFailedExport({ taskId: task.id, error: msg.stage || '导出失败', metadata: meta }))
+        }
+      },
+      onError: () => {
+        failExport(session.id, createFailedExport({ taskId: task.id, error: 'SSE 连接中断' }))
+      },
+    }
+
     try {
-      const { taskId: backendTaskId, close } = await startPdfExport(config, {
-        onProgress: (msg) => {
-          updateProgress(session.id, {
-            backendTaskId: msg.taskId ?? backendTaskId ?? undefined,
-            current: msg.current, total: msg.total, currentFile: msg.currentFile,
-            successCount: msg.successCount, failCount: msg.failCount,
-            progress: msg.percent, stage: msg.stage || '正在导出',
-          })
-        },
-        onTerminal: (msg) => {
-          const btid = msg.taskId ?? backendTaskId ?? null
-          const meta = { backendTaskId: btid, total: msg.total, successCount: msg.successCount, failCount: msg.failCount, fileErrors: msg.errors }
-          if (msg.status === 'completed') {
-            completeExport(session.id, createSuccessfulExport({ taskId: task.id, metadata: meta }))
-          } else if (msg.status === 'cancelled') {
-            cancelExport(session.id, createCancelledExport({ taskId: task.id, metadata: meta }))
-          } else {
-            failExport(session.id, createFailedExport({ taskId: task.id, error: msg.stage || '导出失败', metadata: meta }))
-          }
-        },
-        onError: () => {
-          failExport(session.id, createFailedExport({ taskId: task.id, error: 'SSE 连接中断' }))
-        },
-      })
+      let backendTaskId = null
+      let close = () => {}
+
+      if (EXPORT_RENDER_ENABLED && previewState && settings) {
+        // 新管线（D2-2-c1）：几何由 Preview 状态经薄桥组装，ExportService 保持几何无关。
+        // 仅当 flag 开启且 Preview 几何状态可用时启用；否则回落 legacy /api/export-pdf。
+        const byPath = new Map(files.map(f => [f.path, f]))
+        const exportFiles = (config.files && config.files.length)
+          ? config.files.map(cf => byPath.get(cf.path) || { key: cf.path, path: cf.path, name: cf.name, status: 'parsed' })
+          : files.filter(f => f.status === 'parsed')
+        const commands = buildExportSnapshot({
+          files: exportFiles,
+          documentState: previewState.documentState,
+          fileRotations: previewState.fileRotations,
+          previewPage: previewState.previewPage,
+          settings,
+        })
+        const res = await startRenderExport(commands, handlers)
+        backendTaskId = res.taskId
+        close = res.close
+      } else {
+        const res = await startPdfExport(config, handlers)
+        backendTaskId = res.taskId
+        close = res.close
+      }
 
       pdfCloseRef.current = close
       if (backendTaskId) updateProgress(session.id, { backendTaskId })
@@ -135,7 +163,7 @@ export function useExport({ files, electronAPIRef }) {
       console.error('PDF 导出异常:', err)
       failExport(session.id, createFailedExport({ taskId: task.id, error: err.message || '导出异常' }))
     }
-  }, [])
+  }, [files, electronAPIRef, previewState, settings])
 
   // ── 取消导出 ──
   const handleCancelPdfExport = useCallback(async () => {

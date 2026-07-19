@@ -405,7 +405,7 @@ function AppContent() {
     pdfExportTask,
     cancelPdfExport,
     closePdfExportTask,
-  } = useExport({ files, electronAPIRef })
+  } = useExport({ files, electronAPIRef, previewState: preview.state, settings })
 
   const { clearExportSession } = useExportSession()
 
