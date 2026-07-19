@@ -1,4 +1,5 @@
 import { BACKEND_URL } from '../config'
+import { materializedFileStore } from './MaterializedFileStore'
 
 export async function materializePage(descriptor, sessionId) {
   if (!descriptor || !descriptor.id) {
@@ -24,5 +25,15 @@ export async function materializePage(descriptor, sessionId) {
   }
 
   const blob = await resp.blob()
-  return new File([blob], `${descriptor.id}.pdf`, { type: 'application/pdf' })
+  const file = new File([blob], `${descriptor.id}.pdf`, { type: 'application/pdf' })
+
+  return materializedFileStore.acquire(sessionId, descriptor.id, file)
+}
+
+export function releaseMaterializedFile(handle) {
+  materializedFileStore.release(handle)
+}
+
+export function cleanupSessionMaterialization(sessionId) {
+  materializedFileStore.cleanup(sessionId)
 }

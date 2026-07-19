@@ -25,7 +25,7 @@
 
 import { BACKEND_URL } from '../config'
 import { resolveFile } from '../services/FileResolver'
-import { materializePage } from '../services/PageMaterializer'
+import { materializePage, releaseMaterializedFile } from '../services/PageMaterializer'
 import { createParseResult } from '../models/ParseResult'
 
 /**
@@ -43,55 +43,63 @@ export async function runParseTask(job, { ipc, autoOrient, sessionId }) {
   const { fileObj: f } = job
   let resp
   let file = f.file
+  let materializedHandle = null
 
   console.log('[parseRunner] Processing:', f.name, 'file:', !!f.file, 'printPath:', !!f.printPath, 'path:', !!f.path, 'descriptor:', !!f._pageDescriptor)
 
   if (f._pageDescriptor && !file) {
-    file = await materializePage(f._pageDescriptor, sessionId)
+    materializedHandle = await materializePage(f._pageDescriptor, sessionId)
+    file = materializedHandle.file
     f.file = file
     f._pageDescriptor = null
   }
 
-  if (file) {
-    const fd = new FormData()
-    fd.append('file', file)
-    fd.append('autoOrient', autoOrient ? '1' : '0')
-    fd.append('mode', 'batch')
+  try {
+    if (file) {
+      const fd = new FormData()
+      fd.append('file', file)
+      fd.append('autoOrient', autoOrient ? '1' : '0')
+      fd.append('mode', 'batch')
 
-    resp = await fetch(`${BACKEND_URL}/parse_invoice`, {
-      method: 'POST', body: fd,
-    })
-  } else if ((f.printPath || f.path) && ipc) {
-    file = await resolveFile(f, ipc)
-    if (!file) throw new Error('IPC read-file failed: ' + f.name)
-    const fd = new FormData()
-    fd.append('file', file)
-    fd.append('autoOrient', autoOrient ? '1' : '0')
-    fd.append('mode', 'batch')
+      resp = await fetch(`${BACKEND_URL}/parse_invoice`, {
+        method: 'POST', body: fd,
+      })
+    } else if ((f.printPath || f.path) && ipc) {
+      file = await resolveFile(f, ipc)
+      if (!file) throw new Error('IPC read-file failed: ' + f.name)
+      const fd = new FormData()
+      fd.append('file', file)
+      fd.append('autoOrient', autoOrient ? '1' : '0')
+      fd.append('mode', 'batch')
 
-    resp = await fetch(`${BACKEND_URL}/parse_invoice`, {
-      method: 'POST', body: fd,
-    })
-  }
-
-  if (!resp) throw new Error('无法读取文件')
-
-  if (!resp.ok) {
-    if (resp.status === 429) {
-      throw new Error('服务器繁忙，请稍后重试')
+      resp = await fetch(`${BACKEND_URL}/parse_invoice`, {
+        method: 'POST', body: fd,
+      })
     }
-    throw new Error(`parse_invoice returned ${resp.status}`)
+
+    if (!resp) throw new Error('无法读取文件')
+
+    if (!resp.ok) {
+      if (resp.status === 429) {
+        throw new Error('服务器繁忙，请稍后重试')
+      }
+      throw new Error(`parse_invoice returned ${resp.status}`)
+    }
+
+    const data = await resp.json()
+    console.log('[parseRunner] Response data:', {
+      type: data.invoice_type,
+      number: data.invoice_number,
+      amount: data.amount,
+      date: data.invoice_date,
+      failed_fields: data.failed_fields,
+      parse_method: data.parse_method,
+    })
+
+    return createParseResult(data, f.name)
+  } finally {
+    if (materializedHandle) {
+      releaseMaterializedFile(materializedHandle)
+    }
   }
-
-  const data = await resp.json()
-  console.log('[parseRunner] Response data:', {
-    type: data.invoice_type,
-    number: data.invoice_number,
-    amount: data.amount,
-    date: data.invoice_date,
-    failed_fields: data.failed_fields,
-    parse_method: data.parse_method,
-  })
-
-  return createParseResult(data, f.name)
 }
