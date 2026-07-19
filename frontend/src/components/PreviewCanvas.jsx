@@ -1,6 +1,6 @@
 import { useRef, useCallback, memo, useEffect } from 'react'
 
-export default memo(function PreviewCanvas({ previewFile, previewCanvas, previewUrl, grayscale, previewRenderVersion, paperLayout, contentLayout, previewRotation, previewLoading }) {
+export default memo(function PreviewCanvas({ previewFile, previewCanvas, previewUrl, grayscale, previewRenderVersion, paperLayout, contentLayout, previewRotation, previewLoading, containerSize }) {
   const canvasRef = useRef(null)
   const imgRef = useRef(null)
 
@@ -9,6 +9,27 @@ export default memo(function PreviewCanvas({ previewFile, previewCanvas, preview
   const containerH = contentLayout?.paperDisplayRect?.h || paperLayout?.displayRect?.h || 0
   const contentReady = contentLayout?.ready
   const imgRect = contentLayout?.imageRect
+
+  // ── 骨架屏自适应尺寸计算 ──
+  // 当 contentLayout 未就绪时（骨架屏阶段），直接根据 containerSize 计算自适应尺寸
+  const computeSkeletonSize = useCallback(() => {
+    if (!paperLayout?.paperRect || !containerSize?.width) {
+      return { w: containerW, h: containerH }
+    }
+    const { width: containerWidth, height: containerHeight } = containerSize
+    const { w: paperW, h: paperH } = paperLayout.paperRect
+    const SHADOW_PAD = 8
+    const availW = containerWidth - SHADOW_PAD * 2 - 2
+    const availH = containerHeight - SHADOW_PAD * 2 - 2
+    if (availW <= 0 || availH <= 0) {
+      return { w: containerW, h: containerH }
+    }
+    const scale = Math.min(availW / paperW, availH / paperH)
+    return {
+      w: Math.round(paperW * scale),
+      h: Math.round(paperH * scale),
+    }
+  }, [paperLayout, containerSize, containerW, containerH])
 
   // ✅ L1 缓存：跟踪 DOM canvas 上次绘制的内容
   //    仅当同一 DOM canvas + 同 source canvas + 同滤镜 + 同版本时跳过重绘
@@ -79,9 +100,10 @@ export default memo(function PreviewCanvas({ previewFile, previewCanvas, preview
   // ── 骨架屏：高清未就绪时显示纸张轮廓+加载态 ──
   if (!contentReady || !previewCanvas) {
     if (previewFile && containerW > 0) {
+      const skeletonSize = computeSkeletonSize()
       return (
         <div className="preview-skeleton">
-          <div className="preview-skeleton-paper" style={{ width: containerW, height: containerH }}>
+          <div className="preview-skeleton-paper" style={{ width: skeletonSize.w, height: skeletonSize.h }}>
             <div className="preview-skeleton-shimmer" />
           </div>
         </div>
