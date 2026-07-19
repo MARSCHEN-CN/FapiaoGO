@@ -8,6 +8,7 @@ import {
 import { buildFileObj, generateFileKey, processPdfFile, stripIdentity } from '../utils/fileHelpers'
 import { createPlaceholders } from '../utils/placeholderGenerator'
 import { resolveFile } from '../services/FileResolver'
+import { prepareBatchRequest } from '../services/ParseBatchClient'
 import { consumeBatchStream } from '../services/StreamConsumer'
 import { createTask, setTaskAbortController, updateTaskStatus, cancelTask, getTask } from '../services/TaskRegistry'
 import { createQueues, enqueueSplit, enqueueParse, startSplitWorkers, startParseWorkers, getSplitQueueLength, isQueueEmpty, clearQueues } from '../services/TaskScheduler'
@@ -111,26 +112,8 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
     const ipc = electronAPIRef.current?.ipcRenderer
     const autoOrient = settingsRef.current.autoOrient ?? false
 
-    // 准备所有文件的 File 对象
-    const preparedFiles = []
-    for (const fileObj of filesToParse) {
-      if (fileObj.file) {
-        preparedFiles.push(fileObj.file)
-      } else if ((fileObj.printPath || fileObj.path) && ipc) {
-        const file = await resolveFile(fileObj, ipc)
-        preparedFiles.push(file)
-      } else {
-        preparedFiles.push(null)
-      }
-    }
-
-    const formData = new FormData()
-    for (let i = 0; i < preparedFiles.length; i++) {
-      if (preparedFiles[i]) {
-        formData.append('files', preparedFiles[i], filesToParse[i].name)
-      }
-    }
-    formData.append('autoOrient', autoOrient ? '1' : '0')
+    // 通过 ParseBatchClient 准备请求（FormData + URL）
+    const { url, formData } = await prepareBatchRequest(filesToParse, { ipc, autoOrient })
 
     // 标记所有文件为 uploading
     setFiles((prev) =>
@@ -147,7 +130,7 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
     const task = createTask(filesToParse.map((f) => f.key))
     setTaskAbortController(task.id, abortController)
 
-    const batchResult = await consumeBatchStream(`${BACKEND_URL}/parse_batch`, formData, {
+    const batchResult = await consumeBatchStream(url, formData, {
       signal: abortController.signal,
       onProgress: (msg) => {
         completedRef.current = msg.current
