@@ -169,16 +169,12 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
             if (msg.items) {
               batchResult = msg
             } else if (msg.current !== undefined) {
-              // 进度事件
+              // 进度事件 — 仅更新 ProgressStore（Commit 2b）
+              // 不修改 files[]：文件状态已在 POST 前统一设为 'uploading'，
+              // 此处重复 setFiles 是纯冗余渲染（status 条件恒等于当前值）。
+              // Progress 是 telemetry，不是业务状态（Import Pipeline Contract v1.1）。
               completedRef.current = msg.current
               setParseProgress({ current: msg.current, total: msg.total })
-              setFiles((prev) =>
-                prev.map((f) =>
-                  filesToParse.some((fp) => fp.key === f.key)
-                    ? { ...f, status: f.status === 'parsed' ? 'parsed' : 'uploading' }
-                    : f
-                )
-              )
             }
           } catch (_) { /* ignore parse errors */ }
         }
