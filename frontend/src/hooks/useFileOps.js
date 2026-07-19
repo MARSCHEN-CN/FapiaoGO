@@ -353,7 +353,7 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
             if (toAdd.length === 1) {
               const toAddRest = stripIdentity(toAdd[0])
               queueUpdate(p.key, 'ready', toAddRest)
-              progressTotal += 1
+              updateProgress(session.id, { total: (session.progress?.total || 0) + 1 })
               const readyFile = { ...p, ...toAddRest }
               enqueueParse([{ fileObj: readyFile }])
             } else if (toAdd.length > 1) {
@@ -362,19 +362,19 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
                 status: 'ready',
               }))
               replaceWithItems(p.key, pageItems)
-              progressTotal += pageItems.length
+              updateProgress(session.id, { total: (session.progress?.total || 0) + pageItems.length })
               for (const pageObj of pageItems) {
                 enqueueParse([{ fileObj: pageObj }])
               }
             } else {
               queueUpdate(p.key, 'ready', { key: p.key })
-              progressTotal += 1
+              updateProgress(session.id, { total: (session.progress?.total || 0) + 1 })
               enqueueParse([{ fileObj: { ...p, key: p.key } }])
             }
           } else {
             const fileObjRest = stripIdentity(result.fileObj)
             queueUpdate(p.key, 'ready', fileObjRest)
-            progressTotal += 1
+            updateProgress(session.id, { total: (session.progress?.total || 0) + 1 })
             const readyFile = { ...p, ...fileObjRest }
             enqueueParse([{ fileObj: readyFile }])
           }
@@ -396,19 +396,30 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
     }
 
     setParsing(true)
-    await Promise.all(splitWorkers)
-    parsePipelineDone = true
-    await Promise.all(parseWorkers)
+    updateSessionStatus(session.id, 'splitting')
+    try {
+      await Promise.all(splitWorkers)
 
-    // 解析完成后：后处理（排序 + 去重）+ 收尾状态
-    setFiles((prev) => {
-      const { files: sortedFiles } = processImportedFiles(prev, sortByRef.current, sortOrderRef.current)
-      return sortedFiles
-    })
-    setParsing(false)
-    setParseProgress({ current: 0, total: 0 })
-    setImporting(false)
-    updateSessionStatus(session.id, 'completed')
+      parsePipelineDone = true
+      updateSessionStatus(session.id, 'queued')
+      await Promise.all(parseWorkers)
+      updateSessionStatus(session.id, 'processing')
+
+      // 解析完成后：后处理（排序 + 去重）+ 收尾状态
+      setFiles((prev) => {
+        const { files: sortedFiles } = processImportedFiles(prev, sortByRef.current, sortOrderRef.current)
+        return sortedFiles
+      })
+      setParsing(false)
+      setParseProgress({ current: 0, total: 0 })
+      setImporting(false)
+      updateSessionStatus(session.id, 'completed')
+    } catch (err) {
+      console.error('[handleFiles] 会话处理失败:', err)
+      updateSessionStatus(session.id, 'failed')
+      setParsing(false)
+      setImporting(false)
+    }
   }, [setFiles, electronAPIRef, settingsRef, queueUpdate])
 
   // ============================
