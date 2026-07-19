@@ -1360,6 +1360,83 @@ def api_export_pdf_cancel():
     return jsonify({"success": False, "error": "任务不存在"}), 404
 
 
+# ============================
+#  Export Render SSE（D3-3a：RenderCommand → Raster/PDF 布局级导出）
+# ============================
+
+from services.export_render_schema import validate_export_render_request
+
+_export_render_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix='export-render')
+
+
+def _run_export_render_task(task_id, commands):
+    """D3-3a skeleton executor — 仅做契约级结构通过，不渲染、不生成 PDF。
+
+    真实光栅/PDF 执行器在 D3-3b 接入（command → fitz paper canvas → pdf）。
+    本函数**严禁**计算 fit / scale / center / rotation —— 几何所有权在前端
+    RenderCommand（createPlacement）。Grep 禁令：_apply_margins / calculateFit / fit_scale。
+
+    Args:
+        task_id:  任务 ID。
+        commands: 已通过 validate_export_render_request 的归一化命令列表
+                  （sourceRef + paper 已在 POST 边界校验完成）。
+    """
+    task = task_registry.get(task_id)
+    if task is None:
+        logger.error("[Export Render] task %s not found on execution start", task_id[:8])
+        return
+
+    try:
+        task.start()
+        for cmd in commands:
+            if task.cancelled:
+                logger.info("[Export Render] task %s 已取消", task_id[:8])
+                break
+            # D3-3a: 命令结构已校验。D3-3b 在此用 cmd['sourceRef'] + cmd['paper']
+            # 解析源、建立 fitz 画布并落盘。此处仅推进进度以闭合任务生命周期。
+            label = (cmd.get('sourceRef') or {}).get('path', 'command')
+            task.advance(label)
+        task.complete()
+    except Exception:
+        logger.exception("[Export Render] task %s 异常", task_id[:8])
+        task.fail("export-render skeleton failure")
+
+
+@app.route('/api/export-render', methods=['POST'])
+def api_export_render():
+    """D3-3a 布局级导出入口：接收前端 RenderCommand，后台执行，立即返回 taskId。
+
+    Additive：不碰 /api/export-pdf / insert_pdf / pdf_handlers / render_engine._apply_margins。
+    语义与 /api/export-pdf 不同：本端点消费**布局级 RenderCommand**（几何已由前端算好），
+    而非文件级透传。
+    """
+    data = request.get_json(silent=True) or {}
+    commands, err = validate_export_render_request(data)
+    if err:
+        return jsonify({"success": False, "error": err}), 400
+
+    task = task_registry.create(total=len(commands))
+    _export_render_executor.submit(_run_export_render_task, task.id, commands)
+    return jsonify({"success": True, "taskId": task.id})
+
+
+@app.route('/api/export-render/events/<task_id>', methods=['GET'])
+def api_export_render_events(task_id):
+    """SSE 流式读取导出渲染任务状态（只读，与 /api/export-pdf/events 同构）。"""
+    if task_registry.get(task_id) is None:
+        return jsonify({"success": False, "error": "任务不存在"}), 404
+
+    def generate():
+        for state in stream_export_progress(task_id, task_registry):
+            yield f"data: {_json.dumps(state, ensure_ascii=False)}\n\n"
+
+    return Response(
+        stream_with_context(generate()),
+        mimetype='text/event-stream',
+        headers={'Cache-Control': 'no-cache', 'Connection': 'keep-alive', 'X-Accel-Buffering': 'no'},
+    )
+
+
 if __name__ == '__main__':
     logging.basicConfig(
         level=logging.DEBUG,
