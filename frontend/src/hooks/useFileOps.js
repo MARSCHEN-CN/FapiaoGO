@@ -9,6 +9,17 @@ import { buildFileObj, generateFileKey, processPdfFile, stripIdentity } from '..
 import { createPlaceholders } from '../utils/placeholderGenerator'
 import { db } from '../db'
 
+// ── 状态迁移规则 ─────────────────────────────────────────
+// 仅允许正向状态迁移，阻止回退（Import Pipeline Contract v1.1）
+const VALID_TRANSITION = {
+  uploading: ['splitting', 'ready', 'parsing'],
+  splitting: ['ready', 'error'],
+  ready: ['parsing', 'error'],
+  parsing: ['parsed', 'error'],
+  parsed: [],
+  error: ['parsing'],
+}
+
 export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sortOrderRef }) {
   const [isNativeDragActive, setIsNativeDragActive] = useState(false)
   const [importing, setImporting] = useState(false)   // 整个导入流程（处理+解析）
@@ -21,6 +32,53 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
   useEffect(() => {
     settingsRef.current = settings
   }, [settings])
+
+  // ── Batch UI Sync ─────────────────────────────────────────
+  // 批量状态更新队列，替代逐次 setFiles（Import Pipeline Contract v1.1）
+  // Commit 2a: 仅替换 safeUpdate 实现，不改变状态迁移规则
+  const pendingUpdatesRef = useRef(new Map())
+  const flushScheduledRef = useRef(false)
+  const pendingFrameRef = useRef(null)
+  const setFilesRef = useRef(setFiles)
+  setFilesRef.current = setFiles
+
+  const flushUpdates = useCallback(() => {
+    flushScheduledRef.current = false
+    pendingFrameRef.current = null
+    const pending = pendingUpdatesRef.current
+    pendingUpdatesRef.current = new Map()
+    if (pending.size === 0) return
+
+    setFilesRef.current((prev) =>
+      prev.map((f) => {
+        const update = pending.get(f.key)
+        if (!update) return f
+        const { newStatus, extra } = update
+        const allowed = VALID_TRANSITION[f.status]
+        if (allowed && !allowed.includes(newStatus)) return f
+        return { ...f, ...extra, status: newStatus }
+      })
+    )
+  }, [])
+
+  const scheduleFlush = useCallback(() => {
+    if (flushScheduledRef.current) return
+    flushScheduledRef.current = true
+
+    const doFlush = () => { flushUpdates() }
+
+    if (typeof requestIdleCallback === 'function') {
+      pendingFrameRef.current = requestIdleCallback(doFlush, { timeout: 200 })
+    } else {
+      pendingFrameRef.current = setTimeout(doFlush, 100)
+    }
+  }, [flushUpdates])
+
+  const queueUpdate = useCallback((key, newStatus, extra = {}) => {
+    // Map 去重：同一文件只保留最新状态
+    pendingUpdatesRef.current.set(key, { newStatus, extra })
+    scheduleFlush()
+  }, [scheduleFlush])
 
   // ============================
   // 任务状态枚举
@@ -444,32 +502,10 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
       return [...prev, ...placeholders.filter((f) => !existingKeys.has(f.path || f.name))]
     })
 
-    // ── 安全更新 helper（仅允许正向状态迁移，阻止回退） ────────────────
-    // 放宽到真实存在的流转路径：
-    //  - PDF：uploading→splitting→ready→parsing→parsed
-    //  - 非 PDF：uploading→ready→parsing→parsed（buildFileObj 默认 parsing）
-    //  - 任意：→error；error→parsing（允许重试）
-    const VALID_TRANSITION = {
-      uploading: ['splitting', 'ready', 'parsing'],
-      splitting: ['ready', 'error'],
-      ready: ['parsing', 'error'],
-      parsing: ['parsed', 'error'],
-      parsed: [],
-      error: ['parsing'],
-    }
-    const safeUpdate = (key, newStatus, extra = {}) => {
-      setFiles((prev) =>
-        prev.map((f) => {
-          if (f.key !== key) return f
-          const allowed = VALID_TRANSITION[f.status]
-          if (allowed && !allowed.includes(newStatus)) {
-            // 不允许降级，静默忽略
-            return f
-          }
-          return { ...f, ...extra, status: newStatus }
-        })
-      )
-    }
+    // ── 状态更新（批量队列） ─────────────────────────────
+    // 使用 queueUpdate 替代直接的 setFiles 调用，通过 requestIdleCallback
+    // 批量应用状态变更，避免大量文件导入时的渲染风暴。
+    // VALID_TRANSITION 守卫在 flushUpdates 内部执行。
     const replaceWithItems = (key, newItems) => {
       setFiles((prev) => {
         const idx = prev.findIndex((f) => f.key === key)
@@ -507,7 +543,7 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
 
         const { fileObj } = job
         // only parse if still ready (might have been removed)
-        safeUpdate(fileObj.key, 'parsing')
+        queueUpdate(fileObj.key, 'parsing')
 
         try {
           const f = fileObj
@@ -565,7 +601,7 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
               parse_method: data.parse_method
             })
             const fields = data.invoice_fields || data.invoiceFields || {}
-            safeUpdate(f.key, 'parsed', {
+            queueUpdate(f.key, 'parsed', {
               invoiceType: data.invoice_type || data.invoiceType || '',
               invoiceNumber: data.invoice_number || data.invoiceNumber || '',
               amount: data.amount != null ? String(data.amount) : '',
@@ -597,7 +633,7 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
           }
         } catch (err) {
           console.error(`[App] 解析失败: ${fileObj.name}`, err)
-          safeUpdate(fileObj.key, 'error')
+          queueUpdate(fileObj.key, 'error')
         } finally {
           // 无论成功/失败都推进进度，保证进度条能走到 100%
           doneParseJobsRef.current += 1
@@ -614,7 +650,7 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
       while (splitQueue.length > 0) {
         const job = splitQueue.shift()
         const { p, file: f } = job
-        safeUpdate(p.key, 'splitting')
+        queueUpdate(p.key, 'splitting')
 
         try {
           if (f.name.toLowerCase().endsWith('.pdf')) {
@@ -628,7 +664,7 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
               // ✅ 防御性：剥离 toAdd[0] 自带的身份字段（key 等），
               //    用 p.key 作为唯一身份，避免身份被覆盖导致 parse 结果丢失（Blocker 2）
               const toAddRest = stripIdentity(toAdd[0])
-              safeUpdate(p.key, 'ready', toAddRest)
+              queueUpdate(p.key, 'ready', toAddRest)
               totalParseJobsRef.current += 1
 
               // 立即加入 parse 队列（key 由 ...p 提供 = p.key，身份不被 toAdd 覆盖）
@@ -649,7 +685,7 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
               }
             } else {
               // split 产出为空 — 兜底：直接把原始占位项送去解析
-              safeUpdate(p.key, 'ready', { key: p.key })
+              queueUpdate(p.key, 'ready', { key: p.key })
               totalParseJobsRef.current += 1
               parseQueue.push({ fileObj: { ...p, key: p.key } })
             }
@@ -658,7 +694,7 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
             const fileObj = buildFileObj(p.file, f.name, f.path)
             // ✅ 防御性：剥离 fileObj 自带身份字段，用 p.key 作为唯一身份
             const fileObjRest = stripIdentity(fileObj)
-            safeUpdate(p.key, 'ready', fileObjRest)
+            queueUpdate(p.key, 'ready', fileObjRest)
             totalParseJobsRef.current += 1
 
             const readyFile = { ...p, ...fileObjRest }
@@ -666,7 +702,7 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
           }
         } catch (err) {
           console.error(`[App] 文件处理失败: ${f.name}`, err)
-          safeUpdate(p.key, 'error')
+          queueUpdate(p.key, 'error')
         }
       }
     }
@@ -700,7 +736,7 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
     setParsing(false)
     setParseProgress({ current: 0, total: 0 })
     setImporting(false)
-  }, [setFiles, electronAPIRef, settingsRef])
+  }, [setFiles, electronAPIRef, settingsRef, queueUpdate])
 
   // ============================
   // Native Drop（支持文件和文件夹）
