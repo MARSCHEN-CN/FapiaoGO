@@ -522,3 +522,8 @@ Excel导出增强_合计行加序号修复方案.md
 Excel导出增加分类编码列方案.md
 docs/architecture/import-pipeline-v1.md
 docs/architecture/commit-1a-audit.md
+docs/architecture/render-task-boundary-audit.md
+docs/architecture/print-pipeline-audit.md
+docs/architecture/export-pipeline-audit.md
+docs/architecture/export-pipeline-status.md
+docs/architecture/export-boundary-audit.md
