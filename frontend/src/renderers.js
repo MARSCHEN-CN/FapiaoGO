@@ -720,15 +720,14 @@ function _getWorker() {
 // [B1 p2] Compose Placement 接线：Preview(_renderViaWorker) 与 Print(_renderDirect)
 // 共用 createPlacement 作为唯一几何来源，不再各自内联 fit/offset/clip 数学。
 //
-// [C2-a] Compose 几何所有权已上移：slot.contentRect 由 ComposeSlotLayoutFactory +
-// ComposeSlotRasterizer（冻结的旧 px 分区 + 内缩 marginMm）统一产出。本文件只消费
-// slot.contentRect（见 _buildComposeCommand），不再计算、不再持有 COMPOSE_SLOT_MARGIN_MM。
+// Compose 几何（含内缩安全边距）由上游 ComposeSlotLayoutFactory + ComposeSlotRasterizer 冻结产出；
+// 本文件只消费 slot.contentRect，不重算 Compose 几何。
 // 铁律（C 阶段）：Derived geometry 只跨越所有权边界一次（Layout → Renderer 单向）。
 
 // 单一 Compose 几何来源：px slot + 内容源尺寸 + 旋转 → RenderCommand。
 // 与 Worker 端 drawRenderCommand 像素级同构（offset 为左上角、clip=contentRect、
 // rotatedBounds 为旋转后内容尺寸、scale 不烘焙进尺寸）。本函数只做几何→命令组装。
-// [C2-a] 直接消费 slot.contentRect（已含内缩安全边距，由上游 ComposeSlotRasterizer 冻结产出），
+// 直接消费 slot.contentRect（已含内缩安全边距，由上游 ComposeSlotRasterizer 冻结产出），
 // 不在 renderer 内重算 Compose 几何（ownership 泄漏）。
 function _buildComposeCommand(slot, cs, rotate, paper) {
   if (!slot || !cs) return null
@@ -751,7 +750,7 @@ function _buildComposeCommand(slot, cs, rotate, paper) {
  * [B1 p2] 用 ComposePlacementFactory 产出 RenderCommand[] 供 Worker 纯执行。
  * 几何由 createPlacement 唯一计算；本函数只做「slot + 内容源 + 旋转 → RenderCommand」遍历组装。
  * slot.contentRect 已含内缩安全边距（单页 === slot，Merge 内缩），由上游 ComposeSlotRasterizer 冻结产出；
- * 本函数不重算 margin / dpi（C2-a：Derived geometry 只跨越所有权边界一次）。
+ * 本函数不重算 margin / dpi（Derived geometry 只跨越所有权边界一次）。
  *
  * @param {object} layout - createLayout 产出（slots: [{itemId,x,y,width,height,contentRect}, ...]）
  * @param {Map<string,{source:*,width:number,height:number}>} contentSources - itemId → 真实内容尺寸
@@ -761,7 +760,7 @@ function _buildComposeCommand(slot, cs, rotate, paper) {
  */
 function _buildComposeCommands(layout, contentSources, rotations, paper) {
   const { slots } = layout
-  // [C2-a] 不再计算 margin / dpi：contentRect 已含内缩，由上游产出。本函数只遍历组装。
+  // 不再计算 margin / dpi：contentRect 已含内缩，由上游产出。本函数只遍历组装。
   return slots.map((slot) => {
     const cs = slot ? contentSources.get(slot.itemId) : null
     const rotate = (slot && rotations && rotations[slot.itemId]) || 0
@@ -978,10 +977,6 @@ export async function renderMultipleItemsToCanvas(
   const cachedCanvas = renderResultCache.get(_cacheKey)
   if (cachedCanvas) return cachedCanvas
 
-  // [DIAG v4-Step0] 确认 Merge 真实执行路径（worker vs direct）。验证后删除。
-  console.log('[MERGE PATH]', (!isPrint && typeof OffscreenCanvas !== 'undefined') ? 'worker' : 'direct',
-    { isPrint, hasOffscreen: typeof OffscreenCanvas !== 'undefined' })
-
   // 打印路径或环境不支持 Worker → 直接渲染
   if (isPrint || typeof OffscreenCanvas === 'undefined') {
     return _renderDirect(items, paperKey, dpi, isLandscape, rotations, slotCount, isPrint, showSafeMargin, layoutOptions)
@@ -992,7 +987,6 @@ export async function renderMultipleItemsToCanvas(
     return await _renderViaWorker(items, paperKey, dpi, isLandscape, rotations, slotCount, layoutOptions)
   } catch (e) {
     console.warn('[renderMultipleItemsToCanvas] Worker 失败，回退到主线程:', e.message)
-    console.log('[MERGE PATH] worker-failed → fallback direct')  // [DIAG v4-Step0] 区分可能 B
     return _renderDirect(items, paperKey, dpi, isLandscape, rotations, slotCount, isPrint, showSafeMargin, layoutOptions)
   }
 }
@@ -1124,7 +1118,7 @@ async function _renderDirect(
     if (!cs) continue
     const rotate = (rotations && rotations[slot.itemId]) || 0
 
-    // [B1 p2 / C2-a] 与 Preview(_buildComposeCommands) 共用唯一几何来源 createPlacement；直接消费 slot.contentRect。
+    // [B1 p2] 与 Preview(_buildComposeCommands) 共用唯一几何来源 createPlacement；直接消费 slot.contentRect。
     const cmd = _buildComposeCommand(slot, cs, rotate, page)
     if (!cmd) continue
 
