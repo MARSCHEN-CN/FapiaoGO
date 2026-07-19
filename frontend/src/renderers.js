@@ -9,6 +9,7 @@ import { createLayout, normalizeLayoutItem, normalizeLayoutItems, getPaperPixels
 import { isDocumentEngineEnabled, makeImageRef, ConcreteImageHandle, MemoryPixelHandle } from './documentEngine.js'  // P2C 统一入口门面（v12 契约 JS 实现；路线见 v14 §6/§13）+ ②b 桥接用 ImageHandle 值类型（facade 单向依赖，Law #2 允许）
 import { createPlacement } from './compose/composePlacement.js'  // [B1 p2] Virtual Paper 几何（contentRect fit）：Preview/Print 共用唯一几何来源
 import { drawRenderCommand } from './layout/renderDraw.js'  // [C3-2] 与 Worker 共用唯一 executor（drawRenderCommand 纯执行、DOM-free）
+import { buildSingleFileRenderCommand } from './layout/singleFileRenderCommand.js'  // [D1-2] 单文件预览 RenderCommand Producer（与 Compose/Print 同契约）
 // ✅ renderModel.js 为死代码，renderMultipleItemsToCanvas 直接做 transform，不经过 RenderModel
 // import { createRenderModels, applyTransformToContext, restoreContext } from './renderModel'
 
@@ -1343,49 +1344,51 @@ function _getPreviewPdfTempCanvas(w, h) {
 
 /**
  * 切换 PDF 文件到全局 Canvas（双缓冲，防闪烁）
+ *
+ * [D1-2] 单文件 PDF 预览统一收敛到 RenderCommand：
+ *  • 几何由 buildSingleFileRenderCommand（createPlacement）单一决策，drawRenderCommand 纯执行；
+ *    Renderer 不再自算 fit / offset / rotation（ownership 收敛到 Layout/Placement 层）。
+ *  • 源必须「非预旋」：PDF 在 rotation:0 光栅化，旋转由 executor 的 contentRotation 施加，
+ *    与 Compose/Print 同一模型（消除旧 switchPreviewFile 把旋转烤进 bitmap 的特例）。
+ *  • fitScale 仅决定 PDF 采样分辨率(device px)，使 source 像素 ≈ 落盘像素（1:1，画质等同旧实现）；
+ *    落盘 placement / clip / rotation 仍完全由 createPlacement → drawRenderCommand 计算。
  */
 export async function switchPreviewFile(pdfDoc, pageNum = 1, signal, rotation = 0) {
-  // ②b：像素来源从 pdf.js 直绘改为「ImageHandle → drawImage」桥接。
-  // 像素仍由旧 Renderer(pdf.js) 产生；documentEngine 仅提供 ImageHandle 值类型，
-  // 不参与编排（不调用 getImage / 不引入 P4 pdf.js 耦合 / Engine 不知 Canvas）。
-  const { dpi } = _globalPreviewCanvasConfig || {}
+  const { width: paperW, height: paperH } = _globalPreviewCanvasConfig || {}
+  const paper = { width: paperW || 0, height: paperH || 0 }
   const v = await _renderToGlobalCanvas(async (ctx, contentW, contentH, marginL, marginT) => {
     if (signal?.aborted) return
     const page = await pdfDoc.getPage(pageNum)
 
-    // ✅ 先算出旋转后的 viewport 尺寸，再用它算 scale，确保填满可打印区域
-    const rotatedViewport = page.getViewport({ scale: 1, rotation })
-    const scale = Math.min(contentW / rotatedViewport.width, contentH / rotatedViewport.height)
-    const renderViewport = page.getViewport({ scale, rotation })
-    const offsetX = marginL + (contentW - renderViewport.width) / 2
-    const offsetY = marginT + (contentH - renderViewport.height) / 2
+    const baseViewport = page.getViewport({ scale: 1, rotation: 0 })
+    const baseW = baseViewport.width
+    const baseH = baseViewport.height
+    // 旋转感知栅格化比例：让 source 像素 ≈ 落盘像素（1:1，画质等同旧 switchPreviewFile）。
+    // 仅决定 PDF 采样分辨率，落盘几何仍由 createPlacement → drawRenderCommand 计算（非 Renderer 重算）。
+    const fitScale = (baseW > 0 && baseH > 0)
+      ? (rotation % 180 === 0
+        ? Math.min(contentW / baseW, contentH / baseH)
+        : Math.min(contentW / baseH, contentH / baseW))
+      : 0
+    if (!(fitScale > 0)) { await page.cleanup(); return }
 
-    // —— ②b 桥接：pdf.js 光栅到临时 canvas，包成 ImageHandle，再 drawImage 到全局 canvas ——
-    // 复用上面完全相同的 scale / offset，确保输出像素级不变。
+    const renderViewport = page.getViewport({ scale: fitScale, rotation: 0 }) // 始终 rotation:0 → 源非预旋
     const tw = Math.max(1, Math.ceil(renderViewport.width))
     const th = Math.max(1, Math.ceil(renderViewport.height))
-    // ✅ 复用模块级临时 canvas（M1 修复）：避免每次预览切换都 createElement + getContext（GC 抖动/卡顿）。
-    // 仅当尺寸变化时重新分配 backing store；同尺寸（同页切换）时零重分配。
+    // ✅ 复用模块级临时 canvas（M1 修复）：仅尺寸变化时重分配 backing store，同尺寸零重分配。
     const tempCanvas = _getPreviewPdfTempCanvas(tw, th)
     const tctx = tempCanvas.getContext('2d')
-    // ✅ 修复（B-2.2 调查）：复用模块级 tempCanvas 前必须 reset 变换矩阵 + 清空旧像素。
-    //    pdf.js 的 page.render 在复用 ctx 上可能残留/叠加变换（取决于 pdf.js 版本），
-    //    且 pdf.js 不会主动 clearRect，旧文件像素会透出。两者都会造成「第一张正常、后续旋转/错位」。
-    //    仅当 tempCanvas 尺寸变化时 _getPreviewPdfTempCanvas 才会重置，同尺寸（同页/同分辨率切换）不重置 → 必须显式 reset。
+    // ✅ 复用前必须 reset 变换矩阵 + 清空旧像素（pdf.js 不主动 clearRect，残留变换会致错位）。
     tctx.setTransform(1, 0, 0, 1, 0, 0)
     tctx.clearRect(0, 0, tw, th)
     await page.render({ canvasContext: tctx, viewport: renderViewport }).promise
 
-    const ref = makeImageRef(`pdf_${pageNum}_${rotation}`, tw, th, dpi || 72, {
-      source: 'preview-pdf', page: pageNum, rotation,
-    })
-    // 桥接层保留（documentEngine 的 ImageHandle 值类型契约，Engine 不感知 Canvas）。
-    // release 改为 no-op：画布已被模块级缓存复用，清零反而会在同尺寸重用时强制 backing store 重分配。
-    const handle = new ConcreteImageHandle(ref, () => {})
-    const pixel = new MemoryPixelHandle(ref, tempCanvas)
-    const bitmap = await pixel.asBitmap()  // 浏览器端返回 tempCanvas（HTMLCanvasElement），可作 drawImage 源
-    ctx.drawImage(bitmap, offsetX, offsetY, renderViewport.width, renderViewport.height)
-    await handle.release()
+    const sourceWidth = tw
+    const sourceHeight = th
+    const contentRect = { x: marginL, y: marginT, width: contentW, height: contentH }
+    const cmd = buildSingleFileRenderCommand({ sourceWidth, sourceHeight, contentRect, rotation, paper })
+    // executor 纯执行：fit/居中/旋转/clip 全部来自 cmd，Renderer 不再碰几何。
+    drawRenderCommand(ctx, cmd, tempCanvas, sourceWidth, sourceHeight, 1)
 
     await page.cleanup()
   }, signal)
@@ -1395,40 +1398,24 @@ export async function switchPreviewFile(pdfDoc, pageNum = 1, signal, rotation = 
 /**
  * 切换图片/OFD 到全局 Canvas（双缓冲，防闪烁）
  * @param {HTMLImageElement|HTMLCanvasElement} image - 已加载的图片元素
+ *
+ * [D1-2] 与 switchPreviewFile 同一模型：源（image 固有尺寸，非预旋）交给
+ * buildSingleFileRenderCommand 生成 RenderCommand，drawRenderCommand 纯执行。
+ * 不再用 ctx.rotate / document.createElement 现转旋转（旧不一致模型已消除）。
  */
 export async function switchPreviewImage(image, signal, rotation = 0) {
+  const { width: paperW, height: paperH } = _globalPreviewCanvasConfig || {}
+  const paper = { width: paperW || 0, height: paperH || 0 }
   return _renderToGlobalCanvas(async (ctx, contentW, contentH, marginL, marginT) => {
     if (signal?.aborted) return
 
     const imgW = image.naturalWidth || image.width
     const imgH = image.naturalHeight || image.height
-    // ✅ 先根据旋转交换尺寸，再算 scale，确保 fill 模式填满可打印区域
-    let fitW = imgW, fitH = imgH
-    if (rotation % 180 !== 0) { [fitW, fitH] = [fitH, fitW] }
-    const scale = Math.min(contentW / fitW, contentH / fitH)
-    const renderW = imgW * scale
-    const renderH = imgH * scale
-    // 旋转后实际的 canvas 尺寸（宽高交换）
-    let drawW = renderW, drawH = renderH
-    if (rotation % 180 !== 0) { [drawW, drawH] = [drawH, drawW] }
+    if (!(imgW > 0) || !(imgH > 0)) return
 
-    const offsetX = marginL + (contentW - drawW) / 2
-    const offsetY = marginT + (contentH - drawH) / 2
-
-    if (rotation === 0) {
-      ctx.drawImage(image, offsetX, offsetY, drawW, drawH)
-    } else {
-      const tempCanvas = document.createElement('canvas')
-      tempCanvas.width = drawW
-      tempCanvas.height = drawH
-      const tempCtx = tempCanvas.getContext('2d')
-
-      tempCtx.translate(drawW / 2, drawH / 2)
-      tempCtx.rotate((rotation * Math.PI) / 180)
-      tempCtx.drawImage(image, -imgW * scale / 2, -imgH * scale / 2, imgW * scale, imgH * scale)
-
-      ctx.drawImage(tempCanvas, offsetX, offsetY)
-    }
+    const contentRect = { x: marginL, y: marginT, width: contentW, height: contentH }
+    const cmd = buildSingleFileRenderCommand({ sourceWidth: imgW, sourceHeight: imgH, contentRect, rotation, paper })
+    drawRenderCommand(ctx, cmd, image, imgW, imgH, 1)
   }, signal)
 }
 
