@@ -112,10 +112,10 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
     const ipc = electronAPIRef.current?.ipcRenderer
     const autoOrient = settingsRef.current.autoOrient ?? false
 
-    // 通过 ParseBatchClient 准备请求（FormData + URL）
+    // 1. 通过 ParseBatchClient 准备请求（FormData + URL）
     const { url, formData } = await prepareBatchRequest(filesToParse, { ipc, autoOrient })
 
-    // 标记所有文件为 uploading
+    // 2. 标记所有文件为 uploading（UI 状态初始同步）
     setFiles((prev) =>
       prev.map((f) =>
         filesToParse.some((fp) => fp.key === f.key)
@@ -124,8 +124,9 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
       )
     )
 
-    // 通过 StreamConsumer + TaskRegistry 消费 SSE 流
-    // SSE 生命周期由 TaskRegistry 管理（AbortController 统一取消）
+    // 3. 通过 StreamConsumer + TaskRegistry 消费 SSE 流
+    //    SSE 生命周期由 TaskRegistry 管理（AbortController 统一取消）
+    //    ParseResultConsumer 将结果写入 ImportSessionStore + 返回 UI 更新
     const abortController = new AbortController()
     const task = createTask(filesToParse.map((f) => f.key))
     setTaskAbortController(task.id, abortController)
@@ -133,17 +134,14 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
     const batchResult = await consumeBatchStream(url, formData, {
       signal: abortController.signal,
       onProgress: (msg) => {
-        completedRef.current = msg.current
         setParseProgress({ current: msg.current, total: msg.total })
       },
     })
 
     updateTaskStatus(task.id, 'completed')
 
-    // 通过 ParseResult + Consumer 处理批量结果
+    // 4. 消费批量结果：Consumer 写入 Store + 收集 UI 更新
     const updates = new Map()
-    let completedCount = 0
-
     for (const item of batchResult.items) {
       const fileObj = filesToParse[item.index]
       if (!fileObj) continue
@@ -153,16 +151,11 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
         const update = consumeParseResult(result, fileObj, task.id)
         updates.set(fileObj.key, { ...update, status: result.status })
       } else {
-        updates.set(fileObj.key, {
-          status: 'error',
-          errorMsg: item.error || '解析失败',
-        })
+        updates.set(fileObj.key, { status: 'error', errorMsg: item.error || '解析失败' })
       }
-
-      completedCount++
     }
 
-    // 单次批量更新，O(n) 而非 O(n²)
+    // 5. 批量同步到 React UI
     if (updates.size > 0) {
       setFiles((prev) =>
         prev.map((f) => {
@@ -172,11 +165,7 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
       )
     }
 
-    completedRef.current += completedCount
-    setParseProgress({
-      current: completedRef.current,
-      total: filesToParse.length,
-    })
+    // 6. 进度已由 SSE onProgress 实时更新，不再重复计算
   }, [electronAPIRef])
 
   // ============================
