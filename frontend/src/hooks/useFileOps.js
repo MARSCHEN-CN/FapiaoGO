@@ -14,6 +14,7 @@ import { createTask, setTaskAbortController, updateTaskStatus, cancelTask, getTa
 import { createQueues, enqueueSplit, enqueueParse, startSplitWorkers, startParseWorkers, getSplitQueueLength, isQueueEmpty, clearQueues } from '../services/TaskScheduler'
 import { runParseTask } from '../runners/parseRunner'
 import { runSplitTask } from '../runners/splitRunner'
+import { runFallbackParseTask } from '../runners/fallbackParseRunner'
 import { mapParseResultToFileUpdate } from '../mappers/parseResultMapper'
 import { createImportSession, addFilesToSession, replaceFileItems, updateProgress, updateSessionStatus } from '../stores/ImportSessionStore'
 import { processImportedFiles } from '../processors/invoicePostProcessor'
@@ -210,141 +211,35 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
       }
 
       await concurrentBatch(filesToParse, async (fileObj) => {
-        let retries = 0
-        let lastError = null
+        // 通过 fallbackParseRunner 执行单文件解析
+        // Runner 处理：文件读取 + FormData + fetch + retry → ParseResult
+        const task = { fileObj }
+        const outcome = await runFallbackParseTask(task, { ipc, autoOrient, maxRetry: MAX_RETRY })
 
-        while (retries <= MAX_RETRY) {
-          try {
-            let resp
+        if (outcome.success && outcome.result) {
+          // 通过 Consumer 写入 Store + 生成 UI 更新
+          consumeParseResult(outcome.result, fileObj, null)
 
-            // 更新状态为 reading
-            setFiles((prev) =>
-              prev.map((f) =>
-                f.key === fileObj.key ? { ...f, status: 'reading' } : f
-              )
+          setFiles((prev) =>
+            prev.map((f) =>
+              f.key === fileObj.key
+                ? { ...f, ...mapParseResultToFileUpdate(outcome.result, fileObj), status: outcome.status }
+                : f
             )
-
-            if (fileObj.file) {
-              const formData = new FormData()
-              formData.append('file', fileObj.file)
-              formData.append('autoOrient', autoOrient ? '1' : '0')
-              // ✅ 批量模式不返回预览图和原始文本，减少数据传输
-              formData.append('mode', 'batch')
-
-              // 更新状态为 uploading
-              setFiles((prev) =>
-                prev.map((f) =>
-                  f.key === fileObj.key ? { ...f, status: 'uploading' } : f
-                )
-              )
-
-              resp = await fetch(`${BACKEND_URL}/parse_invoice`, { method: 'POST', body: formData })
-            } else if ((fileObj.printPath || fileObj.path) && ipc) {
-              const file = await resolveFile(fileObj, ipc)
-              if (!file) throw new Error('IPC read-file failed: ' + fileObj.name)
-              const formData = new FormData()
-              formData.append('file', file)
-              formData.append('autoOrient', autoOrient ? '1' : '0')
-              formData.append('mode', 'batch')
-
-              setFiles((prev) =>
-                prev.map((f) =>
-                  f.key === fileObj.key ? { ...f, status: 'uploading' } : f
-                )
-              )
-
-              resp = await fetch(`${BACKEND_URL}/parse_invoice`, { method: 'POST', body: formData })
-            }
-
-            if (!resp) {
-              throw new Error('无法获取响应')
-            }
-
-            // ✅ 处理 429 限流错误，延迟重试
-            if (resp.status === 429) {
-              if (retries < MAX_RETRY) {
-                console.log(`[parseFiles] 服务器繁忙，等待 ${RETRY_DELAY_MS}ms 后重试: ${fileObj.key}`)
-                await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS))
-                retries++
-                continue
-              }
-              throw new Error('服务器繁忙，请稍后重试')
-            }
-
-            if (resp.ok) {
-              const data = await resp.json()
-
-              // ✅ 后端 parse_invoice_service 已自动入库，前端无需重复 upsert
-
-              setFiles((prev) =>
-                prev.map((f) =>
-                  f.key === fileObj.key
-                    ? {
-                        ...f,
-                        status: 'parsed',
-                        // 优先从数据库记录读取（单数据源），回退到 API 响应字段
-                        invoiceType: data.db_record?.type || data.invoice_type || data.invoiceType || '',
-                        invoiceNumber: data.db_record?.number || data.invoice_number || data.invoiceNumber || '',
-                        amount: data.db_record?.amount != null ? String(data.db_record.amount) : (data.amount || ''),
-                        invoiceDate: data.db_record?.date || data.invoice_date || data.invoiceDate || '',
-                        newName: data.new_name || data.newName || fileObj.name,
-                        parseMethod: data.parse_method || data.parseMethod || '',
-                        fileFormat: data.file_format || data.fileFormat || getFileFormat(fileObj.name),
-                        previewImage: data.preview_image || data.previewImage || null,
-                        failedFields: data.failed_fields || data.failedFields || [],
-                        // 兼容新旧架构：invoice_fields（旧/蛇形）和 invoiceFields（新/驼峰）
-                        invoiceFields: data.invoice_fields || data.invoiceFields || null,
-                        // 以下字段优先从 db_record 读取，确保显示值与数据库一致
-                        issuer: data.db_record?.issuer || (data.invoice_fields || data.invoiceFields || {})?.kpr || '',
-                        amountWithoutTax: data.db_record?.tax_amount != null
-                          ? String(Math.round((parseFloat(data.db_record.amount || 0) - parseFloat(data.db_record.tax_amount || 0)) * 100) / 100)
-                          : (data.invoice_fields || data.invoiceFields || {})?.amountJe || '',
-                        taxAmount: data.db_record?.tax_amount != null ? String(data.db_record.tax_amount) : (data.invoice_fields || data.invoiceFields || {})?.amountSe || '',
-                        lineItems: (data.invoice_fields || data.invoiceFields || {})?.line_items || [],
-                        rawText: data.raw_text || '',
-                        searchText: buildSearchText({
-                          name: f.name,
-                          invoiceNumber: data.db_record?.number || data.invoice_number || data.invoiceNumber || '',
-                          invoiceType: data.db_record?.type || data.invoice_type || data.invoiceType || '',
-                          amount: data.db_record?.amount != null ? String(data.db_record.amount) : (data.amount || ''),
-                          invoiceDate: data.db_record?.date || data.invoice_date || data.invoiceDate || '',
-                          invoice_fields: data.invoice_fields || data.invoiceFields || {},
-                          rawText: data.raw_text || '',
-                        }),
-                      }
-                    : f
-                )
-              )
-              // ✅ 更新解析进度
-              completedRef.current += 1
-              setParseProgress({ current: completedRef.current, total: filesToParse.length })
-              return
-            } else {
-              throw new Error(`解析失败: HTTP ${resp.status}`)
-            }
-
-          } catch (err) {
-            lastError = err
-            console.warn('[parseFiles] 解析文件失败:', fileObj.key, err.message)
-
-            if (retries < MAX_RETRY) {
-              console.log(`[parseFiles] 重试第 ${retries + 1} 次: ${fileObj.key}`)
-              await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS))
-              retries++
-            } else {
-              break
-            }
-          }
+          )
+        } else {
+          setFiles((prev) =>
+            prev.map((f) =>
+              f.key === fileObj.key
+                ? { ...f, status: 'error', errorMsg: outcome.error || '解析失败' }
+                : f
+            )
+          )
         }
 
-        // 重试后仍然失败
-        setFiles((prev) =>
-          prev.map((f) =>
-            f.key === fileObj.key
-              ? { ...f, status: 'error', errorMsg: lastError?.message || '解析失败' }
-              : f
-          )
-        )
+        // 更新解析进度
+        completedRef.current += 1
+        setParseProgress({ current: completedRef.current, total: filesToParse.length })
       }, CONCURRENCY_LIMIT)
 
       setFiles((prev) => {
