@@ -879,7 +879,7 @@ async function _renderViaWorker(items, paperKey, dpi, isLandscape, rotations, sl
         rotation: (rotations && rotations[id]) || 0,
       }
     })
-    const result = compose({ paperLayout, documents })
+    const result = compose({ paperLayout, documents, ticketCount: slotCount })
     commands = result.map(r => r.renderCommand)
     const slotPositions = computeTicketSlots(paperLayout, items.length)
     const effW = isLandscape ? paperLayout.paperRect.h : paperLayout.paperRect.w
@@ -1169,7 +1169,7 @@ async function _renderDirect(
       }
     })
 
-    const result = compose({ paperLayout, documents })
+    const result = compose({ paperLayout, documents, ticketCount: slotCount })
     commands = result.map(r => r.renderCommand)
     slotPositions = computeTicketSlots(paperLayout, items.length)
 

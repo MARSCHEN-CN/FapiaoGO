@@ -30,35 +30,41 @@ import { buildRenderCommand } from './RenderLayoutFactory.js'
 /**
  * 把一页 N 票的文档组 → 每票 RenderCommand（fit+center+clip 进其 slot）。
  *
+ * 关键设计：
+ *   ticketCount 与 documents.length 解耦——merge 模式下页面 slot 数由
+ *   merge 设置（如 merge2=2）决定，独立于实际提供的文档数（如在 merge2
+ *   + 1 文件场景下，页面仍然分为 2 个 slot，文件进 slot0，slot1 空）。
+ *   当 ticketCount 缺省时，回退 documents.length（单文件/非 merge 兼容）。
+ *
  * 调用方职责：
  *   ① 准备 paperLayout（computePaperLayout 产物，含已内缩边距的 usableRect）
  *   ② 准备 documents[]（来自 ImportSessionStore / 文件列表的 documentState）
- *   ③ 本函数按 documents.length 计算 slot 数（无需显式 ticketCount 参数）
+ *   ③ ticketCount（可选）：页面 slot 总数；缺省=documents.length
  *
  * 不变量：
- *   • 输出数组长度 === documents.length（行数一致，producer 端不会缺 slot）
+ *   • 输出数组长度 === min(documents.length, slots.length)（每文档一个 command）
  *   • 每个 renderCommand 的 clip 锁在 slot 边界，executor 端防邻票渗色
  *   • count<=1 退化为整页单票（无 slot 切割，与 buildRenderCommand() 无 slot 行为一致）
  *   • 非法 paperLayout → 返回空数组（调用方应跳过渲染）
  *
  * @param {Object} params
  * @param {Object} params.paperLayout  - computePaperLayout 产物（px@dpi，自然空间）
- * @param {DocumentState[]} params.documents - 文档状态数组（长度决定 slot 数）
+ * @param {DocumentState[]} params.documents - 文档状态数组
+ * @param {number} [params.ticketCount] - 页面 slot 总数（可选；缺省=documents.length）
  * @returns {ComposedTicket[]}
  */
-export function compose({ paperLayout, documents }) {
+export function compose({ paperLayout, documents, ticketCount }) {
   if (!paperLayout || !documents || !Array.isArray(documents) || documents.length === 0) {
     return []
   }
 
-  const ticketCount = documents.length
-  const slots = computeTicketSlots(paperLayout, ticketCount)
+  const count = (ticketCount != null) ? ticketCount : documents.length
+  const slots = computeTicketSlots(paperLayout, count)
   if (slots.length === 0) return []
 
   const result = []
   for (let i = 0; i < documents.length; i++) {
     const doc = documents[i]
-    // documents.length > slots.length 时跳过多余文档（防御：computeTicketSlots 可能少返 slot）
     const slot = slots[i]
     if (!slot) {
       console.warn(`[MultiTicketComposer] documents[${i}] skipped: no slot (slot count=${slots.length}, doc count=${documents.length})`)
