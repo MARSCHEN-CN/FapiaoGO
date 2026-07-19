@@ -15,6 +15,7 @@ import { runParseTask } from '../runners/parseRunner'
 import { runSplitTask } from '../runners/splitRunner'
 import { mapParseResultToFileUpdate } from '../mappers/parseResultMapper'
 import { createImportSession, addFilesToSession, replaceFileItems, updateProgress, updateSessionStatus } from '../stores/ImportSessionStore'
+import { processImportedFiles } from '../processors/invoicePostProcessor'
 import { db } from '../db'
 
 // ── 状态迁移规则 ─────────────────────────────────────────
@@ -588,16 +589,10 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
     parsePipelineDone = true
     await Promise.all(parseWorkers)
 
-    // 解析完成后：重排序（与旧 parseFiles 行为一致）+ 收尾状态
+    // 解析完成后：后处理（排序 + 去重）+ 收尾状态
     setFiles((prev) => {
-      const duplicates = detectDuplicateInvoices(prev)
-      const duplicateInfo = new Map()
-      duplicates.forEach((dupFiles, groupIndex) => {
-        dupFiles.forEach((file, idx) => {
-          duplicateInfo.set(file.key, { groupIndex, isFirst: idx === 0 })
-        })
-      })
-      return applySort(prev, sortByRef.current, sortOrderRef.current, duplicateInfo)
+      const { files: sortedFiles } = processImportedFiles(prev, sortByRef.current, sortOrderRef.current)
+      return sortedFiles
     })
     setParsing(false)
     setParseProgress({ current: 0, total: 0 })
