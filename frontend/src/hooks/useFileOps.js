@@ -16,6 +16,7 @@ import { runSplitTask } from '../runners/splitRunner'
 import { mapParseResultToFileUpdate } from '../mappers/parseResultMapper'
 import { createImportSession, addFilesToSession, replaceFileItems, updateProgress, updateSessionStatus } from '../stores/ImportSessionStore'
 import { processImportedFiles } from '../processors/invoicePostProcessor'
+import { consumeParseResult } from '../consumers/parseResultConsumer'
 import { db } from '../db'
 
 // ── 状态迁移规则 ─────────────────────────────────────────
@@ -511,7 +512,8 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
 
         try {
           const result = await runParseTask(job, { ipc, autoOrient })
-          queueUpdate(fileObj.key, result.status, mapParseResultToFileUpdate(result, fileObj))
+          const update = consumeParseResult(result, fileObj, session.id)
+          queueUpdate(fileObj.key, result.status, update)
         } catch (err) {
           console.error(`[App] 解析失败: ${fileObj.name}`, err)
           queueUpdate(fileObj.key, 'error')
