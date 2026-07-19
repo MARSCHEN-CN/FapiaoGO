@@ -6,6 +6,7 @@ import {
   getMimeType, concurrentBatch, applySort, buildSearchText, detectDuplicateInvoices,
 } from '../utils'
 import { buildFileObj, generateFileKey, processPdfFile, stripIdentity } from '../utils/fileHelpers'
+import { createPlaceholders } from '../utils/placeholderGenerator'
 import { db } from '../db'
 
 export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sortOrderRef }) {
@@ -433,17 +434,7 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
     const autoOrient = settingsRef.current.autoOrient ?? false
 
     // ── Step 1: 为每个文件生成占位项，立即显示 ──────────────
-    // lazy file loading: 不在此阶段 IPC 读取文件内容（参见 Import Pipeline Contract v1.1）
-    // parseWorker 等下游在需要时通过 printPath / path 读取
-    const placeholders = files.map((f) => ({
-      key: generateFileKey(f.name),
-      name: f.name,
-      path: f.path,
-      file: f.file || null, // browser drag 有 File，dialog/folder 路径为 null
-      status: 'uploading',
-      fileFormat: getFileFormat(f.name),
-      searchText: buildSearchText({ name: f.name }),
-    }))
+    const placeholders = createPlaceholders(files)
 
     // 所有占位一步添加到列表
     setFiles((prev) => {
