@@ -10,6 +10,7 @@ import { validateRenderModel } from '../utils/renderModelValidator'
 import { detectDocumentOrientation } from '../utils/detectOrientation'
 import { printSingleSourceFile as printSingleSource, printMergedImages } from '../services/PrintService'
 import { runMergedPrintTasks } from '../runners/printRunner'
+import { computePaperLayout } from '../previewState'
 
 // ✅ 懒加载 PDF 渲染模块，避免首屏加载 1.4 MB 的 pdfjs-dist + react-pdf
 let _printRenderers = null
@@ -284,6 +285,16 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
       // ✅ 合并模式强制方向（merge2/3=竖向, merge4=横向），纸张用用户设置
       const forcedLandscape = getForcedLandscape(settings.mergeMode, settings.landscape)
 
+      // ✅ V16 slotted path: paperLayout 驱动 MultiTicketComposer（slotSafeInset 已对齐 createLayout）
+      const printPaperLayout = computePaperLayout({
+        paperSize: settings.paperSize,
+        customPaper: settings.customPaper,
+        margins: {
+          left: settings.marginLeft ?? 3, right: settings.marginRight ?? 3,
+          top: settings.marginTop ?? 3, bottom: settings.marginBottom ?? 3,
+        },
+      })
+
       const canvas = await renderMultipleItemsToCanvas(
         validItems,
         settings.paperSize || 'A4',
@@ -293,7 +304,8 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
         groupSize,
         false,  // ✅ isPrint = false（与预览保持一致）
         false,  // showSafeMargin
-        { strategy: groupSize === 4 ? 'grid' : 'vertical', gridCols: 2, gridRows: 2, customPaper: settings.customPaper }
+        { strategy: groupSize === 4 ? 'grid' : 'vertical', gridCols: 2, gridRows: 2, customPaper: settings.customPaper },
+        printPaperLayout  // V16 slotted path: slot geometry now matches createLayout
       )
 
       // ✅ 返回 Uint8Array 而非 blob URL
