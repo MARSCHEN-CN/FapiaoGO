@@ -958,7 +958,7 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
     printing, setPrinting,
     printProgress, setPrintProgress,
     printFiles, setPrintFiles: setPrintFilesAndRef,
-    printProgressRef, printTimeoutRef, printFilesRef, completedCountRef,
+    printTimeoutRef, printFilesRef,
     printQueueStatus,
     alertModal, closeAlert,
     printConfirmModal,

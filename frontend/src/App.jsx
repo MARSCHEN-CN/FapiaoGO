@@ -155,12 +155,20 @@ function AppContent() {
   // ── Unified Print Hook ──
   const {
     printing, printProgress, printFiles, setPrintFiles,
-    printProgressRef, printTimeoutRef, printFilesRef, completedCountRef,
+    printTimeoutRef, printFilesRef,
     handlePrint, handlePrintClose, clearPrintState, setPrinting, setPrintProgress,
     alertModal: printAlert, closeAlert: closePrintAlert,
     printConfirmModal, handlePrintCancel,
     executePrint,  // Step 3.2: 唯一打印执行入口
   } = usePrint({ files, settings, fileRotations, setFiles, electronAPIRef, submitPrintIntent })
+
+  // ── Print progress refs (local; IPC print-progress handler 专用) ──
+  // 这两个 ref 仅在 App.jsx 的 IPC 'print-progress' handler 中使用，
+  // 用于同步判定 wasDone（防止 transition-to-done 重复计数）。
+  // 原先从 usePrint return 解构，但 usePrint 内部从未定义（导致 ReferenceError），
+  // 现本地创建，grep progressMapRef → 0。
+  const progressMapRef = useRef({})        // key → progress snapshot（IPC 事件镜像）
+  const completedCountRef = useRef(0)      // 已完成文件计数（收尾判定）
 
   // ── Print confirm: close modal → executePrint ──
   const onPrintConfirm = useCallback(() => {
@@ -483,14 +491,14 @@ function AppContent() {
 
       const handleProgress = (_event, data) => {
         // 先取"上一次已提交"的进度快照用于判定 wasDone（更新 ref 镜像前）
-        const prevProgress = printProgressRef.current
+        const prevProgress = progressMapRef.current
         const existed = prevProgress[data.key]
         const wasDone = existed && (existed.status === 'done' || existed.status === 'error')
         const isDone = data.status === 'done' || data.status === 'error'
         const transitionToDone = !wasDone && isDone
 
         // 更新 ref 镜像为最新（供下次事件判定 wasDone；事件处理器内变更 ref 不受 StrictMode 双调用影响）
-        printProgressRef.current = { ...prevProgress, [data.key]: data }
+        progressMapRef.current = { ...prevProgress, [data.key]: data }
 
         // ✅ 纯函数 updater：只计算并返回新状态，不修改 ref / 不调度副作用 / 不嵌套 setState
         // （React 18 StrictMode 会双调用 updater；原实现在 updater 内 ++ref / setTimeout / setFiles
@@ -511,7 +519,7 @@ function AppContent() {
           clearTimeout(printTimeoutRef.current)
           printTimeoutRef.current = setTimeout(() => {
             setPrinting(false)
-            printProgressRef.current = {}
+            progressMapRef.current = {}
             setPrintProgress({})
             setFiles((prev) => prev.map((f) => allOriginalKeys.has(f.key) ? { ...f, status: 'parsed' } : f))
           }, 1000)
@@ -563,7 +571,7 @@ function AppContent() {
       }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  // 空依赖数组是安全的：所有 handler 内部只使用 ref（printProgressRef、completedCountRef 等，引用稳定）
+  // 空依赖数组是安全的：所有 handler 内部只使用 ref（progressMapRef、completedCountRef 等，引用稳定）
   // 和 setState 函数式更新（setSettings(prev=>...)、setFiles(prev=>...) 等，引用稳定），
   // 不存在过期闭包风险。IPC 监听器应仅在挂载时注册一次。
   }, [])
