@@ -1336,7 +1336,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
     if (isMergeMode(settings.mergeMode)) {
       console.log(`[PREVIEW FLOW ${previewToken}] REQUEST | merge mode | groupSize=${settings.mergeMode}`)
       const groupSize = parseInt(settings.mergeMode?.replace('merge', '')) || 2
-      const pair = getMergePair(filesRef.current, fileObj.key, groupSize)
+      const pair = getMergePair(filesRef.current, fileObj.key, groupSize, fileIndexMapRef.current)
       if (pair && pair.length >= 1) {
         const loaded = await Promise.all(
           pair.map((item, idx) =>
@@ -1751,7 +1751,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
 
     if (isMergeMode(settings.mergeMode)) {
       const groupSize = parseInt(settings.mergeMode?.replace('merge', '')) || 2
-      const pair = getMergePair(filesRef.current, currentKey, groupSize)
+      const pair = getMergePair(filesRef.current, currentKey, groupSize, fileIndexMapRef.current)
 
       if (pair && pair.length > 0) {
         const idx = fileIndexMapRef.current.get(pair[0].key) ?? -1
@@ -1771,7 +1771,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
 
     if (isMergeMode(settings.mergeMode)) {
       const groupSize = parseInt(settings.mergeMode?.replace('merge', '')) || 2
-      const pair = getMergePair(filesRef.current, currentKey, groupSize)
+      const pair = getMergePair(filesRef.current, currentKey, groupSize, fileIndexMapRef.current)
 
       if (pair && pair.length > 0) {
         const idx = fileIndexMapRef.current.get(pair[0].key) ?? -1

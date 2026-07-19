@@ -117,10 +117,13 @@ export function getMergeGroupStart(index, groupSize = 2) {
   return Math.floor(index / groupSize) * groupSize
 }
 
-export function getMergePair(files, clickedKey, groupSize = 2) {
+export function getMergePair(files, clickedKey, groupSize = 2, indexMap) {
   // 使用全部文件（而非仅 parsed），确保新导入/解析中的文件也参与合并分组
-  const idx = files.findIndex(f => f.key === clickedKey)
-  if (idx === -1) return null
+  // indexMap 可选：传入则 O(1) 查找，否则 fallback O(n) findIndex
+  const idx = indexMap
+    ? indexMap.get(clickedKey)
+    : files.findIndex(f => f.key === clickedKey)
+  if (idx == null || idx < 0) return null
   const start = getMergeGroupStart(idx, groupSize)
   const result = []
   for (let i = 0; i < groupSize; i++) {
