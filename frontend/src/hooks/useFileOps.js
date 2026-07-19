@@ -14,6 +14,7 @@ import { createQueues, enqueueSplit, enqueueParse, startSplitWorkers, startParse
 import { runParseTask } from '../runners/parseRunner'
 import { runSplitTask } from '../runners/splitRunner'
 import { mapParseResultToFileUpdate } from '../mappers/parseResultMapper'
+import { createImportSession, addFilesToSession, replaceFileItems, updateProgress, updateSessionStatus } from '../stores/ImportSessionStore'
 import { db } from '../db'
 
 // ── 状态迁移规则 ─────────────────────────────────────────
@@ -450,7 +451,11 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
     // ── Step 1: 为每个文件生成占位项，立即显示 ──────────────
     const placeholders = createPlaceholders(files)
 
-    // 所有占位一步添加到列表
+    // 创建导入会话（ImportSessionStore 成为文件状态的权威来源）
+    const session = createImportSession()
+    addFilesToSession(session.id, placeholders)
+
+    // 所有占位一步添加到列表（从 Session 同步到 React state）
     setFiles((prev) => {
       const existingKeys = new Set(
         prev.map((f) => f.printPath || f.path || `${f.name}_${f.size}_${f.lastModified}`)
@@ -462,11 +467,12 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
     // 使用 queueUpdate 替代直接的 setFiles 调用，通过 requestIdleCallback
     // 批量应用状态变更，避免大量文件导入时的渲染风暴。
     // VALID_TRANSITION 守卫在 flushUpdates 内部执行。
+    // replaceWithItems 同时更新 Store 和 React state
     const replaceWithItems = (key, newItems) => {
+      replaceFileItems(session.id, key, newItems)
       setFiles((prev) => {
         const idx = prev.findIndex((f) => f.key === key)
         if (idx === -1) return prev
-        // 只允许从 splitting 状态替换
         if (prev[idx].status !== 'splitting' && prev[idx].status !== 'uploading') return prev
         const copy = [...prev]
         copy.splice(idx, 1, ...newItems)
@@ -595,6 +601,7 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
     setParsing(false)
     setParseProgress({ current: 0, total: 0 })
     setImporting(false)
+    updateSessionStatus(session.id, 'completed')
   }, [setFiles, electronAPIRef, settingsRef, queueUpdate])
 
   // ============================
