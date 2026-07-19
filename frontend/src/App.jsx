@@ -50,6 +50,28 @@ const ModalFallback = () => (
   </div>
 );
 
+// ── Derived Snapshot: fileIndexMap ───────────────────────
+// 通过结构键比较避免 status-only 更新触发 O(n) Map 重建。
+// 返回的 Map 引用在 key/order 不变时保持稳定，使下游 useMemo
+// 不会因属性更新而 invalidate（Import Pipeline Contract v1.1, Phase 0.5）
+function useFileIndexMap(files) {
+  const prevStructureKeyRef = useRef('')
+  const mapRef = useRef(new Map())
+
+  const structureKey = useMemo(
+    () => files.map(f => f.key).join('\x00'),
+    [files]
+  )
+
+  if (structureKey !== prevStructureKeyRef.current) {
+    prevStructureKeyRef.current = structureKey
+    const map = new Map()
+    files.forEach((f, i) => map.set(f.key, i))
+    mapRef.current = map
+  }
+  return mapRef.current
+}
+
 function App() {
   return (
     <FileProvider>
@@ -325,15 +347,13 @@ function AppContent() {
   // 合并模式：箭头禁用状态
   // ============================
   // 文件位置索引（O(n) 构建一次，O(1) 查询）
-  const fileIndexMap = useMemo(() => {
-    const map = new Map()
-    files.forEach((f, i) => map.set(f.key, i))
-    return map
-  }, [files])
+  // 通过结构键守卫避免 status-only 更新触发重建（Phase 0.5）
+  const fileIndexMap = useFileIndexMap(files)
 
   // ✅ 合并 isFirst/isLast 为单次 useMemo：用 fileIndexMap 做 O(1) 查找 + getMergeGroupStart 直接算组边界，
   // 避免原实现两次调用 getMergePair（每次 O(n) 遍历 files）。
   // 语义等价：getMergePair 的 pair[0] 即 files[groupStart]，故 fileIndexMap.get(key) 经 getMergeGroupStart 即为原 firstFileIdx。
+  // Deps 已收窄：移除 files（过宽），改用 fileIndexMap.size 替代 files.length（Phase 0.5）
   const { isFirstMergeGroup, isLastMergeGroup } = useMemo(() => {
     if (!previewFile || !isMergeMode(settings.mergeMode)) {
       return { isFirstMergeGroup: false, isLastMergeGroup: false }
@@ -344,9 +364,9 @@ function AppContent() {
     const groupStart = getMergeGroupStart(idx, groupSize)
     return {
       isFirstMergeGroup: groupStart - groupSize < 0,
-      isLastMergeGroup: groupStart + groupSize >= files.length,
+      isLastMergeGroup: groupStart + groupSize >= fileIndexMap.size,
     }
-  }, [previewFile, files, settings.mergeMode, fileIndexMap])
+  }, [previewFile?.key, settings.mergeMode, fileIndexMap])
 
   const currentIndex = previewFile ? fileIndexMap.get(previewFile.key) ?? -1 : -1
 
@@ -356,7 +376,7 @@ function AppContent() {
 
   const isNextDisabled = isMergeMode(settings.mergeMode)
     ? isLastMergeGroup
-    : currentIndex >= files.length - 1
+    : currentIndex >= fileIndexMap.size - 1
 
   // 合并模式下方向由 renderers 强制造纸，用户不可调（2/3 票强制竖向、4 票强制横向）
   const mergeActive = isMergeMode(settings.mergeMode)
