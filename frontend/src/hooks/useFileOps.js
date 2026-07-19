@@ -17,6 +17,7 @@ import { mapParseResultToFileUpdate } from '../mappers/parseResultMapper'
 import { createImportSession, addFilesToSession, replaceFileItems, updateProgress, updateSessionStatus } from '../stores/ImportSessionStore'
 import { processImportedFiles } from '../processors/invoicePostProcessor'
 import { consumeParseResult } from '../consumers/parseResultConsumer'
+import { createParseResult } from '../models/ParseResult'
 import { db } from '../db'
 
 // ── 状态迁移规则 ─────────────────────────────────────────
@@ -156,7 +157,7 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
 
     updateTaskStatus(task.id, 'completed')
 
-    // 收集所有更新，单次应用（避免 O(n²) 数组复制）
+    // 通过 ParseResult + Consumer 处理批量结果
     const updates = new Map()
     let completedCount = 0
 
@@ -165,57 +166,9 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
       if (!fileObj) continue
 
       if (item.success && item.data) {
-        const d = item.data
-        // ✅ 后端 parse_invoice_service 已自动入库，前端无需重复 upsert
-
-        updates.set(fileObj.key, {
-          status: 'parsed',
-          invoiceType: d.db_record?.type || d.invoice_type || '',
-          invoiceNumber: d.db_record?.number || d.invoice_number || '',
-          amount:
-            d.db_record?.amount != null
-              ? String(d.db_record.amount)
-              : d.amount || '',
-          invoiceDate: d.db_record?.date || d.invoice_date || '',
-          newName: d.new_name || fileObj.name,
-          parseMethod: d.parse_method || '',
-          fileFormat: d.file_format || getFileFormat(fileObj.name),
-          previewImage: null,
-          failedFields: d.failed_fields || [],
-          invoiceFields: d.invoice_fields || null,
-          issuer:
-            d.db_record?.issuer || d.invoice_fields?.kpr || '',
-          amountWithoutTax:
-            d.db_record?.tax_amount != null
-              ? String(
-                  Math.round(
-                    (parseFloat(d.db_record.amount || 0) -
-                      parseFloat(d.db_record.tax_amount || 0)) *
-                      100
-                  ) / 100
-                )
-              : d.invoice_fields?.amountJe || '',
-          taxAmount:
-            d.db_record?.tax_amount != null
-              ? String(d.db_record.tax_amount)
-              : d.invoice_fields?.amountSe || '',
-          lineItems: d.invoice_fields?.line_items || [],
-          rawText: d.raw_text || '',
-          searchText: buildSearchText({
-            name: fileObj.name,
-            invoiceNumber:
-              d.db_record?.number || d.invoice_number || '',
-            invoiceType:
-              d.db_record?.type || d.invoice_type || '',
-            amount:
-              d.db_record?.amount != null
-                ? String(d.db_record.amount)
-                : d.amount || '',
-            invoiceDate: d.db_record?.date || d.invoice_date || '',
-            invoice_fields: d.invoice_fields || {},
-            rawText: d.raw_text || '',
-          }),
-        })
+        const result = createParseResult(item.data, fileObj.name)
+        const update = consumeParseResult(result, fileObj, task.id)
+        updates.set(fileObj.key, { ...update, status: result.status })
       } else {
         updates.set(fileObj.key, {
           status: 'error',
