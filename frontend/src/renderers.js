@@ -12,6 +12,23 @@ import { buildSingleFileRenderCommand } from './layout/singleFileRenderCommand.j
 // ✅ renderModel.js 为死代码，renderMultipleItemsToCanvas 直接做 transform，不经过 RenderModel
 // import { createRenderModels, applyTransformToContext, restoreContext } from './renderModel'
 
+/**
+ * 判断当前是否可使用 V16 Slot Composer 路径（MultiTicketComposer + buildRenderCommand）。
+ *
+ * 条件：
+ *   1. paperLayout 已提供（非 null/undefined）
+ *   2. 布局策略非 grid（computeTicketSlots 仅支持竖向等分；grid 布局如 merge4 仍需 createLayout）
+ *
+ * 封装为独立函数的理由：该判断未来可能随 grid 支持或更多策略而扩展，集中一处降低遗漏风险。
+ *
+ * @param {Object|null} paperLayout
+ * @param {string} [strategy] - layoutOptions.strategy（'vertical' | 'grid' | undefined）
+ * @returns {boolean}
+ */
+function canUseSlotComposer(paperLayout, strategy) {
+  return !!(paperLayout && strategy !== 'grid')
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // P2C · Adapter 层入口（v14：路线 P2A✅→P2B✅→P2C→P3→P4→P5→P6）
 // ───────────────────────────────────────────────────────────────────────────
@@ -769,7 +786,7 @@ function _buildComposeCommands(layout, contentSources, rotations, paper) {
   })
 }
 
-async function _renderViaWorker(items, paperKey, dpi, isLandscape, rotations, slotCount, layoutOptions) {
+async function _renderViaWorker(items, paperKey, dpi, isLandscape, rotations, slotCount, layoutOptions, paperLayout = null) {
   // L2 cache key（与 _renderDirect 一致，统一由 buildCacheKey 生成）
   const _cacheKey = buildCacheKey(items, paperKey, dpi, isLandscape, rotations, slotCount, layoutOptions)
 
@@ -834,7 +851,7 @@ async function _renderViaWorker(items, paperKey, dpi, isLandscape, rotations, sl
     return renderResultCache.get(_cacheKey) || null
   }
 
-  // Layout（主线程计算，纯函数）
+  // Layout（主线程计算，纯函数。V16 path: 由 MultiTicketComposer 产出；old path: createLayout）
   const normalizedItems = items.map(item => {
     const id = item.id || item.key
     const cs = contentSources.get(id)
@@ -844,20 +861,56 @@ async function _renderViaWorker(items, paperKey, dpi, isLandscape, rotations, sl
     return normalizeLayoutItem(item, dpi)
   })
 
-  const userMargins = layoutOptions.userMargins
-  const marginMm = userMargins ? {
-    top: userMargins.top || 0, bottom: userMargins.bottom || 0,
-    left: userMargins.left || 0, right: userMargins.right || 0,
-  } : 0
+  let layout, commands
+  if (canUseSlotComposer(paperLayout, layoutOptions.strategy)) {
+    // V16 路径：MultiTicketComposer + buildRenderCommand（与 _renderDirect 同逻辑）
+    const { compose } = await import('./layout/MultiTicketComposer.js')
+    const { computeTicketSlots } = await import('./layout/SlotLayout.js')
+    const forcedOrient = isLandscape ? 'landscape' : 'portrait'
+    const documents = items.map((item) => {
+      const id = item.id || item.key
+      const cs = contentSources.get(id)
+      const w = cs ? cs.width : (item.width || 0)
+      const h = cs ? cs.height : (item.height || 0)
+      return {
+        pageSize: { w, h },
+        pageOrientation: (w >= h) ? 'landscape' : 'portrait',
+        paperOrientation: forcedOrient,
+        rotation: (rotations && rotations[id]) || 0,
+      }
+    })
+    const result = compose({ paperLayout, documents })
+    commands = result.map(r => r.renderCommand)
+    const slotPositions = computeTicketSlots(paperLayout, items.length)
+    const effW = isLandscape ? paperLayout.paperRect.h : paperLayout.paperRect.w
+    const effH = isLandscape ? paperLayout.paperRect.w : paperLayout.paperRect.h
+    layout = {
+      page: { width: effW, height: effH },
+      area: {
+        x: slotPositions[0]?.x ?? 0,
+        y: slotPositions[0]?.y ?? 0,
+        width: slotPositions[0]?.width ?? effW,
+        height: slotPositions.reduce((sum, s) => sum + s.height, 0),
+      },
+      slots: slotPositions,
+    }
+  } else {
+    // 旧路径：createLayout + _buildComposeCommands（向后兼容）
+    const userMargins = layoutOptions.userMargins
+    const marginMm = userMargins ? {
+      top: userMargins.top || 0, bottom: userMargins.bottom || 0,
+      left: userMargins.left || 0, right: userMargins.right || 0,
+    } : 0
 
-  const layout = createLayout(normalizedItems, paperKey, dpi, isLandscape, {
-    slotCount,
-    ...layoutOptions,
-    margin: marginMm,
-  })
+    layout = createLayout(normalizedItems, paperKey, dpi, isLandscape, {
+      slotCount,
+      ...layoutOptions,
+      margin: marginMm,
+    })
 
-  // [Commit A] 主线程计算 Compose 几何 → RenderCommand[]（Worker 纯执行，绝不自算 fit/rotate）
-  const commands = _buildComposeCommands(layout, contentSources, rotations, layout.page)
+    // [Commit A] 主线程计算 Compose 几何 → RenderCommand[]（Worker 纯执行，绝不自算 fit/rotate）
+    commands = _buildComposeCommands(layout, contentSources, rotations, layout.page)
+  }
 
   // ═══════════════════════════════════════════════════════
   // Phase 1.5: HTMLCanvasElement/Image → ImageBitmap
@@ -986,8 +1039,7 @@ export async function renderMultipleItemsToCanvas(
 
   // 预览路径 → Worker 渲染（失败自动回退到主线程）
   try {
-    // NOTE: Worker 路径暂不支持 paperLayout 外部 slot，回退 createLayout（向后兼容）
-    return await _renderViaWorker(items, paperKey, dpi, isLandscape, rotations, slotCount, layoutOptions)
+    return await _renderViaWorker(items, paperKey, dpi, isLandscape, rotations, slotCount, layoutOptions, paperLayout)
   } catch (e) {
     console.warn('[renderMultipleItemsToCanvas] Worker 失败，回退到主线程:', e.message)
     return _renderDirect(items, paperKey, dpi, isLandscape, rotations, slotCount, isPrint, showSafeMargin, layoutOptions, paperLayout)
@@ -1094,11 +1146,10 @@ async function _renderDirect(
   // ═══════════════════════════════════════════════
   // Layout: 基于内容尺寸计算 slot（V16 或 createLayout）
   // ═══════════════════════════════════════════════
-  // V16 路径（paperLayout 提供，且非 grid 布局）：MultiTicketComposer + buildRenderCommand 产出每票 RenderCommand，
-  // 替代 createLayout + _buildComposeCommands 的老路径，使用同一套 createPlacement 几何。
-  // grid 布局（merge4）仍用 createLayout 旧路径（新 SlotLayout 当前仅支持竖向等分）。
+  // V16 路径：canUseSlotComposer 判断使用 MultiTicketComposer + buildRenderCommand
+  // （替代 createLayout + _buildComposeCommands 的老路径，使用同一套 createPlacement 几何）。
   let layout, commands, slotPositions
-  if (paperLayout && layoutOptions.strategy !== 'grid') {
+  if (canUseSlotComposer(paperLayout, layoutOptions.strategy)) {
     const { compose } = await import('./layout/MultiTicketComposer.js')
     const { computeTicketSlots } = await import('./layout/SlotLayout.js')
 
