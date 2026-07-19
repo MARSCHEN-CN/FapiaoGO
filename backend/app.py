@@ -783,9 +783,6 @@ def split_pdf():
     file_bytes = file.read()
     if not file_bytes:
         return jsonify({"success": False, "error": "空文件"}), 400
-
-    descriptor_only = request.form.get('descriptor_only', '0') == '1'
-
     try:
         # 生成文件哈希作为 page_id 基础（保持向后兼容）
         file_hash = hashlib.sha256(file_bytes).hexdigest()[:16]
@@ -798,27 +795,6 @@ def split_pdf():
 
         # 惰性清理 + LRU 硬上限（过期项与超限 LRU 驱逐，联动清理 registry）
         _page_cache_evict()
-
-        if descriptor_only:
-            for i in range(doc.page_count):
-                page_num = i + 1
-                page_id = f"{file_hash}_{i}"
-                with _page_registry_lock:
-                    _page_registry[page_id] = {"doc_id": doc.doc_id, "page": page_num}
-                pages.append({
-                    "id": page_id,
-                    "page_index": page_num,
-                    "source_doc_id": doc.doc_id,
-                    "page_size": {"width": 0, "height": 0},
-                    "status": "ready",
-                })
-            return jsonify({
-                "success": True,
-                "doc_id": doc.doc_id,
-                "total_pages": len(pages),
-                "pages": pages,
-                "expires_in": _page_cache_ttl,
-            })
 
         # 单页任务：拆页 + 200dpi 预览渲染 + base64。
         # fitz.Document 不可跨线程共享，因此每个 worker 用独立副本打开。
@@ -896,51 +872,6 @@ def _respond_pdf(page_bytes: bytes, page_id: str):
             'Content-Length': str(len(page_bytes)),
         }
     )
-
-
-@app.route('/split_pdf/page', methods=['GET'])
-def split_pdf_page():
-    """按需拉取单页 PDF（带任务生命周期检查）"""
-    page_id = request.args.get('page_id')
-    if not page_id:
-        return jsonify({"success": False, "error": "page_id 必填"}), 400
-
-    import_session_id = request.headers.get('X-Import-Session-ID', '')
-    task_id = request.headers.get('X-Task-ID', '')
-
-    with _page_registry_lock:
-        reg_entry = _page_registry.get(page_id)
-
-    if not reg_entry:
-        return jsonify({"success": False, "error": "页面不存在"}), 404
-
-    try:
-        page_bytes = engine.extract_page_pdf(
-            reg_entry["doc_id"], reg_entry["page"]
-        )
-        now = time.time()
-        with _page_cache_lock:
-            _page_cache[page_id] = {
-                "bytes": page_bytes,
-                "created_at": now,
-                "last_used": now,
-            }
-        return _respond_pdf(page_bytes, page_id)
-    except Exception as e:
-        logger.debug("split_pdf_page failed for %s: %s", page_id, e)
-
-    with _page_cache_lock:
-        cache_entry = _page_cache.get(page_id)
-        if not cache_entry:
-            return jsonify({"success": False, "error": "页面不存在或已过期"}), 404
-        if time.time() - cache_entry["created_at"] > _page_cache_ttl:
-            _page_cache.pop(page_id, None)
-            with _page_registry_lock:
-                _page_registry.pop(page_id, None)
-            return jsonify({"success": False, "error": "页面已过期"}), 410
-        cache_entry["last_used"] = time.time()
-
-    return _respond_pdf(cache_entry["bytes"], page_id)
 
 
 @app.route('/download_page/<page_id>', methods=['GET'])

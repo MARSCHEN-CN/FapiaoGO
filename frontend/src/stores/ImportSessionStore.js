@@ -1,173 +1,214 @@
-import { assertCanTransition, isTerminal } from '../contracts/import'
+/**
+ * ImportSessionStore — 导入会话运行时存储
+ *
+ * 职责：
+ *   管理 ImportSession 实例的创建、查询、更新。
+ *   作为一次导入任务的唯一状态根。
+ *
+ * 非 React store：
+ *   不使用 useState / useReducer / 任何 React API。
+ *   纯模块级 Map + 导出方法。
+ *
+ * 调用方 (useFileOps) 负责：
+ *   - 创建 session
+ *   - 将用户操作转化为 store 方法调用
+ *   - 将 store 数据同步到 React state（通过 BatchUIUpdater）
+ *
+ * 与 TaskScheduler 的关系：
+ *   Store 属于业务状态层（what），
+ *   Scheduler 属于执行层（how）。
+ *   Scheduler 不直接读写 Store。
+ *
+ * @module stores/ImportSessionStore
+ */
 
-class ImportSessionStore {
-  constructor() {
-    this.sessions = new Map()
-    this.listeners = new Set()
-  }
+import { createSession, createSessionFile } from '../models/ImportSession'
 
-  createSession(total) {
-    const id = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-    const session = {
-      id,
-      status: 'created',
-      createdAt: Date.now(),
-      records: [],
-      progress: {
-        total,
-        queued: 0,
-        processing: 0,
-        completed: 0,
-        failed: 0,
-        cancelled: 0,
-      },
-    }
-    this.sessions.set(id, session)
-    this.notify()
-    return session
-  }
+// ── 会话存储 ────────────────────────────────────────────
 
-  updateSessionStatus(sessionId, status) {
-    const session = this.sessions.get(sessionId)
-    if (!session) return
+/** @type {Map<string, import('../models/ImportSession').ImportSessionData>} */
+const sessions = new Map()
 
-    if (isTerminal(session.status)) {
-      return
-    }
+// ── 订阅者（用于 React 同步） ───────────────────────────
 
-    assertCanTransition(session.status, status)
-    session.status = status
-    this.notify()
-  }
+/** @type {Set<(sessionId: string) => void>} */
+const subscribers = new Set()
 
-  addRecords(sessionId, records) {
-    const session = this.sessions.get(sessionId)
-    if (!session) return
+/**
+ * 订阅会话变化。
+ * @param {(sessionId: string) => void} fn - 回调函数
+ * @returns {() => void} 取消订阅函数
+ */
+export function subscribe(fn) {
+  subscribers.add(fn)
+  return () => subscribers.delete(fn)
+}
 
-    session.records = [...session.records, ...records]
-    this.notify()
-  }
-
-  replaceRecords(sessionId, records) {
-    const session = this.sessions.get(sessionId)
-    if (!session) return
-
-    session.records = records
-    this.notify()
-  }
-
-  updateRecordStatus(sessionId, recordId, status) {
-    const session = this.sessions.get(sessionId)
-    if (!session) return
-
-    const record = session.records.find((r) => r.id === recordId)
-    if (record) {
-      record.status = status
-      this.notify()
-    }
-  }
-
-  updateProgress(sessionId, progress) {
-    const session = this.sessions.get(sessionId)
-    if (!session) return
-
-    if (progress.total !== undefined) {
-      session.progress.total = progress.total
-    }
-    if (progress.queued !== undefined) {
-      session.progress.queued = progress.queued
-    }
-    if (progress.processing !== undefined) {
-      session.progress.processing = progress.processing
-    }
-    if (progress.completed !== undefined) {
-      session.progress.completed = progress.completed
-    }
-    if (progress.failed !== undefined) {
-      session.progress.failed = progress.failed
-    }
-    if (progress.cancelled !== undefined) {
-      session.progress.cancelled = progress.cancelled
-    }
-    this.notify()
-  }
-
-  incrementProgress(sessionId, type) {
-    const session = this.sessions.get(sessionId)
-    if (!session) return
-
-    switch (type) {
-      case 'completed':
-        session.progress.completed = Math.min(session.progress.completed + 1, session.progress.total)
-        break
-      case 'failed':
-        session.progress.failed += 1
-        break
-      case 'queued':
-        session.progress.queued += 1
-        break
-      case 'processing':
-        session.progress.processing += 1
-        break
-      case 'cancelled':
-        session.progress.cancelled += 1
-        break
-    }
-    this.notify()
-  }
-
-  getSession(sessionId) {
-    return this.sessions.get(sessionId)
-  }
-
-  deleteSession(sessionId) {
-    this.sessions.delete(sessionId)
-    this.notify()
-  }
-
-  subscribe(listener) {
-    this.listeners.add(listener)
-    return () => this.listeners.delete(listener)
-  }
-
-  notify() {
-    this.listeners.forEach((listener) => listener())
+/**
+ * 通知所有订阅者。
+ * @param {string} sessionId
+ */
+function notify(sessionId) {
+  for (const fn of subscribers) {
+    try { fn(sessionId) } catch (_) { /* ignore subscriber errors */ }
   }
 }
 
-export const importSessionStore = new ImportSessionStore()
+// ── 会话管理 ────────────────────────────────────────────
 
-export function createImportSession(total) {
-  return importSessionStore.createSession(total)
+/**
+ * 创建新会话。
+ * @param {Array} [files] - 初始文件列表
+ * @returns {import('../models/ImportSession').ImportSessionData}
+ */
+export function createImportSession(files = []) {
+  const session = createSession(files)
+  sessions.set(session.id, session)
+  notify(session.id)
+  return session
 }
 
-export function addFilesToSession(sessionId, records) {
-  importSessionStore.addRecords(sessionId, records)
+/**
+ * 获取会话。
+ * @param {string} id
+ * @returns {import('../models/ImportSession').ImportSessionData|undefined}
+ */
+export function getSession(id) {
+  return sessions.get(id)
 }
 
-export function replaceFileItems(sessionId, records) {
-  importSessionStore.replaceRecords(sessionId, records)
+/**
+ * 删除会话。
+ * @param {string} id
+ */
+export function removeSession(id) {
+  sessions.delete(id)
+  notify(id)
 }
 
-export function updateProgress(sessionId, progress) {
-  importSessionStore.updateProgress(sessionId, progress)
-}
+// ── 文件管理 ────────────────────────────────────────────
 
-export function updateSessionStatus(sessionId, status) {
-  importSessionStore.updateSessionStatus(sessionId, status)
-}
-
-export function updateFileStatus(sessionId, fileId, status) {
-  importSessionStore.updateRecordStatus(sessionId, fileId, status)
-}
-
-export function addResult(sessionId, result) {
-  const session = importSessionStore.getSession(sessionId)
+/**
+ * 向会话添加文件。
+ * @param {string} sessionId
+ * @param {Array} fileInputs - 文件输入数组
+ */
+export function addFilesToSession(sessionId, fileInputs) {
+  const session = sessions.get(sessionId)
   if (!session) return
 
-  const record = session.records.find((r) => r.id === result.key)
-  if (record) {
-    Object.assign(record, result)
-    importSessionStore.notify()
-  }
+  const existingKeys = new Set(session.files.map(f => f.key))
+  const newFiles = fileInputs
+    .filter(f => !existingKeys.has(f.key || f.name))
+    .map(f => createSessionFile(f))
+
+  session.files.push(...newFiles)
+  session.progress.total = session.files.length
+  notify(sessionId)
+}
+
+/**
+ * 更新会话中某个文件的状态。
+ * @param {string} sessionId
+ * @param {string} fileKey
+ * @param {Partial<import('../models/ImportSession').SessionFile>} updates
+ */
+export function updateFileStatus(sessionId, fileKey, updates) {
+  const session = sessions.get(sessionId)
+  if (!session) return
+
+  const file = session.files.find(f => f.key === fileKey)
+  if (!file) return
+
+  Object.assign(file, updates)
+  notify(sessionId)
+}
+
+/**
+ * 替换会话中某个文件的占位项（多页 PDF 拆分后）。
+ * @param {string} sessionId
+ * @param {string} fileKey - 被替换的占位 key
+ * @param {Array} newItems - 替换项
+ */
+export function replaceFileItems(sessionId, fileKey, newItems) {
+  const session = sessions.get(sessionId)
+  if (!session) return
+
+  const idx = session.files.findIndex(f => f.key === fileKey)
+  if (idx === -1) return
+
+  session.files.splice(idx, 1, ...newItems.map(i => createSessionFile(i)))
+  session.progress.total = session.files.length
+  notify(sessionId)
+}
+
+// ── 任务管理 ────────────────────────────────────────────
+
+/**
+ * 添加任务到会话。
+ * @param {string} sessionId
+ * @param {import('../models/ImportSession').SessionTask} task
+ */
+export function addTask(sessionId, task) {
+  const session = sessions.get(sessionId)
+  if (!session) return
+  session.tasks.push(task)
+  notify(sessionId)
+}
+
+/**
+ * 更新任务状态。
+ * @param {string} sessionId
+ * @param {string} taskId
+ * @param {string} status
+ */
+export function updateTaskStatus(sessionId, taskId, status) {
+  const session = sessions.get(sessionId)
+  if (!session) return
+  const task = session.tasks.find(t => t.id === taskId)
+  if (!task) return
+  task.status = status
+  notify(sessionId)
+}
+
+// ── 进度管理 ────────────────────────────────────────────
+
+/**
+ * 更新会话进度。
+ * @param {string} sessionId
+ * @param {Partial<import('../models/ImportSession').SessionProgress>} delta
+ */
+export function updateProgress(sessionId, delta) {
+  const session = sessions.get(sessionId)
+  if (!session) return
+  if (delta.completed != null) session.progress.completed = delta.completed
+  if (delta.failed != null) session.progress.failed = delta.failed
+  if (delta.total != null) session.progress.total = delta.total
+  notify(sessionId)
+}
+
+/**
+ * 更新会话状态。
+ * @param {string} sessionId
+ * @param {import('../models/ImportSession').SessionStatus} status
+ */
+export function updateSessionStatus(sessionId, status) {
+  const session = sessions.get(sessionId)
+  if (!session) return
+  session.status = status
+  notify(sessionId)
+}
+
+// ── 结果管理 ────────────────────────────────────────────
+
+/**
+ * 添加解析结果到会话。
+ * @param {string} sessionId
+ * @param {Object} result
+ */
+export function addResult(sessionId, result) {
+  const session = sessions.get(sessionId)
+  if (!session) return
+  session.results.push(result)
+  notify(sessionId)
 }

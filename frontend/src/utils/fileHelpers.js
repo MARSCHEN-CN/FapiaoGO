@@ -45,6 +45,7 @@ export { stripIdentity }
 // 每批处理的页数上限，防止大 PDF 导致内存溢出
 const PDF_PAGES_BATCH_SIZE = 10
 
+// 处理多页 PDF 拆分
 export async function processPdfFile(file, getPathFn) {
   const toAdd = []
   const toParse = []
@@ -52,7 +53,6 @@ export async function processPdfFile(file, getPathFn) {
   try {
     const formData = new FormData()
     formData.append('file', file.file || file)
-    formData.append('descriptor_only', '1')
     const resp = await fetch(`${BACKEND_URL}/split_pdf`, { method: 'POST', body: formData })
     const data = await resp.json()
 
@@ -61,6 +61,10 @@ export async function processPdfFile(file, getPathFn) {
       const totalPages = pages.length
       console.log(`[App] 检测到 PDF: ${file.name}, ${totalPages} 页`)
 
+      // TEMP(V17): Guard against single-page PDFs entering the split pipeline.
+      // The long-term fix is to move the pageCount decision to the import
+      // dispatcher so processPdfFile() only handles multi-page PDFs.
+      // When upstream dispatcher is in place, change this to assert(totalPages > 1).
       if (totalPages <= 1) {
         console.log(`[App] PDF ${file.name} 仅 ${totalPages} 页，无需拆分，按原文件处理`)
         const fileObj = buildFileObj(file.file || file, file.name, getPathFn(file))
@@ -69,26 +73,37 @@ export async function processPdfFile(file, getPathFn) {
         return { toAdd, toParse, isMultiPage: false }
       }
 
-      for (const page of pages) {
-        const pageName = file.name.replace('.pdf', `_p${page.page_index}.pdf`)
-        const fileObj = buildFileObj(null, pageName, getPathFn(file), undefined, data.doc_id, page.page_index)
-        fileObj._pageDescriptor = {
-          id: page.id,
-          sourceDocId: page.source_doc_id,
-          pageIndex: page.page_index,
-          pageSize: page.page_size,
-          status: page.status,
-        }
-        toAdd.push(fileObj)
-        toParse.push(fileObj)
-      }
+      for (let i = 0; i < totalPages; i += PDF_PAGES_BATCH_SIZE) {
+        const batch = pages.slice(i, i + PDF_PAGES_BATCH_SIZE)
+        console.log(`[App] 处理 PDF 批次: ${i + 1}-${Math.min(i + batch.length, totalPages)} / ${totalPages}`)
 
+        for (const page of batch) {
+          const binaryStr = atob(page.page_bytes)
+          const bytes = new Uint8Array(binaryStr.length)
+          for (let j = 0; j < binaryStr.length; j++) {
+            bytes[j] = binaryStr.charCodeAt(j)
+          }
+          const blob = new Blob([bytes], { type: 'application/pdf' })
+          const pageName = file.name.replace('.pdf', `_p${page.page_index}.pdf`)
+          const pageFile = new File([blob], pageName, { type: 'application/pdf' })
+
+          const fileObj = buildFileObj(pageFile, pageName, getPathFn(file), page.preview_image, data.doc_id, page.page_index)
+          toAdd.push(fileObj)
+          toParse.push(fileObj)
+        }
+
+        // 每批处理完后让出事件循环，避免阻塞 UI
+        if (i + PDF_PAGES_BATCH_SIZE < totalPages) {
+          await new Promise(resolve => setTimeout(resolve, 0))
+        }
+      }
       return { toAdd, toParse, isMultiPage: true }
     }
   } catch (err) {
     console.error('[App] PDF 拆分失败:', err)
   }
 
+  // 拆分失败或非 PDF
   const fileObj = buildFileObj(file.file || file, file.name, getPathFn(file))
   toAdd.push(fileObj)
   toParse.push(fileObj)

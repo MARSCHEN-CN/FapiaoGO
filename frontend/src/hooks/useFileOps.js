@@ -17,7 +17,7 @@ import { runParseTask } from '../runners/parseRunner'
 import { runSplitTask } from '../runners/splitRunner'
 import { runFallbackParseTask } from '../runners/fallbackParseRunner'
 import { mapParseResultToFileUpdate } from '../mappers/parseResultMapper'
-import { createImportSession, addFilesToSession, replaceFileItems, updateProgress, updateSessionStatus, importSessionStore } from '../stores/ImportSessionStore'
+import { createImportSession, addFilesToSession, replaceFileItems, updateProgress, updateSessionStatus } from '../stores/ImportSessionStore'
 import { processImportedFiles } from '../processors/invoicePostProcessor'
 import { consumeParseResult } from '../consumers/parseResultConsumer'
 import { createParseResult } from '../models/ParseResult'
@@ -263,7 +263,7 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
     const placeholders = createPlaceholders(files)
 
     // 创建导入会话（ImportSessionStore 成为文件状态的权威来源）
-    const session = createImportSession(files.length)
+    const session = createImportSession()
     addFilesToSession(session.id, placeholders)
 
     // 所有占位一步添加到列表（从 Session 同步到 React state）
@@ -301,6 +301,10 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
     enqueueSplit(splitJobs)
     let parsePipelineDone = false
 
+    // 进度计数（同步写入 ImportSessionStore）
+    let progressTotal = 0
+    let progressDone = 0
+
     // Parse 流水线（执行委托给 parseRunner，UI 更新在 orchestrator）
     async function parseWorker() {
       while (true) {
@@ -316,23 +320,19 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
         queueUpdate(fileObj.key, 'parsing')
 
         try {
-          const result = await runParseTask(job, { ipc, autoOrient, sessionId: session.id })
+          const result = await runParseTask(job, { ipc, autoOrient })
           const update = consumeParseResult(result, fileObj, session.id)
           queueUpdate(fileObj.key, result.status, update)
-          updateProgress(session.id, { processing: session.progress?.processing - 1 || 0 })
         } catch (err) {
           console.error(`[App] 解析失败: ${fileObj.name}`, err)
           queueUpdate(fileObj.key, 'error')
-          updateProgress(session.id, { failed: (session.progress?.failed || 0) + 1 })
         } finally {
-          updateProgress(session.id, { completed: (session.progress?.completed || 0) + 1 })
-          const sessionData = importSessionStore.getSession(session.id)
-          if (sessionData?.progress) {
-            setParseProgress({
-              current: sessionData.progress.completed,
-              total: sessionData.progress.total,
-            })
-          }
+          progressDone += 1
+          updateProgress(session.id, { completed: progressDone, total: progressTotal })
+          setParseProgress({
+            current: progressDone,
+            total: progressTotal,
+          })
         }
       }
     }
@@ -353,7 +353,7 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
             if (toAdd.length === 1) {
               const toAddRest = stripIdentity(toAdd[0])
               queueUpdate(p.key, 'ready', toAddRest)
-              updateProgress(session.id, { total: (session.progress?.total || 0) + 1 })
+              progressTotal += 1
               const readyFile = { ...p, ...toAddRest }
               enqueueParse([{ fileObj: readyFile }])
             } else if (toAdd.length > 1) {
@@ -362,19 +362,19 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
                 status: 'ready',
               }))
               replaceWithItems(p.key, pageItems)
-              updateProgress(session.id, { total: (session.progress?.total || 0) + pageItems.length })
+              progressTotal += pageItems.length
               for (const pageObj of pageItems) {
                 enqueueParse([{ fileObj: pageObj }])
               }
             } else {
               queueUpdate(p.key, 'ready', { key: p.key })
-              updateProgress(session.id, { total: (session.progress?.total || 0) + 1 })
+              progressTotal += 1
               enqueueParse([{ fileObj: { ...p, key: p.key } }])
             }
           } else {
             const fileObjRest = stripIdentity(result.fileObj)
             queueUpdate(p.key, 'ready', fileObjRest)
-            updateProgress(session.id, { total: (session.progress?.total || 0) + 1 })
+            progressTotal += 1
             const readyFile = { ...p, ...fileObjRest }
             enqueueParse([{ fileObj: readyFile }])
           }
@@ -396,30 +396,19 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
     }
 
     setParsing(true)
-    updateSessionStatus(session.id, 'splitting')
-    try {
-      await Promise.all(splitWorkers)
+    await Promise.all(splitWorkers)
+    parsePipelineDone = true
+    await Promise.all(parseWorkers)
 
-      parsePipelineDone = true
-      updateSessionStatus(session.id, 'queued')
-      await Promise.all(parseWorkers)
-      updateSessionStatus(session.id, 'processing')
-
-      // 解析完成后：后处理（排序 + 去重）+ 收尾状态
-      setFiles((prev) => {
-        const { files: sortedFiles } = processImportedFiles(prev, sortByRef.current, sortOrderRef.current)
-        return sortedFiles
-      })
-      setParsing(false)
-      setParseProgress({ current: 0, total: 0 })
-      setImporting(false)
-      updateSessionStatus(session.id, 'completed')
-    } catch (err) {
-      console.error('[handleFiles] 会话处理失败:', err)
-      updateSessionStatus(session.id, 'failed')
-      setParsing(false)
-      setImporting(false)
-    }
+    // 解析完成后：后处理（排序 + 去重）+ 收尾状态
+    setFiles((prev) => {
+      const { files: sortedFiles } = processImportedFiles(prev, sortByRef.current, sortOrderRef.current)
+      return sortedFiles
+    })
+    setParsing(false)
+    setParseProgress({ current: 0, total: 0 })
+    setImporting(false)
+    updateSessionStatus(session.id, 'completed')
   }, [setFiles, electronAPIRef, settingsRef, queueUpdate])
 
   // ============================
