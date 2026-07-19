@@ -17,7 +17,7 @@ import { runParseTask } from '../runners/parseRunner'
 import { runSplitTask } from '../runners/splitRunner'
 import { runFallbackParseTask } from '../runners/fallbackParseRunner'
 import { mapParseResultToFileUpdate } from '../mappers/parseResultMapper'
-import { createImportSession, addFilesToSession, replaceFileItems, updateProgress, updateSessionStatus } from '../stores/ImportSessionStore'
+import { createImportSession, addFilesToSession, replaceFileItems, updateProgress, updateSessionStatus, importSessionStore } from '../stores/ImportSessionStore'
 import { processImportedFiles } from '../processors/invoicePostProcessor'
 import { consumeParseResult } from '../consumers/parseResultConsumer'
 import { createParseResult } from '../models/ParseResult'
@@ -263,7 +263,7 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
     const placeholders = createPlaceholders(files)
 
     // 创建导入会话（ImportSessionStore 成为文件状态的权威来源）
-    const session = createImportSession()
+    const session = createImportSession(files.length)
     addFilesToSession(session.id, placeholders)
 
     // 所有占位一步添加到列表（从 Session 同步到 React state）
@@ -301,10 +301,6 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
     enqueueSplit(splitJobs)
     let parsePipelineDone = false
 
-    // 进度计数（同步写入 ImportSessionStore）
-    let progressTotal = 0
-    let progressDone = 0
-
     // Parse 流水线（执行委托给 parseRunner，UI 更新在 orchestrator）
     async function parseWorker() {
       while (true) {
@@ -323,16 +319,20 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
           const result = await runParseTask(job, { ipc, autoOrient, sessionId: session.id })
           const update = consumeParseResult(result, fileObj, session.id)
           queueUpdate(fileObj.key, result.status, update)
+          updateProgress(session.id, { processing: session.progress?.processing - 1 || 0 })
         } catch (err) {
           console.error(`[App] 解析失败: ${fileObj.name}`, err)
           queueUpdate(fileObj.key, 'error')
+          updateProgress(session.id, { failed: (session.progress?.failed || 0) + 1 })
         } finally {
-          progressDone += 1
-          updateProgress(session.id, { completed: progressDone, total: progressTotal })
-          setParseProgress({
-            current: progressDone,
-            total: progressTotal,
-          })
+          updateProgress(session.id, { completed: (session.progress?.completed || 0) + 1 })
+          const sessionData = importSessionStore.getSession(session.id)
+          if (sessionData?.progress) {
+            setParseProgress({
+              current: sessionData.progress.completed,
+              total: sessionData.progress.total,
+            })
+          }
         }
       }
     }

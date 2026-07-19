@@ -11,10 +11,16 @@ class ImportSessionStore {
     const session = {
       id,
       status: 'created',
-      total,
-      completed: 0,
       createdAt: Date.now(),
       records: [],
+      progress: {
+        total,
+        queued: 0,
+        processing: 0,
+        completed: 0,
+        failed: 0,
+        cancelled: 0,
+      },
     }
     this.sessions.set(id, session)
     this.notify()
@@ -65,20 +71,48 @@ class ImportSessionStore {
     const session = this.sessions.get(sessionId)
     if (!session) return
 
-    if (progress.completed !== undefined) {
-      session.completed = progress.completed
-    }
     if (progress.total !== undefined) {
-      session.total = progress.total
+      session.progress.total = progress.total
+    }
+    if (progress.queued !== undefined) {
+      session.progress.queued = progress.queued
+    }
+    if (progress.processing !== undefined) {
+      session.progress.processing = progress.processing
+    }
+    if (progress.completed !== undefined) {
+      session.progress.completed = progress.completed
+    }
+    if (progress.failed !== undefined) {
+      session.progress.failed = progress.failed
+    }
+    if (progress.cancelled !== undefined) {
+      session.progress.cancelled = progress.cancelled
     }
     this.notify()
   }
 
-  incrementProgress(sessionId) {
+  incrementProgress(sessionId, type) {
     const session = this.sessions.get(sessionId)
     if (!session) return
 
-    session.completed = Math.min(session.completed + 1, session.total)
+    switch (type) {
+      case 'completed':
+        session.progress.completed = Math.min(session.progress.completed + 1, session.progress.total)
+        break
+      case 'failed':
+        session.progress.failed += 1
+        break
+      case 'queued':
+        session.progress.queued += 1
+        break
+      case 'processing':
+        session.progress.processing += 1
+        break
+      case 'cancelled':
+        session.progress.cancelled += 1
+        break
+    }
     this.notify()
   }
 
