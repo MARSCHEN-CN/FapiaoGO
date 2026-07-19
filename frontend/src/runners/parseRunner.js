@@ -25,6 +25,7 @@
 
 import { BACKEND_URL } from '../config'
 import { resolveFile } from '../services/FileResolver'
+import { createParseResult } from '../models/ParseResult'
 
 /**
  * 执行单文件解析。
@@ -84,5 +85,5 @@ export async function runParseTask(job, { ipc, autoOrient }) {
     parse_method: data.parse_method,
   })
 
-  return data
+  return createParseResult(data, f.name)
 }

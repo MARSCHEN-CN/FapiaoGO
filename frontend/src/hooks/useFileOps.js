@@ -13,6 +13,7 @@ import { createTask, setTaskAbortController, updateTaskStatus, cancelTask, getTa
 import { createQueues, enqueueSplit, enqueueParse, startSplitWorkers, startParseWorkers, getSplitQueueLength, isQueueEmpty, clearQueues } from '../services/TaskScheduler'
 import { runParseTask } from '../runners/parseRunner'
 import { runSplitTask } from '../runners/splitRunner'
+import { mapParseResultToFileUpdate } from '../mappers/parseResultMapper'
 import { db } from '../db'
 
 // ── 状态迁移规则 ─────────────────────────────────────────
@@ -502,35 +503,8 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
         queueUpdate(fileObj.key, 'parsing')
 
         try {
-          const data = await runParseTask(job, { ipc, autoOrient })
-          const f = fileObj
-          const fields = data.invoice_fields || data.invoiceFields || {}
-          queueUpdate(f.key, 'parsed', {
-            invoiceType: data.invoice_type || data.invoiceType || '',
-            invoiceNumber: data.invoice_number || data.invoiceNumber || '',
-            amount: data.amount != null ? String(data.amount) : '',
-            invoiceDate: data.invoice_date || data.invoiceDate || '',
-            newName: data.new_name || data.newName || f.name,
-            parseMethod: data.parse_method || data.parseMethod || '',
-            fileFormat: data.file_format || data.fileFormat || getFileFormat(f.name),
-            previewImage: data.preview_image || data.previewImage || null,
-            failedFields: data.failed_fields || data.failedFields || [],
-            invoiceFields: fields,
-            issuer: fields?.kpr || '',
-            amountWithoutTax: fields?.amountJe != null ? String(fields.amountJe) : '',
-            taxAmount: fields?.amountSe != null ? String(fields.amountSe) : '',
-            lineItems: fields?.line_items || [],
-            rawText: data.raw_text || '',
-            searchText: buildSearchText({
-              name: f.name,
-              invoiceNumber: data.invoice_number || data.invoiceNumber || '',
-              invoiceType: data.invoice_type || data.invoiceType || '',
-              amount: data.amount != null ? String(data.amount) : '',
-              invoiceDate: data.invoice_date || data.invoiceDate || '',
-              invoice_fields: fields,
-              rawText: data.raw_text || '',
-            }),
-          })
+          const result = await runParseTask(job, { ipc, autoOrient })
+          queueUpdate(fileObj.key, result.status, mapParseResultToFileUpdate(result, fileObj))
         } catch (err) {
           console.error(`[App] 解析失败: ${fileObj.name}`, err)
           queueUpdate(fileObj.key, 'error')
