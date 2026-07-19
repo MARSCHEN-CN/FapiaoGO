@@ -556,17 +556,11 @@ function AppContent() {
       }
       ipc.on('context-menu-files', handleContextMenuFiles)
 
-      const handleExcelProgress = (_event, data) => {
-        setExportProgress(data)
-      }
-      ipc.on('excel-progress', handleExcelProgress)
-
       return () => {
         ipc.removeListener('print-progress', handleProgress)
         ipc.removeListener('settings-window-closed', handleSettingsClosed)
         ipc.removeListener('settings-changed', handleSettingsChanged)
         ipc.removeListener('context-menu-files', handleContextMenuFiles)
-        ipc.removeListener('excel-progress', handleExcelProgress)
         clearTimeout(printTimeoutRef.current)
       }
     }
