@@ -11,6 +11,7 @@ import { resolveFile } from '../services/FileResolver'
 import { consumeBatchStream } from '../services/StreamConsumer'
 import { createTask, setTaskAbortController, updateTaskStatus, cancelTask, getTask } from '../services/TaskRegistry'
 import { createQueues, enqueueSplit, enqueueParse, startSplitWorkers, startParseWorkers, getSplitQueueLength, isQueueEmpty, clearQueues } from '../services/TaskScheduler'
+import { runParseTask } from '../runners/parseRunner'
 import { db } from '../db'
 
 // ── 状态迁移规则 ─────────────────────────────────────────
@@ -485,7 +486,7 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
     const totalParseJobsRef = { current: 0 }
     const doneParseJobsRef = { current: 0 }
 
-    // Parse 流水线（从 TaskScheduler parseQueue 消费，并发 2）
+    // Parse 流水线（执行委托给 parseRunner，UI 更新在 orchestrator）
     async function parseWorker() {
       while (true) {
         if (getParseQueueLength() === 0 && parsePipelineDone) break
@@ -497,91 +498,42 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
         if (!job) continue
 
         const { fileObj } = job
-        // only parse if still ready (might have been removed)
         queueUpdate(fileObj.key, 'parsing')
 
         try {
+          const data = await runParseTask(job, { ipc, autoOrient })
           const f = fileObj
-          let resp
-
-          console.log('[parseWorker] Processing:', f.name, 'file:', !!f.file, 'printPath:', !!f.printPath, 'path:', !!f.path)
-
-          if (f.file) {
-            console.log('[parseWorker] Using f.file branch')
-            const fd = new FormData()
-            fd.append('file', f.file)
-            fd.append('autoOrient', autoOrient ? '1' : '0')
-            fd.append('mode', 'batch')
-
-            try {
-              resp = await fetch(`${BACKEND_URL}/parse_invoice`, {
-                method: 'POST', body: fd,
-              })
-              console.log('[parseWorker] Fetch response:', resp.status, resp.statusText)
-            } catch (fetchErr) {
-              console.error('[parseWorker] Fetch failed:', fetchErr.message, fetchErr)
-              throw fetchErr
-            }
-          } else if ((f.printPath || f.path) && ipc) {
-            const file = await resolveFile(f, ipc)
-            if (!file) throw new Error('IPC read-file failed: ' + f.name)
-            const fd = new FormData()
-            fd.append('file', file)
-            fd.append('autoOrient', autoOrient ? '1' : '0')
-            fd.append('mode', 'batch')
-            resp = await fetch(`${BACKEND_URL}/parse_invoice`, {
-              method: 'POST', body: fd,
-            })
-          }
-
-          if (!resp) throw new Error('无法读取文件')
-
-          if (resp.ok) {
-            const data = await resp.json()
-            console.log('[parseWorker] Response data:', {
-              type: data.invoice_type,
-              number: data.invoice_number,
-              amount: data.amount,
-              date: data.invoice_date,
-              failed_fields: data.failed_fields,
-              parse_method: data.parse_method
-            })
-            const fields = data.invoice_fields || data.invoiceFields || {}
-            queueUpdate(f.key, 'parsed', {
-              invoiceType: data.invoice_type || data.invoiceType || '',
+          const fields = data.invoice_fields || data.invoiceFields || {}
+          queueUpdate(f.key, 'parsed', {
+            invoiceType: data.invoice_type || data.invoiceType || '',
+            invoiceNumber: data.invoice_number || data.invoiceNumber || '',
+            amount: data.amount != null ? String(data.amount) : '',
+            invoiceDate: data.invoice_date || data.invoiceDate || '',
+            newName: data.new_name || data.newName || f.name,
+            parseMethod: data.parse_method || data.parseMethod || '',
+            fileFormat: data.file_format || data.fileFormat || getFileFormat(f.name),
+            previewImage: data.preview_image || data.previewImage || null,
+            failedFields: data.failed_fields || data.failedFields || [],
+            invoiceFields: fields,
+            issuer: fields?.kpr || '',
+            amountWithoutTax: fields?.amountJe != null ? String(fields.amountJe) : '',
+            taxAmount: fields?.amountSe != null ? String(fields.amountSe) : '',
+            lineItems: fields?.line_items || [],
+            rawText: data.raw_text || '',
+            searchText: buildSearchText({
+              name: f.name,
               invoiceNumber: data.invoice_number || data.invoiceNumber || '',
+              invoiceType: data.invoice_type || data.invoiceType || '',
               amount: data.amount != null ? String(data.amount) : '',
               invoiceDate: data.invoice_date || data.invoiceDate || '',
-              newName: data.new_name || data.newName || f.name,
-              parseMethod: data.parse_method || data.parseMethod || '',
-              fileFormat: data.file_format || data.fileFormat || getFileFormat(f.name),
-              previewImage: data.preview_image || data.previewImage || null,
-              failedFields: data.failed_fields || data.failedFields || [],
-              invoiceFields: fields,
-              // 与旧版 parseFiles 单文件分支保持一致的完整字段
-              issuer: fields?.kpr || '',
-              amountWithoutTax: fields?.amountJe != null ? String(fields.amountJe) : '',
-              taxAmount: fields?.amountSe != null ? String(fields.amountSe) : '',
-              lineItems: fields?.line_items || [],
+              invoice_fields: fields,
               rawText: data.raw_text || '',
-              searchText: buildSearchText({
-                name: f.name,
-                invoiceNumber: data.invoice_number || data.invoiceNumber || '',
-                invoiceType: data.invoice_type || data.invoiceType || '',
-                amount: data.amount != null ? String(data.amount) : '',
-                invoiceDate: data.invoice_date || data.invoiceDate || '',
-                invoice_fields: fields,
-                rawText: data.raw_text || '',
-              }),
-            })
-          } else {
-            throw new Error(`parse_invoice returned ${resp.status}`)
-          }
+            }),
+          })
         } catch (err) {
           console.error(`[App] 解析失败: ${fileObj.name}`, err)
           queueUpdate(fileObj.key, 'error')
         } finally {
-          // 无论成功/失败都推进进度，保证进度条能走到 100%
           doneParseJobsRef.current += 1
           setParseProgress({
             current: doneParseJobsRef.current,
