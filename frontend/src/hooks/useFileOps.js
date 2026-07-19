@@ -760,11 +760,30 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
       if (!result.success || !result.files.length) return
 
       // 转换为 processFilesForAddition 需要的格式
-      const droppedFiles = result.files.map(f => ({
-        name: f.name,
-        path: f.path,
-        // 注意：文件夹扫描的文件没有 File 对象，后续读取会通过 IPC read-file
-      }))
+      // PDF 文件需要提前读取（processPdfFile 需要实际文件内容）
+      const droppedFiles = []
+      for (const f of result.files) {
+        const isPDF = f.name.toLowerCase().endsWith('.pdf')
+        let fileData = null
+
+        if (isPDF) {
+          try {
+            const readResult = await api.ipcRenderer.invoke('read-file', f.path)
+            if (readResult.success) {
+              const blob = new Blob([new Uint8Array(readResult.data)], { type: 'application/pdf' })
+              fileData = new File([blob], f.name, { type: 'application/pdf' })
+            }
+          } catch (err) {
+            console.error('[handleNativeDrop] PDF 读取失败:', f.name, err)
+          }
+        }
+
+        droppedFiles.push({
+          name: f.name,
+          path: f.path,
+          file: fileData,
+        })
+      }
 
       await processFilesForAddition(droppedFiles)
     } catch (err) {
