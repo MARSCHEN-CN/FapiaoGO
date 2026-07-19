@@ -19,6 +19,8 @@
   position: relative;
   z-index: 20;
   box-shadow: 2px 0 16px rgba(0, 0, 0, 0.04), var(--highlight-top);
+  border-radius: 0 var(--r-xl) var(--r-xl) 0;
+  overflow: hidden;
 }
 
 /* -- Sidebar header -- */
