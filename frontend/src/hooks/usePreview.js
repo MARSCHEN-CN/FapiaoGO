@@ -982,11 +982,13 @@ export function usePreview({ files, settings, electronAPIRef }) {
         h: Math.round(srcH * fitScale),
       }
     }
-    // 🛡️ DEV 断言：paperDisplayRect 不应超出 viewport 预留空间
+    // 🛡️ DEV 断言：自适应模式下 paperDisplayRect 不应超出 viewport 预留空间
     // 预留空间 = containerSize 内容区 - SHADOW_PAD*2（阴影预留）
     // paperDisplayW > 预留空间 → padding/阴影计算不一致 → 自适应模式弹出滚动条
+    // 注意：manual 模式下用户主动放大导致超出是正常行为（应出现滚动条），不触发警告
     if (
       import.meta.env.DEV &&
+      zoomMode === 'adaptive' &&
       containerSize.width > 0 &&
       paperDisplayW > containerSize.width - SHADOW_PAD * 2
     ) {
