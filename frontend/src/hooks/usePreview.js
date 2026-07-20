@@ -346,8 +346,13 @@ export function usePreview({ files, settings, electronAPIRef }) {
     const deg = ((fileRotations[key] || 0) + 90) % 360
     setFileRotations(prev => ({ ...prev, [key]: deg }))
     // 持久化 contentRotation（纸张方向 Fact 之一），paperOrientation 取当前 Fact
+    // 4.1.5：写入键严格用 Document 身份 docId，不回退 path/key（uiKey 永不入持久层）
     const f = previewFileRef.current
-    const factKey = f?.docId || f?.path || key
+    const factKey = f?.identity?.docId || f?.docId
+    if (!factKey) {
+      console.warn('[DocFacts] skip save: missing docId (image/OFD 尚无 docId)')
+      return
+    }
     const api = electronAPIRef.current
     if (api && api.saveDocFacts) {
       api.saveDocFacts(factKey, { paperOrientation: paperOrientationRef.current, contentRotation: deg }).catch(() => {})
@@ -359,19 +364,21 @@ export function usePreview({ files, settings, electronAPIRef }) {
   // 横向/纵向 = 覆盖持久记录。contentRotation 保持不变（来自当前 Fact）。
   const handlePaperOrientationChange = useCallback((mode) => {
     const f = previewFileRef.current
-    const factKey = f?.docId || f?.path || f?.key
+    // 4.1.5：写入键严格用 Document 身份 docId，不回退 path/key
+    const factKey = f?.identity?.docId || f?.docId
+    if (!factKey) console.warn('[DocFacts] skip persist: missing docId (image/OFD 尚无 docId)')
     const api = electronAPIRef.current
     if (mode === 'auto') {
       const ds = documentStateRef.current
       const nat = ds?.pageSize ? getDocNaturalOrientation(ds.pageSize) : null
       const natural = nat || 'portrait'
       applyPaperOrientation(natural, true)
-      if (api && api.clearDocFacts) api.clearDocFacts(factKey).catch(() => {})
+      if (factKey && api && api.clearDocFacts) api.clearDocFacts(factKey).catch(() => {})
       return
     }
     if (mode !== 'portrait' && mode !== 'landscape') return
     applyPaperOrientation(mode, false)
-    if (api && api.saveDocFacts) {
+    if (factKey && api && api.saveDocFacts) {
       api.saveDocFacts(factKey, { paperOrientation: mode, contentRotation: fileRotations[f?.key] || 0 }).catch(() => {})
     }
   }, [electronAPIRef, fileRotations])
@@ -1397,12 +1404,18 @@ export function usePreview({ files, settings, electronAPIRef }) {
     const naturalOrientation = (docW > 0 && docH > 0) ? getDocNaturalOrientation({ w: docW, h: docH }) : null
 
     // ── Commit C：按 doc_id 加载方向 Fact（Initialize Once + 持久化）──
-    // factKey 优先用内容哈希 docId（稳定跨重启）；图片/OFD 无 docId 时退化为落盘路径。
-    const factKey = loadedFile.docId || loadedFile.path || loadedFile.key
+    // 4.1.5：读取优先用 Document 身份 docId（稳定跨重启）；迁移期回退旧 path/key 落盘键（只读不写旧键）。
+    const docId = loadedFile.identity?.docId || loadedFile.docId || ''
+    const factCandidates = [docId, loadedFile.path, loadedFile.key].filter(Boolean)
     let loadedFacts = null
     try {
       const api = electronAPIRef.current
-      if (api && api.loadDocFacts) loadedFacts = await api.loadDocFacts(factKey)
+      if (api && api.loadDocFacts) {
+        for (const ck of factCandidates) {
+          const rec = await api.loadDocFacts(ck)
+          if (rec) { loadedFacts = rec; break }
+        }
+      }
     } catch (_) { /* 无持久层（Web 模式）退化为 natural 推导 */ }
     const init = computeInitialDocFacts(loadedFacts, naturalOrientation)
     // 恢复 contentRotation 到实时镜象（fileRotations），保证 previewRotation / L2 / full cache 一致
@@ -1412,7 +1425,8 @@ export function usePreview({ files, settings, electronAPIRef }) {
     if (init.shouldPersist) {
       try {
         const api = electronAPIRef.current
-        if (api && api.saveDocFacts) await api.saveDocFacts(factKey, { paperOrientation: init.paperOrientation, contentRotation: init.contentRotation })
+        // 写入严格用 docId（不回退 path/key），无 docId 时跳过落盘
+        if (docId && api && api.saveDocFacts) await api.saveDocFacts(docId, { paperOrientation: init.paperOrientation, contentRotation: init.contentRotation })
       } catch (_) { /* 忽略落盘失败，不影响预览 */ }
     }
 
