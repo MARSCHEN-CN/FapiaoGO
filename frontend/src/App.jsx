@@ -21,7 +21,7 @@ import {
   getElectronAPI, getFilePath, getFileFormat, isMergeMode, getMergeGroupStart,
   detectDuplicateInvoices, getPreviousYearInfo,
 } from './utils'
-import { generateFileKey } from './utils/fileHelpers'
+import { buildFileObj } from './utils/fileHelpers'
 import { getForcedLandscape } from './utils/mergeMode'
 
 import { useSettings } from './hooks/useSettings'
@@ -583,13 +583,10 @@ function AppContent() {
 
       const handleContextMenuFiles = (_event, ctxFiles) => {
         if (!ctxFiles || ctxFiles.length === 0) return
-        const initialFiles = ctxFiles.map((file) => ({
-          key: generateFileKey(file.name),
-          name: file.name, path: file.path, printPath: file.path,
-          status: 'parsing', invoiceType: '', invoiceNumber: '', amount: '',
-          invoiceDate: '', newName: '', parseMethod: '',
-          fileFormat: getFileFormat(file.name), previewImage: null,
-        }))
+        // 经 buildFileObj 统一构造，确保进入文件系统的 fileObj 携带 identity
+        // （context-menu 仅有 {name, path}，无真实 File 对象 → file=null；docId 留空，
+        //  待 4.2.1-c parse 阶段由 updateDocumentIdentity 回填）
+        const initialFiles = ctxFiles.map((file) => buildFileObj(null, file.name, file.path))
         setFiles((prev) => {
           const existingPaths = new Set(prev.map((f) => f.path || f.printPath || f.name))
           return [...prev, ...initialFiles.filter((f) => !existingPaths.has(f.path || f.printPath || f.name))]
