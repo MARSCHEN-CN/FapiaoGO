@@ -93,6 +93,10 @@ export default defineConfig({
         target: 'http://localhost:5000',
         changeOrigin: true,
       },
+      '/import': {
+        target: 'http://localhost:5000',
+        changeOrigin: true,
+      },
     },
   },
 })

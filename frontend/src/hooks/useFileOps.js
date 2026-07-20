@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { useDropzone } from 'react-dropzone'
-import { BACKEND_URL, SUPPORTED_EXTENSIONS } from '../config'
+import { BACKEND_URL, SUPPORTED_EXTENSIONS, IMPORT_SCALE_V1 } from '../config'
 import {
   getElectronAPI, getFilePath, getExtension, getExtensionWithDot,
   getMimeType, concurrentBatch, applySort, detectDuplicateInvoices, getPreviousYearInfo,
@@ -11,8 +11,9 @@ import { createPlaceholders } from '../utils/placeholderGenerator'
 import { resolveFile } from '../services/FileResolver'
 import { prepareBatchRequest } from '../services/ParseBatchClient'
 import { consumeBatchStream } from '../services/StreamConsumer'
-import { createTask, setTaskAbortController, updateTaskStatus, getTask } from '../services/TaskRegistry'
+import { createTask, setTaskAbortController, updateTaskStatus, getTask, setTaskStream, cancelTask } from '../services/TaskRegistry'
 import { createQueues, enqueueSplit, enqueueParse, dequeueSplit, dequeueParse, getSplitQueueLength, getParseQueueLength } from '../services/TaskScheduler'
+import { createImportBatch, subscribeBatchProgress, cancelImportBatch, getBatchResults } from '../services/ImportBatchClient'
 import { runParseTask } from '../runners/parseRunner'
 import { runSplitTask } from '../runners/splitRunner'
 import { runFallbackParseTask } from '../runners/fallbackParseRunner'
@@ -304,8 +305,28 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
     // 进度计数（同步写入 ImportSessionStore）
     let progressTotal = 0
     let progressDone = 0
+    let splitDone = 0  // 拆分阶段完成计数（Phase Progress）
+
+    // ── Import Scale v1: 批量收集器 ──────────────────────
+    // 当 IMPORT_SCALE_V1 启用时，split 后的文件收集到此数组，
+    // 待 split 全部完成后一次性提交到后端 batch API。
+    // 当禁用时，走旧路径 enqueueParse → parseWorker。
+    const readyFiles = []
+
+    /**
+     * 根据 feature flag 决定：收集到 readyFiles 或入队 parseQueue。
+     * @param {Object} fileObj - 就绪文件对象
+     */
+    const collectOrEnqueue = (fileObj) => {
+      if (IMPORT_SCALE_V1) {
+        readyFiles.push(fileObj)
+      } else {
+        enqueueParse([{ fileObj }])
+      }
+    }
 
     // Parse 流水线（执行委托给 parseRunner，UI 更新在 orchestrator）
+    // 仅在 IMPORT_SCALE_V1 = false 时启动（fallback 路径）
     async function parseWorker() {
       while (true) {
         if (getParseQueueLength() === 0 && parsePipelineDone) break
@@ -355,7 +376,7 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
               queueUpdate(p.key, 'ready', toAddRest)
               progressTotal += 1
               const readyFile = { ...p, ...toAddRest }
-              enqueueParse([{ fileObj: readyFile }])
+              collectOrEnqueue(readyFile)
             } else if (toAdd.length > 1) {
               const pageItems = toAdd.map((pageObj) => ({
                 ...pageObj,
@@ -364,44 +385,228 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
               replaceWithItems(p.key, pageItems)
               progressTotal += pageItems.length
               for (const pageObj of pageItems) {
-                enqueueParse([{ fileObj: pageObj }])
+                collectOrEnqueue(pageObj)
               }
             } else {
               queueUpdate(p.key, 'ready', { key: p.key })
               progressTotal += 1
-              enqueueParse([{ fileObj: { ...p, key: p.key } }])
+              collectOrEnqueue({ ...p, key: p.key })
             }
           } else {
             const fileObjRest = stripIdentity(result.fileObj)
             queueUpdate(p.key, 'ready', fileObjRest)
             progressTotal += 1
             const readyFile = { ...p, ...fileObjRest }
-            enqueueParse([{ fileObj: readyFile }])
+            collectOrEnqueue(readyFile)
           }
         } catch (err) {
           console.error(`[App] 文件处理失败: ${f.name}`, err)
           queueUpdate(p.key, 'error')
+        } finally {
+          splitDone += 1
+          setParseProgress({ current: splitDone, total: placeholders.length })
         }
       }
     }
 
-    // 启动 split workers（通过 TaskScheduler 管理队列）+ parse workers
+    // 启动 split workers（通过 TaskScheduler 管理队列）
     const splitWorkers = []
     for (let i = 0; i < Math.min(SPLIT_CONCURRENCY, placeholders.length); i++) {
       splitWorkers.push(splitWorker())
     }
-    const parseWorkers = []
-    for (let i = 0; i < PARSE_CONCURRENCY; i++) {
-      parseWorkers.push(parseWorker())
-    }
 
     setParsing(true)
+    setParseProgress({ current: 0, total: placeholders.length })
     await Promise.all(splitWorkers)
     parsePipelineDone = true
-    await Promise.all(parseWorkers)
 
-    // 解析完成后：后处理（排序 + 去重）+ 收尾状态
+    // ── Import Scale v1: 批量解析路径 ────────────────────
+    // split 完成后，根据 feature flag 选择执行路径
+    if (IMPORT_SCALE_V1 && readyFiles.length > 0) {
+      // 批量路径：POST /import/batch + GET SSE
+      console.log(`[ImportScale] 批量解析 ${readyFiles.length} 个文件`)
+
+      // 标记所有就绪文件为 parsing（一次性）
+      // 状态机已允许 splitting→parsing（Map 去重可能吞掉 ready 中间态）
+      for (const fileObj of readyFiles) {
+        queueUpdate(fileObj.key, 'parsing')
+      }
+
+      // 创建 TaskRegistry 任务（用于取消管理）
+      const task = createTask(readyFiles.map((f) => f.key))
+      const abortController = new AbortController()
+      setTaskAbortController(task.id, abortController)
+      updateTaskStatus(task.id, 'running')
+
+      try {
+        // 准备文件列表（需要 File 对象 + clientKey 用于结果匹配）
+        const filesForBatch = readyFiles.map((fileObj) => ({
+          file: fileObj.file,
+          name: fileObj.name,
+          clientKey: fileObj.key,
+        }))
+        console.log('[ImportScale] clientKeys 提交:', filesForBatch.map(f => f.clientKey ? f.clientKey.slice(0, 8) : 'EMPTY'))
+
+        // 创建批量导入任务
+        const { batchId, total } = await createImportBatch(filesForBatch, {
+          autoOrient,
+          signal: abortController.signal,
+        })
+
+        console.log(`[ImportScale] 批次已创建: ${batchId}, total=${total}`)
+
+        // 监听 SSE 进度
+        await new Promise((resolve, reject) => {
+          const eventSource = subscribeBatchProgress(batchId, {
+            // 注意：onProgress 只驱动任务级进度条，不触碰文件状态。
+            // 文件状态仅在两处迁移：提交时 ready→parsing，hydration 时 parsing→parsed。
+            onProgress: (progress) => {
+              setParseProgress({
+                current: progress.current,
+                total: progress.total,
+              })
+              updateProgress(session.id, {
+                completed: progress.current,
+                total: progress.total,
+              })
+            },
+            onComplete: async (progress) => {
+              console.log('[ImportScale] onComplete enter, status=', progress.status)
+              try {
+                if (progress.status === 'completed') {
+                  // ── Hydration：拉取字段数据，分块更新 UI ──
+                  console.log('[ImportScale] calling getBatchResults, batchId=', batchId)
+                  const items = await getBatchResults(batchId, abortController.signal)
+                  console.log('[ImportScale hydration]', { resultCount: items.length, readyCount: readyFiles.length })
+
+                  const resultMap = new Map()
+                  for (const item of items) {
+                    if (item.clientKey) {
+                      resultMap.set(item.clientKey, item)
+                    }
+                  }
+
+                  // 分块更新（每 100 个一批，避免长任务阻塞渲染）
+                  const CHUNK = 100
+                  for (let i = 0; i < readyFiles.length; i += CHUNK) {
+                    const chunkFiles = readyFiles.slice(i, i + CHUNK)
+                    for (const fileObj of chunkFiles) {
+                      const item = resultMap.get(fileObj.key)
+                      if (item) {
+                        // 构造 ParseResult 兼容结构，复用 mapper
+                        const hydrationResult = {
+                          status: 'parsed',
+                          fields: {
+                            invoiceType: item.invoiceType || '',
+                            invoiceNumber: item.invoiceNumber || '',
+                            amount: item.amount || '',
+                            invoiceDate: item.invoiceDate || '',
+                            newName: item.newName || fileObj.name,
+                            parseMethod: item.parseMethod || '',
+                            fileFormat: fileObj.fileFormat || '',
+                            previewImage: item.previewImage || null,
+                            failedFields: item.failedFields || [],
+                            invoiceFields: item.invoiceFields || null,
+                            issuer: (item.invoiceFields || {}).kpr || '',
+                            amountWithoutTax: (item.invoiceFields || {}).hjje || '',
+                            taxAmount: (item.invoiceFields || {}).se || '',
+                            lineItems: (item.invoiceFields || {}).line_items || [],
+                            rawText: '',
+                          },
+                          raw: {},
+                        }
+                        const update = mapParseResultToFileUpdate(hydrationResult, fileObj)
+                        queueUpdate(fileObj.key, 'parsed', update)
+                      } else {
+                        // 无匹配结果（失败文件）：仅更新状态
+                        queueUpdate(fileObj.key, 'parsed')
+                      }
+                    }
+                    // 让出主线程，允许渲染帧插入
+                    if (i + CHUNK < readyFiles.length) {
+                      await new Promise(r => setTimeout(r, 0))
+                    }
+                  }
+                  console.log(`[ImportScale] Hydration 完成: ${resultMap.size}/${readyFiles.length} 个文件已填充字段`)
+                } else {
+                  // failed / cancelled：标记错误
+                  for (const fileObj of readyFiles) {
+                    queueUpdate(fileObj.key, 'error')
+                  }
+                }
+
+                updateTaskStatus(task.id, 'completed')
+                resolve(progress)
+              } catch (err) {
+                console.error('[ImportScale] onComplete FAILED:', err)
+                // 回退：标记所有文件为 parsed（至少不卡住）
+                for (const fileObj of readyFiles) {
+                  queueUpdate(fileObj.key, 'parsed')
+                }
+                updateTaskStatus(task.id, 'completed')
+                resolve(progress)
+              }
+            },
+            onError: (err) => {
+              console.error('[ImportScale] SSE 错误:', err)
+              // SSE 连接失败，标记所有文件为错误
+              for (const fileObj of readyFiles) {
+                queueUpdate(fileObj.key, 'error')
+              }
+              updateTaskStatus(task.id, 'cancelled')
+              reject(err)
+            },
+          })
+
+          // 将 EventSource 绑定到 Task（用于取消时关闭）
+          setTaskStream(task.id, eventSource)
+
+          // 监听 AbortController（用户取消）
+          abortController.signal.addEventListener('abort', () => {
+            eventSource.close()
+            // 通知后端取消
+            cancelImportBatch(batchId).catch(() => {})
+            for (const fileObj of readyFiles) {
+              queueUpdate(fileObj.key, 'cancelled')
+            }
+            updateTaskStatus(task.id, 'cancelled')
+            reject(new Error('用户取消'))
+          })
+        })
+      } catch (err) {
+        console.error('[ImportScale] 批量解析失败:', err)
+        // 批量失败时，标记所有文件为错误（不回退到逐个解析，避免重复请求）
+        for (const fileObj of readyFiles) {
+          queueUpdate(fileObj.key, 'error')
+        }
+      }
+    } else {
+      // Fallback 路径：旧 parseWorker（逐个 /parse_invoice，2 并发）
+      console.log(`[ImportScale] Fallback 到旧 parseWorker (${readyFiles.length} 个文件)`)
+
+      // 注意：当 IMPORT_SCALE_V1 = false 时，文件已在 splitWorker 中通过 enqueueParse 入队
+      // 当 IMPORT_SCALE_V1 = true 但 readyFiles.length = 0 时，无需解析
+      const parseWorkers = []
+      for (let i = 0; i < PARSE_CONCURRENCY; i++) {
+        parseWorkers.push(parseWorker())
+      }
+      await Promise.all(parseWorkers)
+    }
+
+    // 解析完成后：强制刷新所有待处理更新（hydration 结果），再后处理
+    flushUpdates()
+
+    // 探针2+3：flush 后状态分布 + processImportedFiles 前完整状态
     setFiles((prev) => {
+      const dist = prev.reduce((a, f) => { a[f.status] = (a[f.status] || 0) + 1; return a }, {})
+      console.log('[ImportScale flush] 状态分布:', dist)
+      const notDone = prev.filter(
+        (f) => f.status !== 'parsed' && f.status !== 'error' && f.status !== 'cancelled'
+      )
+      if (notDone.length > 0) {
+        console.warn(`[ImportScale before process] ${notDone.length} 个文件未到终态:`,
+          notDone.slice(0, 20).map(f => `${f.name}:${f.status}`))
+      }
       const { files: sortedFiles } = processImportedFiles(prev, sortByRef.current, sortOrderRef.current)
       return sortedFiles
     })

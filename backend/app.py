@@ -32,6 +32,7 @@ from services.invoice_service import (
     parse_invoice_service, allowed_file, sanitize_filename, detect_file_format
 )
 from parse_job_manager import get_job_manager
+from import_batch_manager import get_import_batch_manager
 from services.decision_router import DecisionRouter
 from render_engine import registry, engine
 from render_engine.api import render_bp
@@ -1451,6 +1452,114 @@ def api_export_render_events(task_id):
         mimetype='text/event-stream',
         headers={'Cache-Control': 'no-cache', 'Connection': 'keep-alive', 'X-Accel-Buffering': 'no'},
     )
+
+
+# ============================
+#  Import Scale v1（批量导入任务生命周期）
+# ============================
+
+
+@app.route('/import/batch', methods=['POST'])
+def import_batch_create():
+    """创建批量导入任务（Import Scale v1）
+
+    接收 multipart/form-data 文件列表，创建 ImportBatch 并异步调度解析。
+    客户端随后通过 GET /import/batch/{batchId}/events 监听 SSE 进度。
+
+    与旧 /parse_batch 的区别：
+    - 不绑定 HTTP 生命周期（POST 立即返回 batchId）
+    - 无 100 文件硬限制（由 BatchManager 窗口式调度）
+    - 结果经 ResultBuffer 批量入库（非逐条 upsert）
+    """
+    files = request.files.getlist('files')
+    if not files:
+        return jsonify({"success": False, "error": "没有上传文件"}), 400
+
+    auto_orient = request.form.get('autoOrient', '1') == '1'
+    enable_auto_ocr = request.form.get('enableAutoOcr', '0') == '1'
+    client_keys = request.form.getlist('clientKeys')  # 护栏A：可选，与 files 按索引对齐
+
+    # 在主线程预读取所有文件字节（Flask request context 不可跨线程访问）
+    file_inputs = []
+    for i, f in enumerate(files):
+        f.seek(0)
+        file_inputs.append({
+            'bytes': f.read(),
+            'filename': f.filename,
+            'clientKey': client_keys[i] if i < len(client_keys) else '',
+        })
+
+    mgr = get_import_batch_manager()
+    batch_id = mgr.create_batch(file_inputs, auto_orient=auto_orient,
+                                enable_auto_ocr=enable_auto_ocr)
+
+    return jsonify({
+        "success": True,
+        "batchId": batch_id,
+        "total": len(file_inputs),
+    })
+
+
+@app.route('/import/batch/<batch_id>/events', methods=['GET'])
+def import_batch_events(batch_id):
+    """SSE 流式读取批量导入进度（只读，不参与业务执行）
+
+    模式与 /api/export-pdf/events/<task_id> 同构：
+    - 轮询 ImportBatch.to_dict()
+    - 终态（completed/failed/cancelled）后停止
+    """
+    mgr = get_import_batch_manager()
+    if mgr.get_batch(batch_id) is None:
+        return jsonify({"success": False, "error": "批次不存在"}), 404
+
+    def generate():
+        try:
+            while True:
+                state = mgr.get_batch_dict(batch_id)
+                if state is None:
+                    break
+                yield f"data: {_json.dumps(state, ensure_ascii=False)}\n\n"
+                if state['status'] in ('completed', 'failed', 'cancelled'):
+                    logger.info(f"[SSE] batch={batch_id} 终态={state['status']}，generator 正常退出")
+                    break
+                time.sleep(0.5)
+        except GeneratorExit:
+            logger.info(f"[SSE] batch={batch_id} client disconnected (GeneratorExit)")
+            raise
+
+    return Response(
+        stream_with_context(generate()),
+        mimetype='text/event-stream',
+        headers={'Cache-Control': 'no-cache', 'Connection': 'keep-alive', 'X-Accel-Buffering': 'no'},
+    )
+
+
+@app.route('/import/batch/cancel', methods=['POST'])
+def import_batch_cancel():
+    """取消批量导入任务"""
+    data = request.get_json(silent=True) or {}
+    batch_id = data.get('batchId', '')
+    if not batch_id:
+        return jsonify({"success": False, "error": "缺少 batchId"}), 400
+    mgr = get_import_batch_manager()
+    if mgr.cancel_batch(batch_id):
+        return jsonify({"success": True})
+    return jsonify({"success": False, "error": "批次不存在或已完成"}), 404
+
+
+@app.route('/import/batch/<batch_id>/results', methods=['GET'])
+def import_batch_results(batch_id):
+    """获取批量导入的解析结果（用于前端 hydration）
+    
+    batch completed 后，前端调用此接口拉取字段数据。
+    返回 clientKey 用于精确匹配前端 fileObj。
+    """
+    mgr = get_import_batch_manager()
+    if mgr.get_batch(batch_id) is None:
+        return jsonify({"success": False, "error": "批次不存在"}), 404
+    
+    items = mgr.get_batch_results(batch_id)
+    return jsonify({"success": True, "items": items})
 
 
 if __name__ == '__main__':

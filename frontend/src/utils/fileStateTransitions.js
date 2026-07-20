@@ -16,9 +16,9 @@
 
 export const VALID_TRANSITION = {
   uploading: ['splitting', 'ready', 'parsing'],
-  splitting: ['ready', 'error'],
+  splitting: ['ready', 'parsing', 'error', 'cancelled'],
   ready: ['parsing', 'error'],
-  parsing: ['parsed', 'error'],
+  parsing: ['parsed', 'error', 'cancelled'],
   parsed: [],
   error: ['parsing'],
 }

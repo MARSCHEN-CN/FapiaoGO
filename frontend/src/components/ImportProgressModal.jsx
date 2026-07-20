@@ -1,16 +1,11 @@
 import React, { useMemo } from 'react'
 import { PUBLIC_BASE } from '../config'
 
-const STEPS = [
-  { key: 'read', label: '读取文件' },
-  { key: 'extract', label: '提取字段' },
-]
-
 /**
- * 导入进度弹窗（方案2：横幅+wait.svg+步骤列表）
+ * 导入进度弹窗（方案2：横幅+wait.svg+进度条）
  *
  * 支持两种 props 方式：
- *  1. 新方式：visible, title, progress(0~100), text, currentStep(0/1/2), onCancel
+ *  1. 新方式：visible, title, progress(0~100), text, onCancel
  *  2. 兼容旧方式：importing, parsing, parseProgress({current,total})
  */
 const ImportProgressModal = (props) => {
@@ -20,7 +15,6 @@ const ImportProgressModal = (props) => {
     title = '正在导入文件',
     progress,
     text = '',
-    currentStep,
     onCancel,
     // 旧 API（兼容）
     importing,
@@ -40,12 +34,14 @@ const ImportProgressModal = (props) => {
     return 0
   }, [progress, parseProgress])
 
-  // 推断当前步骤（基于进度百分比）
-  const activeStep = useMemo(() => {
-    if (currentStep !== undefined) return currentStep
-    if (pct < 60) return 0
-    return 1
-  }, [currentStep, pct])
+  // 统一文本：不暴露内部阶段
+  const displayText = useMemo(() => {
+    if (text) return text
+    if (parseProgress && parseProgress.total > 0) {
+      return `正在处理发票 ${parseProgress.current}/${parseProgress.total}`
+    }
+    return ''
+  }, [text, parseProgress])
 
   if (!visible) return null
 
@@ -79,30 +75,8 @@ const ImportProgressModal = (props) => {
               <span className="ipm-bar-dot" />
             </div>
           </div>
-          {text && <div className="ipm-bar-filename">{text}</div>}
+          {displayText && <div className="ipm-bar-filename">{displayText}</div>}
         </div>
-
-        {/* 步骤列表 */}
-        <ul className="ipm-steps">
-          {STEPS.map((step, i) => {
-            const state = i < activeStep ? 'done' : i === activeStep ? 'active' : 'pending'
-            return (
-              <li key={step.key} className={`ipm-step ipm-step--${state}`}>
-                <span className="ipm-step-icon">
-                  {state === 'done' && (
-                    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                      <polyline points="20 6 9 17 4 12" />
-                    </svg>
-                  )}
-                  {state === 'active' && (
-                    <span className="ipm-step-spinner" />
-                  )}
-                </span>
-                <span className="ipm-step-label">{step.label}</span>
-              </li>
-            )
-          })}
-        </ul>
 
         {/* 底部操作 */}
         {onCancel && (

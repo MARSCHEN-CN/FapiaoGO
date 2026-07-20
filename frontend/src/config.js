@@ -33,6 +33,12 @@ export const PUBLIC_BASE = import.meta.env.BASE_URL
 // false = 回退 pdf.js + Canvas 旧链路
 export const USE_RENDER_ENGINE_PREVIEW = true
 
+// ─── Import Scale v1（批量导入 Feature Flag）──────────────────────
+// true  = 使用 POST /import/batch + GET SSE 批量导入（服务端任务队列）
+// false = 回退旧 parseWorker（前端逐个 /parse_invoice，2 并发）
+// 注意：仅替换 parse 阶段，split 阶段不受影响
+export const IMPORT_SCALE_V1 = true
+
 /**
  * 构建 Render Engine 预览 URL。
  *

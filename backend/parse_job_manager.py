@@ -43,6 +43,7 @@ class ParseJob:
     result_id: str = ''  # 解析结果在缓存中的 key
     created_at: str = ''
     updated_at: str = ''
+    batch_id: str = ''  # 所属批次 ID（空 = 独立任务，非批量导入）
     
     # 性能指标
     metrics: Dict[str, Any] = field(default_factory=dict)
@@ -69,6 +70,7 @@ class ParseJob:
             'result_id': self.result_id,
             'created_at': self.created_at,
             'updated_at': self.updated_at,
+            'batch_id': self.batch_id,
             'metrics': dict(self.metrics),  # 浅拷贝，防调用方误改 job.metrics
         }
     
@@ -335,6 +337,10 @@ class ParseJobManager:
         self._cancel_flags: Dict[str, bool] = {}  # 取消标志，供执行中的任务检查
         self._futures: Dict[str, Future] = {}  # 追踪提交的 future，用于取消
         self._lock = Lock()
+        # 完成订阅：外部模块（如 ImportBatchManager）注册回调，
+        # 每个 job 到达终态时触发。签名: callback(job_id: str, status: str) -> None
+        # 注意：回调在 executor 回调线程中执行，必须线程安全且不可阻塞。
+        self._completion_subscribers: list = []
         
         # 启动队列处理器
         self._start_queue_processor()
@@ -377,21 +383,34 @@ class ParseJobManager:
         self._queue_thread = threading.Thread(target=process_queue, daemon=True, name='QueueProcessor')
         self._queue_thread.start()
     
-    def create_job(self, file_name: str, file_hash: str) -> ParseJob:
-        """创建新的解析任务"""
+    def create_job(self, file_name: str, file_hash: str, batch_id: str = '') -> ParseJob:
+        """创建新的解析任务
+        
+        Args:
+            file_name: 文件名
+            file_hash: 文件内容哈希（用于去重）
+            batch_id: 所属批次 ID（空 = 独立任务）
+        """
         job = ParseJob(
             id=str(uuid.uuid4()),
             file_name=file_name,
             file_hash=file_hash,
             status='pending',
-            progress=0
+            progress=0,
+            batch_id=batch_id,
         )
         self.store.add(job)
-        logger.info(f"[JobManager] 创建任务: {job.id} ({file_name})")
+        logger.info(f"[JobManager] 创建任务: {job.id} ({file_name})"
+                    + (f" [batch={batch_id}]" if batch_id else ""))
         return job
     
-    def submit_job(self, job: ParseJob, parse_func, *args, **kwargs):
-        """提交任务到队列"""
+    def submit_job(self, job: ParseJob, parse_func, *args, **kwargs) -> bool:
+        """提交任务到队列
+        
+        Returns:
+            True: 成功入队
+            False: 队列已满，任务已标记为 failed
+        """
         # 存储解析函数和参数
         job._parse_func = parse_func
         job._parse_args = args
@@ -400,10 +419,12 @@ class ParseJobManager:
         try:
             self.queue.put_nowait(job.id)
             logger.info(f"[JobManager] 提交任务到队列: {job.id}")
+            return True
         except Exception as e:
             job.update_status('failed', error=f'队列已满，请稍后重试')
             self.store.update(job, force_save=True)  # 终态立即保存
             logger.error(f"[JobManager] 提交任务失败: {e}")
+            return False
     
     def _execute_job(self, job: ParseJob):
         """执行解析任务（在线程池中）"""
@@ -451,8 +472,9 @@ class ParseJobManager:
                 job.result_id = result_id
                 job.update_status('success', progress=100)
 
-                # 记录性能指标
+                # 记录性能指标（保留调度器预写入的 client_key 等扩展字段）
                 job.metrics = {
+                    **job.metrics,
                     'elapsed_seconds': round(elapsed, 2),
                     'file_size': parse_kwargs.get('file_size', 0),
                     'parse_method': result.get('parse_method', 'unknown'),
@@ -529,12 +551,37 @@ class ParseJobManager:
         
         负责：
         1. 清理 _futures 追踪
-        2. 触发批量刷盘
+        2. 通知完成订阅者（如 ImportBatchManager）
+        3. 触发批量刷盘
         """
         with self._lock:
             self._futures.pop(job_id, None)
+        
+        # 通知订阅者（在锁外执行，避免回调内再调用 manager 方法时死锁）
+        job = self.store.get(job_id)
+        final_status = job.status if job else 'unknown'
+        for callback in self._completion_subscribers:
+            try:
+                callback(job_id, final_status)
+            except Exception as e:
+                logger.error(f"[JobManager] 完成订阅回调异常: {e}")
+        
         # 检查是否需要批量保存
         self.store._flush_if_needed()
+    
+    def on_job_complete(self, callback):
+        """注册任务完成订阅回调
+        
+        Args:
+            callback: 可调用对象，签名 (job_id: str, status: str) -> None
+                      在每个 job 到达终态（success/failed/cancelled）后触发。
+                      注意：回调在 executor 回调线程中执行，必须线程安全且不可阻塞。
+        
+        用法示例（ImportBatchManager）::
+        
+            manager.on_job_complete(self._handle_job_done)
+        """
+        self._completion_subscribers.append(callback)
     
     def get_job(self, job_id: str) -> Optional[Dict[str, Any]]:
         """获取任务状态"""
@@ -556,6 +603,10 @@ class ParseJobManager:
     def list_jobs(self, limit: int = 50, offset: int = 0) -> list:
         """列出任务"""
         return self.store.list_jobs(limit, offset)
+    
+    def queue_size(self) -> int:
+        """当前队列中等待处理的任务数（用于外部 admission control / pacing）"""
+        return self.queue.qsize()
     
     def shutdown(self):
         """关闭任务管理器"""
