@@ -213,7 +213,9 @@ export function usePreview({ files, settings, electronAPIRef }) {
     const pageW = loadedFile._pdfPageWidth || loadedFile._imageWidth || 0
     const pageH = loadedFile._pdfPageHeight || loadedFile._imageHeight || 0
     return {
-      id: loadedFile.key || loadedFile.id || '',
+      // Stage4.1.4：DocumentState 身份源从 UI key 切换到 Document docId。
+      // 优先 identity.docId（4.1.3 注入）；兼容旧数据回退 docId；永不使用 key。
+      id: loadedFile.identity?.docId || loadedFile.docId || '',
       pageCount: loadedFile._pdfPageCount || 1,
       pageSize: { w: pageW, h: pageH },
       pageOrientation: getDocNaturalOrientation({ w: pageW, h: pageH }),
@@ -1416,7 +1418,9 @@ export function usePreview({ files, settings, electronAPIRef }) {
 
     const docOrientation = naturalOrientation || contentOrient || 'portrait'
     documentStateRef.current = {
-      id: loadedFile.key || loadedFile.id || '',
+      // Stage4.1.4：DocumentState 身份源从 UI key 切换到 Document docId。
+      // 优先 identity.docId（4.1.3 注入）；兼容旧数据回退 docId；永不使用 key。
+      id: loadedFile.identity?.docId || loadedFile.docId || '',
       pageCount: loadedFile._pdfPageCount || 1,
       pageSize: { w: docW, h: docH },
       pageOrientation: docOrientation,
