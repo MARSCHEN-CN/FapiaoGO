@@ -83,3 +83,47 @@ export function resolvePageId(docId, pageNum, explicitPageId) {
   if (pageNum == null || pageNum <= 1) return undefined
   return `${docId}:p${pageNum}`
 }
+
+// ============================================================================
+// Stage 4.2.1-a — Document Fact Enrichment
+// ----------------------------------------------------------------------------
+// 在 parse / OCR 阶段，把后端返回的稳定 doc_id 回填进「已有的」identity。
+//
+// 纪律（与 4.1.x 一致，且更明确）：
+//  - 这是 document fact enrichment（文档事实富化），**不是** new identity creation。
+//    resolveIdentity 是 import 初始身份构造器，本函数绝不把它当作主路径——
+//    仅当 fileObj.identity 缺失（异常兜底）时才用 resolveIdentity 推导防崩。
+//  - 纯函数：零 I/O、零哈希计算；保留已有 uiKey / sourceHash / pageId，只刷 docId。
+//  - 多页 PDF 在 buildFileObj 阶段已带 docId + pageId，此处 docId 不变，
+//    故 pageId 原样保留 → 不会退化（Check D）。
+//  - 顶层 docId 兼容字段（4.1.3 保留）同步刷新，保证 identity?.docId || docId 一致。
+// ============================================================================
+
+/**
+ * 文档身份文档事实富化：把 parse 阶段后端返回的 doc_id 回填进已有 identity。
+ *
+ * @param {object} fileObj          已含 identity 的文件对象（4.1.3 之后主流路径）
+ * @param {string} [docId]         后端 parse 返回的 doc_id；空 / 缺省则不覆盖原值
+ * @returns {object}               新的文件对象（不修改入参）
+ */
+export function updateDocumentIdentity(fileObj, docId) {
+  if (!fileObj || typeof fileObj !== 'object') return fileObj
+
+  // 已有 identity 直接富化；仅缺失时兜底用 resolveIdentity（异常路径，非主流程）
+  const base = fileObj.identity ?? resolveIdentity(fileObj)
+  const nextDocId = (docId != null && docId !== '') ? docId : (base.docId ?? '')
+
+  const identity = {
+    uiKey: base.uiKey ?? fileObj.key ?? '',
+    docId: nextDocId,
+    sourceHash: base.sourceHash ?? '',
+    // 保留既有 pageId（多页）；原本无 pageId 且文件确为多页时由新 docId 重推导
+    pageId: base.pageId ?? resolvePageId(nextDocId, fileObj.pageNum, fileObj.pageId),
+  }
+
+  return {
+    ...fileObj,
+    docId: nextDocId, // 同步顶层兼容字段（4.1.3 保留）
+    identity,
+  }
+}
