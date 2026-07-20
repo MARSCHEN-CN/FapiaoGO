@@ -228,6 +228,19 @@ class DocumentRegistry:
 # ── helpers ────────────────────────────────────────────────────
 
 def _make_doc_id(file_bytes: bytes, filename: str = "") -> str:
-    """Generate an opaque document id — not a path, not guessable."""
-    digest = hashlib.sha256(file_bytes + filename.encode("utf-8")).hexdigest()
+    """Generate an opaque document identity — pure content hash.
+
+    Identity Contract v1.1:
+        docId = sha256(file_bytes).hexdigest()[:24]
+
+    The `filename` parameter is accepted (for callers that pass it)
+    but deliberately NOT included in the hash. Including the filename
+    would cause renaming to change the document's persistent identity,
+    breaking DocFacts, RenderCache, and UI state across sessions.
+
+    Old behavior (pre-v1.1):
+        docId = sha256(file_bytes + filename)[:24] — deprecated.
+        See docs/architecture/identity-migration-note-v1.1.md.
+    """
+    digest = hashlib.sha256(file_bytes).hexdigest()
     return digest[:24]
