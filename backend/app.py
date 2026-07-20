@@ -1025,6 +1025,9 @@ def parse_invoice():
     try:
         file.seek(0)
         file_bytes = file.read()  # 只读取一次，后续复用
+        # Identity Contract v1.1：文档永久身份 = sha256(file_bytes)[:24]（content-only，filename 不进哈希）。
+        # 与 /split_pdf、/preview/{doc_id} 共用同一 doc_id，使单文件 parse 也能闭合身份链（4.2.1-c）。
+        doc_id = registry._make_doc_id(file_bytes, file.filename or "")
 
         auto_orient = request.form.get('autoOrient', '1') == '1'
         enable_auto_ocr = request.form.get('enableAutoOcr', '0') == '1'
@@ -1072,6 +1075,7 @@ def parse_invoice():
         mode=mode,
         from_cache=result.get('from_cache', False),
         filename=result.get('safe_filename', ''),
+        doc_id=doc_id,
     )
 
 

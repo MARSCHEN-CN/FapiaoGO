@@ -26,7 +26,7 @@ def build_response(file_format, parse_method, invoice_type, invoice_number,
                    amount, invoice_date, raw_text, preview_image=None, filename='',
                    extra_fields=None, db_record=None, bbox_data=None,
                    include_preview=True, include_raw_text=True, mode='detail',
-                   from_cache=False):
+                   from_cache=False, doc_id=None):
     """构建解析响应，包含完整发票字段
 
     Args:
@@ -195,5 +195,11 @@ def build_response(file_format, parse_method, invoice_type, invoice_number,
         if len(bbox_data) > MAX_BBOX_ITEMS:
             bbox_data = bbox_data[:MAX_BBOX_ITEMS]
         response["bbox_data"] = bbox_data
+
+    # Identity Contract v1.1：透出文档永久身份 doc_id（content-hash，不含 filename）。
+    # 由调用方（parse_invoice）用 registry._make_doc_id(file_bytes) 计算后传入，
+    # 与 /split_pdf、/preview/{doc_id} 共用同一 doc_id，保证单文件也能闭合身份链。
+    # 缺省为 ''（保持向后兼容——旧消费者忽略此字段）。
+    response["doc_id"] = doc_id or ""
 
     return jsonify(response)
