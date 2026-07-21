@@ -527,3 +527,9 @@ docs/architecture/print-pipeline-audit.md
 docs/architecture/export-pipeline-audit.md
 docs/architecture/export-pipeline-status.md
 docs/architecture/export-boundary-audit.md
+docs
+*.pdf
+backend/test_step1_regression.py
+backend/test_step2_batch.py
+backend/test_step3_api.py
+backend/test_step5_stress.py
