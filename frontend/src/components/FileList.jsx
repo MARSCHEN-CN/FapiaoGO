@@ -1,6 +1,7 @@
 import { memo, useRef, useState, useEffect, useMemo } from 'react'
 import { List } from 'react-window'
 import { isMergeMode, getMergeGroupStart, isFailedFile } from '../utils'
+import { documentIdentityKey } from '../utils/documentViewModel'
 
 const ROW_HEIGHT = 64
 const OVERSCAN = 5
@@ -14,7 +15,7 @@ const FileCardRow = memo(({ index, style, files, previewFileKey, previewFileDocI
   const isGroupFirst = mergeActive && index === mergeGroupStart
   const isGroupLast = mergeActive && index === mergeGroupStart + mergeCount - 1
 
-  const dupInfo = duplicateInfo.get(fileObj.key)
+  const dupInfo = duplicateInfo.get(documentIdentityKey(fileObj))
   const isDuplicate = !!dupInfo
   const isDupFirst = dupInfo?.isFirst
   const dupGroupIndex = dupInfo?.groupIndex

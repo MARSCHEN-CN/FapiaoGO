@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
-import { applySort, detectDuplicateInvoices, getPreviousYearInfo } from '../utils'
+import { applySort, getPreviousYearInfo } from '../utils'
+import { buildDocumentViewModel, buildPageDuplicateInfo } from '../utils/documentViewModel'
 
 export function useSort(setFiles, files) {
   const [sortBy, setSortBy] = useState(() => {
@@ -40,14 +41,10 @@ export function useSort(setFiles, files) {
       previousYearInfo.current = null
       return
     }
-    const duplicates = detectDuplicateInvoices(files)
-    const info = new Map()
-    duplicates.forEach((dupFiles, groupIndex) => {
-      dupFiles.forEach((file, idx) => {
-        info.set(file.key, { groupIndex, isFirst: idx === 0 })
-      })
-    })
-    duplicateInfo.current = info
+    // D1：重复检测以 document 为单位，再投影到页 key 供 applySort 分区
+    //    （同一 document 的所有页共享组索引，排序后拆分页仍相邻）
+    const { duplicateGroups } = buildDocumentViewModel(files)
+    duplicateInfo.current = buildPageDuplicateInfo(duplicateGroups)
     previousYearInfo.current = getPreviousYearInfo(files)
   }, [files])
 

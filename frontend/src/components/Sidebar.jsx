@@ -1,5 +1,6 @@
 import React, { useMemo, useRef, useCallback, useEffect, useState } from 'react'
-import { isMergeMode, getDuplicateGroupInfo, getPreviousYearInfo, resolveStatsMode, getElectronAPI } from '../utils'
+import { isMergeMode, getPreviousYearInfo, resolveStatsMode, getElectronAPI } from '../utils'
+import { buildDocumentDuplicateInfo } from '../utils/documentViewModel'
 import { groupFilesByDocument } from '../utils/groupDocuments'
 import { useFileContext } from '../contexts/FileContext'
 import { PUBLIC_BASE } from '../config'
@@ -60,7 +61,7 @@ export default React.memo(function Sidebar({
   sortBy, sortOrder, toggleSort,
 }) {
   const [removeSourceFile, setRemoveSourceFile] = useState(false)
-  const { files, searchQuery, setSearchQuery, filteredFiles, isSearching, totalAmount, hasFailedFiles, failedFilesCount } = useFileContext()
+  const { files, searchQuery, setSearchQuery, filteredFiles, isSearching, documentView, totalAmount, hasFailedFiles, failedFilesCount } = useFileContext()
   const mergeActive = isMergeMode(paperSize)
 
   // ── 排序下拉（纯 UI 状态，不上升到 App 级） ──
@@ -88,24 +89,17 @@ export default React.memo(function Sidebar({
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [sortMenuOpen, handleCloseSortMenu])
 
-  // 检测重复发票（getDuplicateGroupInfo 内部已调用 detectDuplicateInvoices）
-  const duplicateInfo = useMemo(() => getDuplicateGroupInfo(files), [files])
+  // ── D1：重复检测以 document 为单位（多页发票 = 一个发票 = 不构成重复） ──
+  // duplicateGroups 由 Document 视图模型统一派生（invoiceNumber 分组，输入为 document 条目）
+  const duplicateInfo = useMemo(
+    () => buildDocumentDuplicateInfo(documentView.duplicateGroups),
+    [documentView],
+  )
+  const duplicateGroupCount = documentView.duplicateGroups.size
 
-  // 从 duplicateInfo 直接提取组数，避免重复遍历
-  const duplicateGroupCount = useMemo(() => {
-    if (duplicateInfo.size === 0) return 0
-    const groups = new Set()
-    duplicateInfo.forEach(info => groups.add(info.groupIndex))
-    return groups.size
-  }, [duplicateInfo])
-
-  // 往年发票检测（与 duplicateInfo 同构）
+  // 往年发票：计数以 document 为单位；page 级 info 仅供 FileList 行级 badge
   const previousYearInfo = useMemo(() => getPreviousYearInfo(files), [files])
-  const previousYearCount = useMemo(() => {
-    let c = 0
-    previousYearInfo.forEach(info => { if (info.isPreviousYear) c++ })
-    return c
-  }, [previousYearInfo])
+  const previousYearCount = documentView.previousYearCount
   const hasPreviousYear = previousYearCount > 0
 
   // ── Step 10.5+：文件列表 document-level 聚合 ──
@@ -117,17 +111,18 @@ export default React.memo(function Sidebar({
   )
 
   // ── 统计区动画：仅值变化时触发 countPop ──
+  // D1：统计单位 = Document（documentCount），重复组数来自视图模型
   const countDisplay = hasFailedFiles
     ? failedFilesCount
     : hasPreviousYear
       ? previousYearCount
-      : duplicateInfo.size > 0
+      : duplicateGroupCount > 0
         ? duplicateGroupCount
-        : files.length
+        : documentView.documentCount
   const statsMode = resolveStatsMode({
     hasFailed: hasFailedFiles,
     previousYearCount,
-    duplicateCount: duplicateInfo.size > 0,
+    duplicateCount: duplicateGroupCount,
   })
   const prevStatsRef = useRef({ count: 0, amount: 0, mode: 'normal' })
   const [poppingStats, setPoppingStats] = useState({ count: false, amount: false })
@@ -396,7 +391,7 @@ export default React.memo(function Sidebar({
           {hasFailedFiles ? (
             <>
               <div className="sb-stat-summary">
-                共 <b>{files.length}</b> 个文件 · 其中 <span className="sb-stat-summary-error">{failedFilesCount} 个解析失败</span>
+                共 <b>{documentView.documentCount}</b> 个文件 · 其中 <span className="sb-stat-summary-error">{failedFilesCount} 个解析失败</span>
               </div>
               <div className="sb-seg-control">
                 <button
@@ -419,7 +414,7 @@ export default React.memo(function Sidebar({
           ) : hasPreviousYear ? (
             <>
               <div className="sb-stat-summary">
-                共 <b>{files.length}</b> 个文件 · 其中 <span className="sb-stat-summary-year">{previousYearCount} 个往年发票</span>
+                共 <b>{documentView.documentCount}</b> 个文件 · 其中 <span className="sb-stat-summary-year">{previousYearCount} 个往年发票</span>
               </div>
               <div className="sb-seg-control">
                 <button
@@ -442,7 +437,7 @@ export default React.memo(function Sidebar({
           ) : duplicateGroupCount > 0 ? (
             <>
               <div className="sb-stat-summary">
-                共 <b>{files.length}</b> 个文件 · 其中 <span className="sb-stat-summary-warn">{duplicateGroupCount} 组重复</span>
+                共 <b>{documentView.documentCount}</b> 个文件 · 其中 <span className="sb-stat-summary-warn">{duplicateGroupCount} 组重复</span>
               </div>
               <div className="sb-seg-control">
                 <button
@@ -468,7 +463,7 @@ export default React.memo(function Sidebar({
                 <div className="sb-stat-icon blue">
                   {ICONS.file}
                 </div>
-                <span className={`sb-stat-val${poppingStats.count ? ' pop' : ''}`}>{files.length}</span>
+                <span className={`sb-stat-val${poppingStats.count ? ' pop' : ''}`}>{documentView.documentCount}</span>
                 <span className="sb-stat-label">文件数</span>
               </div>
               <div className="sb-stat">

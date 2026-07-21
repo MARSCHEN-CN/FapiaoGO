@@ -3,8 +3,9 @@ import { useDropzone } from 'react-dropzone'
 import { BACKEND_URL, SUPPORTED_EXTENSIONS, IMPORT_SCALE_V1 } from '../config'
 import {
   getElectronAPI, getFilePath, getExtension, getExtensionWithDot,
-  getMimeType, concurrentBatch, applySort, detectDuplicateInvoices, getPreviousYearInfo,
+  getMimeType, concurrentBatch, applySort, getPreviousYearInfo,
 } from '../utils'
+import { buildDocumentViewModel, buildPageDuplicateInfo } from '../utils/documentViewModel'
 import { stripIdentity } from '../utils/fileHelpers'
 import { applyFileUpdate } from '../utils/fileStateTransitions'
 import { createPlaceholders } from '../utils/placeholderGenerator'
@@ -185,14 +186,9 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
         try {
           await parseFilesBatch(filesToParse)
           setFiles((prev) => {
-            const duplicates = detectDuplicateInvoices(prev)
-            const duplicateInfo = new Map()
-            duplicates.forEach((dupFiles, groupIndex) => {
-              dupFiles.forEach((file, idx) => {
-                duplicateInfo.set(file.key, { groupIndex, isFirst: idx === 0 })
-              })
-            })
-            return applySort(prev, sortByRef.current, sortOrderRef.current, duplicateInfo, getPreviousYearInfo(prev))
+            // D1：重复检测以 document 为单位，再投影到页 key 供 applySort 分区
+            const { duplicateGroups } = buildDocumentViewModel(prev)
+            return applySort(prev, sortByRef.current, sortOrderRef.current, buildPageDuplicateInfo(duplicateGroups), getPreviousYearInfo(prev))
           })
           return
         } catch (batchErr) {
@@ -238,14 +234,9 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
       }, CONCURRENCY_LIMIT)
 
       setFiles((prev) => {
-        const duplicates = detectDuplicateInvoices(prev)
-        const duplicateInfo = new Map()
-        duplicates.forEach((dupFiles, groupIndex) => {
-          dupFiles.forEach((file, idx) => {
-            duplicateInfo.set(file.key, { groupIndex, isFirst: idx === 0 })
-          })
-        })
-        return applySort(prev, sortByRef.current, sortOrderRef.current, duplicateInfo, getPreviousYearInfo(prev))
+        // D1：重复检测以 document 为单位，再投影到页 key 供 applySort 分区
+        const { duplicateGroups } = buildDocumentViewModel(prev)
+        return applySort(prev, sortByRef.current, sortOrderRef.current, buildPageDuplicateInfo(duplicateGroups), getPreviousYearInfo(prev))
       })
     } finally {
       setParsing(false)

@@ -20,8 +20,9 @@ const DevDocumentViewerDemo = lazy(() => import('./components/DevDocumentViewerD
 import { PREVIEW_DPI, SUPPORTED_EXTENSIONS, ZOOM_STEPS, PUBLIC_BASE } from './config'
 import {
   getElectronAPI, getFilePath, getFileFormat, isMergeMode, getMergeGroupStart,
-  detectDuplicateInvoices, getPreviousYearInfo,
+  getPreviousYearInfo,
 } from './utils'
+import { buildDocumentViewModel, documentPages } from './utils/documentViewModel'
 import { buildFileObj } from './utils/fileHelpers'
 import { getForcedLandscape } from './utils/mergeMode'
 
@@ -360,16 +361,19 @@ function AppContent() {
   }, [cleanupPreviewUrl])
 
   const removeDuplicateFiles = useCallback((removeSource = false) => {
-    // ✅ 先读取最新列表计算重复组（不在 updater 内做副作用）
+    // ✅ D1：重复检测以 document 为单位——先把页聚合成 document，再按 invoiceNumber 分组。
+    //    删除重复 = 删除组内非首个 document 的全部页（不能按页删，否则多页发票被截断）。
     const liveFiles = filesRef.current
-    const duplicates = detectDuplicateInvoices(liveFiles)
+    const { duplicateGroups } = buildDocumentViewModel(liveFiles)
     const duplicateKeys = new Set()
     const pathsToDelete = []
-    duplicates.forEach((dupFiles) => {
-      dupFiles.forEach((file, idx) => {
+    duplicateGroups.forEach((dupDocs) => {
+      dupDocs.forEach((doc, idx) => {
         if (idx > 0) {
-          duplicateKeys.add(file.key)
-          if (removeSource && file.path) pathsToDelete.push(file.path)
+          for (const page of documentPages(doc)) {
+            duplicateKeys.add(page.key)
+            if (removeSource && page.path) pathsToDelete.push(page.path)
+          }
         }
       })
     })

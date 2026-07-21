@@ -177,6 +177,10 @@ export function detectDuplicateInvoices(files) {
 
 /**
  * 获取文件的重复组信息
+ * @deprecated D1 起重复检测以 document 为单位：请改用
+ *   utils/documentViewModel 的 buildDocumentDuplicateInfo(duplicateGroups)。
+ *   本函数按 page-level 记录建组，多页发票的同号页会被误判为重复，
+ *   保留一个版本周期后删除。
  * @param {Array} files - 文件列表
  * @returns {Map} - key为文件key，value为{groupIndex, isFirst, total}的Map
  */

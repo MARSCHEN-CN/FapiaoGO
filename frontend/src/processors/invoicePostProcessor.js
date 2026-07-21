@@ -12,16 +12,20 @@
  * @module processors/invoicePostProcessor
  */
 
-import { detectDuplicateInvoices, applySort, getPreviousYearInfo } from '../utils'
+import { applySort, getPreviousYearInfo } from '../utils'
+import { buildDocumentViewModel, buildPageDuplicateInfo } from '../utils/documentViewModel'
 
 /**
  * @typedef {Object} PostProcessResult
  * @property {Array} files - 处理后的文件列表
- * @property {Map} duplicateInfo - 重复发票分组信息
+ * @property {Map} duplicateInfo - 重复发票分组信息（page key → 组索引投影）
  */
 
 /**
  * 处理导入完成的文件列表。
+ *
+ * D1：重复检测以 document 为单位（多页发票 = 一个发票 = 不构成重复），
+ * 再投影到页 key 供 applySort 分区（同一 document 的页共享组索引，排序后仍相邻）。
  *
  * @param {Array} files - 当前文件列表（含解析结果）
  * @param {string} sortBy - 排序字段
@@ -29,13 +33,8 @@ import { detectDuplicateInvoices, applySort, getPreviousYearInfo } from '../util
  * @returns {PostProcessResult}
  */
 export function processImportedFiles(files, sortBy, sortOrder) {
-  const duplicates = detectDuplicateInvoices(files)
-  const duplicateInfo = new Map()
-  duplicates.forEach((dupFiles, groupIndex) => {
-    dupFiles.forEach((file, idx) => {
-      duplicateInfo.set(file.key, { groupIndex, isFirst: idx === 0 })
-    })
-  })
+  const { duplicateGroups } = buildDocumentViewModel(files)
+  const duplicateInfo = buildPageDuplicateInfo(duplicateGroups)
   return {
     files: applySort(files, sortBy, sortOrder, duplicateInfo, getPreviousYearInfo(files)),
     duplicateInfo,
