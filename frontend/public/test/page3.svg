@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2480" height="3508" viewBox="0 0 2480 3508">
+  <rect width="2480" height="3508" fill="#ffffff"/>
+  <rect x="100" y="80" width="2280" height="3348" fill="none" stroke="#e0e0e0" stroke-width="2"/>
+  <text x="1240" y="300" font-family="SimSun, serif" font-size="120" text-anchor="middle" fill="#333">电子发票（普通发票）</text>
+  <text x="1240" y="500" font-family="SimSun, serif" font-size="72" text-anchor="middle" fill="#666">第 3 页 / 共 3 页</text>
+  <line x1="200" y1="600" x2="2280" y2="600" stroke="#ccc" stroke-width="2"/>
+  <text x="300" y="750" font-family="SimSun, serif" font-size="60" fill="#333">发票号码：26447000001410980276</text>
+  <text x="300" y="900" font-family="SimSun, serif" font-size="60" fill="#333">（末页）</text>
+  <rect x="200" y="1100" width="2080" height="600" fill="#f0f8f0" stroke="#cde" stroke-width="1"/>
+  <text x="1240" y="1450" font-family="SimSun, serif" font-size="80" text-anchor="middle" fill="#666">— 合计区域（第3页）—</text>
+  <text x="300" y="2000" font-family="SimSun, serif" font-size="72" fill="#333">价税合计（大写）：壹万伍仟玖佰元整</text>
+  <text x="300" y="2200" font-family="SimSun, serif" font-size="72" fill="#333">价税合计（小写）：¥15,900.00</text>
+  <text x="300" y="2500" font-family="SimSun, serif" font-size="60" fill="#333">备注：测试多页发票第三页</text>
+  <text x="300" y="2700" font-family="SimSun, serif" font-size="60" fill="#333">开票人：王工</text>
+  <text x="1240" y="3300" font-family="sans-serif" font-size="48" text-anchor="middle" fill="#aaa">MOCK TEST PAGE 3</text>
+</svg>

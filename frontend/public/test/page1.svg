@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2480" height="3508" viewBox="0 0 2480 3508">
+  <rect width="2480" height="3508" fill="#ffffff"/>
+  <rect x="100" y="80" width="2280" height="3348" fill="none" stroke="#e0e0e0" stroke-width="2"/>
+  <text x="1240" y="300" font-family="SimSun, serif" font-size="120" text-anchor="middle" fill="#333">电子发票（普通发票）</text>
+  <text x="1240" y="500" font-family="SimSun, serif" font-size="72" text-anchor="middle" fill="#666">第 1 页 / 共 3 页</text>
+  <line x1="200" y1="600" x2="2280" y2="600" stroke="#ccc" stroke-width="2"/>
+  <text x="300" y="750" font-family="SimSun, serif" font-size="60" fill="#333">发票号码：26447000001410980276</text>
+  <text x="300" y="900" font-family="SimSun, serif" font-size="60" fill="#333">开票日期：2026年07月21日</text>
+  <text x="300" y="1050" font-family="SimSun, serif" font-size="60" fill="#333">购买方：测试科技有限公司</text>
+  <text x="300" y="1200" font-family="SimSun, serif" font-size="60" fill="#333">销售方：示例贸易有限公司</text>
+  <rect x="200" y="1400" width="2080" height="800" fill="#f9f9f9" stroke="#ddd" stroke-width="1"/>
+  <text x="1240" y="1850" font-family="SimSun, serif" font-size="80" text-anchor="middle" fill="#999">— 明细区域（第1页）—</text>
+  <text x="300" y="2500" font-family="SimSun, serif" font-size="60" fill="#333">项目名称：*信息技术服务*软件开发费</text>
+  <text x="300" y="2650" font-family="SimSun, serif" font-size="60" fill="#333">金额：¥10,000.00</text>
+  <text x="300" y="2800" font-family="SimSun, serif" font-size="60" fill="#333">税率：6%</text>
+  <text x="1240" y="3300" font-family="sans-serif" font-size="48" text-anchor="middle" fill="#aaa">MOCK TEST PAGE 1</text>
+</svg>
