@@ -50,7 +50,7 @@ EXPORT_ALLOWED_BASE_DIRS = [
 ALLOWED_EXPORT_KEYS = {
     'serialNo', 'invoiceType', 'invoiceDate', 'invoiceNumber',
     'amountWithoutTax', 'taxAmount', 'totalAmount',
-    'buyerName', 'buyerTaxNo', 'sellerName', 'sellerTaxNo',
+    'buyerName', 'buyerTaxNo', 'sellerName', 'sellerTaxNo', 'issuer',
     'classificationCode', 'xmmc', 'ggxh', 'unit', 'quantity',
     'unitPrice', 'lineAmount', 'taxRate', 'lineTax',
     'note', 'originalFilename',
@@ -60,7 +60,7 @@ ALLOWED_EXPORT_KEYS = {
 MASTER_WIDTH = {
     'serialNo': 8, 'invoiceType': 12, 'invoiceDate': 12, 'invoiceNumber': 20,
     'amountWithoutTax': 12, 'taxAmount': 12, 'totalAmount': 12,
-    'buyerName': 25, 'buyerTaxNo': 20, 'sellerName': 25, 'sellerTaxNo': 20,
+    'buyerName': 25, 'buyerTaxNo': 20, 'sellerName': 25, 'sellerTaxNo': 20, 'issuer': 10,
     'classificationCode': 18, 'xmmc': 35, 'ggxh': 20, 'unit': 8,
     'quantity': 10, 'unitPrice': 12, 'lineAmount': 12, 'taxRate': 12,
     'lineTax': 12, 'note': 30, 'originalFilename': 35,

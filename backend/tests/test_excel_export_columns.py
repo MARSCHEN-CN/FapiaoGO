@@ -73,6 +73,12 @@ class TestSanitizeColumns(unittest.TestCase):
         self.assertTrue(out[0]['virtual'])
         self.assertEqual(out[0]['width'], ex.MASTER_WIDTH['serialNo'])
 
+    def test_issuer_whitelisted(self):
+        # 开票人 (issuer) 必须被白名单放行，否则勾选后预览有、导出没有
+        cols = ex.sanitize_columns([{'key': 'issuer', 'label': '开票人'}])
+        self.assertEqual([c['key'] for c in cols], ['issuer'])
+        self.assertEqual(cols[0]['width'], ex.MASTER_WIDTH['issuer'])
+
 
 class TestInvoiceIdentity(unittest.TestCase):
     def test_invoice_number_first(self):
@@ -144,6 +150,18 @@ class TestExportCsvColumns(unittest.TestCase):
         with open(self.path, encoding='utf-8-sig') as f:
             rows = list(csv.reader(f))
         self.assertEqual(rows[0], ['发票号码'])
+
+    def test_issuer_exports_in_csv(self):
+        # 开票人列必须真正出现在导出（验证白名单放行后链路打通）
+        cols = ex.sanitize_columns([
+            {'key': 'invoiceNumber', 'label': '发票号码'},
+            {'key': 'issuer', 'label': '开票人'},
+        ])
+        ex.export_csv(self.path, _sample_invoices(),
+                      {'includeRemark': False, 'columns': cols})
+        with open(self.path, encoding='utf-8-sig') as f:
+            rows = list(csv.reader(f))
+        self.assertEqual(rows[0], ['发票号码', '开票人'])
 
     def test_backward_compat_no_columns(self):
         # 不传 columns → 旧默认列（含备注/原文件名当 includeRemark=True）
