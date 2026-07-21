@@ -13,6 +13,7 @@ const PrintConfirmModal = lazy(() => import('./components/PrintConfirmModal'))
 const ImportProgressModal = lazy(() => import('./components/ImportProgressModal'))
 const ExportProgressModal = lazy(() => import('./components/ExportProgressModal'))
 const PdfExportConfirmModal = lazy(() => import('./components/PdfExportConfirmModal'))
+const ExcelExportFieldsModal = lazy(() => import('./components/ExcelExportFieldsModal'))
 const TaskProgressModal = lazy(() => import('./components/TaskProgressModal'))
 const CalculatorWindow = lazy(() => import('./components/CalculatorWindow'))
 const DevDocumentViewerDemo = lazy(() => import('./components/DevDocumentViewerDemo').then(m => ({ default: m.DevDocumentViewerDemo })))
@@ -205,6 +206,9 @@ function AppContent() {
 
   // ── PDF 导出弹窗状态 ──
   const [showPdfExport, setShowPdfExport] = useState(false)
+
+  // ── Excel 导出字段确认弹窗状态（Commit 4A） ──
+  const [showExcelFields, setShowExcelFields] = useState(false)
 
   const {
     packing, packProgress, packResult, setPackResult, setPacking,
@@ -498,6 +502,16 @@ function AppContent() {
     cancelPdfExport,
     closePdfExportTask,
   } = useExport({ files, electronAPIRef, previewState: preview.state, settings })
+
+  // 打开 Excel 字段确认弹窗：无已解析发票时复用 handleExportExcel 的无数据告警
+  const openExcelFields = useCallback(() => {
+    const parsed = files.filter((f) => f.status === 'parsed')
+    if (parsed.length === 0) {
+      handleExportExcel()
+      return
+    }
+    setShowExcelFields(true)
+  }, [files, handleExportExcel])
 
   const { clearExportSession } = useExportSession()
 
@@ -986,7 +1000,7 @@ function AppContent() {
           packProgress={packProgress}
           printing={printing}
           removeFailedFiles={removeFailedFiles}
-          handleExportExcel={handleExportExcel}
+          onExportExcel={openExcelFields}
           onExportPdf={() => setShowPdfExport(true)}
           exporting={exporting}
         />
@@ -1059,6 +1073,15 @@ function AppContent() {
             handleExportPdf(config)
           }}
           onCancel={() => setShowPdfExport(false)}
+        />
+        <ExcelExportFieldsModal
+          visible={showExcelFields}
+          files={files.filter(f => f.status === 'parsed')}
+          onConfirm={(cols) => {
+            setShowExcelFields(false)
+            handleExportExcel(cols)
+          }}
+          onCancel={() => setShowExcelFields(false)}
         />
         <TaskProgressModal
           visible={!!pdfExportTask}

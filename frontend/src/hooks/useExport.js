@@ -57,7 +57,9 @@ export function useExport({ files, electronAPIRef, previewState, settings }) {
   const pdfExportTask = sessionToPdfTaskView(activeSession)
 
   // ── Excel 导出 ──
-  const handleExportExcel = useCallback(async () => {
+  // columns: 可选，来自字段确认弹窗的 {key,label,width,virtual}[]；
+  //          不传（旧路径 / 无数据告警复用）则后端走默认全列。
+  const handleExportExcel = useCallback(async (columns) => {
     const ipc = electronAPIRef.current?.ipcRenderer
     if (!ipc) return
 
@@ -76,7 +78,7 @@ export function useExport({ files, electronAPIRef, previewState, settings }) {
 
     try {
       const result = await exportExcel({
-        files: parsedFiles, ipc, taskId: task.id,
+        files: parsedFiles, ipc, taskId: task.id, columns,
         onProgress: (p) => {
           updateProgress(session.id, {
             current: p.current, total: p.total, stage: p.stage,

@@ -102,6 +102,8 @@ async function _extractError(response) {
  * @param {Array} params.files - 已过滤的 parsed 文件列表
  * @param {object} params.ipc - Electron ipcRenderer（依赖注入）
  * @param {object} [params.options] - { includeRemark=true, splitByType=false, format='xlsx' }
+ * @param {Array}  [params.columns] - 字段确认弹窗下发的列定义 [{key,label,width,virtual}]
+ *                                     顺序即导出列序；不传则后端走默认全列。
  * @param {number} params.taskId - 前端 ExportTask.id（关联 ExportResult）
  * @param {(progress: {current:number,total:number,stage:string}) => void} [params.onProgress]
  * @returns {Promise<object>} ExportResult
@@ -110,6 +112,7 @@ export async function exportExcel({
   files,
   ipc,
   options = {},
+  columns = null,
   taskId,
   onProgress,
 }) {
@@ -156,6 +159,7 @@ export async function exportExcel({
         includeRemark: options.includeRemark ?? true,
         splitByType: options.splitByType ?? false,
       },
+      columns: columns || undefined,
       format: options.format || (isCsv ? 'csv' : 'xlsx'),
     }),
   })
