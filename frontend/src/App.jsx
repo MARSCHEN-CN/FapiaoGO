@@ -39,7 +39,8 @@ import { useAlertQueue } from './hooks/useAlertQueue'
 
 import Sidebar from './components/Sidebar'
 import TopBar from './components/TopBar'
-import PreviewCanvas from './components/PreviewCanvas'
+import { DisplayAdapter, resolveDocId } from './components/DisplayAdapter'
+import { useDocument } from './hooks/useDocument'
 import StatusIndicator from './components/StatusIndicator'
 import ActionBar from './components/ActionBar'
 import InvoiceDetail from './components/InvoiceDetail'
@@ -126,6 +127,11 @@ function AppContent() {
     previewRotation, paperOrientation, autoActive, fileRotations, showLeftArrow, showRightArrow,
     paperLayout, contentLayout, containerSize,
   } = preview.state
+
+  // Display Area Refactor Step 10：当前预览文件是否已注册 InvoiceDocument。
+  // 用于门控 legacy 加载遮罩（新路径 DocumentViewer 自行管理加载态）。
+  const activeDocument = useDocument(resolveDocId(previewFile))
+
   const {
     handlePreview, preloadHD, handleRotate, handlePaperOrientationChange, prevPage, nextPage,
     handlePrevFile, handleNextFile, cleanupPreviewUrl,
@@ -837,8 +843,9 @@ function AppContent() {
             }
 
             // 加载中：有预览文件但渲染尚未就绪
+            // 新展示路径（DocumentViewer）自行管理加载态，跳过 legacy 遮罩
             const hasPreview = !!previewCanvas || !!previewUrl;
-            if (!contentLayout?.ready || !hasPreview) {
+            if (!activeDocument && (!contentLayout?.ready || !hasPreview)) {
               if (previewCanvas && !contentLayout?.ready) {
                 return (
                   <div className="canvas-center-overlay canvas-loading" style={{ gap: '10px' }}>
@@ -876,17 +883,20 @@ function AppContent() {
 
           {/* 滚动层：ref 绑定在这里 */}
           <div ref={previewContainerRef} className="canvas-scroll">
-            <PreviewCanvas
-              previewFile={previewFile}
+            {/* Display Area Refactor Step 10：双轨展示适配器。
+                已注册 InvoiceDocument → DocumentViewer（新路径）；
+                否则 → PreviewCanvas（legacy，保留一个版本周期）。 */}
+            <DisplayAdapter
+              file={previewFile}
+              containerSize={containerSize}
+              grayscale={settings.grayscale}
               previewCanvas={previewCanvas}
               previewUrl={previewUrl}
-              grayscale={settings.grayscale}
               previewRenderVersion={previewRenderVersion}
               paperLayout={paperLayout}
               contentLayout={contentLayout}
               previewRotation={previewRotation}
               previewLoading={previewLoading}
-              containerSize={containerSize}
             />
           </div>
 
