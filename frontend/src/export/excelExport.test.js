@@ -1,0 +1,79 @@
+// Commit 2 前端模型单测（Node 22 内置 node:test，零依赖，纯 ESM）
+// 运行：node --test frontend/src/export/excelExport.test.js
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+
+import { EXCEL_COLUMNS, ALL_KEYS, VIRTUAL_KEYS, visibleColumns } from './excelColumns.js'
+import { getInvoiceIdentity } from './invoiceIdentity.js'
+import { computeTotals, countInvoices } from './excelTotals.js'
+
+// 后端 _db_record_to_export 实际产出的 row key 集合（Commit 1 已锁定，同源保证）
+const BACKEND_ROW_KEYS = new Set([
+  'serialNo', 'invoiceType', 'invoiceNumber', 'invoiceDate',
+  'buyerName', 'buyerTaxNo', 'sellerName', 'sellerTaxNo',
+  'amountWithoutTax', 'taxAmount', 'totalAmount', 'amountDx',
+  'note', 'issuer', 'originalFilename',
+  'xmmc', 'ggxh', 'unit', 'quantity', 'unitPrice',
+  'lineAmount', 'taxRate', 'lineTax', 'classificationCode',
+])
+
+test('EXCEL_COLUMNS 共 22 项，ALL_KEYS 与数组长度一致', () => {
+  assert.equal(EXCEL_COLUMNS.length, 22)
+  assert.equal(ALL_KEYS.length, 22)
+  assert.deepEqual(ALL_KEYS, EXCEL_COLUMNS.map((c) => c.key))
+})
+
+test('serialNo 为虚拟列，开票人不在此清单', () => {
+  const serial = EXCEL_COLUMNS.find((c) => c.key === 'serialNo')
+  assert.equal(serial.virtual, true)
+  assert.deepEqual(VIRTUAL_KEYS, ['serialNo'])
+  assert.ok(!ALL_KEYS.includes('issuer'), '开票人不应出现在可勾选清单')
+})
+
+test('所有列 key 必须与后端 row key 一致（同源保证，防止预览空白）', () => {
+  for (const key of ALL_KEYS) {
+    assert.ok(BACKEND_ROW_KEYS.has(key), `列 ${key} 不在后端 row key 集合中`)
+  }
+})
+
+test('getInvoiceIdentity 三态：发票号 → 原文件名 → __ANON_{index}', () => {
+  assert.equal(getInvoiceIdentity({ invoiceNumber: '123' }), '123')
+  assert.equal(getInvoiceIdentity({ invoiceNumber: '', originalFilename: 'a.pdf' }), 'a.pdf')
+  assert.equal(getInvoiceIdentity({}, 5), '__ANON_5')
+  // 空号不同 index 必须不同（否则去重/共X张错乱）
+  assert.notEqual(getInvoiceIdentity({}, 5), getInvoiceIdentity({}, 6))
+})
+
+test('computeTotals：发票级去重 + 行级全加', () => {
+  const rows = [
+    { invoiceNumber: 'A', amountWithoutTax: 100, taxAmount: 10, totalAmount: 110, lineAmount: 60, lineTax: 6 },
+    { invoiceNumber: 'A', amountWithoutTax: 100, taxAmount: 10, totalAmount: 110, lineAmount: 40, lineTax: 4 },
+    { invoiceNumber: 'B', amountWithoutTax: 200, taxAmount: 20, totalAmount: 220, lineAmount: 200, lineTax: 20 },
+  ]
+  const cols = EXCEL_COLUMNS.filter((c) =>
+    ['amountWithoutTax', 'taxAmount', 'totalAmount', 'lineAmount', 'lineTax'].includes(c.key))
+  const t = computeTotals(rows, cols)
+  assert.equal(t.amountWithoutTax, 300) // A(100)+B(200)，A 第二行去重
+  assert.equal(t.taxAmount, 30)
+  assert.equal(t.totalAmount, 330)
+  assert.equal(t.lineAmount, 300) // 60+40+200 全加
+  assert.equal(t.lineTax, 30)
+})
+
+test('countInvoices 唯一发票数', () => {
+  const rows = [
+    { invoiceNumber: 'A' },
+    { invoiceNumber: 'A' },
+    { invoiceNumber: 'B' },
+    { invoiceNumber: '', originalFilename: 'x.pdf' }, // 空号但有文件名 → 计 1 张
+  ]
+  assert.equal(countInvoices(rows), 3)
+})
+
+test('visibleColumns 保持规范顺序（A,B,D 勾 C → A,B,C,D）', () => {
+  const vis = visibleColumns(new Set(['invoiceType', 'invoiceDate', 'invoiceNumber']))
+  assert.deepEqual(vis.map((c) => c.key), ['invoiceType', 'invoiceDate', 'invoiceNumber'])
+  // 乱序传入也应回到规范序
+  const vis2 = visibleColumns(new Set(['invoiceNumber', 'serialNo', 'invoiceType']))
+  assert.deepEqual(vis2.map((c) => c.key), ['serialNo', 'invoiceType', 'invoiceNumber'])
+})
