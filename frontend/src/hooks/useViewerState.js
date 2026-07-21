@@ -17,7 +17,7 @@
  * @module hooks/useViewerState
  */
 
-import { useState, useCallback, useRef } from 'react'
+import { useState, useCallback, useRef, useEffect } from 'react'
 import { nextZoomStep } from './zoomStep.mjs'
 import { applyWheelZoom } from './continuousZoom.mjs'
 import { clampPan, computeFitScale, computeDisplaySize, rotatedDimensions } from '../utils/viewerTransform'
@@ -59,10 +59,14 @@ const ZOOM_MAX = 500
  * @param {Object} opts
  * @param {import('../models/InvoiceDocument').InvoiceDocument|null} opts.document - 当前文档
  * @param {{ width: number, height: number }} opts.containerSize - 视口容器尺寸
+ * @param {number} [opts.initialPage=0] - 初始页 index（0-based，来自 fileObj.pageNum - 1）
  * @returns {{ state: ViewerState, actions: ViewerActions }}
  */
-export function useViewerState({ document, containerSize }) {
-  const [currentPage, setCurrentPage] = useState(0)
+export function useViewerState({ document, containerSize, initialPage = 0 }) {
+  const [currentPage, setCurrentPage] = useState(() => {
+    const max = document ? document.pageCount - 1 : 0
+    return Math.min(max, Math.max(0, initialPage))
+  })
   const [zoom, setZoom] = useState(100)
   const [panX, setPanX] = useState(0)
   const [panY, setPanY] = useState(0)
@@ -136,6 +140,20 @@ export function useViewerState({ document, containerSize }) {
     setPanX(0)
     setPanY(0)
   }, [document])
+
+  // ─── initialPage 导航（拆分页切换 / 换文档定位） ───
+  // 同一多页 PDF 的拆分页共享同一 Document 实例：在侧栏切换不同 fileObj
+  // 时只有 initialPage 变化，useState 初值不会重跑，必须由 effect 导航。
+  // 依赖 [initialPage, docId]：
+  //   - initialPage 变化 → 定位到目标拆分页（验收用例：点 [2] 显示 pageNum=2）
+  //   - docId 变化 → 切换到另一文档时重新定位
+  // 不依赖 goToPage / document 身份：同 docId 的 document 对象更新
+  // （如图片加载后的尺寸回填 patchPageMeta）不得把用户当前页 snap 回初始页。
+  const goToPageRef = useRef(goToPage)
+  goToPageRef.current = goToPage
+  useEffect(() => {
+    goToPageRef.current(initialPage)
+  }, [initialPage, document?.docId])
 
   const nextPage = useCallback(() => {
     goToPage(currentPage + 1)

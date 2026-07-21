@@ -86,6 +86,10 @@ export function DisplayAdapter({
   const docId = resolveDocId(file)
   const document = useDocument(docId)
 
+  // 拆分页定位：fileObj.pageNum 为 1-based（后端 page_index），
+  // 转为 Viewer 的 0-based 页 index。非拆分文件 pageNum 为 null → 第 1 页。
+  const initialPage = (file?.pageNum || 1) - 1
+
   // 新路径：PDF 且已注册有效 Document（至少 1 页）。
   // 非 PDF（图片/OFD）后端 /preview 无法服务，保持 legacy 路径。
   if (isPdfFile(file) && document && document.pageCount > 0) {
@@ -93,6 +97,7 @@ export function DisplayAdapter({
       <DocumentViewer
         document={document}
         containerSize={containerSize}
+        initialPage={initialPage}
         grayscale={grayscale}
       />
     )

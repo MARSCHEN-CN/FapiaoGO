@@ -26,6 +26,7 @@ import './DocumentViewer.css'
  * @param {Object} props
  * @param {import('../models/InvoiceDocument').InvoiceDocument|null} props.document - 文档模型
  * @param {{ width: number, height: number }} props.containerSize - 视口容器尺寸
+ * @param {number} [props.initialPage=0] - 初始页 index（0-based，来自 fileObj.pageNum - 1）
  * @param {boolean} [props.grayscale=false] - 灰度模式
  * @param {boolean} [props.loading=false] - 加载状态
  * @param {React.ReactNode} [props.overlaySlot] - OCR/字段 Overlay 插槽
@@ -34,12 +35,13 @@ import './DocumentViewer.css'
 export function DocumentViewer({
   document,
   containerSize,
+  initialPage = 0,
   grayscale = false,
   loading = false,
   overlaySlot,
   toolbarSlot,
 }) {
-  const { state, actions } = useViewerState({ document, containerSize })
+  const { state, actions } = useViewerState({ document, containerSize, initialPage })
 
   // 当前页 PageMeta
   const currentPage = getPage(document, state.currentPage)
