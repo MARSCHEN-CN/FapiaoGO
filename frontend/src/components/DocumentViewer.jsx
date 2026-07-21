@@ -15,6 +15,7 @@
 
 import React, { useMemo, useCallback } from 'react'
 import { ViewerViewport } from './ViewerViewport'
+import { ThumbnailStrip } from './ThumbnailStrip'
 import { useViewerState } from '../hooks/useViewerState'
 import { resolvePreviewUrl } from '../utils/previewResourceResolver'
 import { getPage } from '../models/InvoiceDocument'
@@ -28,7 +29,6 @@ import './DocumentViewer.css'
  * @param {boolean} [props.loading=false] - 加载状态
  * @param {React.ReactNode} [props.overlaySlot] - OCR/字段 Overlay 插槽
  * @param {React.ReactNode} [props.toolbarSlot] - 工具栏插槽（zoom/rotate 按钮）
- * @param {React.ReactNode} [props.thumbnailSlot] - 缩略图栏插槽（Phase 5）
  */
 export function DocumentViewer({
   document,
@@ -37,7 +37,6 @@ export function DocumentViewer({
   loading = false,
   overlaySlot,
   toolbarSlot,
-  thumbnailSlot,
 }) {
   const { state, actions } = useViewerState({ document, containerSize })
 
@@ -62,8 +61,12 @@ export function DocumentViewer({
 
   return (
     <div className="document-viewer">
-      {/* 缩略图栏（Phase 5 激活） */}
-      {thumbnailSlot}
+      {/* 缩略图栏：多页时自动显示 */}
+      <ThumbnailStrip
+        document={document}
+        currentPage={state.currentPage}
+        onPageSelect={actions.goToPage}
+      />
 
       {/* 主视口 */}
       <div className="document-viewer-main">
