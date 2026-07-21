@@ -42,6 +42,10 @@ export function buildFileObj(file, name, path, previewImage = null, docId = null
     identity,
     // 预计算 searchText，确保所有文件（含未解析或解析失败的）都能快速搜索
     searchText: buildSearchText({ name }),
+    // ── V2: InvoiceDocument 多页支持 ──
+    pageCount: 1,
+    pages: [{ index: 0, previewUrl: null, width: 0, height: 0, rotation: 0 }],
+    currentPage: 0,
   }
 }
 
