@@ -15,6 +15,7 @@ const ExportProgressModal = lazy(() => import('./components/ExportProgressModal'
 const PdfExportConfirmModal = lazy(() => import('./components/PdfExportConfirmModal'))
 const TaskProgressModal = lazy(() => import('./components/TaskProgressModal'))
 const CalculatorWindow = lazy(() => import('./components/CalculatorWindow'))
+const DevDocumentViewerDemo = lazy(() => import('./components/DevDocumentViewerDemo').then(m => ({ default: m.DevDocumentViewerDemo })))
 
 import { PREVIEW_DPI, SUPPORTED_EXTENSIONS, ZOOM_STEPS, PUBLIC_BASE } from './config'
 import {
@@ -84,6 +85,17 @@ function App() {
 function AppContent() {
   const isSettingsWindow = window.location.hash === '#/settings'
   const isCalculatorWindow = window.location.hash === '#/calculator'
+  const isDevViewer = window.location.hash === '#/dev-viewer' || new URLSearchParams(window.location.search).get('dev') === 'viewer'
+
+  // ── Display Refactor: Mock E2E 验证入口（开发用）──
+  if (isDevViewer) {
+    return (
+      <Suspense fallback={<ModalFallback />}>
+        <DevDocumentViewerDemo />
+      </Suspense>
+    )
+  }
+
   const electronAPIRef = useRef(null)
 
   // ============================
