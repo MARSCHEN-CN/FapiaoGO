@@ -1,16 +1,19 @@
 /**
- * ThumbnailStrip — 缩略图导航栏
+ * ThumbnailStrip — 缩略图横向导航栏（底部）
  *
  * 职责：
- *   竖排显示文档所有页面缩略图，支持点击切页。
+ *   横向显示文档所有页面缩略图，支持点击切页。
  *   Lazy 加载：当前页 ± 5 页加载真实缩略图，其余 placeholder。
- *   当前页高亮 + 自动滚动到可视区。
+ *   当前页高亮 + 自动横向滚动到可视区。
+ *
+ * 布局：上展示区（ViewerViewport）+ 下缩略图栏（本组件）。
+ * 发票场景：用户打开一张发票 → 查看内容 → 偶尔确认第几页。
+ * 展示区优先级 > 翻页导航。
  *
  * 设计决策（来自 display-area-refactor.md）：
  *   - 不全量预加载（企业发票场景：30/100/300 页）
  *   - Lazy 规则：当前页 ± 5 页加载，其余灰色骨架
  *   - 已加载的不 revoke（保留缓存）
- *   - 300 个 img DOM 有压力，用虚拟滚动或 IntersectionObserver
  *
  * @module components/ThumbnailStrip
  */
@@ -49,7 +52,7 @@ export function ThumbnailStrip({ document, currentPage, onPageSelect }) {
   useEffect(() => {
     const el = itemRefs.current.get(currentPage)
     if (el && stripRef.current) {
-      el.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+      el.scrollIntoView({ inline: 'nearest', behavior: 'smooth' })
     }
   }, [currentPage])
 
@@ -67,7 +70,7 @@ export function ThumbnailStrip({ document, currentPage, onPageSelect }) {
   }, [])
 
   return (
-    <div className="thumbnail-strip" ref={stripRef} role="navigation" aria-label="页面缩略图">
+    <div className="viewer-thumbnail-bar" ref={stripRef} role="navigation" aria-label="页面缩略图">
       {document.pages.map((page, index) => (
         <div key={page.pageId} ref={(el) => setItemRef(index, el)}>
           <ThumbnailItem

@@ -61,14 +61,7 @@ export function DocumentViewer({
 
   return (
     <div className="document-viewer">
-      {/* 缩略图栏：多页时自动显示 */}
-      <ThumbnailStrip
-        document={document}
-        currentPage={state.currentPage}
-        onPageSelect={actions.goToPage}
-      />
-
-      {/* 主视口 */}
+      {/* 主视口（上方） */}
       <div className="document-viewer-main">
         {toolbarSlot}
 
@@ -95,6 +88,13 @@ export function DocumentViewer({
           </div>
         )}
       </div>
+
+      {/* 缩略图横向导航栏（底部，多页时自动显示） */}
+      <ThumbnailStrip
+        document={document}
+        currentPage={state.currentPage}
+        onPageSelect={actions.goToPage}
+      />
     </div>
   )
 }

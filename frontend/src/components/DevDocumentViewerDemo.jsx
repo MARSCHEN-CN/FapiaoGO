@@ -6,7 +6,7 @@
  *   开发阶段使用，不进入生产构建。
  *
  * 验收清单：
- *   1. 打开第一页，左侧显示3个缩略图
+ *   1. 打开第一页，底部横向显示3个缩略图
  *   2. 点击第二页，主图切换
  *   3. page1 zoom 200% + rotate 90° → 点击 page2 → zoom reset, pan reset, rotation=90 保留
  *   4. Ctrl+wheel 连续缩放正常
@@ -112,15 +112,7 @@ function MockDocumentViewer({ document, containerSize, mockUrls }) {
 
   return (
     <div className="document-viewer" style={{ height: '100%' }}>
-      {/* 缩略图栏 */}
-      <MockThumbnailStrip
-        document={document}
-        currentPage={state.currentPage}
-        onPageSelect={actions.goToPage}
-        mockUrls={mockUrls}
-      />
-
-      {/* 主视口 */}
+      {/* 主视口（上方） */}
       <div className="document-viewer-main">
         <ViewerViewport
           page={currentPage}
@@ -164,6 +156,14 @@ function MockDocumentViewer({ document, containerSize, mockUrls }) {
           <div>effective: {((currentPage?.sourceRotation || 0) + state.viewRotation) % 360}°</div>
         </div>
       </div>
+
+      {/* 缩略图横向导航栏（底部） */}
+      <MockThumbnailStrip
+        document={document}
+        currentPage={state.currentPage}
+        onPageSelect={actions.goToPage}
+        mockUrls={mockUrls}
+      />
     </div>
   )
 }
@@ -175,7 +175,7 @@ function MockThumbnailStrip({ document, currentPage, onPageSelect, mockUrls }) {
   if (!document || document.pageCount <= 1) return null
 
   return (
-    <div className="thumbnail-strip" role="navigation" aria-label="页面缩略图">
+    <div className="viewer-thumbnail-bar" role="navigation" aria-label="页面缩略图">
       {document.pages.map((page, index) => (
         <div
           key={page.pageId}
