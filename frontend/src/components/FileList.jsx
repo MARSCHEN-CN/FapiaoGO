@@ -68,9 +68,10 @@ const FileCardRow = memo(({ index, style, files, previewFileKey, previewFileDocI
   if (fileObj.invoiceType?.includes('专票')) { typeClass = 'zp'; typeText = '专票' }
   if (fileObj.invoiceType?.includes('普票')) { typeClass = 'pp'; typeText = '普票' }
 
-  // 高亮：直接 key 匹配，或 document 聚合条目的 docId 匹配
+  // 高亮：直接 key 匹配，或 document 聚合条目的 _pages 包含预览页
+  // （不按 docId 匹配：相同内容重复导入共享 docId，会误亮另一实例的行）
   const isActive = previewFileKey === fileObj.key ||
-    (fileObj._isDocumentGroup && fileObj.docId && previewFileDocId === fileObj.docId)
+    (fileObj._isDocumentGroup && Array.isArray(fileObj._pages) && fileObj._pages.some(p => p.key === previewFileKey))
   const isMultipage = fileObj._isDocumentGroup && fileObj._pageCount > 1
 
   return (
@@ -222,14 +223,15 @@ export default memo(function FileList({
   useEffect(() => {
     if (!previewFileKey || !listRef.current) return
     let index = files.findIndex(f => f.key === previewFileKey)
-    // document 聚合条目：按 docId 回退匹配
-    if (index === -1 && previewFileDocId) {
-      index = files.findIndex(f => f._isDocumentGroup && f.docId === previewFileDocId)
+    // document 聚合条目：回退按「预览页归属于该 document 的 _pages」匹配
+    // （不按 docId：相同内容重复导入共享 docId，会滚动到另一实例的行）
+    if (index === -1) {
+      index = files.findIndex(f => f._isDocumentGroup && Array.isArray(f._pages) && f._pages.some(p => p.key === previewFileKey))
     }
     if (index !== -1) {
       listRef.current.scrollToRow({ index, align: 'smart' })
     }
-  }, [previewFileKey, previewFileDocId, files])
+  }, [previewFileKey, files])
 
   if (files.length === 0) {
     return (

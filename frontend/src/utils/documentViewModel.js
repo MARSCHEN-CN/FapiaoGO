@@ -27,8 +27,8 @@
  * @module utils/documentViewModel
  */
 
-import { groupFilesByDocument } from './groupDocuments'
-import { detectDuplicateInvoices, isFailedFile, isPreviousYearFile } from '../utils'
+import { groupFilesByDocument } from './groupDocuments.js'
+import { detectDuplicateInvoices, isFailedFile, isPreviousYearFile } from '../utils.js'
 
 /**
  * document 条目包含的页数组。
@@ -46,15 +46,22 @@ export function documentPages(docEntry) {
 }
 
 /**
- * document 身份键（重复组 badge / 查找用）。
- * 优先 docId（Identity Contract v1.1：identity.docId → 顶层 docId），
- * 缺失时（解析前的单页文件等）回退 uiKey。
+ * document 行身份键（重复组 badge / 查找用）= uiKey。
  *
- * @param {Object|null} docEntry - document 条目
- * @returns {string} 身份键
+ * 为什么不用 docId：docId 是内容身份（sha256(bytes)[:24]，backend
+ * registry._make_doc_id），相同内容重复导入会得到相同 docId，无法区分
+ * "两份同样的发票"——用它做行身份会使重复组 Map 键碰撞、互相覆盖。
+ * uiKey = representative 页的 key（name+timestamp+uuid，导入实例唯一），
+ * 即 Identity Contract v1.1 定义的「React key / FileList 行 / selection」身份。
+ *
+ * 领域分离（冻结）：文件列表行身份 = uiKey；多页识别 = docId + pageNum
+ * 唯一性；重复检测 = invoiceNumber。三者不混用，invoiceNumber 永不参与身份键。
+ *
+ * @param {Object|null} docEntry - document 条目（groupFilesByDocument 产出）
+ * @returns {string} 行身份键
  */
 export function documentIdentityKey(docEntry) {
-  return docEntry?.identity?.docId || docEntry?.docId || docEntry?.key || ''
+  return docEntry?.key || ''
 }
 
 // 金额解析规则与原 FileContext 一致：剥离 ¥/￥/千分位逗号后 parseFloat

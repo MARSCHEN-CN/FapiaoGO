@@ -15,6 +15,11 @@
  *   - 其余文件（单页 PDF / 图片 / OFD / 无 docId）保持原样
  *   - document 条目的 representative = pageNum 最小的 fileObj（通常 pageNum=1）
  *   - 保持原始顺序（document 条目出现在其第一个拆分页的位置）
+ *   - 导入实例分区：docId 是内容哈希（sha256(bytes)[:24]，backend
+ *     registry._make_doc_id，filename 不参与），相同内容重复导入会得到
+ *     相同 docId，无法区分"两份同样的发票"。合法多页文档的 pageNum(1..N)
+ *     各出现一次；同 docId 下 pageNum 重复（如两个 p1、两个 p2）即判定为
+ *     多个导入实例，按 pageNum 唯一性拆分为相互独立的 document
  *   - 纯函数，不修改输入数组或对象
  *
  * 不负责：
@@ -50,29 +55,47 @@ export function restoreOriginalName(pageName) {
 export function groupFilesByDocument(files) {
   if (!Array.isArray(files) || files.length === 0) return files || []
 
-  // Pass 1: 收集拆分页分组（docId → pages[]）
-  const groups = new Map()
+  // Pass 1: 收集拆分页，按 docId + pageNum 唯一性分区为「导入实例」。
+  // docId 是内容哈希：相同内容重复导入 → 相同 docId（两份同样的发票无法
+  // 仅凭 docId 区分）。合法多页文档的 pageNum(1..N) 各出现一次；同 docId
+  // 下 pageNum 重复即多个导入实例。按 files[] 顺序将每页分配到该 docId 下
+  // 第一个 pageNum 不冲突的实例，冲突则新建实例。
+  const docInstances = new Map()   // docId → [{ pageNums: Set, pages: [] }]
+  const pageInstance = new Map()   // 页 fileObj → 所属实例
   for (const f of files) {
-    if (f.docId && f.pageNum) {
-      if (!groups.has(f.docId)) groups.set(f.docId, [])
-      groups.get(f.docId).push(f)
+    if (!(f.docId && f.pageNum)) continue
+    let instances = docInstances.get(f.docId)
+    if (!instances) {
+      instances = []
+      docInstances.set(f.docId, instances)
+    }
+    let instance = instances.find(inst => !inst.pageNums.has(f.pageNum))
+    if (!instance) {
+      instance = { pageNums: new Set(), pages: [] }
+      instances.push(instance)
+    }
+    instance.pageNums.add(f.pageNum)
+    instance.pages.push(f)
+    pageInstance.set(f, instance)
+  }
+
+  // 实例内按 pageNum 升序排列
+  for (const instances of docInstances.values()) {
+    for (const inst of instances) {
+      inst.pages.sort((a, b) => (a.pageNum || 1) - (b.pageNum || 1))
     }
   }
 
-  // 组内按 pageNum 升序排列
-  for (const [, pages] of groups) {
-    pages.sort((a, b) => (a.pageNum || 1) - (b.pageNum || 1))
-  }
-
-  // Pass 2: 构建结果——每个 docId 在首次出现位置输出一条聚合条目，后续页跳过
+  // Pass 2: 构建结果——每个实例在其首页出现位置输出一条聚合条目，后续页跳过
   const result = []
   const emitted = new Set()
 
   for (const f of files) {
-    if (f.docId && f.pageNum && groups.has(f.docId)) {
-      if (!emitted.has(f.docId)) {
-        emitted.add(f.docId)
-        const pages = groups.get(f.docId)
+    const instance = pageInstance.get(f)
+    if (instance) {
+      if (!emitted.has(instance)) {
+        emitted.add(instance)
+        const pages = instance.pages
         const rep = pages[0] // pageNum 最小的页（representative）
         result.push({
           ...rep,
@@ -82,7 +105,7 @@ export function groupFilesByDocument(files) {
           _isDocumentGroup: true,
         })
       }
-      // 后续拆分页：已聚合，跳过
+      // 已聚合进实例的页：跳过
     } else {
       // 非拆分页：原样保留
       result.push(f)
