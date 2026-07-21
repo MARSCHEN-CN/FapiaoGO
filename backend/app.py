@@ -315,6 +315,11 @@ def api_export_excel_sse():
     options = data.get('options', {})
     fmt = data.get('format', 'xlsx')
 
+    # 列驱动导出：校验并裁剪客户端 columns（白名单 + 保序 + 透传 virtual）
+    columns = excel_exporter.sanitize_columns(data.get('columns'))
+    if columns is not None:
+        options = {**options, 'columns': columns}
+
     # 优先从数据库读取（fileNames），兼容旧版 invoices 传参
     file_names = data.get('fileNames', [])
     if file_names:
@@ -391,6 +396,11 @@ def api_export_excel():
     options = data.get('options', {})
     fmt = data.get('format', 'xlsx')
 
+    # 列驱动导出：校验并裁剪客户端 columns（白名单 + 保序 + 透传 virtual）
+    columns = excel_exporter.sanitize_columns(data.get('columns'))
+    if columns is not None:
+        options = {**options, 'columns': columns}
+
     # 优先从数据库读取（fileNames），兼容旧版 invoices 传参
     file_names = data.get('fileNames', [])
     if file_names:
@@ -415,6 +425,27 @@ def api_export_excel():
     except Exception as e:
         logger.error('[Export] 导出失败: %s\n%s', e, traceback.format_exc())
         return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route('/api/export-excel-rows', methods=['POST'])
+def api_export_excel_rows():
+    """返回与最终导出同源的扁平行（复用 _db_record_to_export）。
+
+    用于「导出为 Excel」确认页的实时预览，保证预览 == 导出。
+    version 字段便于后续字段模型升级时做兼容性判断。
+    """
+    data = request.get_json() or {}
+    file_names = data.get('fileNames', [])
+    if not file_names:
+        return jsonify({'success': False, 'error': '缺少 fileNames'}), 400
+    rows = []
+    for rec in db_module.get_invoices_by_filenames(file_names):
+        rows.extend(_db_record_to_export(rec))
+    return jsonify({
+        'success': True,
+        'version': 'excel-export-v1',
+        'rows': rows,
+    })
 
 
 # ============================

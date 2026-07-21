@@ -42,6 +42,75 @@ EXPORT_ALLOWED_BASE_DIRS = [
 
 
 # ═══════════════════════════════════════════════════════════
+#  导出列定义（字段选择 / 列驱动导出）
+# ═══════════════════════════════════════════════════════════
+
+# Excel 允许导出的字段白名单：exporter 不信任客户端传入的 columns，
+# 越权 / 未知 key 一律丢弃（防止前端误传非导出字段）。
+ALLOWED_EXPORT_KEYS = {
+    'serialNo', 'invoiceType', 'invoiceDate', 'invoiceNumber',
+    'amountWithoutTax', 'taxAmount', 'totalAmount',
+    'buyerName', 'buyerTaxNo', 'sellerName', 'sellerTaxNo',
+    'classificationCode', 'xmmc', 'ggxh', 'unit', 'quantity',
+    'unitPrice', 'lineAmount', 'taxRate', 'lineTax',
+    'note', 'originalFilename',
+}
+
+# 字段默认宽度（与前端 excelColumns.js 真源对齐，作宽度回退）。
+MASTER_WIDTH = {
+    'serialNo': 8, 'invoiceType': 12, 'invoiceDate': 12, 'invoiceNumber': 20,
+    'amountWithoutTax': 12, 'taxAmount': 12, 'totalAmount': 12,
+    'buyerName': 25, 'buyerTaxNo': 20, 'sellerName': 25, 'sellerTaxNo': 20,
+    'classificationCode': 18, 'xmmc': 35, 'ggxh': 20, 'unit': 8,
+    'quantity': 10, 'unitPrice': 12, 'lineAmount': 12, 'taxRate': 12,
+    'lineTax': 12, 'note': 30, 'originalFilename': 35,
+}
+
+# 发票级字段：同一发票多行明细时合并这些列（仅对当前列中存在的 key 生效）。
+INVOICE_LEVEL_KEYS = {
+    'serialNo', 'invoiceType', 'invoiceDate', 'invoiceNumber',
+    'amountWithoutTax', 'taxAmount', 'totalAmount',
+    'buyerName', 'buyerTaxNo', 'sellerName', 'sellerTaxNo', 'issuer',
+    'note', 'originalFilename',
+}
+
+
+def _invoice_identity(rec):
+    """发票去重 / 分组身份（前后端共用规则）。
+
+    发票号 → 原文件名 → __ANON_{id}（稳定，不每次生成新对象）。
+    用于预览序号、合计行去重、XLSX 分组合并，保证「预览 == 导出」。
+    """
+    return rec.get('invoiceNumber') or rec.get('file_name') or f"__ANON_{id(rec)}"
+
+
+def sanitize_columns(columns):
+    """校验并裁剪客户端传入的列定义。
+
+    - 仅保留 ALLOWED_EXPORT_KEYS 内的 key，丢弃越权 key
+    - 保持传入顺序（不排序，尊重用户字段选择顺序）
+    - 透传 virtual 标记（serialNo 由写行序号生成，不读 inv）
+    返回 None 表示未指定（调用方走默认全列）。
+    """
+    if not columns:
+        return None
+    out = []
+    for c in columns:
+        if not isinstance(c, dict):
+            continue
+        key = c.get('key')
+        if key not in ALLOWED_EXPORT_KEYS:
+            continue
+        out.append({
+            'key': key,
+            'label': c.get('label') or key,
+            'width': int(c.get('width') or MASTER_WIDTH.get(key, 12)),
+            'virtual': bool(c.get('virtual')),
+        })
+    return out or None
+
+
+# ═══════════════════════════════════════════════════════════
 #  路径校验
 # ═══════════════════════════════════════════════════════════
 
@@ -204,54 +273,57 @@ class XlsxWriter:
 
     # ── 核心写入 ──
 
-    def write_summary_sheet(self, ws, sheet_invoices, serial_start=1, sheet_label=''):
-        """设置汇总 sheet（含发票级字段合并 + quantity 原始字符串保留）。"""
+    def write_summary_sheet(self, ws, sheet_invoices, serial_start=1, sheet_label='', columns=None):
+        """设置汇总 sheet（含发票级字段合并 + quantity 原始字符串保留）。
+
+        columns: 可选，由调用方指定的列定义列表
+                 [{key, label, width, virtual}, ...]，顺序即用户选择顺序。
+                 为 None 时走历史默认列（含 include_remark 控制备注/原文件名）。
+        """
         get_col = self._get_column_letter
         on_progress = self.on_progress
 
-        cols = [
-            ('序号', 'serialNo', 8),
-            ('发票类型', 'invoiceType', 12),
-            ('开票日期', 'invoiceDate', 12),
-            ('发票号码', 'invoiceNumber', 20),
-            ('税前金额', 'amountWithoutTax', 12),
-            ('税额合计', 'taxAmount', 12),
-            ('价税合计', 'totalAmount', 12),
-            ('购买方名称', 'buyerName', 25),
-            ('购买方税号', 'buyerTaxNo', 20),
-            ('销售方名称', 'sellerName', 25),
-            ('销售方税号', 'sellerTaxNo', 20),
-            ('开票人', 'issuer', 10),
-            ('分类编码', 'classificationCode', 18),
-            ('项目名称', 'xmmc', 35),
-            ('规格型号', 'ggxh', 20),
-            ('单位', 'unit', 8),
-            ('数量', 'quantity', 10),
-            ('单价', 'unitPrice', 12),
-            ('金额', 'lineAmount', 12),
-            ('税率/征收率', 'taxRate', 12),
-            ('税额', 'lineTax', 12),
-        ]
-        if self.include_remark:
-            cols.extend([('备注', 'note', 30), ('原文件名', 'originalFilename', 35)])
-
-        # 发票级字段：同一发票多行明细时合并这些列
-        invoice_level_keys = [
-            'serialNo', 'invoiceType', 'invoiceDate', 'invoiceNumber',
-            'amountWithoutTax', 'taxAmount', 'totalAmount',
-            'buyerName', 'buyerTaxNo', 'sellerName', 'sellerTaxNo',
-            'issuer',
-        ]
-        if self.include_remark:
-            invoice_level_keys.extend(['note', 'originalFilename'])
+        if columns:
+            # 新路径：列由调用方指定（顺序即用户选择顺序，不排序）
+            cols = [(c['label'], c['key'], c['width'], bool(c.get('virtual')))
+                    for c in columns]
+            group_key_fn = _invoice_identity
+        else:
+            # 旧路径：保持历史默认列序（含 include_remark 控制备注/原文件名）
+            cols = [
+                ('序号', 'serialNo', 8, False),
+                ('发票类型', 'invoiceType', 12, False),
+                ('开票日期', 'invoiceDate', 12, False),
+                ('发票号码', 'invoiceNumber', 20, False),
+                ('税前金额', 'amountWithoutTax', 12, False),
+                ('税额合计', 'taxAmount', 12, False),
+                ('价税合计', 'totalAmount', 12, False),
+                ('购买方名称', 'buyerName', 25, False),
+                ('购买方税号', 'buyerTaxNo', 20, False),
+                ('销售方名称', 'sellerName', 25, False),
+                ('销售方税号', 'sellerTaxNo', 20, False),
+                ('开票人', 'issuer', 10, False),
+                ('分类编码', 'classificationCode', 18, False),
+                ('项目名称', 'xmmc', 35, False),
+                ('规格型号', 'ggxh', 20, False),
+                ('单位', 'unit', 8, False),
+                ('数量', 'quantity', 10, False),
+                ('单价', 'unitPrice', 12, False),
+                ('金额', 'lineAmount', 12, False),
+                ('税率/征收率', 'taxRate', 12, False),
+                ('税额', 'lineTax', 12, False),
+            ]
+            if self.include_remark:
+                cols.extend([('备注', 'note', 30, False), ('原文件名', 'originalFilename', 35, False)])
+            group_key_fn = lambda inv: inv.get('invoiceNumber') or f'__UNIQUE_{id(inv)}'
 
         # key → 列序号 映射（用于 merge_cells）
         col_index_map = {}
-        for c, (_, key, _) in enumerate(cols, 1):
+        for c, (_, key, _, _) in enumerate(cols, 1):
             col_index_map[key] = c
 
         # 写表头
-        for c, (header, _, width) in enumerate(cols, 1):
+        for c, (header, _, width, _virtual) in enumerate(cols, 1):
             cell = ws.cell(row=1, column=c, value=header)
             cell.font = self.header_font
             cell.fill = self.header_fill
@@ -259,10 +331,10 @@ class XlsxWriter:
             cell.border = self.thin_border
             ws.column_dimensions[get_col(c)].width = width
 
-        # 按发票号分组（同一发票多明细分组合并）
+        # 按发票身份分组（同一发票多明细分组合并）
         group_map = {}
-        for idx, inv in enumerate(sheet_invoices):
-            key = inv.get('invoiceNumber') or f'__UNIQUE_{idx}'
+        for inv in sheet_invoices:
+            key = group_key_fn(inv)
             if key not in group_map:
                 group_map[key] = []
             group_map[key].append(inv)
@@ -279,25 +351,26 @@ class XlsxWriter:
             row_count = len(group)
 
             for inv in group:
-                for c, (_, key, _) in enumerate(cols, 1):
-                    val = inv.get(key, '')
-                    if key == 'serialNo':
-                        val = serial
-                    elif key in self.money_keys:
-                        val = self._safe_num(val)
-                    elif key == 'quantity':
-                        # 借鉴 ExcelJS：整数保持字符串（防 "001" → 1）
-                        q_str = str(val) if val else ''
-                        try:
-                            q_num = float(q_str.replace(',', ''))
-                            if q_num != int(q_num):
-                                val = q_num
-                            else:
-                                val = q_str
-                        except (ValueError, TypeError):
-                            val = self._sanitize(val)
+                for c, (_, key, _, virtual) in enumerate(cols, 1):
+                    if key == 'serialNo' or virtual:
+                        val = serial   # 序号 / 虚拟列由计数器生成，不读 inv
                     else:
-                        val = self._sanitize(val)
+                        raw = inv.get(key, '')
+                        if key in self.money_keys:
+                            val = self._safe_num(raw)
+                        elif key == 'quantity':
+                            # 借鉴 ExcelJS：整数保持字符串（防 "001" → 1）
+                            q_str = str(raw) if raw else ''
+                            try:
+                                q_num = float(q_str.replace(',', ''))
+                                if q_num != int(q_num):
+                                    val = q_num
+                                else:
+                                    val = q_str
+                            except (ValueError, TypeError):
+                                val = self._sanitize(raw)
+                        else:
+                            val = self._sanitize(raw)
                     cell = ws.cell(row=row_idx, column=c, value=val)
                     cell.border = self.thin_border
                     if key in self.money_keys and isinstance(val, (int, float)):
@@ -314,7 +387,7 @@ class XlsxWriter:
             serial += 1  # 每张发票递增序号
             if row_count > 1:
                 end_row = start_row + row_count - 1
-                for ikey in invoice_level_keys:
+                for ikey in INVOICE_LEVEL_KEYS:
                     ci = col_index_map.get(ikey)
                     if ci:
                         cl = get_col(ci)
@@ -330,9 +403,9 @@ class XlsxWriter:
 
         for group in group_map.values():
             for inv in group:
-                inv_num = inv.get('invoiceNumber', '')
-                if inv_num not in seen_invoices:
-                    seen_invoices.add(inv_num)
+                inv_id = group_key_fn(inv)
+                if inv_id not in seen_invoices:
+                    seen_invoices.add(inv_id)
                     total_amount_without_tax += Decimal(str(
                         self._safe_num(inv.get('amountWithoutTax', 0))))
                     total_tax_amount += Decimal(str(
@@ -399,23 +472,34 @@ def export_csv(file_path, invoices, options, on_progress=None):
     Args:
         file_path: 目标绝对路径
         invoices: 发票数据列表
-        options: { includeRemark, ... }
+        options: { includeRemark, columns }
+                 columns: 可选，[{key,label,width,virtual}, ...] 指定列（顺序即选择顺序，不排序）
         on_progress: 可选回调 (current, total, stage) -> None
     """
     include_remark = options.get('includeRemark', True)
+    columns = options.get('columns')
     total = len(invoices)
 
-    headers = [
-        '序号', '发票类型', '开票日期', '发票号码',
-        '税前金额', '税额合计', '价税合计',
-        '购买方名称', '购买方纳税人识别号',
-        '销售方名称', '销售方纳税人识别号',
-    ]
-    if include_remark:
-        headers.extend(['备注', '原文件名'])
-    headers.extend([
-        '分类编码', '项目名称', '规格型号', '单位', '数量', '单价', '金额', '税率/征收率', '税额'
-    ])
+    if columns:
+        # 新路径：列由调用方指定（顺序即用户选择顺序，不排序，与预览同源）
+        headers = [c['label'] for c in columns]
+        ordered = list(invoices)
+        group_key_fn = _invoice_identity
+    else:
+        # 旧路径：保持历史默认列
+        headers = [
+            '序号', '发票类型', '开票日期', '发票号码',
+            '税前金额', '税额合计', '价税合计',
+            '购买方名称', '购买方纳税人识别号',
+            '销售方名称', '销售方纳税人识别号',
+        ]
+        if include_remark:
+            headers.extend(['备注', '原文件名'])
+        headers.extend([
+            '分类编码', '项目名称', '规格型号', '单位', '数量', '单价', '金额', '税率/征收率', '税额'
+        ])
+        ordered = sorted(invoices, key=lambda x: x.get('invoiceNumber', ''))
+        group_key_fn = lambda inv: inv.get('invoiceNumber', '')
 
     if on_progress:
         on_progress(10, 100, f'正在写入 CSV ({total} 行)...')
@@ -426,39 +510,55 @@ def export_csv(file_path, invoices, options, on_progress=None):
         writer = csv.writer(f)
         writer.writerow(headers)
 
-        # 按发票号排序（确保同发票行连续，序号统一）
-        sorted_invoices = sorted(invoices, key=lambda x: x.get('invoiceNumber', ''))
+        # 按发票身份分组（保持出现顺序，同发票行连续）
+        groups = []
+        group_index = {}
+        for inv in ordered:
+            key = group_key_fn(inv)
+            if key not in group_index:
+                group_index[key] = len(groups)
+                groups.append([])
+            groups[group_index[key]].append(inv)
+
         serial = 1
         written = 0
-        for inv_num, group in groupby(sorted_invoices,
-                                       key=lambda x: x.get('invoiceNumber', '')):
+        for group in groups:
             for inv in group:
-                row = [
-                    serial,
-                    inv.get('invoiceType', ''),
-                    inv.get('invoiceDate', ''),
-                    inv.get('invoiceNumber', ''),
-                    inv.get('amountWithoutTax', ''),
-                    inv.get('taxAmount', ''),
-                    inv.get('totalAmount', ''),
-                    inv.get('buyerName', ''),
-                    inv.get('buyerTaxNo', ''),
-                    inv.get('sellerName', ''),
-                    inv.get('sellerTaxNo', ''),
-                ]
-                if include_remark:
-                    row.extend([inv.get('note', ''), inv.get('originalFilename', '')])
-                row.extend([
-                    inv.get('classificationCode', ''),
-                    inv.get('xmmc', ''),
-                    inv.get('ggxh', ''),
-                    inv.get('unit', ''),
-                    inv.get('quantity', ''),
-                    inv.get('unitPrice', ''),
-                    inv.get('lineAmount', ''),
-                    inv.get('taxRate', ''),
-                    inv.get('lineTax', ''),
-                ])
+                if columns:
+                    row = []
+                    for c in columns:
+                        key = c['key']
+                        if key == 'serialNo' or c.get('virtual'):
+                            row.append(serial)   # 虚拟列由计数器生成
+                        else:
+                            row.append(inv.get(key, ''))
+                else:
+                    row = [
+                        serial,
+                        inv.get('invoiceType', ''),
+                        inv.get('invoiceDate', ''),
+                        inv.get('invoiceNumber', ''),
+                        inv.get('amountWithoutTax', ''),
+                        inv.get('taxAmount', ''),
+                        inv.get('totalAmount', ''),
+                        inv.get('buyerName', ''),
+                        inv.get('buyerTaxNo', ''),
+                        inv.get('sellerName', ''),
+                        inv.get('sellerTaxNo', ''),
+                    ]
+                    if include_remark:
+                        row.extend([inv.get('note', ''), inv.get('originalFilename', '')])
+                    row.extend([
+                        inv.get('classificationCode', ''),
+                        inv.get('xmmc', ''),
+                        inv.get('ggxh', ''),
+                        inv.get('unit', ''),
+                        inv.get('quantity', ''),
+                        inv.get('unitPrice', ''),
+                        inv.get('lineAmount', ''),
+                        inv.get('taxRate', ''),
+                        inv.get('lineTax', ''),
+                    ])
                 writer.writerow(sanitize_export_row(row))
                 written += 1
 
@@ -491,6 +591,7 @@ def export_xlsx(file_path, invoices, options, on_progress=None):
 
     include_remark = options.get('includeRemark', True)
     split_by_type = options.get('splitByType', False)
+    columns = options.get('columns')
 
     if on_progress:
         on_progress(5, 100, '创建 Excel 工作簿...')
@@ -524,13 +625,13 @@ def export_xlsx(file_path, invoices, options, on_progress=None):
                 name = f'{name}({i})'
             used_names.add(name)
             ws = wb.create_sheet(title=name)
-            writer.write_summary_sheet(ws, type_invs, sheet_label=f'[{name}]')
+            writer.write_summary_sheet(ws, type_invs, sheet_label=f'[{name}]', columns=columns)
 
         if on_progress:
             on_progress(90, 100, '汇总数据写入完成')
     else:
         ws = wb.create_sheet(title='发票汇总')
-        writer.write_summary_sheet(ws, invoices, sheet_label='发票汇总')
+        writer.write_summary_sheet(ws, invoices, sheet_label='发票汇总', columns=columns)
 
         if on_progress:
             on_progress(90, 100, '汇总数据写入完成')
