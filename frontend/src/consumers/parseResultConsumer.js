@@ -19,6 +19,7 @@
 
 import { mapParseResultToFileUpdate } from '../mappers/parseResultMapper'
 import { updateFileStatus, addResult } from '../stores/ImportSessionStore'
+import { ensureDocumentFromFileObj } from '../stores/DocumentStore'
 
 /**
  * 消费单个解析结果。
@@ -34,6 +35,14 @@ export function consumeParseResult(result, fileObj, sessionId) {
   // 写入 Store
   updateFileStatus(sessionId, fileObj.key, { ...update, status: result.status })
   addResult(sessionId, { fileKey: fileObj.key, result })
+
+  // ── Display Area Refactor Phase 6：Document 注册 ──
+  // 当 parse 产出 docId 时，确保 DocumentStore 有对应的 InvoiceDocument。
+  // 过渡期：单页文件从 fileObj 构建兼容 Document；
+  // 多页文件后续由 Coordinator 路径调用 registerFromCoordinator。
+  if (update.docId) {
+    ensureDocumentFromFileObj({ ...fileObj, docId: update.docId, identity: update.identity })
+  }
 
   return update
 }
