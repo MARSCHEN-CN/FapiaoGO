@@ -27,21 +27,22 @@ import { ensureDocumentFromFileObj } from '../stores/DocumentStore'
  * @param {Object} result - ParseResult
  * @param {Object} fileObj - 原始文件对象（用于更新状态）
  * @param {string} sessionId - 会话 ID
+ * @param {Object[]} [siblings] - 同批文件数组（多页聚合：共享 docId 的分页 fileObj）
  * @returns {Object} UI 更新数据（可传入 queueUpdate）
  */
-export function consumeParseResult(result, fileObj, sessionId) {
+export function consumeParseResult(result, fileObj, sessionId, siblings = null) {
   const update = mapParseResultToFileUpdate(result, fileObj)
 
   // 写入 Store
   updateFileStatus(sessionId, fileObj.key, { ...update, status: result.status })
   addResult(sessionId, { fileKey: fileObj.key, result })
 
-  // ── Display Area Refactor Phase 6：Document 注册 ──
+  // ── Display Area Refactor：Document 注册 ──
   // 当 parse 产出 docId 时，确保 DocumentStore 有对应的 InvoiceDocument。
-  // 过渡期：单页文件从 fileObj 构建兼容 Document；
-  // 多页文件后续由 Coordinator 路径调用 registerFromCoordinator。
+  // Step 10.5：传入 siblings 后，共享 docId 的拆分页聚合为多页 Document；
+  // 未传时退化为单页构建。OCR/ParseResult 合并仍属 Coordinator 职责。
   if (update.docId) {
-    ensureDocumentFromFileObj({ ...fileObj, docId: update.docId, identity: update.identity })
+    ensureDocumentFromFileObj({ ...fileObj, docId: update.docId, identity: update.identity }, siblings)
   }
 
   return update

@@ -17,7 +17,7 @@
  * @module stores/DocumentStore
  */
 
-import { createDocument, createPageMeta, documentFromFileObj } from '../models/InvoiceDocument'
+import { createDocument, createPageMeta } from '../models/InvoiceDocument'
 
 /** @type {Map<string, import('../models/InvoiceDocument').InvoiceDocument>} */
 const documents = new Map()
@@ -48,6 +48,17 @@ function notify() {
 }
 
 /**
+ * 统一触发一次变更通知。
+ *
+ * 配合 ensureDocumentFromFileObj 的 silent 模式使用：
+ * 大批量路径（如 hydration）在循环内静默注册，
+ * 循环结束后调用本函数一次性通知，避免 N 文件 N 次通知。
+ */
+export function flushDocumentNotifications() {
+  notify()
+}
+
+/**
  * 注册或更新一个 InvoiceDocument。
  *
  * @param {import('../models/InvoiceDocument').InvoiceDocument} doc
@@ -72,26 +83,89 @@ export function getDocument(docId) {
 }
 
 /**
- * 从 fileObj 确保有对应的 InvoiceDocument。
+ * 从 fileObj（及其同 docId 兄弟文件）确保有对应的 InvoiceDocument。
  *
- * 过渡期使用：现有单页文件尚未走 Coordinator 路径时，
- * 从 fileObj 构建兼容的单页 Document 并注册。
- * 如果已存在则直接返回。
+ * Step 10.5 多页聚合（Display Refactor 范围，非 Coordinator）：
+ *   导入拆分产生的多个分页 fileObj 共享同一 docId、各带不同 pageNum。
+ *   传入 siblings（同批文件数组）后，按 docId 过滤、按 pageNum 排序，
+ *   聚合为 pages[]（index = pageNum - 1），首次真正激活多页 Document。
+ *   不重新解析 PDF、不做 OCR/ParseResult 合并（那些属于 Coordinator）。
+ *
+ * 单页兼容：未提供 siblings 时退化为单页构建。
+ * 已回填的页面尺寸会被保留，避免聚合覆盖真实像素尺寸。
  *
  * @param {Object} fileObj
+ * @param {Object[]} [siblings] - 同批文件数组（含所有共享 docId 的分页 fileObj）
+ * @param {{silent?: boolean}} [options] - silent=true 时注册后不立即 notify，
+ *   由调用方在循环结束后调用 flushDocumentNotifications() 统一通知。
+ *   用于 hydration 等大批量路径，避免每文件一次通知。
  * @returns {import('../models/InvoiceDocument').InvoiceDocument|null}
  */
-export function ensureDocumentFromFileObj(fileObj) {
+export function ensureDocumentFromFileObj(fileObj, siblings = null, options = {}) {
+  const { silent = false } = options
   if (!fileObj?.docId) return null
 
-  const existing = documents.get(fileObj.docId)
-  if (existing) return existing
+  const docId = fileObj.docId
+  const pool = Array.isArray(siblings) && siblings.length > 0 ? siblings : [fileObj]
 
-  const doc = documentFromFileObj(fileObj)
-  if (doc) {
-    documents.set(doc.docId, doc)
-    notify()
+  // 过滤同 docId 的分页，提取 pageNum（去重 + 升序）
+  const seen = new Set()
+  const pageNums = []
+  for (const f of pool) {
+    if (!f || f.docId !== docId) continue
+    const pageNum = f.pageNum || 1
+    if (!seen.has(pageNum)) {
+      seen.add(pageNum)
+      pageNums.push(pageNum)
+    }
   }
+  pageNums.sort((a, b) => a - b)
+
+  const existing = documents.get(docId)
+
+  // 保留已回填的页面尺寸（按 index 对应）
+  const prevByIndex = new Map()
+  if (existing) {
+    for (const p of existing.pages) {
+      if (p.width || p.height) prevByIndex.set(p.index, p)
+    }
+  }
+
+  const pages = pageNums.map((pageNum) => {
+    const index = pageNum - 1
+    const prev = prevByIndex.get(index)
+    return createPageMeta({
+      docId,
+      index,
+      width: prev?.width || 0,
+      height: prev?.height || 0,
+      sourceRotation: prev?.sourceRotation || 0,
+    })
+  })
+
+  // 与现有 Document 完全一致时直接返回，避免无意义通知
+  if (
+    existing &&
+    existing.pageCount === pages.length &&
+    existing.pages.every(
+      (p, i) =>
+        p.index === pages[i].index &&
+        p.width === pages[i].width &&
+        p.height === pages[i].height &&
+        p.sourceRotation === pages[i].sourceRotation,
+    )
+  ) {
+    return existing
+  }
+
+  const doc = createDocument({
+    docId,
+    fileKey: fileObj.key || '',
+    sourceHash: fileObj.identity?.sourceHash || '',
+    pages,
+  })
+  documents.set(docId, doc)
+  if (!silent) notify()
   return doc
 }
 
