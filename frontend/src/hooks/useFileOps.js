@@ -19,6 +19,7 @@ import { runSplitTask } from '../runners/splitRunner'
 import { runFallbackParseTask } from '../runners/fallbackParseRunner'
 import { mapParseResultToFileUpdate } from '../mappers/parseResultMapper'
 import { createImportSession, addFilesToSession, replaceFileItems, updateProgress, updateSessionStatus } from '../stores/ImportSessionStore'
+import { ensureDocumentFromFileObj, flushDocumentNotifications, getDocument } from '../stores/DocumentStore'
 import { processImportedFiles } from '../processors/invoicePostProcessor'
 import { consumeParseResult } from '../consumers/parseResultConsumer'
 import { createParseResult } from '../models/ParseResult'
@@ -140,7 +141,9 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
 
       if (item.success && item.data) {
         const result = createParseResult(item.data, fileObj.name)
-        const update = consumeParseResult(result, fileObj, task.id)
+        // Step 10.5：传入整批文件作为 siblings，供 DocumentStore 聚合
+        // 共享 docId 的拆分页为多页 Document（单页文件不受影响）。
+        const update = consumeParseResult(result, fileObj, task.id, filesToParse)
         updates.set(fileObj.key, { ...update, status: result.status })
       } else {
         updates.set(fileObj.key, { status: 'error', errorMsg: item.error || '解析失败' })
@@ -208,7 +211,9 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
 
         if (outcome.success && outcome.result) {
           // 通过 Consumer 写入 Store + 生成 UI 更新
-          consumeParseResult(outcome.result, fileObj, null)
+          // Step 10.5：传入整批 filesToParse 作为 siblings，
+          // 与批量路径（:145）一致，供 DocumentStore 聚合共享 docId 的拆分页。
+          consumeParseResult(outcome.result, fileObj, null, filesToParse)
 
           setFiles((prev) =>
             prev.map((f) =>
@@ -488,6 +493,7 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
 
                   // 分块更新（每 100 个一批，避免长任务阻塞渲染）
                   const CHUNK = 100
+                  let docsTouched = false
                   for (let i = 0; i < readyFiles.length; i += CHUNK) {
                     const chunkFiles = readyFiles.slice(i, i + CHUNK)
                     for (const fileObj of chunkFiles) {
@@ -521,6 +527,21 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
                         // 无匹配结果（失败文件）：仅更新状态
                         queueUpdate(fileObj.key, 'parsed')
                       }
+
+                      // ── Step 10.5：Document 注册（展示索引建立，非导入管线重构）──
+                      // fileObj 在拆分时已携带 docId + pageNum（1-based，来自后端
+                      // page_index）。静默注册，共享 docId 的拆分页聚合为多页
+                      // Document；chunk 结束后统一 flush，避免每文件一次通知。
+                      if (fileObj.docId) {
+                        const prev = getDocument(fileObj.docId)
+                        const doc = ensureDocumentFromFileObj(fileObj, readyFiles, { silent: true })
+                        if (doc && doc !== prev) docsTouched = true
+                      }
+                    }
+                    // 本 chunk 有新注册/变更时统一通知一次
+                    if (docsTouched) {
+                      flushDocumentNotifications()
+                      docsTouched = false
                     }
                     // 让出主线程，允许渲染帧插入
                     if (i + CHUNK < readyFiles.length) {
