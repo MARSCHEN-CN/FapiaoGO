@@ -275,3 +275,15 @@ export function clearAllDocuments() {
 export function getDocumentCount() {
   return documents.size
 }
+
+/**
+ * 获取所有已注册的 docId（生命周期 GC 用）。
+ *
+ * 配合 App 层的反应式清理：当 files[] 中不再有任何文件引用某 docId 时，
+ * 调用 removeDocument 回收对应 Document，防止删除后残留。
+ *
+ * @returns {string[]}
+ */
+export function getRegisteredDocIds() {
+  return Array.from(documents.keys())
+}

@@ -41,6 +41,7 @@ import Sidebar from './components/Sidebar'
 import TopBar from './components/TopBar'
 import { DisplayAdapter, resolveDocId } from './components/DisplayAdapter'
 import { useDocument } from './hooks/useDocument'
+import { removeDocument, getRegisteredDocIds } from './stores/DocumentStore'
 import StatusIndicator from './components/StatusIndicator'
 import ActionBar from './components/ActionBar'
 import InvoiceDetail from './components/InvoiceDetail'
@@ -293,6 +294,36 @@ function AppContent() {
     // ✅ 清空所有预览缓存
     clearAllPreviewCache()
   }, [cleanupPreviewUrl, clearPrintState, clearAllPreviewCache])
+
+  // ── Step 10.6: Display Lifecycle Cleanup ─────────────────────
+  // 展示状态生命周期必须跟随 selection 生命周期释放。
+  //
+  // 问题背景：removeFile 删除"正在预览的最后一个文件"或"分组删除多页发票"时，
+  // nextPreviewFile 计算基于删除前的快照，可能为 null 或指向同样将被删除的分页，
+  // 导致 files=[] 但 previewFile 仍持有旧文件 → 空状态页上残留旧 viewer。
+  //
+  // 反应式修复：只要 previewFile 的 key 不再存在于 files（任何删除路径），
+  // 立即释放展示状态。DocumentViewer 随 previewFile=null 卸载（ViewerState
+  // 是 useState，卸载即丢弃，无需手动 reset）。
+  useEffect(() => {
+    if (!previewFile) return
+    if (files.some((f) => f.key === previewFile.key)) return
+    cleanupPreviewUrl()
+    setPreviewFile(null)
+  }, [files, previewFile, cleanupPreviewUrl, setPreviewFile])
+
+  // DocumentStore 生命周期 GC：files 中无任何文件引用的 docId → 回收 Document。
+  // 覆盖单删/分组删/清空/删失败文件等全部路径，防止 Store 残留。
+  useEffect(() => {
+    const referenced = new Set()
+    for (const f of files) {
+      const docId = resolveDocId(f)
+      if (docId) referenced.add(docId)
+    }
+    for (const docId of getRegisteredDocIds()) {
+      if (!referenced.has(docId)) removeDocument(docId)
+    }
+  }, [files])
 
   const removeFailedFiles = useCallback((removeSource = false) => {
     // ✅ 先读取最新列表计算要删除的文件（不在 updater 内做副作用）
