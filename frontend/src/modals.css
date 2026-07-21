@@ -162,11 +162,11 @@
 }
 
 /* ======================== Modal Overlay & Base Styles ======================== */
-.pc-overlay, .rp-overlay, .pk-overlay, .ex-overlay, .pe-overlay, .tp-overlay {
+.pc-overlay, .rp-overlay, .pk-overlay, .ex-overlay, .pe-overlay, .tp-overlay, .xec-overlay {
   z-index: 100;
 }
 
-.pc-panel, .rp-panel, .pk-panel, .ex-panel, .pe-panel, .tp-panel {
+.pc-panel, .rp-panel, .pk-panel, .ex-panel, .pe-panel, .tp-panel, .xec-panel {
   background: var(--canvas-float-bg);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
@@ -382,7 +382,7 @@ button.pc-btn.outline,
 .pc-file-info { font-size: 11px; color: var(--text-3); flex-shrink: 0; }
 
 /* footer */
-.pc-footer, .rp-footer, .pk-footer, .pe-footer {
+.pc-footer, .rp-footer, .pk-footer, .pe-footer, .xec-footer {
   display: flex; align-items: center; justify-content: flex-end; gap: 10px;
   padding: 16px 24px; border-top: 1px solid var(--border-light);
 }
@@ -992,6 +992,208 @@ button.pc-btn.outline,
   color: var(--text-2);
   padding: 0;
 }>
+
+/* ======================== Excel Export Fields Modal (xec-) ======================== */
+.xec-panel {
+  width: 960px;
+  max-width: 94vw;
+  max-height: 90vh;
+}
+
+.xec-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 24px 0;
+}
+
+.xec-header-left {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.xec-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0;
+}
+
+.xec-subtitle {
+  font-size: 12px;
+  color: var(--text-3);
+}
+
+.xec-file-count {
+  font-size: 12px;
+  color: var(--text-3);
+}
+
+.xec-body {
+  padding: 16px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.xec-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+}
+
+/* 预览区占据剩余高度，让表格可滚动 */
+.xec-preview-section {
+  flex: 1;
+  min-height: 0;
+}
+
+.xec-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.xec-section-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-3);
+}
+
+.xec-section-actions {
+  display: flex;
+  gap: 12px;
+}
+
+.xec-link-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--accent);
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.xec-link-btn:hover {
+  text-decoration: underline;
+}
+
+.xec-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 6px 10px;
+  max-height: 132px;
+  overflow-y: auto;
+  padding: 10px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border-light);
+  border-radius: 8px;
+}
+
+.xec-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-2);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.xec-field input[type="checkbox"] {
+  accent-color: var(--accent);
+  flex-shrink: 0;
+}
+
+.xec-table-wrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid var(--border-light);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.xec-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.xec-table thead th {
+  position: sticky;
+  top: 0;
+  background: var(--surface);
+  color: var(--text-2);
+  font-weight: 600;
+  text-align: left;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+  z-index: 1;
+}
+
+.xec-table tbody td {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border-light);
+  white-space: nowrap;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.xec-table tbody tr:hover {
+  background: var(--surface-hover);
+}
+
+.xec-money {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.xec-total-row td {
+  position: sticky;
+  bottom: 0;
+  background: var(--surface);
+  font-weight: 600;
+  border-top: 2px solid var(--border);
+  padding: 8px 10px;
+  white-space: nowrap;
+}
+
+.xec-empty {
+  padding: 28px;
+  text-align: center;
+  color: var(--text-3);
+  font-size: 13px;
+}
+
+.xec-count {
+  margin-top: 8px;
+  text-align: right;
+  font-size: 12px;
+  color: var(--text-3);
+}
+
+.xec-error {
+  color: var(--danger);
+  font-size: 12px;
+}
+
+.xec-loading {
+  color: var(--text-3);
+  font-size: 12px;
+}
 
 /* ================================================================
    DARK MODE — all modals · 质感升级
