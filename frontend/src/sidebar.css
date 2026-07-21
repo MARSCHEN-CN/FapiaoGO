@@ -1114,6 +1114,32 @@
   right: 80px;
 }
 
+/* -- 多页文档标记（共N页） -- */
+.file-card.multipage { position: relative; overflow: hidden; }
+
+.multipage-label {
+  position: absolute;
+  top: -1px; right: 28px;
+  font-size: 9px;
+  background: var(--purple);
+  color: #fff;
+  padding: 1px 6px;
+  border-radius: 0 0 4px 4px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  z-index: 1;
+}
+
+/* 多页 + 重复 共存：重复标签左移避让 */
+.file-card:has(.multipage-label) .duplicate-label {
+  right: 80px;
+}
+
+/* 多页 + 合并组 共存：多页标签左移避让 */
+.file-card:has(.merge-group-label) .multipage-label {
+  right: 80px;
+}
+
 /* -- 往年发票标记 -- */
 .file-card.previous-year { position: relative; overflow: hidden; }
 

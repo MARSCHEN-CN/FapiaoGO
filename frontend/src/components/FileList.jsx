@@ -6,7 +6,7 @@ const ROW_HEIGHT = 64
 const OVERSCAN = 5
 
 // ─── FileCard 行组件 ─────────────────────────────────────────────
-const FileCardRow = memo(({ index, style, files, previewFileKey, mergeActive, mergeCount, duplicateInfo, previousYearInfo, fileRotations, onPreview, onRemove, onRotate, onHoverFile }) => {
+const FileCardRow = memo(({ index, style, files, previewFileKey, previewFileDocId, mergeActive, mergeCount, duplicateInfo, previousYearInfo, fileRotations, onPreview, onRemove, onRotate, onHoverFile }) => {
   const fileObj = files?.[index]
   if (!fileObj) return null
 
@@ -29,8 +29,24 @@ const FileCardRow = memo(({ index, style, files, previewFileKey, mergeActive, me
   const handleClick = () => {
     if (typeof onPreview === 'function') onPreview(fileObj)
   }
-  const handleRemove = (e) => { e.stopPropagation(); onRemove(fileObj.key) }
-  const handleRotate = (e) => { e.stopPropagation(); onRotate(fileObj.key) }
+  const handleRemove = (e) => {
+    e.stopPropagation()
+    // document-level 聚合条目：删除所有分页
+    if (fileObj._isDocumentGroup && fileObj._pages) {
+      for (const page of fileObj._pages) onRemove(page.key)
+    } else {
+      onRemove(fileObj.key)
+    }
+  }
+  const handleRotate = (e) => {
+    e.stopPropagation()
+    // document-level 聚合条目：旋转所有分页
+    if (fileObj._isDocumentGroup && fileObj._pages) {
+      for (const page of fileObj._pages) onRotate(page.key)
+    } else {
+      onRotate(fileObj.key)
+    }
+  }
   const handleMouseEnter = () => {
     // 只对已解析的文件触发预加载
     if (fileObj.status === 'parsed' && typeof onHoverFile === 'function') {
@@ -51,10 +67,15 @@ const FileCardRow = memo(({ index, style, files, previewFileKey, mergeActive, me
   if (fileObj.invoiceType?.includes('专票')) { typeClass = 'zp'; typeText = '专票' }
   if (fileObj.invoiceType?.includes('普票')) { typeClass = 'pp'; typeText = '普票' }
 
+  // 高亮：直接 key 匹配，或 document 聚合条目的 docId 匹配
+  const isActive = previewFileKey === fileObj.key ||
+    (fileObj._isDocumentGroup && fileObj.docId && previewFileDocId === fileObj.docId)
+  const isMultipage = fileObj._isDocumentGroup && fileObj._pageCount > 1
+
   return (
     <div
       style={style}
-      className={`file-card ${previewFileKey === fileObj.key ? 'active' : ''} ${isGroupFirst ? 'merge-group-first' : ''} ${isGroupLast ? 'merge-group-last' : ''} ${fileObj.failedFields?.length > 0 ? 'has-failed' : ''} ${fileObj.status === 'parsing' ? 'parsing' : ''} ${showDuplicate ? 'duplicate' : ''} ${showPrevYear ? 'previous-year' : ''}`}
+      className={`file-card ${isActive ? 'active' : ''} ${isGroupFirst ? 'merge-group-first' : ''} ${isGroupLast ? 'merge-group-last' : ''} ${fileObj.failedFields?.length > 0 ? 'has-failed' : ''} ${fileObj.status === 'parsing' ? 'parsing' : ''} ${showDuplicate ? 'duplicate' : ''} ${showPrevYear ? 'previous-year' : ''} ${isMultipage ? 'multipage' : ''}`}
       onClick={handleClick}
       onMouseEnter={handleMouseEnter}
     >
@@ -66,6 +87,7 @@ const FileCardRow = memo(({ index, style, files, previewFileKey, mergeActive, me
       )}
       {showDuplicate && isDupFirst && <div className="duplicate-bar"></div>}
       {showDuplicate && <div className="duplicate-label">重复组 {dupGroupIndex}</div>}
+      {isMultipage && <div className="multipage-label">共{fileObj._pageCount}页</div>}
       {isGroupFirst && mergeActive && <div className="merge-group-label">合并组 {Math.floor(index / mergeCount) + 1}</div>}
 
       <button className="file-card-rotate" onClick={handleRotate} title={`旋转 (${fileRotations?.[fileObj.key] || 0}°)`}>
@@ -147,6 +169,7 @@ const FileCardRow = memo(({ index, style, files, previewFileKey, mergeActive, me
   if (prev.onRotate !== next.onRotate) return false
   if (prev.onHoverFile !== next.onHoverFile) return false
   if (prev.previewFileKey !== next.previewFileKey) return false
+  if (prev.previewFileDocId !== next.previewFileDocId) return false
   if (prev.mergeActive !== next.mergeActive || prev.mergeCount !== next.mergeCount) return false
   if (prev.duplicateInfo !== next.duplicateInfo) return false
   if (prev.previousYearInfo !== next.previousYearInfo) return false
@@ -170,6 +193,7 @@ export default memo(function FileList({
   const mergeActive = isMergeMode(paperSize)
   const mergeCount = mergeActive ? parseInt(paperSize.replace('merge', ''), 10) : 2
   const previewFileKey = previewFile?.key || null
+  const previewFileDocId = previewFile?.docId || null
   const listRef = useRef(null)
 
   // ⚠ 警告：不要删除下面 rowProps 中的 `files` 键，即使 FileCardRow 未直接使用它。
@@ -181,6 +205,7 @@ export default memo(function FileList({
   const rowProps = useMemo(() => ({
     files,           // Do NOT remove: react-window v2 memoizes Object.values(rowProps)
     previewFileKey,
+    previewFileDocId,
     mergeActive,
     mergeCount,
     duplicateInfo,
@@ -190,16 +215,20 @@ export default memo(function FileList({
     onRemove,
     onRotate,
     onHoverFile,
-  }), [files, previewFileKey, mergeActive, mergeCount, duplicateInfo, previousYearInfo, fileRotations, onPreview, onRemove, onRotate, onHoverFile])
+  }), [files, previewFileKey, previewFileDocId, mergeActive, mergeCount, duplicateInfo, previousYearInfo, fileRotations, onPreview, onRemove, onRotate, onHoverFile])
 
   // 选中文件自动滚动（react-window v2 API：scrollToRow({ index, align })）
   useEffect(() => {
     if (!previewFileKey || !listRef.current) return
-    const index = files.findIndex(f => f.key === previewFileKey)
+    let index = files.findIndex(f => f.key === previewFileKey)
+    // document 聚合条目：按 docId 回退匹配
+    if (index === -1 && previewFileDocId) {
+      index = files.findIndex(f => f._isDocumentGroup && f.docId === previewFileDocId)
+    }
     if (index !== -1) {
       listRef.current.scrollToRow({ index, align: 'smart' })
     }
-  }, [previewFileKey, files])
+  }, [previewFileKey, previewFileDocId, files])
 
   if (files.length === 0) {
     return (

@@ -1,5 +1,6 @@
 import React, { useMemo, useRef, useCallback, useEffect, useState } from 'react'
 import { isMergeMode, getDuplicateGroupInfo, getPreviousYearInfo, resolveStatsMode, getElectronAPI } from '../utils'
+import { groupFilesByDocument } from '../utils/groupDocuments'
 import { useFileContext } from '../contexts/FileContext'
 import { PUBLIC_BASE } from '../config'
 import FileList from './FileList'
@@ -106,6 +107,14 @@ export default React.memo(function Sidebar({
     return c
   }, [previousYearInfo])
   const hasPreviousYear = previousYearCount > 0
+
+  // ── Step 10.5+：文件列表 document-level 聚合 ──
+  // 拆分页（docId + pageNum）聚合为一条 document 条目，
+  // FileList 显示"一张发票"而非"每页一条"。底层 files[] 不变。
+  const displayFiles = useMemo(
+    () => groupFilesByDocument(isSearching ? filteredFiles : files),
+    [isSearching, filteredFiles, files],
+  )
 
   // ── 统计区动画：仅值变化时触发 countPop ──
   const countDisplay = hasFailedFiles
@@ -365,7 +374,7 @@ export default React.memo(function Sidebar({
                 </div>
               ) : (
                 <FileList
-                  files={isSearching ? filteredFiles : files}
+                  files={displayFiles}
                   previewFile={previewFile}
                   paperSize={paperSize}
                   duplicateInfo={duplicateInfo}
