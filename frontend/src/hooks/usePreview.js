@@ -176,7 +176,15 @@ export function usePreview({ files, settings, electronAPIRef }) {
   // 因此 Consumer 永远看到最后一帧有效画面，而非正在构建的中间态（A→null→B 的 null 被消除）。
   const committedPreviewRef = useRef({ url: null, dims: null, canvas: null, layout: null, timestamp: 0 })
   // 清空 committed（切到无预览文件 / 文件无预览数据时调用）
+  // ✅ Step 10.6：释放 = 清空 + 取消在途。只清 committed 不够——删除流程自身会
+  //    handlePreview(已被删除的文件)，其在途 doLoadPreview 会复活 previewFile 并派发新的
+  //    RE probe / canvas 渲染；这些异步提交若在清空之后回写 previewUrl/previewCanvas，
+  //    就会在空状态页下残留旧帧。先递增三个 token，使所有在途任务的提交守卫失效。
   const clearCommitted = useCallback(() => {
+    previewVersionRef.current++        // 在途 doLoadPreview 的 version 守卫失效，阻止复活 previewFile
+    imgLoadTokenRef.current++          // 在途 RE probe 的 commit 守卫失效，阻止回写 previewUrl
+    renderVersionRef.current++         // 在途 canvas 渲染的提交守卫失效
+    renderCancelledRef.current = true  // 双保险：标记当前渲染已取消
     committedPreviewRef.current = { url: null, dims: null, canvas: null, layout: null, timestamp: 0 }
     setPreviewUrl(null)
     setPreviewImgDims(null)
