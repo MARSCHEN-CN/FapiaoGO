@@ -56,8 +56,13 @@ function ViewerViewportInner({
   // 图片自然像素尺寸（PageMeta 为 0×0 时的渲染回退 + 回填来源）。
   // 切换页面（previewUrl 变化）时重置，等待新图加载。
   const [naturalDims, setNaturalDims] = useState(null)
+  // 加载重试计数：渲染引擎对文档的注册（autoRegister）可能略晚于首次加载，
+  // 首次 404 后短暂延迟重试，覆盖该时间窗。通过 key 变更强制 img 重新加载。
+  const [loadAttempt, setLoadAttempt] = useState(0)
+  const retryRef = useRef(0)
   useEffect(() => {
     setNaturalDims(null)
+    retryRef.current = 0
   }, [previewUrl])
 
   // 计算有效旋转和尺寸
@@ -82,6 +87,13 @@ function ViewerViewportInner({
       onNaturalSize?.(page.index, w, h)
     }
   }, [page, onNaturalSize])
+
+  // ─── Image Error：延迟重试（覆盖渲染引擎注册时间窗） ───
+  const handleImageError = useCallback(() => {
+    if (retryRef.current >= 3) return
+    retryRef.current += 1
+    setTimeout(() => setLoadAttempt((n) => n + 1), 800)
+  }, [])
 
   // ─── Wheel Zoom ───
   const handleWheel = useCallback((e) => {
@@ -177,6 +189,7 @@ function ViewerViewportInner({
         }}
       >
         <img
+          key={loadAttempt}
           className="viewer-image"
           src={previewUrl}
           alt=""
@@ -184,6 +197,7 @@ function ViewerViewportInner({
           loading="eager"
           decoding="async"
           onLoad={handleImageLoad}
+          onError={handleImageError}
           style={{
             width: '100%',
             height: '100%',

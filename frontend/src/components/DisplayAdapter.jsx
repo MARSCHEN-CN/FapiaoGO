@@ -41,6 +41,21 @@ export function resolveDocId(file) {
 }
 
 /**
+ * 判断文件是否为 PDF。
+ *
+ * Step 10 阶段 DocumentViewer 仅服务 PDF：
+ * 后端 /preview/{docId} 只能栅格化 PDF（图片渲染分支尚未实现，恒 404），
+ * 图片/OFD 文件必须继续走 legacy PreviewCanvas（客户端 canvas 回退），
+ * 否则会被新路径路由到 DocumentViewer 后预览损坏。
+ *
+ * @param {Object|null} file - fileObj
+ * @returns {boolean}
+ */
+export function isPdfFile(file) {
+  return file?.fileFormat === 'pdf' || file?._fileFormat === 'pdf'
+}
+
+/**
  * @param {Object} props
  * @param {Object|null} props.file - 当前预览文件对象（fileObj）
  * @param {{ width: number, height: number }} props.containerSize - 视口容器尺寸
@@ -71,8 +86,9 @@ export function DisplayAdapter({
   const docId = resolveDocId(file)
   const document = useDocument(docId)
 
-  // 新路径：已注册有效 Document（至少 1 页）
-  if (document && document.pageCount > 0) {
+  // 新路径：PDF 且已注册有效 Document（至少 1 页）。
+  // 非 PDF（图片/OFD）后端 /preview 无法服务，保持 legacy 路径。
+  if (isPdfFile(file) && document && document.pageCount > 0) {
     return (
       <DocumentViewer
         document={document}
