@@ -15,8 +15,8 @@
 //   total:  'invoice' → 合计行按发票身份去重，每个发票只累加一次（税前/税额合计/价税合计）
 //   total:  'line'    → 合计行每行明细都累加（金额/税额）
 //
-// 共 22 项 = 用户原 20 字段 + 备注 + 原文件名。
-// 「开票人」按方案明确排除（不在勾选清单内）。
+// 共 23 项 = 用户原 20 字段 + 备注 + 原文件名 + 开票人（经确认补入可勾选清单）。
+// 开票人 (issuer) 已加入后端 ALLOWED_EXPORT_KEYS 白名单，预览与导出同源。
 export const EXCEL_COLUMNS = [
   { key: 'serialNo',           label: '序号',               width: 8,  virtual: true },
   { key: 'invoiceType',        label: '发票类型',           width: 12 },
@@ -29,6 +29,7 @@ export const EXCEL_COLUMNS = [
   { key: 'buyerTaxNo',         label: '购买方纳税人识别号', width: 20 },
   { key: 'sellerName',         label: '销售方名称',         width: 25 },
   { key: 'sellerTaxNo',        label: '销售方纳税人识别号', width: 20 },
+  { key: 'issuer',             label: '开票人',             width: 10 },
   { key: 'classificationCode', label: '分类编码',           width: 18 },
   { key: 'xmmc',               label: '项目名称',           width: 35 },
   { key: 'ggxh',               label: '规格型号',           width: 20 },

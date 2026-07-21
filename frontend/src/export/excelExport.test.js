@@ -17,17 +17,20 @@ const BACKEND_ROW_KEYS = new Set([
   'lineAmount', 'taxRate', 'lineTax', 'classificationCode',
 ])
 
-test('EXCEL_COLUMNS 共 22 项，ALL_KEYS 与数组长度一致', () => {
-  assert.equal(EXCEL_COLUMNS.length, 22)
-  assert.equal(ALL_KEYS.length, 22)
+test('EXCEL_COLUMNS 共 23 项，ALL_KEYS 与数组长度一致', () => {
+  assert.equal(EXCEL_COLUMNS.length, 23)
+  assert.equal(ALL_KEYS.length, 23)
   assert.deepEqual(ALL_KEYS, EXCEL_COLUMNS.map((c) => c.key))
 })
 
-test('serialNo 为虚拟列，开票人不在此清单', () => {
+test('serialNo 为虚拟列，开票人已在清单（序号在销售方税号后、分类编码前）', () => {
   const serial = EXCEL_COLUMNS.find((c) => c.key === 'serialNo')
   assert.equal(serial.virtual, true)
   assert.deepEqual(VIRTUAL_KEYS, ['serialNo'])
-  assert.ok(!ALL_KEYS.includes('issuer'), '开票人不应出现在可勾选清单')
+  assert.ok(ALL_KEYS.includes('issuer'), '开票人应在可勾选清单')
+  const keys = EXCEL_COLUMNS.map((c) => c.key)
+  assert.ok(keys.indexOf('issuer') > keys.indexOf('sellerTaxNo'), '开票人应在销售方税号之后')
+  assert.ok(keys.indexOf('issuer') < keys.indexOf('classificationCode'), '开票人应在分类编码之前')
 })
 
 test('所有列 key 必须与后端 row key 一致（同源保证，防止预览空白）', () => {
