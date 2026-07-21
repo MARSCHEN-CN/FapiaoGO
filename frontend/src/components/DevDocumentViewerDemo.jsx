@@ -176,26 +176,28 @@ function MockThumbnailStrip({ document, currentPage, onPageSelect, mockUrls }) {
 
   return (
     <div className="viewer-thumbnail-bar" role="navigation" aria-label="页面缩略图">
-      {document.pages.map((page, index) => (
-        <div
-          key={page.pageId}
-          className={`thumbnail-item${index === currentPage ? ' thumbnail-item--active' : ''}`}
-          onClick={() => onPageSelect(index)}
-          role="button"
-          tabIndex={0}
-          aria-label={`第 ${index + 1} 页`}
-        >
-          <div className="thumbnail-frame">
-            <img
-              src={mockUrls[index]}
-              alt=""
-              draggable={false}
-              className="thumbnail-img thumbnail-img--loaded"
-            />
+      <div className="viewer-thumbnail-list">
+        {document.pages.map((page, index) => (
+          <div
+            key={page.pageId}
+            className={`thumbnail-item${index === currentPage ? ' thumbnail-item--active' : ''}`}
+            onClick={() => onPageSelect(index)}
+            role="button"
+            tabIndex={0}
+            aria-label={`第 ${index + 1} 页`}
+          >
+            <div className="thumbnail-frame">
+              <img
+                src={mockUrls[index]}
+                alt=""
+                draggable={false}
+                className="thumbnail-img thumbnail-img--loaded"
+              />
+            </div>
+            <span className="thumbnail-label">{index + 1}</span>
           </div>
-          <span className="thumbnail-label">{index + 1}</span>
-        </div>
-      ))}
+        ))}
+      </div>
     </div>
   )
 }

@@ -70,18 +70,20 @@ export function ThumbnailStrip({ document, currentPage, onPageSelect }) {
   }, [])
 
   return (
-    <div className="viewer-thumbnail-bar" ref={stripRef} role="navigation" aria-label="页面缩略图">
-      {document.pages.map((page, index) => (
-        <div key={page.pageId} ref={(el) => setItemRef(index, el)}>
-          <ThumbnailItem
-            index={index}
-            thumbnailUrl={thumbnailUrls[index]}
-            active={index === currentPage}
-            shouldLoad={shouldLoadPage(index)}
-            onClick={handlePageSelect}
-          />
-        </div>
-      ))}
+    <div className="viewer-thumbnail-bar" role="navigation" aria-label="页面缩略图">
+      <div className="viewer-thumbnail-list" ref={stripRef}>
+        {document.pages.map((page, index) => (
+          <div key={page.pageId} ref={(el) => setItemRef(index, el)}>
+            <ThumbnailItem
+              index={index}
+              thumbnailUrl={thumbnailUrls[index]}
+              active={index === currentPage}
+              shouldLoad={shouldLoadPage(index)}
+              onClick={handlePageSelect}
+            />
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
