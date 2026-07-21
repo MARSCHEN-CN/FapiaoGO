@@ -1,0 +1,100 @@
+/**
+ * DisplayAdapter — 展示区双轨适配器
+ *
+ * 职责（单一）：
+ *   判断当前文件是否已注册 InvoiceDocument：
+ *     - 有 → 走新展示路径 DocumentViewer（Document/Page/Viewer 三层）。
+ *     - 无 → 走旧展示路径 PreviewCanvas（legacy，保留一个版本周期）。
+ *
+ * 为什么独立成组件（而不是直接改 App.jsx）：
+ *   App.jsx 是应用组合层。DocumentStore 查询、Viewer 判断、Preview fallback
+ *   属于"展示路由"职责，应收敛在本组件，避免 App.jsx 重新膨胀为大组件。
+ *
+ * 响应式：
+ *   通过 useDocument 订阅 DocumentStore。即使预览先于解析完成显示
+ *   （docId 已在 fileObj 上，但 Document 稍后才注册），也能在注册后
+ *   自动从 PreviewCanvas 切换到 DocumentViewer，无需刷新或导航。
+ *
+ * Architecture Law D1：
+ *   本组件只做路由，不碰纸张/边距（Print），也不碰 zoom/pan（Viewer 内部）。
+ *
+ * @module components/DisplayAdapter
+ */
+
+import React from 'react'
+import { DocumentViewer } from './DocumentViewer'
+import PreviewCanvas from './PreviewCanvas'
+import { useDocument } from '../hooks/useDocument'
+
+/**
+ * 从 fileObj 解析规范 docId。
+ *
+ * 身份契约（Identity Contract v1.1）：identity.docId 是规范出口，
+ * 顶层 docId 为兼容字段。读取顺序：identity.docId → docId。
+ * 永不使用 key / filename 作为文档身份。
+ *
+ * @param {Object|null} file - fileObj
+ * @returns {string|null} docId，无法解析时返回 null
+ */
+export function resolveDocId(file) {
+  return file?.identity?.docId || file?.docId || null
+}
+
+/**
+ * @param {Object} props
+ * @param {Object|null} props.file - 当前预览文件对象（fileObj）
+ * @param {{ width: number, height: number }} props.containerSize - 视口容器尺寸
+ * @param {boolean} [props.grayscale=false] - 灰度模式
+ *
+ * ── 以下为 legacy PreviewCanvas 透传 props（新路径不使用） ──
+ * @param {HTMLCanvasElement|null} [props.previewCanvas]
+ * @param {string|null} [props.previewUrl]
+ * @param {number} [props.previewRenderVersion]
+ * @param {Object|null} [props.paperLayout]
+ * @param {Object|null} [props.contentLayout]
+ * @param {number} [props.previewRotation]
+ * @param {boolean} [props.previewLoading]
+ */
+export function DisplayAdapter({
+  file,
+  containerSize,
+  grayscale = false,
+  // legacy pass-through
+  previewCanvas,
+  previewUrl,
+  previewRenderVersion,
+  paperLayout,
+  contentLayout,
+  previewRotation,
+  previewLoading,
+}) {
+  const docId = resolveDocId(file)
+  const document = useDocument(docId)
+
+  // 新路径：已注册有效 Document（至少 1 页）
+  if (document && document.pageCount > 0) {
+    return (
+      <DocumentViewer
+        document={document}
+        containerSize={containerSize}
+        grayscale={grayscale}
+      />
+    )
+  }
+
+  // 旧路径：fallback 到 PreviewCanvas（保留一个版本周期）
+  return (
+    <PreviewCanvas
+      previewFile={file}
+      previewCanvas={previewCanvas}
+      previewUrl={previewUrl}
+      grayscale={grayscale}
+      previewRenderVersion={previewRenderVersion}
+      paperLayout={paperLayout}
+      contentLayout={contentLayout}
+      previewRotation={previewRotation}
+      previewLoading={previewLoading}
+      containerSize={containerSize}
+    />
+  )
+}

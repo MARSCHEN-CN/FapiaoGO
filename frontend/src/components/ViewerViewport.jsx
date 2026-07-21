@@ -12,7 +12,7 @@
  * @module components/ViewerViewport
  */
 
-import React, { useRef, useCallback, useEffect, memo } from 'react'
+import React, { useRef, useState, useCallback, useEffect, memo } from 'react'
 import { buildTransformString, computeFitScale, computeDisplaySize, rotatedDimensions } from '../utils/viewerTransform'
 import { effectiveRotation } from '../models/InvoiceDocument'
 
@@ -30,6 +30,8 @@ import { effectiveRotation } from '../models/InvoiceDocument'
  * @param {(deltaY: number) => void} props.onWheelZoom - 滚轮缩放回调
  * @param {(panX: number, panY: number) => void} props.onPanChange - 平移回调
  * @param {() => void} props.onDoubleClick - 双击适应回调
+ * @param {(pageIndex: number, width: number, height: number) => void} [props.onNaturalSize] -
+ *   图片加载后上报自然像素尺寸（用于回填 0×0 的 PageMeta）
  * @param {React.ReactNode} [props.overlaySlot] - Overlay 插槽（OCR/字段高亮）
  */
 function ViewerViewportInner({
@@ -45,18 +47,41 @@ function ViewerViewportInner({
   onWheelZoom,
   onPanChange,
   onDoubleClick,
+  onNaturalSize,
   overlaySlot,
 }) {
   const viewportRef = useRef(null)
   const dragState = useRef({ dragging: false, startX: 0, startY: 0, startPanX: 0, startPanY: 0 })
 
+  // 图片自然像素尺寸（PageMeta 为 0×0 时的渲染回退 + 回填来源）。
+  // 切换页面（previewUrl 变化）时重置，等待新图加载。
+  const [naturalDims, setNaturalDims] = useState(null)
+  useEffect(() => {
+    setNaturalDims(null)
+  }, [previewUrl])
+
   // 计算有效旋转和尺寸
   const effRotation = page ? effectiveRotation(page, viewRotation) : 0
-  const dims = page ? rotatedDimensions(page.width || 0, page.height || 0, effRotation) : { width: 0, height: 0 }
+  // 基础尺寸：优先 PageMeta；缺失（0×0，过渡期注册）时回退到已加载图片的自然尺寸。
+  const baseW = page && page.width ? page.width : naturalDims ? naturalDims.width : 0
+  const baseH = page && page.height ? page.height : naturalDims ? naturalDims.height : 0
+  const dims = rotatedDimensions(baseW, baseH, effRotation)
 
   // 计算 fit scale 和显示尺寸
   const fitScale = computeFitScale(dims.width, dims.height, containerSize?.width || 0, containerSize?.height || 0)
   const { displayW, displayH, scale } = computeDisplaySize(dims.width, dims.height, fitScale, zoom)
+
+  // ─── Image Load：捕获自然尺寸并上报回填 ───
+  const handleImageLoad = useCallback((e) => {
+    const w = e.target?.naturalWidth || 0
+    const h = e.target?.naturalHeight || 0
+    if (w <= 0 || h <= 0) return
+    setNaturalDims({ width: w, height: h })
+    // PageMeta 缺失尺寸时上报，由 DocumentViewer 回填 DocumentStore（D1：尺寸属于业务数据）
+    if (page && (!page.width || !page.height)) {
+      onNaturalSize?.(page.index, w, h)
+    }
+  }, [page, onNaturalSize])
 
   // ─── Wheel Zoom ───
   const handleWheel = useCallback((e) => {
@@ -127,6 +152,10 @@ function ViewerViewportInner({
 
   const transformStr = buildTransformString({ panX, panY, scale, rotation: effRotation })
 
+  // 尺寸是否已知（PageMeta 有值，或图片已加载拿到自然尺寸）。
+  // 未知时先隐藏图片并显示占位，避免以错误尺寸闪现。
+  const dimsKnown = dims.width > 0 && dims.height > 0
+
   return (
     <div
       className="viewer-viewport"
@@ -144,6 +173,7 @@ function ViewerViewportInner({
           willChange: 'transform',
           width: dims.width ? `${dims.width}px` : 'auto',
           height: dims.height ? `${dims.height}px` : 'auto',
+          opacity: dimsKnown ? 1 : 0,
         }}
       >
         <img
@@ -153,6 +183,7 @@ function ViewerViewportInner({
           draggable={false}
           loading="eager"
           decoding="async"
+          onLoad={handleImageLoad}
           style={{
             width: '100%',
             height: '100%',
@@ -162,6 +193,10 @@ function ViewerViewportInner({
         />
         {overlaySlot}
       </div>
+
+      {!dimsKnown && (
+        <div className="viewer-placeholder">加载中...</div>
+      )}
 
       {loading && (
         <div className="viewer-loading-overlay">

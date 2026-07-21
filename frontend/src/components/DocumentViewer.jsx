@@ -19,6 +19,7 @@ import { ThumbnailStrip } from './ThumbnailStrip'
 import { useViewerState } from '../hooks/useViewerState'
 import { resolvePreviewUrl } from '../utils/previewResourceResolver'
 import { getPage } from '../models/InvoiceDocument'
+import { patchPageMeta } from '../stores/DocumentStore'
 import './DocumentViewer.css'
 
 /**
@@ -59,6 +60,20 @@ export function DocumentViewer({
     actions.setPan(panX, panY)
   }, [actions])
 
+  // 图片加载后回填真实像素尺寸（过渡期注册的 PageMeta 尺寸为 0×0）。
+  // D1：尺寸属于业务数据，写回 DocumentStore，供 Viewer/Print 共享。
+  const handleNaturalSize = useCallback((pageIndex, width, height) => {
+    if (!document?.docId) return
+    const target = getPage(document, pageIndex)
+    if (target && (!target.width || !target.height)) {
+      patchPageMeta(document.docId, pageIndex, {
+        width,
+        height,
+        sourceRotation: target.sourceRotation || 0,
+      })
+    }
+  }, [document])
+
   return (
     <div className="document-viewer">
       {/* 主视口（上方） */}
@@ -78,6 +93,7 @@ export function DocumentViewer({
           onWheelZoom={actions.wheelZoom}
           onPanChange={handlePanChange}
           onDoubleClick={handleDoubleClick}
+          onNaturalSize={handleNaturalSize}
           overlaySlot={overlaySlot}
         />
 

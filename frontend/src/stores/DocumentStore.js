@@ -23,6 +23,31 @@ import { createDocument, createPageMeta, documentFromFileObj } from '../models/I
 const documents = new Map()
 
 /**
+ * ─── 响应式订阅（供 useSyncExternalStore 使用） ───
+ *
+ * DocumentStore 是模块级 Map，本身不触发 React 重渲染。
+ * 通过 subscribe/notify，消费方（useDocument hook）可以在
+ * Document 注册/更新/移除时自动重渲染。
+ */
+const listeners = new Set()
+
+/**
+ * 订阅 DocumentStore 变更。
+ *
+ * @param {() => void} listener - 变更回调
+ * @returns {() => void} 取消订阅函数
+ */
+export function subscribe(listener) {
+  listeners.add(listener)
+  return () => listeners.delete(listener)
+}
+
+/** 通知所有订阅者（内部使用）。 */
+function notify() {
+  for (const listener of listeners) listener()
+}
+
+/**
  * 注册或更新一个 InvoiceDocument。
  *
  * @param {import('../models/InvoiceDocument').InvoiceDocument} doc
@@ -31,6 +56,7 @@ const documents = new Map()
 export function registerDocument(doc) {
   if (!doc || !doc.docId) return doc
   documents.set(doc.docId, doc)
+  notify()
   return doc
 }
 
@@ -64,6 +90,7 @@ export function ensureDocumentFromFileObj(fileObj) {
   const doc = documentFromFileObj(fileObj)
   if (doc) {
     documents.set(doc.docId, doc)
+    notify()
   }
   return doc
 }
@@ -89,6 +116,7 @@ export function registerFromCoordinator(coordinatorResult, fileKey = '', sourceH
   )
   const doc = createDocument({ docId, fileKey, sourceHash, pages })
   documents.set(docId, doc)
+  notify()
   return doc
 }
 
@@ -112,6 +140,37 @@ export function updatePageMeta(docId, pages) {
     })
   )
   documents.set(docId, { ...doc, pages: updatedPages, pageCount: updatedPages.length })
+  notify()
+}
+
+/**
+ * 合并更新单页元数据（不影响其他页面）。
+ *
+ * 主要用途：页面图片加载后，将真实像素尺寸回填到 PageMeta。
+ * 与 updatePageMeta（整组替换）不同，本函数只改指定页的指定字段，
+ * 其余页面与字段保持不变。pageCount 不变。
+ *
+ * @param {string} docId
+ * @param {number} pageIndex - 0-based 页索引
+ * @param {{width?: number, height?: number, sourceRotation?: number}} patch - 要合并的字段
+ */
+export function patchPageMeta(docId, pageIndex, patch) {
+  const doc = documents.get(docId)
+  if (!doc) return
+
+  const pages = doc.pages.map((p) =>
+    p.index === pageIndex
+      ? createPageMeta({
+          docId,
+          index: p.index,
+          width: patch.width ?? p.width,
+          height: patch.height ?? p.height,
+          sourceRotation: patch.sourceRotation ?? p.sourceRotation,
+        })
+      : p
+  )
+  documents.set(docId, { ...doc, pages })
+  notify()
 }
 
 /**
@@ -120,7 +179,10 @@ export function updatePageMeta(docId, pages) {
  * @param {string} docId
  */
 export function removeDocument(docId) {
-  if (docId) documents.delete(docId)
+  if (docId) {
+    documents.delete(docId)
+    notify()
+  }
 }
 
 /**
@@ -128,6 +190,7 @@ export function removeDocument(docId) {
  */
 export function clearAllDocuments() {
   documents.clear()
+  notify()
 }
 
 /**
