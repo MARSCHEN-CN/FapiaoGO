@@ -80,6 +80,15 @@ def normalize_filename(name: object) -> str:
     return s
 
 
+def invoice_index_key(filename: object) -> str:
+    """发票文件名索引键的统一入口。
+
+    所有涉及 _invoice_index_by_filename 的读写操作都应通过此函数，
+    确保写入和查询使用同一套归一化规则，防止因规则不一致导致的 404。
+    """
+    return normalize_filename(filename)
+
+
 # ── Legacy page suffix resolution ──
 # 历史数据中，早期分页落库的文件名会带 `_p1` / `_p2` 等页后缀
 # （如 '24442000000123331548_2024年03月28日_p1.pdf'），
@@ -343,7 +352,7 @@ def _rebuild_indexes() -> None:
         if inv.get("hash_sha256"):
             _invoice_index_by_hash[inv["hash_sha256"]] = i
         if inv.get("file_name"):
-            _invoice_index_by_filename[normalize_filename(inv["file_name"])] = i
+            _invoice_index_by_filename[invoice_index_key(inv["file_name"])] = i
         if inv.get("number"):
             num = str(inv["number"])
             _invoice_index_by_number.setdefault(num, []).append(i)
@@ -528,7 +537,7 @@ def _replay_oplog() -> None:
                         if data.get("hash_sha256"):
                             _invoice_index_by_hash[data["hash_sha256"]] = _idx
                         if data.get("file_name"):
-                            _invoice_index_by_filename[normalize_filename(data["file_name"])] = _idx
+                            _invoice_index_by_filename[invoice_index_key(data["file_name"])] = _idx
                         if data.get("number"):
                             _invoice_index_by_number.setdefault(str(data["number"]), []).append(_idx)
 
@@ -916,7 +925,7 @@ def upsert_invoice(row: Dict) -> Dict:
         if new_invoice.get('hash_sha256'):
             _invoice_index_by_hash[new_invoice['hash_sha256']] = idx
         if new_invoice.get('file_name'):
-            _invoice_index_by_filename[str(new_invoice['file_name']).strip().lower()] = idx
+            _invoice_index_by_filename[invoice_index_key(new_invoice['file_name'])] = idx
         if new_invoice.get('number'):
             _invoice_index_by_number.setdefault(str(new_invoice['number']), []).append(idx)
         _refresh_search_text(new_invoice)
@@ -990,7 +999,7 @@ def batch_upsert_invoices(rows: List[Dict]) -> List[Dict]:
             if new_invoice.get('hash_sha256'):
                 _invoice_index_by_hash[new_invoice['hash_sha256']] = idx
             if new_invoice.get('file_name'):
-                _invoice_index_by_filename[str(new_invoice['file_name']).strip().lower()] = idx
+                _invoice_index_by_filename[invoice_index_key(new_invoice['file_name'])] = idx
             if new_invoice.get('number'):
                 _invoice_index_by_number.setdefault(str(new_invoice['number']), []).append(idx)
             _refresh_search_text(new_invoice)
@@ -1060,7 +1069,7 @@ def hard_delete_invoice(invoice_id: str) -> Optional[Dict]:
                 _invoice_index_by_hash.pop(inv['hash_sha256'], None)
 
             if inv.get('file_name'):
-                _invoice_index_by_filename.pop(normalize_filename(inv['file_name']), None)
+                _invoice_index_by_filename.pop(invoice_index_key(inv['file_name']), None)
 
             if inv.get('number'):
                 num = str(inv['number'])
@@ -1153,14 +1162,14 @@ def _resolve_invoice_with_fallback(filename: str) -> Optional[Dict]:
       3. legacy_page_suffix: normalize_filename(strip_p_suffix(basename))
     """
     # Step 1: exact match
-    target = normalize_filename(filename)
+    target = invoice_index_key(filename)
     found = _resolve_invoice_by_key(target)
     if found:
         return found
 
     # Step 2: basename match
     basename = filename.split('/')[-1].split('\\')[-1]
-    pure_name = normalize_filename(basename)
+    pure_name = invoice_index_key(basename)
     if pure_name != target:
         found = _resolve_invoice_by_key(pure_name)
         if found:
@@ -1174,7 +1183,7 @@ def _resolve_invoice_with_fallback(filename: str) -> Optional[Dict]:
     for key, idx in _invoice_index_by_filename.items():
         if '_p' not in key:
             continue
-        stripped_key = normalize_filename(_strip_page_suffix(key))
+        stripped_key = invoice_index_key(_strip_page_suffix(key))
         if stripped_key == target or stripped_key == pure_name:
             if not _invoices[idx].get('deleted_at'):
                 return _invoices[idx].copy()
