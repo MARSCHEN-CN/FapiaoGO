@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
-import { EXCEL_COLUMNS, ALL_KEYS, visibleColumns } from '../export/excelColumns.js'
+import { EXCEL_COLUMNS, ALL_KEYS, visibleColumns, INVOICE_LEVEL_KEYS } from '../export/excelColumns.js'
 import { computeTotals, countInvoices } from '../export/excelTotals.js'
-import { getInvoiceIdentity } from '../export/invoiceIdentity.js'
+import { groupInvoiceRows } from '../export/invoiceIdentity.js'
 import { BACKEND_URL } from '../config'
 
 /**
@@ -85,16 +85,9 @@ const ExcelExportFieldsModal = ({
   // 当前勾选列定义（顺序 = EXCEL_COLUMNS 规范序；取消再勾回规范位置）
   const visibleCols = useMemo(() => visibleColumns(selected), [selected])
 
-  // 序号列：按发票身份分组赋 1..N（与后端 serialNo 语义一致——每张发票一个序号）
-  const serialByRow = useMemo(() => {
-    const map = new Map()
-    let n = 0
-    return rows.map((r, i) => {
-      const id = getInvoiceIdentity(r, i)
-      if (!map.has(id)) map.set(id, ++n)
-      return map.get(id)
-    })
-  }, [rows])
+  // 按发票身份分组（与后端 write_summary_sheet 同序：首现顺序）。
+  // 组内多行明细时，发票级列在下方 tbody 渲染为 rowspan 合并，与导出单元格合并一致。
+  const groups = useMemo(() => groupInvoiceRows(rows), [rows])
 
   const totals = useMemo(() => computeTotals(rows, visibleCols), [rows, visibleCols])
   const invoiceCount = useMemo(() => countInvoices(rows), [rows])
@@ -181,21 +174,32 @@ const ExcelExportFieldsModal = ({
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map((r, i) => (
-                    <tr key={i}>
-                      {visibleCols.map((c) => (
-                        <td
-                          key={c.key}
-                          className={c.money ? 'xec-money' : undefined}
-                          title={r[c.key] ?? ''}
-                        >
-                          {c.key === 'serialNo'
-                            ? serialByRow[i]
-                            : (r[c.key] ?? '')}
-                        </td>
-                      ))}
-                    </tr>
-                  ))}
+                  {groups.map((group, gi) => {
+                    const serial = gi + 1
+                    return group.map((r, ri) => {
+                      const isFirst = ri === 0
+                      // 发票级列在非首行不渲染（由首行 rowspan 覆盖），实现与导出一致的合并
+                      const cells = visibleCols.filter(
+                        (c) => !(INVOICE_LEVEL_KEYS.has(c.key) && !isFirst),
+                      )
+                      return (
+                        <tr key={`${gi}-${ri}`}>
+                          {cells.map((c) => (
+                            <td
+                              key={c.key}
+                              rowSpan={INVOICE_LEVEL_KEYS.has(c.key) ? group.length : undefined}
+                              className={c.money ? 'xec-money' : undefined}
+                              title={r[c.key] ?? ''}
+                            >
+                              {c.key === 'serialNo'
+                                ? serial
+                                : (r[c.key] ?? '')}
+                            </td>
+                          ))}
+                        </tr>
+                      )
+                    })
+                  })}
                 </tbody>
                 {visibleCols.length > 0 && (
                   <tfoot>

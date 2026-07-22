@@ -49,6 +49,15 @@ export const ALL_KEYS = EXCEL_COLUMNS.map((c) => c.key)
 // 虚拟列 key 集合（预览渲染 / columns payload 时需特殊处理）
 export const VIRTUAL_KEYS = EXCEL_COLUMNS.filter((c) => c.virtual).map((c) => c.key)
 
+// 发票级字段：同一发票多行明细时，预览与导出均合并这些列（rowspan / 单元格合并）。
+// ⚠️ 必须与 backend/excel_exporter.py 的 INVOICE_LEVEL_KEYS 保持一致；行级字段不合并。
+export const INVOICE_LEVEL_KEYS = new Set([
+  'serialNo', 'invoiceType', 'invoiceDate', 'invoiceNumber',
+  'amountWithoutTax', 'taxAmount', 'totalAmount',
+  'buyerName', 'buyerTaxNo', 'sellerName', 'sellerTaxNo', 'issuer',
+  'note', 'originalFilename',
+])
+
 // 便捷：返回当前勾选列对应的列定义（保持 EXCEL_COLUMNS 顺序）
 export function visibleColumns(selectedKeys) {
   const set = selectedKeys instanceof Set ? selectedKeys : new Set(selectedKeys)

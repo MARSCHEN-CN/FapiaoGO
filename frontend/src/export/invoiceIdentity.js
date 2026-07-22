@@ -22,3 +22,20 @@ export function getInvoiceIdentity(row, index = 0) {
     `__ANON_${index}`
   )
 }
+
+// 按发票身份分组（首现顺序），用于多行明细的预览 rowspan 合并。
+// 分组规则与后端 write_summary_sheet（group_key_fn=_invoice_identity）严格一致：
+// 同一发票的若干明细行归为一组，组间保持首现顺序。返回 Array<Array<row>>。
+export function groupInvoiceRows(rows) {
+  const map = new Map()
+  const order = []
+  rows.forEach((r, i) => {
+    const id = getInvoiceIdentity(r, i)
+    if (!map.has(id)) {
+      map.set(id, [])
+      order.push(id)
+    }
+    map.get(id).push(r)
+  })
+  return order.map((id) => map.get(id))
+}
