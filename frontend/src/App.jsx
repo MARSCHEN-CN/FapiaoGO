@@ -42,7 +42,7 @@ import { useAlertQueue } from './hooks/useAlertQueue'
 
 import Sidebar from './components/Sidebar'
 import TopBar from './components/TopBar'
-import { DisplayAdapter, resolveDocId } from './components/DisplayAdapter'
+import { DisplayAdapter, resolveDocId, isPdfFile } from './components/DisplayAdapter'
 import { useDocument } from './hooks/useDocument'
 import { removeDocument, getRegisteredDocIds } from './stores/DocumentStore'
 import StatusIndicator from './components/StatusIndicator'
@@ -139,6 +139,11 @@ function AppContent() {
   // 用于门控 legacy 加载遮罩（新路径 DocumentViewer 自行管理加载态）。
   const activeDocument = useDocument(resolveDocId(previewFile))
 
+  // D2-4 5C：DocumentViewer 路径是否激活（与 DisplayAdapter 路由条件严格一致）。
+  // 激活时隐藏 control-bar 的 legacy 缩放控件（+/−/档位/指示器），由 DocumentViewer 内置
+  // ZoomToolbar 接管缩放显示与操作；detail 按钮与方向控件保留。legacy 路径（图片/OFD）继续用旧 toolbar。
+  const documentViewerActive = isPdfFile(previewFile) && activeDocument && activeDocument.pageCount > 0
+
   const {
     handlePreview, preloadHD, handleRotate, handlePaperOrientationChange, prevPage, nextPage,
     handlePrevFile, handleNextFile, cleanupPreviewUrl,
@@ -159,20 +164,6 @@ function AppContent() {
 
   // ── Invoice Detail Edit Modal ──
   const [detailFile, setDetailFile] = useState(null)
-
-  // ── D2-3 4b：DocumentViewer 缩放显示上抬（只读展示通道，非新 zoom source）──
-  // 非空 ⟺ DocumentViewer 已挂载并上报 {mode,scale}；卸载时清空回 null。
-  // legacy 路径（图片/OFD）恒为 null，toolbar 指示器回退读 preview.zoom。
-  const [viewerZoomDisplay, setViewerZoomDisplay] = useState(null)
-
-  // toolbar 缩放指示器显示值（D2-3 4b）：
-  // DocumentViewer 路径 → 读上抬的 mode/scale（fit→'自适应'，manual→绝对 scale×100%）；
-  // legacy 路径 → null，各显示点沿用原 preview.zoom 逻辑（零回归）。
-  const viewerZoomLabel = viewerZoomDisplay
-    ? (viewerZoomDisplay.mode === 'manual' && viewerZoomDisplay.scale != null
-        ? `${Math.round(viewerZoomDisplay.scale * 100)}%`
-        : '自适应')
-    : null
 
   // ── Calculator window (opens as separate Electron window) ──
   const openCalculator = useCallback(() => {
@@ -801,13 +792,15 @@ function AppContent() {
               }} title="查看/编辑发票字段">
                 <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
               </button>
+              {/* D2-4 5C：DocumentViewer 激活时隐藏 legacy 缩放控件（ZoomToolbar 接管），detail 按钮保留 */}
+              {!documentViewerActive && (<>
               <div className="cz-separator" />
               <button className="tb-btn" onClick={zoomOut} title="缩小">
                 <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
               </button>
               <div className="sort-dropdown-container" ref={zoomDropdownRef}>
                 <button className="tb-zoom-trigger" onClick={() => setZoomMenuOpen(!zoomMenuOpen)}>
-                  {viewerZoomLabel ?? (zoomMode === 'adaptive' ? '自适应' : `${Math.round(zoomPercent)}%`)}
+                  {zoomMode === 'adaptive' ? '自适应' : `${Math.round(zoomPercent)}%`}
                 </button>
                 {(zoomMenuOpen || zoomMenuClosing) && (
                   <div className={`sort-dropdown zoom-dropdown ${zoomMenuClosing ? 'closing' : ''}`}>
@@ -829,7 +822,7 @@ function AppContent() {
                     </button>
                     <div className="zoom-dropdown-divider"></div>
                     <div style={{ padding: '6px 12px', fontSize: '12px', color: 'var(--text-muted)', borderBottom: '1px solid var(--border)' }}>
-                      当前：{viewerZoomLabel ?? `${Math.round(zoomPercent)}%`}
+                      当前：{Math.round(zoomPercent)}%
                     </div>
                     {ZOOM_STEPS.map(s => (
                       <button
@@ -851,6 +844,7 @@ function AppContent() {
               <button className="tb-btn" onClick={zoomIn} title="放大">
                 <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
               </button>
+              </>)}
             </div>
 
             <div className="canvas-orient-control">
@@ -957,7 +951,6 @@ function AppContent() {
               file={previewFile}
               containerSize={containerSize}
               grayscale={settings.grayscale}
-              onViewerZoomChange={setViewerZoomDisplay}
               previewCanvas={previewCanvas}
               previewUrl={previewUrl}
               previewRenderVersion={previewRenderVersion}

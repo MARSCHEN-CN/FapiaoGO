@@ -47,6 +47,9 @@ import { wheelZoomFactor } from '../hooks/continuousZoom.mjs'
  * @param {number|null} [props.scale] - D2-3 manual 模式冻结的绝对渲染比例（fit 模式为 null）。
  * @param {(nextScale: number) => void} [props.onEnterManual] - D2-3 滚轮进入/更新 manual 模式回调，
  *   参数为 currentScale × wheelZoomFactor 后的新绝对 scale。
+ * @param {(fitScale: number) => void} [props.onFitScaleChange] - D2-4 5C：上抬 authoritative fitScale
+ *   给 useViewerState（fit 相对百分比显示 + 档位换算的单一真相来源）。消费方 reportFitScale 内置
+ *   相等短路，fitScale 不变时不触发 re-render，避免 hook↔viewport 循环。
  */
 function ViewerViewportInner({
   page,
@@ -67,6 +70,8 @@ function ViewerViewportInner({
   mode,
   scale: manualScale,
   onEnterManual,
+  // D2-4 5C：上抬 authoritative fitScale 给 useViewerState
+  onFitScaleChange,
 }) {
   const viewportRef = useRef(null)
   const dragState = useRef({ dragging: false, startX: 0, startY: 0, startPanX: 0, startPanY: 0 })
@@ -125,6 +130,13 @@ function ViewerViewportInner({
 
   // 计算 fit scale（D2-1：使用自测量尺寸，非外层 prop）
   const fitScale = computeFitScale(dims.width, dims.height, measuredSize.width, measuredSize.height)
+
+  // D2-4 5C：上抬 authoritative fitScale 给 useViewerState（fit 相对显示 + 档位换算的单一真相）。
+  // reportFitScale 内置相等短路（prev===fs 不 setState），fitScale 稳定时不触发 re-render，
+  // 因此不会形成 hook↔viewport 循环。
+  useEffect(() => {
+    onFitScaleChange?.(fitScale)
+  }, [fitScale, onFitScaleChange])
 
   // D2-3：双路径渲染 scale
   //  - 新模型（mode 已传入）：fit → fitScale（实时跟随视口）；manual → 冻结绝对 manualScale

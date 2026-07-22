@@ -13,9 +13,10 @@
  * @module components/DocumentViewer
  */
 
-import React, { useMemo, useCallback, useEffect } from 'react'
+import React, { useMemo, useCallback } from 'react'
 import { ViewerViewport } from './ViewerViewport'
 import { ThumbnailStrip } from './ThumbnailStrip'
+import { ZoomToolbar } from './ZoomToolbar'
 import { useViewerState } from '../hooks/useViewerState'
 import { resolvePreviewUrl } from '../utils/previewResourceResolver'
 import { getPage } from '../models/InvoiceDocument'
@@ -30,10 +31,6 @@ import './DocumentViewer.css'
  * @param {boolean} [props.grayscale=false] - 灰度模式
  * @param {boolean} [props.loading=false] - 加载状态
  * @param {React.ReactNode} [props.overlaySlot] - OCR/字段 Overlay 插槽
- * @param {React.ReactNode} [props.toolbarSlot] - 工具栏插槽（zoom/rotate 按钮）
- * @param {(zoom: {mode: 'fit'|'manual', scale: number|null}|null) => void} [props.onViewerZoomChange] -
- *   D2-3 4b：缩放显示上抬回调。把 useViewerState 的 mode/scale 上报给 App toolbar 指示器；
- *   组件卸载时上报 null（避免切到 legacy 路径后 toolbar 残留 viewer 显示）。
  */
 export const DocumentViewer = React.memo(function DocumentViewer({
   document,
@@ -42,20 +39,8 @@ export const DocumentViewer = React.memo(function DocumentViewer({
   grayscale = false,
   loading = false,
   overlaySlot,
-  toolbarSlot,
-  onViewerZoomChange,
 }) {
   const { state, actions } = useViewerState({ document, containerSize, initialPage })
-
-  // D2-3 4b：把 mode/scale 上抬给 App toolbar 指示器（只读展示通道，非新 zoom source）。
-  // 卸载时上报 null（独立 effect，cleanup 仅在卸载/onViewerZoomChange 变化时触发，避免每次
-  // mode/scale 变化先清空再赋值造成闪烁）。
-  useEffect(() => {
-    onViewerZoomChange?.({ mode: state.mode, scale: state.scale })
-  }, [state.mode, state.scale, onViewerZoomChange])
-  useEffect(() => {
-    return () => onViewerZoomChange?.(null)
-  }, [onViewerZoomChange])
 
   // 当前页 PageMeta
   const currentPage = getPage(document, state.currentPage)
@@ -94,7 +79,8 @@ export const DocumentViewer = React.memo(function DocumentViewer({
     <div className="document-viewer">
       {/* 主视口（上方） */}
       <div className="document-viewer-main">
-        {toolbarSlot}
+        {/* D2-4 5C：DocumentViewer 内置缩放工具栏（读 useViewerState，不拥有状态） */}
+        <ZoomToolbar state={state} actions={actions} />
 
         <ViewerViewport
           page={currentPage}
@@ -108,6 +94,7 @@ export const DocumentViewer = React.memo(function DocumentViewer({
           grayscale={grayscale}
           loading={loading}
           onEnterManual={actions.enterManual}
+          onFitScaleChange={actions.reportFitScale}
           onPanChange={handlePanChange}
           onDoubleClick={handleDoubleClick}
           onNaturalSize={handleNaturalSize}
