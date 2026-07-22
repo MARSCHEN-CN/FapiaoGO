@@ -52,9 +52,9 @@ export function DocumentViewer({
     return resolvePreviewUrl(currentPage, document.docId)
   }, [currentPage, document?.docId])
 
-  // 双击适应
+  // 双击适应（D2-3：回到 fit 模式，scale=null）
   const handleDoubleClick = useCallback(() => {
-    actions.setFit()
+    actions.setFitMode()
   }, [actions])
 
   // 平移
@@ -85,14 +85,15 @@ export function DocumentViewer({
         <ViewerViewport
           page={currentPage}
           previewUrl={previewUrl}
-          zoom={state.zoom}
+          mode={state.mode}
+          scale={state.scale}
           panX={state.panX}
           panY={state.panY}
           viewRotation={state.viewRotation}
           containerSize={containerSize}
           grayscale={grayscale}
           loading={loading}
-          onWheelZoom={actions.wheelZoom}
+          onEnterManual={actions.enterManual}
           onPanChange={handlePanChange}
           onDoubleClick={handleDoubleClick}
           onNaturalSize={handleNaturalSize}
