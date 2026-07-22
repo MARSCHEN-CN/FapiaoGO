@@ -231,3 +231,75 @@ def test_single_and_batch_share_offthread_signature(client):
         f"单文件与批量路径参数不一致：single={single_args} batch={batch_args}"
     )
     assert single_args == (pdf_bytes, "test.pdf", True, False)
+
+
+# ── P1-3-b: 执行器类型可观测性（契约测试，不测日志文本） ──
+
+def test_get_executor_kind_reflects_singleton(monkeypatch):
+    """_get_executor_kind() 应如实反映全局执行器单例类型（可观测性核心）。
+
+    不依赖真实进程池（避免测试内 spawn 进程），用假对象验证 helper 仅做类型名映射。
+    """
+    class _FakeEx:
+        pass
+
+    monkeypatch.setattr(backend_app, "_ocr_executor", None)
+    assert backend_app._get_executor_kind() == "none"
+
+    monkeypatch.setattr(backend_app, "_ocr_executor", _FakeEx())
+    assert backend_app._get_executor_kind() == "_FakeEx"
+
+
+def test_parse_batch_routes_through_injected_executor(client, monkeypatch):
+    """契约：batch 必须使用 _get_executor() 返回的执行器（可被注入/观测）。
+
+    注入一个假 executor，断言 /parse_batch 把解析任务提交到该 executor —— 证明
+    batch OCR 并发模型由 _get_executor() 单例决定（即 P1-3-a 的复用契约），且 P1-3-b
+    的可观测性点就是『同一个单例』。不断言日志文本（日志格式未来可改，测文本会脆弱）。
+    """
+    class FakeExecutor:
+        def __init__(self):
+            self.submitted = []  # 记录 (fn, args)
+
+        def submit(self, fn, *args, **kwargs):
+            import concurrent.futures as _cf
+            fut = _cf.Future()
+            fut.set_result(_canned_svc_result())
+            self.submitted.append((fn, args))
+            return fut
+
+    fake = FakeExecutor()
+    # 注入：让 _get_executor() 返回假 executor（不创建真实进程池）
+    monkeypatch.setattr(backend_app, "_get_executor", lambda: fake)
+
+    pdf_bytes = _make_pdf()
+    resp = client.post(
+        "/parse_batch",
+        data={
+            "files": (io.BytesIO(pdf_bytes), "test.pdf"),
+            "autoOrient": "1",
+            "enableAutoOcr": "0",
+        },
+        content_type="multipart/form-data",
+    )
+    assert resp.status_code == 200, f"状态码异常: {resp.status_code}"
+    # 消费完整 SSE 流 -> 后台 run_batch 线程在 monkeypatch 生效期内完成
+    body = resp.data.decode("utf-8")
+
+    # 契约：batch 确实把解析任务提交到了注入的 executor（即 _get_executor 返回的那个）
+    assert len(fake.submitted) == 1, (
+        f"batch 未通过注入的 executor 提交任务（submitted={len(fake.submitted)}）"
+    )
+    # 提交的函数应是 ocr_pool_task.run_parse（与单文件路径一致）
+    submitted_fn = fake.submitted[0][0]
+    import ocr_pool_task
+    assert submitted_fn is ocr_pool_task.run_parse, (
+        f"batch 提交的函数不是 ocr_pool_task.run_parse（实际 {submitted_fn!r}）"
+    )
+    # 响应由注入 executor 的返回正确构建
+    final = _parse_sse_final(body)
+    assert final is not None and final.get("success") is True, "SSE 未携带成功结果"
+    items = final["items"]
+    assert len(items) == 1
+    assert items[0].get("data", {}).get("invoice_number") == \
+        _canned_svc_result()["invoice_number"]

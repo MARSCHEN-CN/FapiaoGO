@@ -1027,6 +1027,18 @@ def _get_executor():
     return _ocr_executor
 
 
+def _get_executor_kind():
+    """返回 OCR 执行器类型名，用于生产可观测性。
+
+    无执行器（_ocr_executor 为 None，即回退到同步执行）时返回 'none'。
+    统一覆盖 ProcessPoolExecutor / ThreadPoolExecutor / sync / disabled 各模式，
+    避免散落 type(_ocr_executor).__name__。
+    """
+    if _ocr_executor is None:
+        return "none"
+    return type(_ocr_executor).__name__
+
+
 def _parse_sync(file_bytes, filename, auto_orient, enable_auto_ocr):
     """请求线程内同步解析（回退路径，等价于改造前的行为）。"""
     return parse_invoice_service(
@@ -1191,6 +1203,13 @@ def parse_batch():
                 return index, None, str(e)
             finally:
                 parse_semaphore.release()
+
+        # P1-3-b: 一次 batch 仅记录一次执行器类型，便于生产确认 batch OCR 实际跑在哪个
+        # 执行器上（ProcessPoolExecutor / ThreadPoolExecutor / none=sync 回退）。目的仅为
+        # 可观测——若静默回退到 ThreadPool/sync，优化等于未生效，INFO 级才能在生产日志发现。
+        # 注意：OCR 并行度由 OCR_WORKERS 决定，与 BATCH_WORKERS / parse_semaphore 解耦。
+        logger.info("parse_batch OCR executor=%s workers=%s",
+                    _get_executor_kind(), OCR_WORKERS)
 
         with ThreadPoolExecutor(max_workers=BATCH_WORKERS,
                                 thread_name_prefix='batch-parse') as pool:
