@@ -163,6 +163,10 @@ function ViewerViewportInner({
   const handleWheel = useCallback((e) => {
     if (!(e.ctrlKey || e.metaKey)) return
     e.preventDefault()
+    // D2-3 4a：ViewerViewport 完全拥有 Ctrl+wheel 缩放，阻止冒泡到 .canvas-scroll 上
+    // 的 legacy usePreview.handleWheelZoom（usePreview.js:1057），避免污染 preview.zoom
+    // 导致 toolbar 指示器与真实 mode/scale 错位。
+    e.stopPropagation()
     const ctx = zoomCtxRef.current
     if (ctx.useNewModel) {
       // 新模型：当前 scale（manual 用冻结值，fit 用实时 fitScale）× 乘性因子 → 进入/更新 manual
