@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react'
 import Toggle from './Toggle'
+import '../settings-printer.css'
 
 // 分隔符号选项（用于压缩包重命名）
 const ARCHIVE_SEPARATOR_OPTIONS = ['_', '-', ',', '+', '#', '·', ' ', '']
