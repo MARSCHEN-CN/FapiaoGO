@@ -9,6 +9,7 @@ import { useFileContext } from '../contexts/FileContext'
 export default React.memo(function ActionBar({
   handleRename,
   handlePack,
+  onExportZip,
   handlePrint,
   packing,
   packProgress,
@@ -102,7 +103,7 @@ export default React.memo(function ActionBar({
                 </button>
                 <button
                   className="abm-dropdown-item"
-                  onClick={() => { handlePack(); setExportDropdownOpen(false) }}
+                  onClick={() => { onExportZip?.(); setExportDropdownOpen(false) }}
                 >
                   <img src="/icon/zip.svg" alt="ZIP" style={{ width: 17, height: 17 }} />
                   导出为压缩包

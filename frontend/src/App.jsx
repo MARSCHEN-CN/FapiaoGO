@@ -14,6 +14,7 @@ const ImportProgressModal = lazy(() => import('./components/ImportProgressModal'
 const ExportProgressModal = lazy(() => import('./components/ExportProgressModal'))
 const PdfExportConfirmModal = lazy(() => import('./components/PdfExportConfirmModal'))
 const ExcelExportFieldsModal = lazy(() => import('./components/ExcelExportFieldsModal'))
+const PackConfirmModal = lazy(() => import('./components/PackConfirmModal'))
 const TaskProgressModal = lazy(() => import('./components/TaskProgressModal'))
 const CalculatorWindow = lazy(() => import('./components/CalculatorWindow'))
 const DevDocumentViewerDemo = lazy(() => import('./components/DevDocumentViewerDemo').then(m => ({ default: m.DevDocumentViewerDemo })))
@@ -225,6 +226,9 @@ function AppContent() {
 
   // ── Excel 导出字段确认弹窗状态（Commit 4A） ──
   const [showExcelFields, setShowExcelFields] = useState(false)
+
+  // ── 压缩包导出确认弹窗状态 ──
+  const [showPackConfirm, setShowPackConfirm] = useState(false)
 
   const {
     packing, packProgress, packResult, setPackResult, setPacking,
@@ -528,6 +532,16 @@ function AppContent() {
     }
     setShowExcelFields(true)
   }, [files, handleExportExcel])
+
+  // 打开压缩包导出确认弹窗：无已解析文件时复用 handlePack 的无数据告警
+  const openPackConfirm = useCallback(() => {
+    const parsed = files.filter((f) => f.status === 'parsed')
+    if (parsed.length === 0) {
+      handlePack()
+      return
+    }
+    setShowPackConfirm(true)
+  }, [files, handlePack])
 
   const { clearExportSession } = useExportSession()
 
@@ -1021,6 +1035,7 @@ function AppContent() {
         <ActionBar
           handleRename={handleRename}
           handlePack={handlePack}
+          onExportZip={openPackConfirm}
           handlePrint={handlePrint}
           packing={packing}
           packProgress={packProgress}
@@ -1110,6 +1125,17 @@ function AppContent() {
             handleExportExcel(cols)
           }}
           onCancel={() => setShowExcelFields(false)}
+        />
+        <PackConfirmModal
+          visible={showPackConfirm}
+          settings={settings}
+          saveSettings={saveSettings}
+          parsedFiles={files.filter(f => f.status === 'parsed')}
+          onConfirm={() => {
+            setShowPackConfirm(false)
+            handlePack()
+          }}
+          onCancel={() => setShowPackConfirm(false)}
         />
         <TaskProgressModal
           visible={!!pdfExportTask}
