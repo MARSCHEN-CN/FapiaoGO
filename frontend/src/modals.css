@@ -1007,14 +1007,34 @@ button.pc-btn.outline,
 }>
 
 /* ======================== Excel Export Fields Modal (xec-) ======================== */
+/* overlay 显式固定视口居中（与 .modal-overlay 基类一致，叠加声明消除歧义） */
+.xec-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
 .xec-panel {
   width: 1200px;
   max-width: 96vw;
   height: 760px;
   max-height: 96vh;
+  flex: none;                 /* 不被 overlay 的 flex 上下文压缩（Commit 5.1） */
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  box-sizing: border-box;
+}
+.xec-panel,
+.xec-panel * {
+  box-sizing: border-box;     /* 防止 padding/border 撑破固定尺寸（Commit 5.1） */
+}
+/* header/footer 永不被列高变化压缩，保证面板尺寸只由显式高度决定 */
+.xec-header,
+.xec-footer {
+  flex-shrink: 0;
 }
 
 .xec-header {
