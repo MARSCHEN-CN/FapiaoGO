@@ -38,6 +38,8 @@ const SCALE_MAX = 20
  * @property {number} zoom - ⚠️ legacy：fit 相对百分比（100=fit），仅供 dev demo 旧路径，新路径用 mode/scale
  * @property {'fit'|'manual'} mode - D2-3：缩放参考系。fit=渲染 scale 由 viewport 实时派生；manual=冻结绝对 scale
  * @property {number|null} scale - D2-3：manual 模式的绝对渲染 scale；fit 模式为 null
+ * @property {number} fitScale - D2-4：authoritative fit scale（ViewerViewport 上抬，D2-1 唯一尺寸源）
+ * @property {number} zoomPercent - D2-4：fit 相对缩放百分比（fit→100，manual→round(scale/fitScale×100)），供 ZoomToolbar 显示
  * @property {number} panX - 水平平移（px）
  * @property {number} panY - 垂直平移（px）
  * @property {number} viewRotation - 用户临时旋转（0/90/180/270）
@@ -45,8 +47,10 @@ const SCALE_MAX = 20
 
 /**
  * @typedef {Object} ViewerActions
- * @property {() => void} zoomIn - 离散放大一档
- * @property {() => void} zoomOut - 离散缩小一档
+ * @property {() => void} zoomIn - D2-4：离散放大一档（nextZoomStep，fit→125；100≡fit）
+ * @property {() => void} zoomOut - D2-4：离散缩小一档（落到 100 时回 fit 模式）
+ * @property {(pct: number) => void} setScalePreset - D2-4：下拉档位直选（fit 相对百分比，100→fit，其余→manual）
+ * @property {(fitScale: number) => void} reportFitScale - D2-4：ViewerViewport 上抬 authoritative fit scale
  * @property {() => void} setFit - ⚠️ legacy：适应窗口（zoom=100），供 dev demo 旧路径
  * @property {(scale: number) => void} enterManual - D2-3：进入 manual 模式并冻结绝对 scale（保留 pan）
  * @property {(scale: number) => void} setManualScale - D2-3：设置 manual 绝对 scale（语义同 enterManual）
@@ -82,6 +86,9 @@ export function useViewerState({ document, containerSize, initialPage = 0 }) {
   //   mode='manual' → 渲染 scale = 用户冻结的绝对 scale（resize 不重算，只 re-clamp pan）。
   const [mode, setMode] = useState('fit')
   const [scale, setScale] = useState(null)
+  // D2-4：authoritative fit scale，由 ViewerViewport 经 reportFitScale 上抬（D2-1 唯一尺寸源）。
+  // 供离散档位缩放换算 step↔绝对 scale，及 fit 相对显示 zoomPercent 派生。
+  const [fitScale, setFitScale] = useState(0)
   const [panX, setPanX] = useState(0)
   const [panY, setPanY] = useState(0)
   const [viewRotation, setViewRotation] = useState(0)
@@ -100,24 +107,11 @@ export function useViewerState({ document, containerSize, initialPage = 0 }) {
     return rotatedDimensions(page.width || 0, page.height || 0, effRotation)
   }, [page, viewRotation])
 
-  // ─── Zoom Actions ───
-
-  const zoomIn = useCallback(() => {
-    setZoom((z) => nextZoomStep(z, 'in', ZOOM_STEPS))
-    setPanX(0)
-    setPanY(0)
-  }, [])
-
-  const zoomOut = useCallback(() => {
-    setZoom((z) => nextZoomStep(z, 'out', ZOOM_STEPS))
-    setPanX(0)
-    setPanY(0)
-  }, [])
-
-  const setFit = useCallback(() => {
-    setZoom(100)
-    setPanX(0)
-    setPanY(0)
+  // ─── D2-4：authoritative fit scale 上抬 ───
+  // ViewerViewport 把 measuredSize 派生的 fit scale 上报到此（D2-1 唯一尺寸源）。
+  // reportFitScale 带相等短路，避免 fitScale 未变时触发重渲染（防 ViewerViewport↔hook 循环）。
+  const reportFitScale = useCallback((fs) => {
+    setFitScale((prev) => (prev === fs ? prev : fs))
   }, [])
 
   // ─── D2-3：fit/manual 参考系分离 actions ───
@@ -142,6 +136,53 @@ export function useViewerState({ document, containerSize, initialPage = 0 }) {
   const setFitMode = useCallback(() => {
     setMode('fit')
     setScale(null)
+    setPanX(0)
+    setPanY(0)
+  }, [])
+
+  // ─── D2-4：离散档位缩放（toolbar +/−/下拉）───
+
+  // 当前 fit 相对档位（供 ZoomToolbar 显示 + 档位高亮 + nextZoomStep 起点）：
+  //   fit 模式 → 100（≡ 自适应基准）；manual → round(scale/fitScale×100)。
+  //   fitScale 缺失（≤0，尺寸未知）回退 100，避免除零。
+  const zoomPercent = (mode === 'manual' && scale != null && fitScale > 0)
+    ? Math.round((scale / fitScale) * 100)
+    : 100
+
+  // 应用离散档位：100 ≡ fit 模式（自适应）；其余 → manual 绝对 scale = fitScale × step/100。
+  // 离散缩放重置 pan（沿用 legacy UX，与 wheel 保留 pan 区分）；fitScale 缺失时无法换算，忽略。
+  const applyZoomStep = useCallback((step) => {
+    if (step === 100) {
+      setFitMode()
+      return
+    }
+    if (fitScale <= 0) return
+    const absScale = fitScale * (step / 100)
+    const clamped = Math.min(SCALE_MAX, Math.max(SCALE_MIN, absScale))
+    setMode('manual')
+    setScale(clamped)
+    setPanX(0)
+    setPanY(0)
+  }, [fitScale, setFitMode])
+
+  const zoomIn = useCallback(() => {
+    applyZoomStep(nextZoomStep(zoomPercent, 'in', ZOOM_STEPS))
+  }, [applyZoomStep, zoomPercent])
+
+  const zoomOut = useCallback(() => {
+    applyZoomStep(nextZoomStep(zoomPercent, 'out', ZOOM_STEPS))
+  }, [applyZoomStep, zoomPercent])
+
+  // 下拉档位直选：pct 为 fit 相对百分比（∈ ZOOM_STEPS）。100 → fit，其余 → manual。
+  // 取代旧 setManualScale(绝对 scale) 的误用风险（下拉传百分比，旧语义会 clamp 到 SCALE_MAX）。
+  const setScalePreset = useCallback((pct) => {
+    applyZoomStep(pct)
+  }, [applyZoomStep])
+
+  // ─── legacy zoom actions（仅供 DevDemo 旧 zoom 模型，Step 13 随 PreviewCanvas 移除）───
+
+  const setFit = useCallback(() => {
+    setZoom(100)
     setPanX(0)
     setPanY(0)
   }, [])
@@ -238,6 +279,8 @@ export function useViewerState({ document, containerSize, initialPage = 0 }) {
       zoom,
       mode,
       scale,
+      fitScale,
+      zoomPercent,
       panX,
       panY,
       viewRotation,
@@ -245,6 +288,8 @@ export function useViewerState({ document, containerSize, initialPage = 0 }) {
     actions: {
       zoomIn,
       zoomOut,
+      setScalePreset,
+      reportFitScale,
       setFit,
       enterManual,
       setManualScale,
