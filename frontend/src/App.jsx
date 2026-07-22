@@ -160,6 +160,20 @@ function AppContent() {
   // ── Invoice Detail Edit Modal ──
   const [detailFile, setDetailFile] = useState(null)
 
+  // ── D2-3 4b：DocumentViewer 缩放显示上抬（只读展示通道，非新 zoom source）──
+  // 非空 ⟺ DocumentViewer 已挂载并上报 {mode,scale}；卸载时清空回 null。
+  // legacy 路径（图片/OFD）恒为 null，toolbar 指示器回退读 preview.zoom。
+  const [viewerZoomDisplay, setViewerZoomDisplay] = useState(null)
+
+  // toolbar 缩放指示器显示值（D2-3 4b）：
+  // DocumentViewer 路径 → 读上抬的 mode/scale（fit→'自适应'，manual→绝对 scale×100%）；
+  // legacy 路径 → null，各显示点沿用原 preview.zoom 逻辑（零回归）。
+  const viewerZoomLabel = viewerZoomDisplay
+    ? (viewerZoomDisplay.mode === 'manual' && viewerZoomDisplay.scale != null
+        ? `${Math.round(viewerZoomDisplay.scale * 100)}%`
+        : '自适应')
+    : null
+
   // ── Calculator window (opens as separate Electron window) ──
   const openCalculator = useCallback(() => {
     const ipc = electronAPIRef.current?.ipcRenderer
@@ -793,7 +807,7 @@ function AppContent() {
               </button>
               <div className="sort-dropdown-container" ref={zoomDropdownRef}>
                 <button className="tb-zoom-trigger" onClick={() => setZoomMenuOpen(!zoomMenuOpen)}>
-                  {zoomMode === 'adaptive' ? '自适应' : `${Math.round(zoomPercent)}%`}
+                  {viewerZoomLabel ?? (zoomMode === 'adaptive' ? '自适应' : `${Math.round(zoomPercent)}%`)}
                 </button>
                 {(zoomMenuOpen || zoomMenuClosing) && (
                   <div className={`sort-dropdown zoom-dropdown ${zoomMenuClosing ? 'closing' : ''}`}>
@@ -815,7 +829,7 @@ function AppContent() {
                     </button>
                     <div className="zoom-dropdown-divider"></div>
                     <div style={{ padding: '6px 12px', fontSize: '12px', color: 'var(--text-muted)', borderBottom: '1px solid var(--border)' }}>
-                      当前：{Math.round(zoomPercent)}%
+                      当前：{viewerZoomLabel ?? `${Math.round(zoomPercent)}%`}
                     </div>
                     {ZOOM_STEPS.map(s => (
                       <button
@@ -943,6 +957,7 @@ function AppContent() {
               file={previewFile}
               containerSize={containerSize}
               grayscale={settings.grayscale}
+              onViewerZoomChange={setViewerZoomDisplay}
               previewCanvas={previewCanvas}
               previewUrl={previewUrl}
               previewRenderVersion={previewRenderVersion}

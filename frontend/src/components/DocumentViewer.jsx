@@ -13,7 +13,7 @@
  * @module components/DocumentViewer
  */
 
-import React, { useMemo, useCallback } from 'react'
+import React, { useMemo, useCallback, useEffect } from 'react'
 import { ViewerViewport } from './ViewerViewport'
 import { ThumbnailStrip } from './ThumbnailStrip'
 import { useViewerState } from '../hooks/useViewerState'
@@ -31,6 +31,9 @@ import './DocumentViewer.css'
  * @param {boolean} [props.loading=false] - 加载状态
  * @param {React.ReactNode} [props.overlaySlot] - OCR/字段 Overlay 插槽
  * @param {React.ReactNode} [props.toolbarSlot] - 工具栏插槽（zoom/rotate 按钮）
+ * @param {(zoom: {mode: 'fit'|'manual', scale: number|null}|null) => void} [props.onViewerZoomChange] -
+ *   D2-3 4b：缩放显示上抬回调。把 useViewerState 的 mode/scale 上报给 App toolbar 指示器；
+ *   组件卸载时上报 null（避免切到 legacy 路径后 toolbar 残留 viewer 显示）。
  */
 export function DocumentViewer({
   document,
@@ -40,8 +43,19 @@ export function DocumentViewer({
   loading = false,
   overlaySlot,
   toolbarSlot,
+  onViewerZoomChange,
 }) {
   const { state, actions } = useViewerState({ document, containerSize, initialPage })
+
+  // D2-3 4b：把 mode/scale 上抬给 App toolbar 指示器（只读展示通道，非新 zoom source）。
+  // 卸载时上报 null（独立 effect，cleanup 仅在卸载/onViewerZoomChange 变化时触发，避免每次
+  // mode/scale 变化先清空再赋值造成闪烁）。
+  useEffect(() => {
+    onViewerZoomChange?.({ mode: state.mode, scale: state.scale })
+  }, [state.mode, state.scale, onViewerZoomChange])
+  useEffect(() => {
+    return () => onViewerZoomChange?.(null)
+  }, [onViewerZoomChange])
 
   // 当前页 PageMeta
   const currentPage = getPage(document, state.currentPage)

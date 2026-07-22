@@ -60,6 +60,8 @@ export function isPdfFile(file) {
  * @param {Object|null} props.file - 当前预览文件对象（fileObj）
  * @param {{ width: number, height: number }} props.containerSize - 视口容器尺寸
  * @param {boolean} [props.grayscale=false] - 灰度模式
+ * @param {(zoom: {mode: 'fit'|'manual', scale: number|null}|null) => void} [props.onViewerZoomChange] -
+ *   D2-3 4b：DocumentViewer 缩放显示上抬回调（透传给 DocumentViewer）。卸载时上报 null。
  *
  * ── 以下为 legacy PreviewCanvas 透传 props（新路径不使用） ──
  * @param {HTMLCanvasElement|null} [props.previewCanvas]
@@ -74,6 +76,7 @@ export function DisplayAdapter({
   file,
   containerSize,
   grayscale = false,
+  onViewerZoomChange,
   // legacy pass-through
   previewCanvas,
   previewUrl,
@@ -99,6 +102,7 @@ export function DisplayAdapter({
         containerSize={containerSize}
         initialPage={initialPage}
         grayscale={grayscale}
+        onViewerZoomChange={onViewerZoomChange}
       />
     )
   }
