@@ -1,13 +1,20 @@
 /**
- * ViewerViewport — 图片变换渲染层
+ * ViewerViewport — 图片变换渲染层 + 视口尺寸唯一来源
  *
  * 职责：
  *   渲染当前页 <img> + CSS transform（zoom/pan/rotate）。
  *   处理交互手势：Ctrl+wheel zoom、拖拽 pan、双击 fit。
- *   不管理状态（由 useViewerState 驱动），纯渲染 + 事件上报。
+ *   通过内置 ResizeObserver 自测量视口内容区尺寸（D2-1），
+ *   以测量值驱动 fitScale 计算，不依赖外层 prop 传入的 containerSize。
+ *   不管理 zoom/pan 状态（由 useViewerState 驱动），纯渲染 + 事件上报。
  *
  * Architecture Law D1：
  *   只消费 resolvePreviewUrl 产出的 URL，不碰纸张/边距。
+ *
+ * D2-1：
+ *   ResizeObserver 监听自身 .viewer-viewport 元素，
+ *   测量 clientWidth/Height 减去 padding 得到真实图片可用区域。
+ *   窗口 resize → 自动重算 fitScale → 图片实时适配。
  *
  * @module components/ViewerViewport
  */
@@ -24,7 +31,8 @@ import { effectiveRotation } from '../models/InvoiceDocument'
  * @param {number} props.panX - 水平平移
  * @param {number} props.panY - 垂直平移
  * @param {number} props.viewRotation - 用户查看旋转
- * @param {{ width: number, height: number }} props.containerSize - 容器尺寸
+ * @param {{ width: number, height: number }} [props.containerSize] - ⚠️ D2-1 起不再用于 fitScale 计算
+ *   （已由内置 ResizeObserver 自测量替代）。保留 prop 接口供 useViewerState pan clamp 使用，D2-2 移除。
  * @param {boolean} props.grayscale - 灰度模式
  * @param {boolean} props.loading - 加载中
  * @param {(deltaY: number) => void} props.onWheelZoom - 滚轮缩放回调
@@ -65,6 +73,39 @@ function ViewerViewportInner({
     retryRef.current = 0
   }, [previewUrl])
 
+  // ─── D2-1：ResizeObserver 自测量视口内容区 ───
+  // 测量 .viewer-viewport 的 clientWidth/Height 减去 padding，
+  // 得到图片真实可用区域。替代外层 prop containerSize（测量对象为 .canvas-scroll，
+  // 不含 viewport 自身 padding 和 thumbnail bar 高度，导致 fitScale 偏大）。
+  const [measuredSize, setMeasuredSize] = useState({ width: 0, height: 0 })
+  useEffect(() => {
+    const el = viewportRef.current
+    if (!el) return
+    let ticking = false
+    const update = () => {
+      ticking = false
+      const style = getComputedStyle(el)
+      const padX = Number.parseFloat(style.paddingLeft) + Number.parseFloat(style.paddingRight)
+      const padY = Number.parseFloat(style.paddingTop) + Number.parseFloat(style.paddingBottom)
+      const w = el.clientWidth - padX
+      const h = el.clientHeight - padY
+      setMeasuredSize((prev) => {
+        if (prev.width === w && prev.height === h) return prev
+        return { width: w, height: h }
+      })
+    }
+    const observer = new ResizeObserver(() => {
+      if (!ticking) {
+        requestAnimationFrame(update)
+        ticking = true
+      }
+    })
+    observer.observe(el)
+    // 首次立即测量（ResizeObserver 首次回调可能延迟一帧）
+    update()
+    return () => observer.disconnect()
+  }, [])
+
   // 计算有效旋转和尺寸
   const effRotation = page ? effectiveRotation(page, viewRotation) : 0
   // 基础尺寸：优先 PageMeta；缺失（0×0，过渡期注册）时回退到已加载图片的自然尺寸。
@@ -72,8 +113,8 @@ function ViewerViewportInner({
   const baseH = page && page.height ? page.height : naturalDims ? naturalDims.height : 0
   const dims = rotatedDimensions(baseW, baseH, effRotation)
 
-  // 计算 fit scale 和显示尺寸
-  const fitScale = computeFitScale(dims.width, dims.height, containerSize?.width || 0, containerSize?.height || 0)
+  // 计算 fit scale 和显示尺寸（D2-1：使用自测量尺寸，非外层 prop）
+  const fitScale = computeFitScale(dims.width, dims.height, measuredSize.width, measuredSize.height)
   const { displayW, displayH, scale } = computeDisplaySize(dims.width, dims.height, fitScale, zoom)
 
   // ─── Image Load：捕获自然尺寸并上报回填 ───
