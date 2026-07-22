@@ -60,6 +60,8 @@ export function isPdfFile(file) {
  * @param {Object|null} props.file - 当前预览文件对象（fileObj）
  * @param {{ width: number, height: number }} props.containerSize - 视口容器尺寸
  * @param {boolean} [props.grayscale=false] - 灰度模式
+ * @param {(controller: Object|null) => void} [props.onViewerController] -
+ *   D2-4.1：DocumentViewer 缩放控制上抬回调（透传给 DocumentViewer，供 App control-bar ZoomToolbar）。
  *
  * ── 以下为 legacy PreviewCanvas 透传 props（新路径不使用） ──
  * @param {HTMLCanvasElement|null} [props.previewCanvas]
@@ -74,6 +76,7 @@ export const DisplayAdapter = React.memo(function DisplayAdapter({
   file,
   containerSize,
   grayscale = false,
+  onViewerController,
   // legacy pass-through
   previewCanvas,
   previewUrl,
@@ -99,6 +102,7 @@ export const DisplayAdapter = React.memo(function DisplayAdapter({
         containerSize={containerSize}
         initialPage={initialPage}
         grayscale={grayscale}
+        onViewerController={onViewerController}
       />
     )
   }

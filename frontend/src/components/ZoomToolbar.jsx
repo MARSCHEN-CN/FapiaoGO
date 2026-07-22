@@ -5,8 +5,13 @@
  *   不拥有缩放状态：mode/scale/zoomPercent 全部由 useViewerState 驱动，经 props 传入；
  *   本组件只读 state、只调 actions。唯一的本地 state 是下拉菜单开合（瞬态 UI，非缩放域状态）。
  *
- * 适用范围：仅 DocumentViewer 路径（PDF 已注册）。legacy 路径（图片/OFD）继续用
- *   App.jsx control-bar 的 preview.zoom 工具栏，与本组件无关。
+ * 摆放位置（D2-4.1）：渲染在 App.jsx control-bar 内（用户习惯的缩放位置），
+ *   仅当 DocumentViewer 路径激活时由 App 条件渲染；legacy 路径（图片/OFD）继续用
+ *   control-bar 内的 preview.zoom 旧控件。状态源是 useViewerState，经 DocumentViewer
+ *   的 controller 桥接上抬给 App（状态归属 Viewer，UI 位置保持在 control-bar）。
+ *
+ * 根节点为 fragment：本组件只输出 缩小按钮 + 下拉 + 放大按钮，由 App 现有的
+ *   .canvas-zoom-control 容器包裹（避免容器嵌套），分隔线由 App 提供。
  *
  * 显示语义（D2-4 冻结，决策 A）：
  *   fit 模式  → 「自适应」（不显示 fitScale×100，避免随窗口变化误导用户）。
@@ -64,7 +69,7 @@ export function ZoomToolbar({ state, actions }) {
   const label = mode === 'fit' ? '自适应' : `${zoomPercent}%`
 
   return (
-    <div className="canvas-zoom-control viewer-zoom-toolbar">
+    <>
       <button className="tb-btn" onClick={actions.zoomOut} title="缩小">
         <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
       </button>
@@ -116,6 +121,6 @@ export function ZoomToolbar({ state, actions }) {
       <button className="tb-btn" onClick={actions.zoomIn} title="放大">
         <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
       </button>
-    </div>
+    </>
   )
 }
