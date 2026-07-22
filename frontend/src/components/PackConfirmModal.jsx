@@ -80,7 +80,7 @@ const PackConfirmModal = ({
   if (!visible) return null
 
   return (
-    <div className="modal-overlay xec-overlay">
+    <div className="modal-overlay">
       <div className="xec-panel" style={{ maxWidth: '560px' }}>
         {/* ── 标题 ── */}
         <div className="xec-header">
@@ -92,7 +92,7 @@ const PackConfirmModal = ({
         </div>
 
         {/* ── 主体 = 打包设置（从设置-打包页原样迁移） ── */}
-        <div className="xec-body" style={{ maxHeight: '600px', overflowY: 'auto' }}>
+        <div className="xec-body">
           <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
 
             {/* 打包规则卡片 */}
@@ -357,7 +357,7 @@ const PackConfirmModal = ({
         </div>
 
         {/* ── 底部 ── */}
-        <div className="xec-footer" style={{ borderTop: 'none' }}>
+        <div className="xec-footer">
           <button type="button" className="pc-btn outline" onClick={onCancel}>
             取消
           </button>
