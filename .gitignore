@@ -537,3 +537,4 @@ backend/test_step5_stress.py
 invoice-multi-page-viewer/pages
 invoice-multi-page-viewer/invoice-multi-page-viewer.design
 导出压缩包确认页方案.md
+invoice-multi-page-viewer/colors_and_type-professional.css
