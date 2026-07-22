@@ -17,12 +17,11 @@
   [pickle]   进程池返回结构必须可 pickle（无 numpy/PIL/fitz.Page/logger/exception
              等不可跨进程对象）。已由生产单文件路径证明，本测试用真实 OCR 结果再验一次。
 
-注意（测试内已知坑，非 P1-3 范围）：
-  app.py:1084 在单文件 /parse_invoice 端点调用 `registry._make_doc_id(...)`，但
-  render_engine/__init__.py:22 把 `registry` 绑定为 DocumentRegistry **实例**，而
-  _make_doc_id 是该模块的顶层函数（render_engine/registry.py:230），故该端点会抛
-  AttributeError（独立预存在 bug，需在 P1-3 之外单独处理）。本测试对单端点打
-  registry._make_doc_id 的补丁仅为让测试可达，不改变生产代码、不扩大 P1-3 范围。
+注意：
+  /parse_invoice 端点使用 render_engine.registry._make_doc_id（模块级函数，content-hash
+  生成 doc_id）以与 /split_pdf、/preview/{doc_id} 共用同一身份链。该端点曾误调用
+  registry._make_doc_id（实例方法不存在）导致全程 500，已在 fix(backend) 中修复。
+  本测试验证单文件 / 批量路径收敛到同一 _run_parse_offthread 签名。
 """
 
 import io
@@ -183,19 +182,13 @@ def test_parse_batch_routes_through_offthread(client):
 # ── [硬验收 2] 单文件 / 批量 收敛到同一解析路径（参数签名一致） ──
 
 def test_single_and_batch_share_offthread_signature(client):
-    """/parse_invoice 与 /parse_batch 对同一文件调用 _run_parse_offthread 的参数签名一致。
-
-    单端点 app.py:1084 存在独立的 registry._make_doc_id AttributeError（见文件头注释），
-    本测试在单端点子块内对该实例属性打补丁以让端点可达；此补丁仅限测试内，不改生产代码。
-    """
+    """/parse_invoice 与 /parse_batch 对同一文件调用 _run_parse_offthread 的参数签名一致。"""
     pdf_bytes = _make_pdf()
     canned = _canned_svc_result()
 
-    # 单文件路径（绕过独立的 registry bug 补丁，仅测试内）
-    with mock.patch.object(backend_app.registry, "_make_doc_id",
-                            create=True, return_value="fake-doc-id"), \
-            mock.patch.object(backend_app, "_run_parse_offthread",
-                              return_value=canned) as m_single:
+    # 单文件路径：验证单端点确实走 _run_parse_offthread（真实 doc_id 计算）
+    with mock.patch.object(backend_app, "_run_parse_offthread",
+                           return_value=canned) as m_single:
         r1 = client.post(
             "/parse_invoice",
             data={

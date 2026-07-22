@@ -35,6 +35,7 @@ from parse_job_manager import get_job_manager
 from import_batch_manager import get_import_batch_manager
 from services.decision_router import DecisionRouter
 from render_engine import registry, engine
+from render_engine.registry import _make_doc_id
 from render_engine.api import render_bp
 
 # 全局实例（惰性初始化）
@@ -1093,7 +1094,7 @@ def parse_invoice():
         file_bytes = file.read()  # 只读取一次，后续复用
         # Identity Contract v1.1：文档永久身份 = sha256(file_bytes)[:24]（content-only，filename 不进哈希）。
         # 与 /split_pdf、/preview/{doc_id} 共用同一 doc_id，使单文件 parse 也能闭合身份链（4.2.1-c）。
-        doc_id = registry._make_doc_id(file_bytes, file.filename or "")
+        doc_id = _make_doc_id(file_bytes, file.filename or "")
 
         auto_orient = request.form.get('autoOrient', '1') == '1'
         enable_auto_ocr = request.form.get('enableAutoOcr', '0') == '1'
