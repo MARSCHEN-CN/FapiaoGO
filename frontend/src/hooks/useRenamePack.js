@@ -53,7 +53,7 @@ export function useRenamePack({ files, settings, setFiles, parseFiles, electronA
       key: f.key,
       name: f.name,
       originalPath: f.printPath || f.path || '',
-      invoiceFields: f.invoiceFields || {
+      invoiceFields: (f.invoiceFields && Object.keys(f.invoiceFields).length) ? f.invoiceFields : {
         type: f.invoiceType || '',
         fphm: f.invoiceNumber || '',
         kprq: f.invoiceDate || '',
@@ -211,7 +211,7 @@ export function useRenamePack({ files, settings, setFiles, parseFiles, electronA
           const newFiles = result.renamedFiles.map((file, i) => {
             const original = pathToFileMap.get(file.originalPath)
             return {
-              key: generateFileKey(`renamed_${file.newPath}_${i}`),
+              key: generateFileKey(`${file.newName}_${i}`),
               name: file.newName, path: file.newPath, printPath: file.newPath,
               status: 'parsing', invoiceType: '', invoiceNumber: '', amount: '',
               invoiceDate: '', newName: '', parseMethod: '',
