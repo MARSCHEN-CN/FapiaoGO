@@ -232,12 +232,14 @@ function AppContent() {
 
   const {
     packing, packProgress, packResult, setPackResult, setPacking,
+    reimporting,
+    reimportProgress,
     renamePreviewVisible, setRenamePreviewVisible,
     renamePreviewFiles, renameResult, setRenameResult,
     renamedPreviewKey,
     alertModal: renamePackAlert, closeAlert: closeRenamePackAlert,
     handleRename, handleRenameConfirm, handlePack,
-  } = useRenamePack({ files, settings, setFiles, parseFiles, electronAPIRef })
+  } = useRenamePack({ files, settings, setFiles, parseFiles, parseProgress, electronAPIRef })
 
   const handleRenameCancel = useCallback(() => {
     setRenamePreviewVisible(false)
@@ -1053,6 +1055,7 @@ function AppContent() {
           importing={importing}
           parsing={parsing}
           parseProgress={parseProgress}
+          visible={Boolean(importing || parsing) && !reimporting}
         />
         <PrintProgressModal
           printing={printing}
@@ -1065,6 +1068,7 @@ function AppContent() {
             visible
             files={renamePreviewFiles}
             executing={packing}
+            reimportProgress={reimportProgress}
             result={renameResult}
             onConfirm={handleRenameConfirm}
             onCancel={handleRenameCancel}

@@ -8,6 +8,7 @@ const RenamePreviewModal = ({
   visible,
   files,           // [{ key, originalName, newName, conflict, fileFormat }]
   executing,       // boolean: 是否正在执行重命名
+  reimportProgress, // null | 0-100: 重导入进度
   result,          // null | { success, renamed, failed, partialCount, error }
   onConfirm,
   onCancel,
@@ -132,12 +133,25 @@ const RenamePreviewModal = ({
         <div className="rp-panel">
           <div className="rp-header">
             <div className="rp-header-left">
-              <h3 className="rp-title">正在重命名...</h3>
+              <h3 className="rp-title">
+                {reimportProgress !== null ? '正在重新导入重命名完成的文件...' : '正在重命名...'}
+              </h3>
             </div>
           </div>
           <div className="rp-executing">
             <div className="rp-spinner" />
-            <span className="rp-executing-text">正在处理 {selectedKeys.size} 个文件</span>
+            <span className="rp-executing-text">
+              {reimportProgress !== null
+                ? `正在重新导入 ${reimportProgress}%`
+                : `正在处理 ${selectedKeys.size} 个文件`}
+            </span>
+            {reimportProgress !== null && (
+              <div className="rp-progress">
+                <div className="rp-progress-bar">
+                  <div className="rp-progress-fill" style={{ width: `${reimportProgress}%` }} />
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>
