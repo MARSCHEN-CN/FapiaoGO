@@ -35,7 +35,7 @@ import './DocumentViewer.css'
  *   D2-3 4b：缩放显示上抬回调。把 useViewerState 的 mode/scale 上报给 App toolbar 指示器；
  *   组件卸载时上报 null（避免切到 legacy 路径后 toolbar 残留 viewer 显示）。
  */
-export function DocumentViewer({
+export const DocumentViewer = React.memo(function DocumentViewer({
   document,
   containerSize,
   initialPage = 0,
@@ -130,4 +130,4 @@ export function DocumentViewer({
       />
     </div>
   )
-}
+})

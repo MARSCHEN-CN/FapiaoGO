@@ -75,6 +75,7 @@ def _dedup_ocr_lines(existing_text, ocr_lines):
             buckets.setdefault(len(norm), []).append(norm)
 
     deduped = []
+    max_len = max(buckets) if buckets else 0  # buckets 在循环外已构建且不再变更，循环内为常量
     for line in ocr_lines:
         norm = _normalize_for_dedup(line)
         if not norm:
@@ -85,7 +86,6 @@ def _dedup_ocr_lines(existing_text, ocr_lines):
         L = len(norm)
         is_dup = False
         if L >= 4 and buckets:
-            max_len = max(buckets)
             # 比 OCR 行严格短的已有行：检查 existing in norm
             for length in range(4, L):
                 bucket = buckets.get(length)

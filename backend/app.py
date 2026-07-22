@@ -1172,10 +1172,12 @@ def parse_batch():
                                 thread_name_prefix='batch-parse') as pool:
             futures = {pool.submit(_parse_one, i, fi): i
                        for i, fi in enumerate(file_inputs)}
+            completed = 0
             for fut in as_completed(futures):
                 idx, svc_result, error = fut.result()
                 results[idx] = (idx, svc_result, error)
-                progress_queue.put({'current': sum(1 for r in results if r is not None), 'total': total})
+                completed += 1
+                progress_queue.put({'current': completed, 'total': total})
 
         # 批量入库
         db_records = []

@@ -72,7 +72,7 @@ export function isPdfFile(file) {
  * @param {number} [props.previewRotation]
  * @param {boolean} [props.previewLoading]
  */
-export function DisplayAdapter({
+export const DisplayAdapter = React.memo(function DisplayAdapter({
   file,
   containerSize,
   grayscale = false,
@@ -122,4 +122,4 @@ export function DisplayAdapter({
       containerSize={containerSize}
     />
   )
-}
+})

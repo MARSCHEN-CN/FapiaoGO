@@ -324,7 +324,9 @@ class RenderEngine:
         # ── [DIAG] Layer 1.5: 缓存层 — HIT 时不进 _render_spec_page ──
         ox = render_spec.get("placement", {}).get("offsetX", "-") if render_spec else "-"
         oy = render_spec.get("placement", {}).get("offsetY", "-") if render_spec else "-"
-        print(f"[CACHE] {'HIT' if cached else 'MISS'} ox={ox} oy={oy} sig={spec_tag[:20] if spec_tag else 'legacy'}", flush=True)
+        logger.debug("[CACHE] %s ox=%s oy=%s sig=%s",
+                     'HIT' if cached else 'MISS', ox, oy,
+                     spec_tag[:20] if spec_tag else 'legacy')
         if cached is not None:
             logger.debug("cache hit: %s", cache_key[:32])
             return cached.data, cached.fmt, cached.etag
