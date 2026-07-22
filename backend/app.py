@@ -1644,6 +1644,13 @@ if __name__ == '__main__':
         level=logging.DEBUG,
         format='%(asctime)s %(levelname)s %(name)s - %(message)s',
     )
+    # ── 冷启动诊断：确认运行时实际使用的数据库路径 ──
+    # 注意：db.py 模块级 logger.info（DB_DIR/INVOICES_PATH）在 import 时执行，
+    # 早于本 basicConfig，会被 lastResort(WARNING) 静默丢弃；此处补足可见输出。
+    logger.info("[DB-PATH] DB_DIR        = %s", db_module.DB_DIR)
+    logger.info("[DB-PATH] INVOICES_PATH = %s", db_module.INVOICES_PATH)
+    logger.info("[DB-PATH] OPLOG_PATH    = %s", db_module.OPLOG_PATH)
+    logger.info("[DB-PATH] MARSPRINT_DB_PATH env = %r", os.environ.get('MARSPRINT_DB_PATH', ''))
     from cache import _get_manager
     _cache_mgr = _get_manager()
     migrated = _cache_mgr.migrate_legacy()
