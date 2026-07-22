@@ -81,7 +81,7 @@ const PackConfirmModal = ({
 
   return (
     <div className="modal-overlay xec-overlay">
-      <div className="xec-panel" style={{ maxWidth: '560px' }}>
+      <div className="xec-panel" style={{ maxWidth: '560px', height: 'auto', maxHeight: 'none', overflow: 'visible' }}>
         {/* ── 标题 ── */}
         <div className="xec-header">
           <div className="xec-header-left">
