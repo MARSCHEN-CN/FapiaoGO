@@ -80,19 +80,44 @@ const PackConfirmModal = ({
   if (!visible) return null
 
   return (
-    <div className="modal-overlay">
-      <div className="xec-panel" style={{ maxWidth: '560px' }}>
+    <div className="modal-overlay" style={{ zIndex: 100 }}>
+      <div style={{
+        width: '560px',
+        maxWidth: '96vw',
+        background: 'var(--canvas-float-bg)',
+        backdropFilter: 'blur(16px)',
+        WebkitBackdropFilter: 'blur(16px)',
+        borderRadius: 'var(--r-xl)',
+        boxShadow: '0 8px 32px rgba(0,0,0,0.15)',
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'hidden',
+        boxSizing: 'border-box',
+      }}>
         {/* ── 标题 ── */}
-        <div className="xec-header">
-          <div className="xec-header-left">
-            <h3 className="xec-title">导出为压缩包</h3>
-            <span className="xec-subtitle">确认打包设置</span>
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '16px 24px',
+          flexShrink: 0,
+        }}>
+          <div>
+            <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 600, color: 'var(--text)' }}>导出为压缩包</h3>
+            <span style={{ fontSize: '12px', color: 'var(--text-3)' }}>确认打包设置</span>
           </div>
-          <span className="xec-file-count">已选择 {parsedFiles.length} 个文件</span>
+          <span style={{ fontSize: '12px', color: 'var(--text-3)' }}>已选择 {parsedFiles.length} 个文件</span>
         </div>
 
         {/* ── 主体 = 打包设置（从设置-打包页原样迁移） ── */}
-        <div className="xec-body">
+        <div style={{
+          padding: '0 24px',
+          maxHeight: '600px',
+          overflowY: 'auto',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '10px',
+        }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
 
             {/* 打包规则卡片 */}
@@ -357,7 +382,15 @@ const PackConfirmModal = ({
         </div>
 
         {/* ── 底部 ── */}
-        <div className="xec-footer">
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'flex-end',
+          gap: '10px',
+          padding: '16px 24px',
+          flexShrink: 0,
+          borderTop: 'none',
+        }}>
           <button type="button" className="pc-btn outline" onClick={onCancel}>
             取消
           </button>
