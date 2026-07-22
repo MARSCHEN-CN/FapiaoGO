@@ -1131,9 +1131,12 @@ function AppContent() {
           settings={settings}
           saveSettings={saveSettings}
           parsedFiles={files.filter(f => f.status === 'parsed')}
-          onConfirm={() => {
+          onConfirm={(packSettings) => {
             setShowPackConfirm(false)
-            handlePack()
+            // 先同步写 settings，确保 handlePack 读到最新值
+            saveSettings({ ...settings, packSettings })
+            // 下一微任务让 React 状态收敛
+            setTimeout(() => handlePack(), 0)
           }}
           onCancel={() => setShowPackConfirm(false)}
         />

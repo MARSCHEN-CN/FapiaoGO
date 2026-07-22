@@ -397,7 +397,19 @@ const PackConfirmModal = ({
           <button
             type="button"
             className="pc-btn solid"
-            onClick={onConfirm}
+            onClick={() => {
+              const currentPackSettings = {
+                packTargetFolder,
+                packKeepOriginal,
+                packArchiveFormat,
+                packRenameBeforeArchive,
+                packArchiveNamePrefix,
+                packArchiveNameDateFormat,
+                packArchiveNameSeparator,
+                packNameFieldOrder,
+              }
+              onConfirm(currentPackSettings)
+            }}
           >
             确认导出
           </button>
