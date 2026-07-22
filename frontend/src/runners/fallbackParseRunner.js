@@ -32,15 +32,19 @@ export async function runFallbackParseTask(task, { ipc, autoOrient, maxRetry = 1
   let retries = 0
   let lastError = null
 
+  console.log('[DIAG] fallbackParse START fileObj:', fileObj?.name, 'path:', fileObj?.printPath || fileObj?.path, 'hasIpc:', !!ipc)
+
   while (retries <= MAX_RETRY) {
     try {
       // ── 准备请求 ────────────────────────────────────
       const request = await prepareSingleRequest(fileObj, { ipc, autoOrient })
       if (!request) {
+        console.log('[DIAG] fallbackParse prepareSingleRequest returned null')
         return { success: false, error: '无法读取文件: ' + fileObj.name, status: 'error' }
       }
 
       const { url, formData } = request
+      console.log('[DIAG] fallbackParse fetching:', url, 'formData keys:', [...formData.keys()].join(','))
 
       // ── 发送请求 ────────────────────────────────────
       const resp = await fetch(url, { method: 'POST', body: formData })
