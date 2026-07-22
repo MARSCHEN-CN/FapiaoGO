@@ -1083,6 +1083,12 @@ def parse_invoice():
         return jsonify({"success": False, "error": "没有上传文件"}), 400
 
     file = request.files['file']
+    # [DIAG] A/B 对比：打印文件名和文件大小
+    import logging as _diag_log
+    _diag_log = logging.getLogger(__name__)
+    _diag_log.info("[DIAG] parse_invoice filename=%s  size=%d  mode=%s",
+                   file.filename, len(file.read()), request.form.get('mode', 'single'))
+    file.seek(0)
     if not allowed_file(file.filename):
         return jsonify({"success": False, "error": "不支持的文件格式"}), 400
 
