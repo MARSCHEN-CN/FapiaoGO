@@ -20,17 +20,24 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { nextZoomStep } from './zoomStep.mjs'
 import { applyWheelZoom } from './continuousZoom.mjs'
-import { clampPan, computeFitScale, computeDisplaySize, rotatedDimensions } from '../utils/viewerTransform'
+import { clampPan, computeFitScale, rotatedDimensions } from '../utils/viewerTransform'
 import { effectiveRotation } from '../models/InvoiceDocument'
 
 const ZOOM_STEPS = [25, 50, 75, 100, 125, 150, 200]
 const ZOOM_MIN = 10
 const ZOOM_MAX = 500
 
+// D2-3：manual 模式的绝对 scale 夹取边界（渲染比例，非 fit 相对百分比）。
+// 0.02 ≈ 自然尺寸的 2%，20 ≈ 2000%，覆盖从极小到极大的手动缩放。
+const SCALE_MIN = 0.02
+const SCALE_MAX = 20
+
 /**
  * @typedef {Object} ViewerState
  * @property {number} currentPage - 当前显示页 index（0-based）
- * @property {number} zoom - 缩放百分比（100 = fit）
+ * @property {number} zoom - ⚠️ legacy：fit 相对百分比（100=fit），仅供 dev demo 旧路径，新路径用 mode/scale
+ * @property {'fit'|'manual'} mode - D2-3：缩放参考系。fit=渲染 scale 由 viewport 实时派生；manual=冻结绝对 scale
+ * @property {number|null} scale - D2-3：manual 模式的绝对渲染 scale；fit 模式为 null
  * @property {number} panX - 水平平移（px）
  * @property {number} panY - 垂直平移（px）
  * @property {number} viewRotation - 用户临时旋转（0/90/180/270）
@@ -40,8 +47,10 @@ const ZOOM_MAX = 500
  * @typedef {Object} ViewerActions
  * @property {() => void} zoomIn - 离散放大一档
  * @property {() => void} zoomOut - 离散缩小一档
- * @property {() => void} setFit - 适应窗口（zoom=100）
- * @property {(pct: number) => void} setManualScale - 设置精确缩放百分比
+ * @property {() => void} setFit - ⚠️ legacy：适应窗口（zoom=100），供 dev demo 旧路径
+ * @property {(scale: number) => void} enterManual - D2-3：进入 manual 模式并冻结绝对 scale（保留 pan）
+ * @property {(scale: number) => void} setManualScale - D2-3：设置 manual 绝对 scale（语义同 enterManual）
+ * @property {() => void} setFitMode - D2-3：回到 fit 模式（scale=null，pan 归零）
  * @property {(deltaY: number) => void} wheelZoom - 连续滚轮缩放
  * @property {() => void} rotateLeft - 逆时针旋转 90°
  * @property {() => void} rotateRight - 顺时针旋转 90°
@@ -68,6 +77,11 @@ export function useViewerState({ document, containerSize, initialPage = 0 }) {
     return Math.min(max, Math.max(0, initialPage))
   })
   const [zoom, setZoom] = useState(100)
+  // D2-3：fit/manual 缩放参考系分离。
+  //   mode='fit'    → 渲染 scale 由 viewport 实时 fit 计算派生，scale 为 null。
+  //   mode='manual' → 渲染 scale = 用户冻结的绝对 scale（resize 不重算，只 re-clamp pan）。
+  const [mode, setMode] = useState('fit')
+  const [scale, setScale] = useState(null)
   const [panX, setPanX] = useState(0)
   const [panY, setPanY] = useState(0)
   const [viewRotation, setViewRotation] = useState(0)
@@ -106,9 +120,30 @@ export function useViewerState({ document, containerSize, initialPage = 0 }) {
     setPanY(0)
   }, [])
 
-  const setManualScale = useCallback((pct) => {
-    const clamped = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, pct))
-    setZoom(clamped)
+  // ─── D2-3：fit/manual 参考系分离 actions ───
+
+  // 进入 manual 模式并冻结绝对 scale（Ctrl+wheel 触发）。
+  // 保留 pan：滚轮缩放不应让视图跳位，只改变比例。
+  const enterManual = useCallback((nextScale) => {
+    const clamped = Math.min(SCALE_MAX, Math.max(SCALE_MIN, nextScale))
+    setMode('manual')
+    setScale(clamped)
+  }, [])
+
+  // 设置 manual 绝对 scale（已在 manual 模式时的后续调整，语义同 enterManual）。
+  // ⚠️ D2-3 起为绝对 scale 语义（旧版为 zoom 百分比，无消费方，已替换）。
+  const setManualScale = useCallback((nextScale) => {
+    const clamped = Math.min(SCALE_MAX, Math.max(SCALE_MIN, nextScale))
+    setMode('manual')
+    setScale(clamped)
+  }, [])
+
+  // 回到 fit 模式（双击适应触发）：scale 派生回 null，pan 归零。
+  const setFitMode = useCallback(() => {
+    setMode('fit')
+    setScale(null)
+    setPanX(0)
+    setPanY(0)
   }, [])
 
   const wheelZoom = useCallback((deltaY) => {
@@ -135,7 +170,9 @@ export function useViewerState({ document, containerSize, initialPage = 0 }) {
     if (!document) return
     const clamped = Math.min(document.pageCount - 1, Math.max(0, index))
     setCurrentPage(clamped)
-    // 页切换：reset zoom + pan，保留 viewRotation
+    // 页切换：回 fit 模式（D2-3）+ reset pan，保留 viewRotation
+    setMode('fit')
+    setScale(null)
     setZoom(100)
     setPanX(0)
     setPanY(0)
@@ -174,11 +211,14 @@ export function useViewerState({ document, containerSize, initialPage = 0 }) {
       return
     }
     const fitScale = computeFitScale(dims.width, dims.height, container.width, container.height)
-    const { displayW, displayH } = computeDisplaySize(dims.width, dims.height, fitScale, zoom)
+    // D2-3：manual 用冻结的绝对 scale，fit 用 fitScale，clamp 与实际渲染一致。
+    const renderScale = (mode === 'manual' && scale != null) ? scale : fitScale
+    const displayW = dims.width * renderScale
+    const displayH = dims.height * renderScale
     const clamped = clampPan(newPanX, newPanY, displayW, displayH, container.width, container.height)
     setPanX(clamped.panX)
     setPanY(clamped.panY)
-  }, [getPageDimensions, zoom])
+  }, [getPageDimensions, mode, scale])
 
   const panBy = useCallback((deltaX, deltaY) => {
     setPanX((x) => x + deltaX)
@@ -196,6 +236,8 @@ export function useViewerState({ document, containerSize, initialPage = 0 }) {
     state: {
       currentPage,
       zoom,
+      mode,
+      scale,
       panX,
       panY,
       viewRotation,
@@ -204,7 +246,9 @@ export function useViewerState({ document, containerSize, initialPage = 0 }) {
       zoomIn,
       zoomOut,
       setFit,
+      enterManual,
       setManualScale,
+      setFitMode,
       wheelZoom,
       rotateLeft,
       rotateRight,
