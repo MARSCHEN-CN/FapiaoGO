@@ -996,8 +996,11 @@ button.pc-btn.outline,
 /* ======================== Excel Export Fields Modal (xec-) ======================== */
 .xec-panel {
   width: 960px;
+  min-width: 720px;
   max-width: 94vw;
-  max-height: 90vh;
+  height: 82vh;
+  min-height: 540px;
+  max-height: 92vh;
 }
 
 .xec-header {
@@ -1116,7 +1119,7 @@ button.pc-btn.outline,
 .xec-table-wrap {
   position: relative;
   flex: 1;
-  min-height: 0;
+  min-height: 240px;
   overflow: auto;
   border: 1px solid var(--border-light);
   border-radius: 8px;
