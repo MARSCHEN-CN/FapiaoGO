@@ -1,0 +1,47 @@
+/* 方案C: 沉浸式书籍视图 - 深色琥珀沉浸 */
+:root {
+  /* Brand primary - single hue (amber accent on dark) */
+  --brand-primary: #D97706;
+  --brand-primary-foreground: #1C1C1E;
+
+  /* Backgrounds (dark theme) */
+  --brand-background: #0F0F10;
+  --brand-foreground: #E8E6E3;
+  --brand-card: #1C1C1E;
+  --brand-card-foreground: #E8E6E3;
+  --brand-popover: #27272A;
+  --brand-popover-foreground: #E8E6E3;
+  --brand-muted: #27272A;
+  --brand-muted-foreground: #A1A1AA;
+  --brand-border: #3F3F46;
+  --brand-input: #3F3F46;
+  --brand-ring: #D97706;
+
+  /* Primary scale */
+  --brand-primary-50: #FFFBEB;
+  --brand-primary-100: #FEF3C7;
+  --brand-primary-200: #FDE68A;
+  --brand-primary-300: #FCD34D;
+  --brand-primary-400: #FBBF24;
+  --brand-primary-500: #D97706;
+  --brand-primary-600: #B45309;
+  --brand-primary-700: #92400E;
+  --brand-primary-800: #78350F;
+  --brand-primary-900: #451A03;
+
+  /* State colors */
+  --state-success: #34D399;
+  --state-warning: #FBBF24;
+  --state-error: #F87171;
+  --state-info: #D97706;
+
+  /* Radius */
+  --brand-radius-sm: 3px;
+  --brand-radius-md: 6px;
+  --brand-radius-lg: 8px;
+  --brand-radius-full: 9999px;
+
+  /* Font */
+  --brand-font: "Noto Serif SC", "Source Han Serif SC", "Songti SC", "Georgia", serif;
+  --brand-font-mono: "Courier New", "Consolas", monospace;
+}

@@ -1,0 +1,47 @@
+/* 方案A: 专业文档查看器风格 - 蓝灰专业色调 */
+:root {
+  /* Brand primary - single hue */
+  --brand-primary: #2D5A8A;
+  --brand-primary-foreground: #FFFFFF;
+
+  /* Backgrounds */
+  --brand-background: #F5F6F8;
+  --brand-foreground: #1A1D23;
+  --brand-card: #FFFFFF;
+  --brand-card-foreground: #1A1D23;
+  --brand-popover: #FFFFFF;
+  --brand-popover-foreground: #1A1D23;
+  --brand-muted: #EEF0F3;
+  --brand-muted-foreground: #5F6B7A;
+  --brand-border: #D8DCE3;
+  --brand-input: #D8DCE3;
+  --brand-ring: #2D5A8A;
+
+  /* Primary scale */
+  --brand-primary-50: #EBF0F7;
+  --brand-primary-100: #D1DEEC;
+  --brand-primary-200: #A9C1DB;
+  --brand-primary-300: #7BA3C7;
+  --brand-primary-400: #5386B3;
+  --brand-primary-500: #2D5A8A;
+  --brand-primary-600: #254A72;
+  --brand-primary-700: #1E3B5A;
+  --brand-primary-800: #172D44;
+  --brand-primary-900: #0F1E2E;
+
+  /* State colors */
+  --state-success: #16A34A;
+  --state-warning: #D97706;
+  --state-error: #DC2626;
+  --state-info: #2D5A8A;
+
+  /* Radius */
+  --brand-radius-sm: 4px;
+  --brand-radius-md: 6px;
+  --brand-radius-lg: 8px;
+  --brand-radius-full: 9999px;
+
+  /* Font */
+  --brand-font: "Microsoft YaHei", "PingFang SC", "Hiragino Sans GB", "Segoe UI", system-ui, sans-serif;
+  --brand-font-mono: "Consolas", "SF Mono", "Menlo", monospace;
+}
