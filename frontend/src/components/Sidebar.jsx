@@ -61,6 +61,7 @@ export default React.memo(function Sidebar({
   sortBy, sortOrder, toggleSort,
 }) {
   const [removeSourceFile, setRemoveSourceFile] = useState(false)
+  const [showPreviousYearWarning, setShowPreviousYearWarning] = useState(true)
   const { files, searchQuery, setSearchQuery, filteredFiles, isSearching, documentView, totalAmount, hasFailedFiles, failedFilesCount } = useFileContext()
   const mergeActive = isMergeMode(paperSize)
 
@@ -267,7 +268,7 @@ export default React.memo(function Sidebar({
               {ICONS.sort}
             </button>
             {(sortMenuOpen || sortMenuClosing) && (
-              <div className={`sort-dropdown ${sortMenuClosing ? 'closing' : ''}`}>
+              <div className={`sort-dropdown sort-dropdown--sidebar ${sortMenuClosing ? 'closing' : ''}`}>
                 <div className="sort-dropdown-header">排序方式</div>
                 {SORT_OPTIONS.map(({ field, label, icon }) => (
                   <button
@@ -411,7 +412,7 @@ export default React.memo(function Sidebar({
                 </label>
               </div>
             </>
-          ) : hasPreviousYear ? (
+          ) : hasPreviousYear && showPreviousYearWarning ? (
             <>
               <div className="sb-stat-summary">
                 共 <b>{documentView.documentCount}</b> 个文件 · 其中 <span className="sb-stat-summary-year">{previousYearCount} 个往年发票</span>
@@ -433,6 +434,13 @@ export default React.memo(function Sidebar({
                   <span className="sb-seg-option-label">删源文件</span>
                 </label>
               </div>
+              <button
+                className="sb-stats-close"
+                onClick={(e) => { e.stopPropagation(); setShowPreviousYearWarning(false) }}
+                title="关闭提示（视为正常状况）"
+              >
+                {ICONS.clear}
+              </button>
             </>
           ) : duplicateGroupCount > 0 ? (
             <>

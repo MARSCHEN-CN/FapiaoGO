@@ -213,7 +213,11 @@
 .sb-dropdown {
   position: absolute;
   top: calc(100% + 6px);
-  right: 0;
+  /* 添加按钮位于 .sb-actions 最左侧：改为 left:0 向右展开，整体留在侧栏内。
+     原本 right:0 向左展开，在窄侧栏（≤1400px→260px，≤1100px→240px）下
+     会越过侧栏左缘，被 .sidebar{overflow:hidden} 裁切（小窗下显示不完整）。 */
+  left: 0;
+  right: auto;
   min-width: 150px;
   background: var(--surface);
   border: 1px solid var(--border);
@@ -221,7 +225,7 @@
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
   padding: 4px;
   z-index: 100;
-  transform-origin: top right;
+  transform-origin: top left;
   animation: sbDropdownIn 0.15s ease;
 }
 
@@ -289,6 +293,14 @@
   animation: fadeIn 0.15s ease;
   opacity: 1;
   transform: translateY(0);
+}
+
+/* 侧栏排序弹窗：排序按钮位于 .sb-actions 最右侧，若按通用 .sort-dropdown 的
+   left:0 向右展开会越过侧栏右缘，被 .sidebar{overflow:hidden} 裁切（看起来像被主界面遮住）。
+   改为 right:0 向左展开，整体留在侧栏内。仅作用于侧栏排序弹窗，不影响主区域缩放下拉。 */
+.sort-dropdown--sidebar {
+  left: auto;
+  right: 0;
 }
 
 .sort-dropdown.closing {
@@ -705,6 +717,35 @@
   border-radius: var(--r-xl);
   border: 1px solid color-mix(in srgb, var(--accent) 12%, transparent);
   box-shadow: 0 1px 3px color-mix(in srgb, var(--accent) 6%, transparent);
+  position: relative;
+}
+
+.sb-stats-close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.05);
+  color: var(--text-3);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--t-fast) var(--ease);
+}
+
+.sb-stats-close:hover {
+  background: rgba(0, 0, 0, 0.1);
+  color: var(--text-1);
+}
+
+.sb-stats-close svg {
+  width: 12px;
+  height: 12px;
 }
 
 /* 正常状态：两栏统计（文件数 + 总金额） */
