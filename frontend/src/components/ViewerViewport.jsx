@@ -22,12 +22,13 @@
 import React, { useRef, useState, useCallback, useEffect, memo } from 'react'
 import { buildTransformString, computeFitScale, computeDisplaySize, rotatedDimensions } from '../utils/viewerTransform'
 import { effectiveRotation } from '../models/InvoiceDocument'
+import { wheelZoomFactor } from '../hooks/continuousZoom.mjs'
 
 /**
  * @param {Object} props
  * @param {import('../models/InvoiceDocument').PageMeta|null} props.page - 当前页 PageMeta
  * @param {string|null} props.previewUrl - 当前页预览 URL（由 PreviewResourceResolver 解析）
- * @param {number} props.zoom - 缩放百分比（100=fit）
+ * @param {number} props.zoom - ⚠️ 旧模型缩放百分比（100=fit）。仅在未传 mode 时（DevDemo 回退路径）生效。
  * @param {number} props.panX - 水平平移
  * @param {number} props.panY - 垂直平移
  * @param {number} props.viewRotation - 用户查看旋转
@@ -35,12 +36,17 @@ import { effectiveRotation } from '../models/InvoiceDocument'
  *   （已由内置 ResizeObserver 自测量替代）。保留 prop 接口供 useViewerState pan clamp 使用，D2-2 移除。
  * @param {boolean} props.grayscale - 灰度模式
  * @param {boolean} props.loading - 加载中
- * @param {(deltaY: number) => void} props.onWheelZoom - 滚轮缩放回调
+ * @param {(deltaY: number) => void} props.onWheelZoom - ⚠️ 旧模型滚轮缩放回调（未传 mode 时生效）。
  * @param {(panX: number, panY: number) => void} props.onPanChange - 平移回调
  * @param {() => void} props.onDoubleClick - 双击适应回调
  * @param {(pageIndex: number, width: number, height: number) => void} [props.onNaturalSize] -
  *   图片加载后上报自然像素尺寸（用于回填 0×0 的 PageMeta）
  * @param {React.ReactNode} [props.overlaySlot] - Overlay 插槽（OCR/字段高亮）
+ * @param {'fit'|'manual'} [props.mode] - D2-3 缩放模式。传入即启用新模型（fit/manual 分离）；
+ *   未传（undefined）则回退旧 zoom 模型。ViewerViewport 是纯消费者，不拥有 mode（由 useViewerState 驱动）。
+ * @param {number|null} [props.scale] - D2-3 manual 模式冻结的绝对渲染比例（fit 模式为 null）。
+ * @param {(nextScale: number) => void} [props.onEnterManual] - D2-3 滚轮进入/更新 manual 模式回调，
+ *   参数为 currentScale × wheelZoomFactor 后的新绝对 scale。
  */
 function ViewerViewportInner({
   page,
@@ -57,6 +63,10 @@ function ViewerViewportInner({
   onDoubleClick,
   onNaturalSize,
   overlaySlot,
+  // D2-3：fit/manual 新模型 prop（传入 mode 即启用；未传则回退旧 zoom 模型）
+  mode,
+  scale: manualScale,
+  onEnterManual,
 }) {
   const viewportRef = useRef(null)
   const dragState = useRef({ dragging: false, startX: 0, startY: 0, startPanX: 0, startPanY: 0 })
@@ -113,9 +123,17 @@ function ViewerViewportInner({
   const baseH = page && page.height ? page.height : naturalDims ? naturalDims.height : 0
   const dims = rotatedDimensions(baseW, baseH, effRotation)
 
-  // 计算 fit scale 和显示尺寸（D2-1：使用自测量尺寸，非外层 prop）
+  // 计算 fit scale（D2-1：使用自测量尺寸，非外层 prop）
   const fitScale = computeFitScale(dims.width, dims.height, measuredSize.width, measuredSize.height)
-  const { displayW, displayH, scale } = computeDisplaySize(dims.width, dims.height, fitScale, zoom)
+
+  // D2-3：双路径渲染 scale
+  //  - 新模型（mode 已传入）：fit → fitScale（实时跟随视口）；manual → 冻结绝对 manualScale
+  //    （窗口 resize 只重算 fitScale，manual 的 manualScale 不变 → 用户查看的局部细节不漂移）。
+  //  - 旧模型（mode 未传入，DevDemo 回退）：scale = fitScale × zoom%（兼容原行为）。
+  const useNewModel = mode !== undefined
+  const renderScale = useNewModel
+    ? (mode === 'manual' && manualScale != null ? manualScale : fitScale)
+    : computeDisplaySize(dims.width, dims.height, fitScale, zoom).scale
 
   // ─── Image Load：捕获自然尺寸并上报回填 ───
   const handleImageLoad = useCallback((e) => {
@@ -136,13 +154,25 @@ function ViewerViewportInner({
     setTimeout(() => setLoadAttempt((n) => n + 1), 800)
   }, [])
 
-  // ─── Wheel Zoom ───
+  // ─── Wheel Zoom（D2-3 双路径）───
+  // ref 持有最新 scale 上下文，handleWheel 引用保持稳定（deps=[]）：
+  // fitScale 随 ResizeObserver 变化，若进 deps 会导致 wheel listener 反复注销/重注册。
+  const zoomCtxRef = useRef({})
+  zoomCtxRef.current = { useNewModel, mode, manualScale, fitScale, onEnterManual, onWheelZoom }
+
   const handleWheel = useCallback((e) => {
-    if (e.ctrlKey || e.metaKey) {
-      e.preventDefault()
-      onWheelZoom?.(e.deltaY)
+    if (!(e.ctrlKey || e.metaKey)) return
+    e.preventDefault()
+    const ctx = zoomCtxRef.current
+    if (ctx.useNewModel) {
+      // 新模型：当前 scale（manual 用冻结值，fit 用实时 fitScale）× 乘性因子 → 进入/更新 manual
+      const currentScale = (ctx.mode === 'manual' && ctx.manualScale != null) ? ctx.manualScale : ctx.fitScale
+      ctx.onEnterManual?.(currentScale * wheelZoomFactor(e.deltaY))
+    } else {
+      // 旧模型（DevDemo）：上报 deltaY，由 useViewerState.wheelZoom 处理
+      ctx.onWheelZoom?.(e.deltaY)
     }
-  }, [onWheelZoom])
+  }, [])
 
   // 注册 wheel 为 passive:false（React 默认 passive）
   useEffect(() => {
@@ -203,7 +233,7 @@ function ViewerViewportInner({
     )
   }
 
-  const transformStr = buildTransformString({ panX, panY, scale, rotation: effRotation })
+  const transformStr = buildTransformString({ panX, panY, scale: renderScale, rotation: effRotation })
 
   // 尺寸是否已知（PageMeta 有值，或图片已加载拿到自然尺寸）。
   // 未知时先隐藏图片并显示占位，避免以错误尺寸闪现。
