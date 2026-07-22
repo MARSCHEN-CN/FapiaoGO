@@ -1055,9 +1055,11 @@ def _run_parse_offthread(file_bytes, filename, auto_orient, enable_auto_ocr):
         return _parse_sync(file_bytes, filename, auto_orient, enable_auto_ocr)
 
 
-# 供 parse_batch 使用的并发限流（批量解析走独立线程池）。
-# 上限改为与 CPU 核数挂钩：max(2, cpu_count())，避免在低核机器上超卖，
-# 也避免在高核机器上被固定 10 限制 throughput。cpu_count() 为 None 时回退到 2。
+# 供 parse_batch 使用的「提交层」并发限流（外层 ThreadPool 仅为调度层）。
+# 注意：OCR 实际并行度由 _get_executor() 的 ProcessPoolExecutor + OCR_WORKERS 决定，
+# 与 BATCH_WORKERS / parse_semaphore 解耦——调参时不要混淆两者。
+# 该 semaphore 仅限制「同时向进程池提交的任务数」，上限与 CPU 核数挂钩：
+# max(2, cpu_count())；cpu_count() 为 None 时回退到 2。
 parse_semaphore = threading.Semaphore(max(2, os.cpu_count() or 1))
 
 
@@ -1173,11 +1175,13 @@ def parse_batch():
             try:
                 if not allowed_file(fi['filename']):
                     return index, None, f"不支持的文件格式: {fi['filename']}"
-                svc_result = parse_invoice_service(
+                # P1-3: 收敛到已有 OCR 进程池（ProcessPoolExecutor，绕过 GIL），与单文件
+                # /parse_invoice 共用同一执行器与 OCR_WORKERS 并行度。外层 ThreadPool +
+                # parse_semaphore 仅做调度/提交限流，不再在 batch 线程内直接跑 OCR。
+                # _run_parse_offthread 内部 skip_db_write=True，DB 写入仍由主进程批量完成。
+                svc_result = _run_parse_offthread(
                     fi['bytes'], fi['filename'],
-                    auto_orient=auto_orient,
-                    enable_auto_ocr=enable_auto_ocr,
-                    skip_db_write=True,
+                    auto_orient, enable_auto_ocr,
                 )
                 if svc_result is None:
                     return index, None, f"无法识别的文件格式: {fi['filename']}"
