@@ -84,11 +84,9 @@ const PackConfirmModal = ({
     const api = getElectronAPI()
     if (!api?.ipcRenderer) return
     try {
-      const result = await api.ipcRenderer.invoke('show-open-dialog', {
-        properties: ['openDirectory'],
-      })
-      if (result && result.filePaths && result.filePaths.length > 0) {
-        handlePackTargetFolderChange(result.filePaths[0])
+      const result = await api.ipcRenderer.invoke('select-folder')
+      if (result && result.folder) {
+        handlePackTargetFolderChange(result.folder)
       }
     } catch (err) {
       console.warn('[PackConfirmModal] 选择文件夹失败:', err)
