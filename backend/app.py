@@ -828,58 +828,78 @@ def split_pdf():
         # 惰性清理 + LRU 硬上限（过期项与超限 LRU 驱逐，联动清理 registry）
         _page_cache_evict()
 
-        # 单页任务：拆页 + 200dpi 预览渲染 + base64。
-        # fitz.Document 不可跨线程共享，因此每个 worker 用独立副本打开。
-        def _process_page(task):
-            i, page_num, page_id = task
-            local_pdf = fitz.open(stream=file_bytes, filetype="pdf")
-            try:
-                page_bytes = engine.extract_page_pdf(
-                    doc.doc_id, page_num, pdf_doc=local_pdf)
-                preview_data, _, _ = engine.render(
-                    doc_id=doc.doc_id,
-                    preset_name="preview",
-                    page=page_num,
-                    override_params={"dpi": 200, "fmt": "jpeg"},
-                    pdf_doc=local_pdf,
-                )
-            finally:
-                local_pdf.close()
-            preview_b64 = base64.b64encode(preview_data).decode('ascii')
-            return (i, page_num, page_id, page_bytes, preview_b64)
-
-        def _register_and_collect(results):
-            # 主线程写 registry/cache，保证字典写入集中、顺序稳定
-            for (i, page_num, page_id, page_bytes, preview_b64) in results:
-                with _page_registry_lock:
-                    _page_registry[page_id] = {"doc_id": doc.doc_id, "page": page_num}
-                with _page_cache_lock:
-                    _page_cache[page_id] = {
-                        "bytes": page_bytes,
-                        "created_at": now,
-                        "last_used": now,
-                    }
-                pages.append({
-                    "page_index": page_num,
-                    "page_id": page_id,
-                    "preview_image": preview_b64,
-                    "page_bytes": base64.b64encode(page_bytes).decode('ascii'),
-                })
-
-        tasks = [(i, i + 1, f"{file_hash}_{i}") for i in range(doc.page_count)]
-
-        # 并行渲染：多页并发处理，消除串行 30s+ 瓶颈。
-        # 并发上限约束同时持有的整本 PDF 副本数，避免内存峰值过高。
+        # ── Commit 2: page task -> chunk task ──
+        # 旧实现每页任务都 fitz.open 整本 PDF（open 次数 = 页数，整本重复解析）。
+        # 现改为「chunk 任务」：每个 worker 仅打开一次整本，处理自己页码块内多页。
+        # fitz.Document 仍只属于单个 worker 线程（不可跨线程共享），不提升为全局对象；
+        # 不依赖线程与 chunk 的绑定关系（ThreadPoolExecutor 调度任意分配，open 数由
+        # chunk_count 上限决定，与调度无关）。
+        # chunk_count 上限 = SPLIT_MAX_WORKERS，故总 fitz.open 次数 = min(页数, 8)：
+        #   8 页 -> 8 次（与旧持平，无回归）；100 页 -> 8 次（旧 100）；500 页 -> 8 次。
+        # page_id 仍 = f"{file_hash}_{i}"（i=0-based 页序），输出 pages[] 顺序不变。
         SPLIT_MAX_WORKERS = 8
+        page_count = doc.page_count
+        chunk_count = min(page_count, SPLIT_MAX_WORKERS)
+        chunk_size = (page_count + chunk_count - 1) // chunk_count if chunk_count else 1
+        chunks = []
+        for c in range(chunk_count):
+            start = c * chunk_size
+            end = min(start + chunk_size, page_count)
+            if start >= end:
+                continue  # 防御性，page_count>=1 时不触发
+            chunks.append([(i, i + 1, f"{file_hash}_{i}") for i in range(start, end)])
+
+        def _process_chunk(page_items):
+            # 一个 worker 内只打开一次整本 PDF，循环处理块内所有页。
+            # 引擎对 pdf_doc 只读（extract_page_pdf/render 仅读 src），块内复用同一句柄安全。
+            with fitz.open(stream=file_bytes, filetype="pdf") as local_pdf:
+                chunk_out = []
+                for (i, page_num, page_id) in page_items:
+                    page_bytes = engine.extract_page_pdf(
+                        doc.doc_id, page_num, pdf_doc=local_pdf)
+                    preview_data, _, _ = engine.render(
+                        doc_id=doc.doc_id,
+                        preset_name="preview",
+                        page=page_num,
+                        override_params={"dpi": 200, "fmt": "jpeg"},
+                        pdf_doc=local_pdf,
+                    )
+                    preview_b64 = base64.b64encode(preview_data).decode('ascii')
+                    chunk_out.append((i, page_num, page_id, page_bytes, preview_b64))
+            return chunk_out
+
+        def _register_and_collect(chunk_results):
+            # 主线程写 registry/cache，保证字典写入集中、顺序稳定。
+            # chunk_results 为「list of per-chunk lists」，按 chunk 顺序展开即文档序
+            # （ex.map 保 chunk 序；每个 chunk 内部按页序产出）。
+            for chunk in chunk_results:
+                for (i, page_num, page_id, page_bytes, preview_b64) in chunk:
+                    with _page_registry_lock:
+                        _page_registry[page_id] = {"doc_id": doc.doc_id, "page": page_num}
+                    with _page_cache_lock:
+                        _page_cache[page_id] = {
+                            "bytes": page_bytes,
+                            "created_at": now,
+                            "last_used": now,
+                        }
+                    pages.append({
+                        "page_index": page_num,
+                        "page_id": page_id,
+                        "preview_image": preview_b64,
+                        "page_bytes": base64.b64encode(page_bytes).decode('ascii'),
+                    })
+
+        # 并行渲染：多 chunk 并发处理，消除串行瓶颈；每 worker 仅开一次整本副本，
+        # 并发上限约束同时持有的整本副本数，避免内存峰值过高。
         if fitz is not None and doc.page_count > 1:
-            max_workers = min(doc.page_count, SPLIT_MAX_WORKERS)
+            max_workers = min(chunk_count, SPLIT_MAX_WORKERS)
             with ThreadPoolExecutor(max_workers=max_workers) as ex:
-                # ex.map 按任务顺序返回结果
-                results = list(ex.map(_process_page, tasks))
+                # ex.map 按 chunk 顺序返回结果
+                results = list(ex.map(_process_chunk, chunks))
             _register_and_collect(results)
         else:
             # 串行回退：fitz 不可用或单页文档（与原行为一致）
-            results = [_process_page(t) for t in tasks]
+            results = [_process_chunk(c) for c in chunks]
             _register_and_collect(results)
 
         return jsonify({
