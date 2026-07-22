@@ -18,7 +18,8 @@ import { BACKEND_URL } from '../config'
  * Props:
  *   visible:        boolean            是否渲染
  *   files:          Array              已选文件列表（用于推导 fileNames 拉取预览行）
- *   initialColumns: Set<string> | null 已持久化的勾选 keys；null/undefined 时回落默认全选
+ *   initialColumns: Set<string> | null | undefined  已持久化的勾选 keys。
+ *                     undefined=加载中(等待) / null=无持久化(回落全选) / Set=已保存(应用)
  *   onPersist:      (keys: Set) => void 勾选变化时防抖持久化
  *   onConfirm:      (columns) => void   确认导出，columns 含 {key,label,width,virtual}
  *   onCancel:       () => void          取消
@@ -34,18 +35,26 @@ const ExcelExportFieldsModal = ({
   // 默认 23/23 全选（保持现有导出结果）；若已持久化则弹窗打开时以持久化为准
   const [selected, setSelected] = useState(() => new Set(ALL_KEYS))
   const selectedRef = useRef(selected)
-  // 每次打开只初始化一次：以持久化勾选为准，避免覆盖用户会话内的勾选
-  const initRef = useRef(false)
+  // 每次打开（visible 上升沿）以持久化勾选为准初始化一次。
+  // 三态约定（来自 useExcelExportSettings）：
+  //   undefined = 仍在加载（等待，不应用默认、不锁定）
+  //   null      = 无持久化（回落 23/23 全选）
+  //   Set       = 已保存勾选（应用之）
+  // appliedRef 保证「本次打开只应用一次」：避免加载完成 / persist 乐观回写触发
+  // initialColumns 变化时覆盖用户会话内已做的勾选；关闭时复位，下次打开重新读取持久化。
+  const appliedRef = useRef(false)
   useEffect(() => {
-    if (visible && !initRef.current) {
-      setSelected(initialColumns ? new Set(initialColumns) : new Set(ALL_KEYS))
-      initRef.current = true
-    } else if (!visible) {
-      initRef.current = false
+    if (!visible) {
+      appliedRef.current = false
+      return
     }
+    if (initialColumns === undefined) return // 仍在加载，等待
+    if (appliedRef.current) return // 本次打开已应用，不重复覆盖
+    appliedRef.current = true
+    setSelected(initialColumns ? new Set(initialColumns) : new Set(ALL_KEYS))
   }, [visible, initialColumns])
 
-  // 保持 selectedRef 与渲染态同步（initRef 经 setSelected 改值后亦需同步，避免 toggle 基于旧值计算）
+  // 保持 selectedRef 与渲染态同步（appliedRef 经 setSelected 改值后亦需同步，避免 toggle 基于旧值计算）
   useEffect(() => {
     selectedRef.current = selected
   }, [selected])

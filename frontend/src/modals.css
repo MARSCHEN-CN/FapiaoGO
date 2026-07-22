@@ -196,6 +196,19 @@
 }
 .pc-btn.solid:hover { background: #2b5cd9; transform: translateY(-1px); }
 .pc-btn.solid:active { transform: translateY(0) scale(0.98); }
+/* 禁用态必须有视觉反馈（Excel 字段确认页空选时确认按钮需变灰），否则 disabled 只见蓝不变灰 */
+.pc-btn.solid:disabled {
+  background: var(--surface);
+  color: var(--text-3);
+  border-color: var(--border);
+  cursor: not-allowed;
+  opacity: 0.65;
+  transform: none;
+}
+.pc-btn.outline:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
 
 /* 通用?pc-btn.outline 样式 */
 button.pc-btn.outline,
@@ -995,12 +1008,13 @@ button.pc-btn.outline,
 
 /* ======================== Excel Export Fields Modal (xec-) ======================== */
 .xec-panel {
-  width: 960px;
-  min-width: 720px;
-  max-width: 94vw;
-  height: 82vh;
-  min-height: 540px;
-  max-height: 92vh;
+  width: 1200px;
+  max-width: 96vw;
+  height: 760px;
+  max-height: 96vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .xec-header {
@@ -1093,7 +1107,7 @@ button.pc-btn.outline,
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
   gap: 6px 10px;
-  max-height: 132px;
+  max-height: 168px;
   overflow-y: auto;
   padding: 10px 12px;
   background: var(--surface);
