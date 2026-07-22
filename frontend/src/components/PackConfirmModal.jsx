@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react'
 import Toggle from './Toggle'
+import { getElectronAPI } from '../utils'
 import '../settings-printer.css'
 
 // 分隔符号选项（用于压缩包重命名）
@@ -77,6 +78,27 @@ const PackConfirmModal = ({
   const handlePackArchiveNameDateFormatChange = (val) => { setPackArchiveNameDateFormat(val); updatePackSettings('packArchiveNameDateFormat', val) }
   const handlePackArchiveNameSeparatorChange = (val) => { setPackArchiveNameSeparator(val); updatePackSettings('packArchiveNameSeparator', val) }
   const handlePackNameFieldOrderChange = (newOrder) => { setPackNameFieldOrder(newOrder); updatePackSettings('packNameFieldOrder', newOrder) }
+
+  // 选择目标文件夹
+  const selectPackFolder = async () => {
+    const api = getElectronAPI()
+    if (!api?.ipcRenderer) return
+    try {
+      const result = await api.ipcRenderer.invoke('show-open-dialog', {
+        properties: ['openDirectory'],
+      })
+      if (result && result.filePaths && result.filePaths.length > 0) {
+        handlePackTargetFolderChange(result.filePaths[0])
+      }
+    } catch (err) {
+      console.warn('[PackConfirmModal] 选择文件夹失败:', err)
+    }
+  }
+
+  // 清除文件夹设置
+  const clearPackFolder = () => {
+    handlePackTargetFolderChange('')
+  }
 
   if (!visible) return null
 
@@ -374,7 +396,58 @@ const PackConfirmModal = ({
                 }}>
                   {packTargetFolder || '未设置 — 打包时弹出选择文件夹对话框'}
                 </div>
+                <button
+                  onClick={selectPackFolder}
+                  style={{
+                    padding: '7px 16px',
+                    fontSize: '12px',
+                    fontWeight: 500,
+                    borderRadius: 'var(--r-sm)',
+                    border: 'none',
+                    background: 'var(--accent-gradient)',
+                    color: '#fff',
+                    cursor: 'pointer',
+                    fontFamily: 'inherit',
+                    whiteSpace: 'nowrap',
+                    transition: 'all 0.15s ease',
+                    boxShadow: '0 2px 6px rgba(79,124,255,0.25)',
+                    minHeight: '32px',
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.transform = 'translateY(-0.5px)'
+                    e.currentTarget.style.boxShadow = '0 3px 8px rgba(79,124,255,0.3)'
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.transform = 'translateY(0)'
+                    e.currentTarget.style.boxShadow = '0 2px 6px rgba(79,124,255,0.25)'
+                  }}
+                >
+                  选择文件夹
+                </button>
               </div>
+
+              {packTargetFolder && (
+                <button
+                  onClick={clearPackFolder}
+                  style={{
+                    alignSelf: 'flex-start',
+                    fontSize: '11px',
+                    color: 'var(--text-4)',
+                    background: 'none',
+                    border: 'none',
+                    cursor: 'pointer',
+                    padding: '2px 0',
+                    textDecoration: 'underline',
+                    textUnderlineOffset: '2px',
+                    fontFamily: 'inherit',
+                    transition: 'color 0.15s ease',
+                  }}
+                  onMouseEnter={(e) => e.currentTarget.style.color = 'var(--text-2)'}
+                  onMouseLeave={(e) => e.currentTarget.style.color = 'var(--text-4)'}
+                >
+                  清除设置，恢复弹框选择
+                </button>
+              )}
 
               <div className="printer-hint" style={{ marginTop: '6px' }}>设置后打包将直接输出到此文件夹；不设置则弹出选择文件夹对话框。</div>
             </div>
