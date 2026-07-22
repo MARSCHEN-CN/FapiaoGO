@@ -28,6 +28,7 @@ import { buildFileObj } from './utils/fileHelpers'
 import { getForcedLandscape } from './utils/mergeMode'
 
 import { useSettings } from './hooks/useSettings'
+import { useExcelExportSettings } from './hooks/useExcelExportSettings'
 import { useSort } from './hooks/useSort'
 import { usePreview } from './hooks/usePreview'
 import { useFileOps } from './hooks/useFileOps'
@@ -115,6 +116,9 @@ function AppContent() {
     settingsWindowOpen, setSettingsWindowOpen,
     printers, setPrinters, openSettings,
   } = useSettings(electronAPIRef)
+
+  // Excel 导出字段选择持久化（Commit 4B）
+  const excelExportSettings = useExcelExportSettings(electronAPIRef)
 
   const {
     sortBy, sortOrder, toggleSort, sortByRef, sortOrderRef,
@@ -1077,6 +1081,8 @@ function AppContent() {
         <ExcelExportFieldsModal
           visible={showExcelFields}
           files={files.filter(f => f.status === 'parsed')}
+          initialColumns={excelExportSettings.columns}
+          onPersist={excelExportSettings.persist}
           onConfirm={(cols) => {
             setShowExcelFields(false)
             handleExportExcel(cols)

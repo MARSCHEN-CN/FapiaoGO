@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { EXCEL_COLUMNS, ALL_KEYS, visibleColumns, INVOICE_LEVEL_KEYS } from '../export/excelColumns.js'
 import { computeTotals, countInvoices } from '../export/excelTotals.js'
 import { groupInvoiceRows } from '../export/invoiceIdentity.js'
@@ -11,24 +11,44 @@ import { BACKEND_URL } from '../config'
  * 预览数据来自后端 `/api/export-excel-rows`（与最终导出同一 `_db_record_to_export`
  * 输出），保证「预览 = 导出数据源」。
  *
- * 边界（v2.1 Commit 3）：
- *   - 不接 Settings 持久化（那是 Commit 4B），selected 默认 23/23 全选。
- *   - 不接 ActionBar / App（那是 Commit 4A）。
+ * 边界（v2.1）：
+ *   - Commit 4B 已接 Settings 持久化：弹窗打开时以持久化勾选为准，否则默认 23/23 全选。
+ *     勾选变化经 onPersist 防抖写回 Settings.json.excelExport.columns。
  *
  * Props:
- *   visible:   boolean            是否渲染
- *   files:     Array              已选文件列表（用于推导 fileNames 拉取预览行）
- *   onConfirm: (columns) => void   确认导出，columns 含 {key,label,width,virtual}
- *   onCancel:  () => void          取消
+ *   visible:        boolean            是否渲染
+ *   files:          Array              已选文件列表（用于推导 fileNames 拉取预览行）
+ *   initialColumns: Set<string> | null 已持久化的勾选 keys；null/undefined 时回落默认全选
+ *   onPersist:      (keys: Set) => void 勾选变化时防抖持久化
+ *   onConfirm:      (columns) => void   确认导出，columns 含 {key,label,width,virtual}
+ *   onCancel:       () => void          取消
  */
 const ExcelExportFieldsModal = ({
   visible,
   files = [],
+  initialColumns,
+  onPersist,
   onConfirm,
   onCancel,
 }) => {
-  // 默认 23/23 全选（保持现有导出结果）；持久化在 Commit 4B 接入
+  // 默认 23/23 全选（保持现有导出结果）；若已持久化则弹窗打开时以持久化为准
   const [selected, setSelected] = useState(() => new Set(ALL_KEYS))
+  const selectedRef = useRef(selected)
+  // 每次打开只初始化一次：以持久化勾选为准，避免覆盖用户会话内的勾选
+  const initRef = useRef(false)
+  useEffect(() => {
+    if (visible && !initRef.current) {
+      setSelected(initialColumns ? new Set(initialColumns) : new Set(ALL_KEYS))
+      initRef.current = true
+    } else if (!visible) {
+      initRef.current = false
+    }
+  }, [visible, initialColumns])
+
+  // 保持 selectedRef 与渲染态同步（initRef 经 setSelected 改值后亦需同步，避免 toggle 基于旧值计算）
+  useEffect(() => {
+    selectedRef.current = selected
+  }, [selected])
   const [rows, setRows] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
@@ -92,17 +112,23 @@ const ExcelExportFieldsModal = ({
   const totals = useMemo(() => computeTotals(rows, visibleCols), [rows, visibleCols])
   const invoiceCount = useMemo(() => countInvoices(rows), [rows])
 
-  const toggleKey = useCallback((key) => {
-    setSelected((prev) => {
-      const next = new Set(prev)
-      if (next.has(key)) next.delete(key)
-      else next.add(key)
-      return next
-    })
-  }, [])
+  // 同步更新 state + ref 并触发持久化（Commit 4B）
+  const applySelection = useCallback((next) => {
+    selectedRef.current = next
+    setSelected(next)
+    if (onPersist) onPersist(next)
+  }, [onPersist])
 
-  const selectAll = useCallback(() => setSelected(new Set(ALL_KEYS)), [])
-  const clearAll = useCallback(() => setSelected(new Set()), [])
+  const toggleKey = useCallback((key) => {
+    const prev = selectedRef.current
+    const next = new Set(prev)
+    if (next.has(key)) next.delete(key)
+    else next.add(key)
+    applySelection(next)
+  }, [applySelection])
+
+  const selectAll = useCallback(() => applySelection(new Set(ALL_KEYS)), [applySelection])
+  const clearAll = useCallback(() => applySelection(new Set()), [applySelection])
 
   const handleConfirm = useCallback(() => {
     if (visibleCols.length === 0) return

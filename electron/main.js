@@ -921,14 +921,28 @@ async function writeSettingsFile(settings) {
   await fs.promises.writeFile(settingsPath, JSON.stringify(settings, null, 2), 'utf-8')
 }
 
+// 安全读取 Settings.json（文件不存在/解析失败返回 {}），供合并写回使用
+async function readSettingsFileSafe() {
+  try {
+    const data = await fs.promises.readFile(settingsPath, 'utf-8')
+    const parsed = JSON.parse(data)
+    return parsed && typeof parsed === 'object' ? parsed : {}
+  } catch (_) {
+    return {}
+  }
+}
+
 // --- 打印设置加载与保存 ---
 ipcMain.handle('save-print-settings', async (event, settings) => {
   try {
     console.log('保存打印设置:', settings)
-    await writeSettingsFile(settings)
+    // read-modify-write：合并而非整体覆盖，避免清掉其它子配置（如 excelExport.columns）
+    const existing = await readSettingsFileSafe()
+    const merged = { ...existing, ...settings }
+    await writeSettingsFile(merged)
     // ✅ 立即通知主窗口设置已变化（尤其是 mergeMode）
     if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('settings-changed', settings)
+      mainWindow.webContents.send('settings-changed', merged)
     }
     return { success: true }
   } catch (error) {
@@ -971,6 +985,34 @@ ipcMain.handle('load-print-settings', async () => {
     return parsed
   } catch (error) {
     return {}
+  }
+})
+
+// ============================
+// Excel 导出字段选择持久化（Commit 4B）
+// 挂在 Settings.json.excelExport.columns 下（string[]）。read-modify-write 避免覆盖打印等其它子配置。
+// ============================
+ipcMain.handle('save-excel-export-columns', async (event, columns) => {
+  try {
+    if (!Array.isArray(columns)) return { success: false, error: 'columns must be an array' }
+    const existing = await readSettingsFileSafe()
+    existing.excelExport = { ...(existing.excelExport || {}), columns }
+    await writeSettingsFile(existing)
+    return { success: true }
+  } catch (error) {
+    return { success: false, error: error.message }
+  }
+})
+
+ipcMain.handle('load-excel-export-columns', async () => {
+  try {
+    const existing = await readSettingsFileSafe()
+    if (existing.excelExport && Array.isArray(existing.excelExport.columns)) {
+      return existing.excelExport.columns
+    }
+    return null
+  } catch (error) {
+    return null
   }
 })
 
