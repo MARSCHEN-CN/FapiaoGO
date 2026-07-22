@@ -1,5 +1,16 @@
 import { getInvoiceIdentity } from './invoiceIdentity.js'
 
+// 货币 2 位取整（修复浮点累加误差，如 28.94 + 49513.01 = 49541.950000000004）。
+// 采用「分币整数 + epsilon」而非 Math.round(x*100)，规避 1.005*100=100.4999… 的经典坑；
+// 与后端 excel_exporter 的 float(round(Decimal, 2)) 在 2 位精度下结果一致，保证「预览 == 导出」。
+export function roundMoney(n) {
+  const v = Number(n)
+  if (!Number.isFinite(v)) return 0
+  const sign = v < 0 ? -1 : 1
+  const cents = Math.round((Math.abs(v) + 1e-9) * 100)
+  return sign * cents / 100
+}
+
 // 计算合计行数值。
 //
 // @param {Array<Object>} rows        预览行（来自 /api/export-excel-rows 同源数据）
@@ -27,6 +38,10 @@ export function computeTotals(rows, visibleCols) {
       else if (c.total === 'line') acc[c.key] += v
     }
     seen.add(id)
+  }
+  // 货币字段 2 位取整，消除浮点累加误差（与后端合计 round 对齐）
+  for (const k of Object.keys(acc)) {
+    acc[k] = roundMoney(acc[k])
   }
   return acc
 }

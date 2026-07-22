@@ -5,7 +5,7 @@ import assert from 'node:assert/strict'
 
 import { EXCEL_COLUMNS, ALL_KEYS, VIRTUAL_KEYS, visibleColumns } from './excelColumns.js'
 import { getInvoiceIdentity, groupInvoiceRows } from './invoiceIdentity.js'
-import { computeTotals, countInvoices } from './excelTotals.js'
+import { computeTotals, countInvoices, roundMoney } from './excelTotals.js'
 
 // 后端 _db_record_to_export 实际产出的 row key 集合（Commit 1 已锁定，同源保证）
 const BACKEND_ROW_KEYS = new Set([
@@ -61,6 +61,26 @@ test('computeTotals：发票级去重 + 行级全加', () => {
   assert.equal(t.totalAmount, 330)
   assert.equal(t.lineAmount, 300) // 60+40+200 全加
   assert.equal(t.lineTax, 30)
+})
+
+test('computeTotals 浮点累加取整（行级 28.94 + 49513.01 → 49541.95，非 49541.950000000004）', () => {
+  // 复现真实场景：行级「金额」(lineAmount) 两行明细累加触发浮点误差
+  const rows = [
+    { invoiceNumber: 'A', lineAmount: 28.94 },
+    { invoiceNumber: 'A', lineAmount: 49513.01 },
+  ]
+  const cols = EXCEL_COLUMNS.filter((c) => ['lineAmount'].includes(c.key))
+  const t = computeTotals(rows, cols)
+  // 行级字段每行累加，必须得到干净 2 位小数（与后端 Decimal 合计一致）
+  assert.equal(t.lineAmount, 49541.95)
+  assert.ok(Number.isInteger(Math.round(t.lineAmount * 100)), '合计应为 2 位精度数值')
+})
+
+test('roundMoney 规避 1.005*100=100.4999 的经典坑，且保持正负', () => {
+  assert.equal(roundMoney(1.005), 1.01) // 朴素 Math.round(1.005*100)=100 会错
+  assert.equal(roundMoney(0.1 + 0.2), 0.3)
+  assert.equal(roundMoney(-28.94 - 49513.01), -49541.95)
+  assert.equal(roundMoney('49541.950000000004'), 49541.95)
 })
 
 test('countInvoices 唯一发票数', () => {
