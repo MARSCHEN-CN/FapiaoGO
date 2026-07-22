@@ -146,3 +146,72 @@ def test_multiple_image_commands_share_one_sheet_page():
     finally:
         os.remove(p1)
         os.remove(p2)
+
+
+def test_pdf_repeated_source_read_once_and_passthrough():
+    # P2-8: a multi-page PDF exported page-by-page must read the source file
+    # from disk only ONCE (cached), while still inserting each selected page
+    # as passthrough (vectors/text/size preserved).
+    import services.export_render_service as ers
+    pdf = _make_pdf(n_pages=3)
+    try:
+        calls = {"n": 0}
+        real_read = ers.read_source_bytes
+
+        def counting_read(src_ref):
+            if src_ref.get("path") == pdf:
+                calls["n"] += 1
+            return real_read(src_ref)
+
+        mp = pytest.MonkeyPatch()
+        mp.setattr(ers, "read_source_bytes", counting_read)
+        try:
+            data = execute_export_render([
+                _pdf_command(pdf, page=0),
+                _pdf_command(pdf, page=1),
+                _pdf_command(pdf, page=2),
+            ])
+        finally:
+            mp.undo()
+
+        assert calls["n"] == 1, "same source referenced 3x must be read from disk once"
+        doc = fitz.open(stream=data)
+        try:
+            assert len(doc) == 3, "all 3 selected pages must be present"
+            for i in range(3):
+                assert (int(doc[i].rect.width), int(doc[i].rect.height)) == (595, 842)
+        finally:
+            doc.close()
+    finally:
+        os.remove(pdf)
+
+
+def test_image_repeated_source_read_once_on_shared_sheet():
+    # P2-8 (image path): the same image source referenced by two commands on the
+    # shared sheet must be read from disk only ONCE.
+    import services.export_render_service as ers
+    png = _make_png()
+    try:
+        calls = {"n": 0}
+        real_read = ers.read_source_bytes
+
+        def counting_read(src_ref):
+            if src_ref.get("path") == png:
+                calls["n"] += 1
+            return real_read(src_ref)
+
+        mp = pytest.MonkeyPatch()
+        mp.setattr(ers, "read_source_bytes", counting_read)
+        try:
+            data = execute_export_render([_image_command(png), _image_command(png)])
+        finally:
+            mp.undo()
+
+        assert calls["n"] == 1, "same image source referenced 2x must be read once"
+        doc = fitz.open(stream=data)
+        try:
+            assert len(doc) == 1, "scheme B: one shared sheet page"
+        finally:
+            doc.close()
+    finally:
+        os.remove(png)

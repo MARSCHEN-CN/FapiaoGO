@@ -63,25 +63,31 @@ def _create_sheet_page(doc, paper):
     return doc.new_page(width=pw, height=ph)
 
 
-def _append_pdf_source(doc, source_bytes, page):
+def _append_pdf_source(doc, source_bytes, page, pdf_doc=None):
     """Insert a single PDF page via fitz.insert_pdf (passthrough, no re-raster).
 
     insert_pdf preserves the source vector content -- the whole point of the
     D3-3 split (Case 1/2: PDF stays PDF). We insert only the page the command
     selected (sourceRef.page), keeping the 1-command -> 1-output-page mapping
     consistent with the image path.
+
+    pdf_doc: optional already-open fitz.Document owned by the caller (used when
+    the same source is referenced by several commands, so it is read + parsed
+    only once). When omitted, source_bytes is opened+closed here (per-command).
     """
-    src_doc = fitz.open(stream=source_bytes)
+    owned = pdf_doc is None
+    src_doc = pdf_doc if pdf_doc is not None else fitz.open(stream=source_bytes)
     try:
         n = len(src_doc)
         if page < 0 or page >= n:
             page = 0
         doc.insert_pdf(src_doc, from_page=page, to_page=page)
     finally:
-        src_doc.close()
+        if owned:
+            src_doc.close()
 
 
-def render_sheet_commands(doc, command_group):
+def render_sheet_commands(doc, command_group, source_cache=None, repeated=None):
     """Draw a GROUP of image RenderCommands onto ONE shared sheet page.
 
     Scheme B: one request == one sheet. This is the same-sheet executor entry
@@ -103,10 +109,21 @@ def render_sheet_commands(doc, command_group):
                     PDF source sneaking into a sheet group.
         FileNotFoundError: source path does not exist (from the source adapter).
     """
+    if source_cache is None:
+        source_cache = {}
     sheet_page = None
     for command in command_group:
         src_ref = command.get('sourceRef') or {}
-        source_bytes = read_source_bytes(src_ref)  # may raise ValueError/FileNotFoundError
+        path = src_ref.get('path')
+        # Only consult the cache for sources referenced by >1 command (see
+        # execute_export_render). Distinct sources are read once on demand, so
+        # peak memory stays identical to the pre-cache behavior.
+        use_cache = repeated is None or path in repeated
+        source_bytes = source_cache.get(path) if (use_cache and path in source_cache) else None
+        if source_bytes is None:
+            source_bytes = read_source_bytes(src_ref)  # may raise ValueError/FileNotFoundError
+            if use_cache:
+                source_cache[path] = source_bytes
         if _detect_source_kind(source_bytes) == 'pdf':
             raise ValueError(
                 "PDF source cannot be composited onto a shared sheet; route it "
@@ -142,6 +159,18 @@ def execute_export_render(commands, progress=None):
         swallow source errors here.
     """
     doc = fitz.open()
+    # Sources referenced by more than one command (e.g. exporting several pages
+    # of one multi-page PDF) are read from disk + parsed only ONCE and reused.
+    # Distinct sources keep the original per-command read (no extra memory held
+    # for the whole request), so this is strictly non-regressive on memory.
+    _path_counts = {}
+    for cmd in commands:
+        p = (cmd.get('sourceRef') or {}).get('path')
+        if p:
+            _path_counts[p] = _path_counts.get(p, 0) + 1
+    _repeated = {p for p, c in _path_counts.items() if c > 1}
+    _source_cache = {}      # path -> bytes (repeated sources only)
+    _pdf_doc_cache = {}     # path -> fitz.Document (repeated PDF sources only)
     try:
         # Route: sniff KIND cheaply (5 bytes) and split into the same-sheet image
         # group vs the PDF passthrough list. Full bytes are read once later.
@@ -158,12 +187,27 @@ def execute_export_render(commands, progress=None):
                 image_group.append(cmd)
 
         if image_group:
-            render_sheet_commands(doc, image_group)
+            render_sheet_commands(doc, image_group, _source_cache, _repeated)
 
         for cmd in pdf_items:
             src_ref = cmd.get('sourceRef') or {}
+            path = src_ref.get('path')
+            page = int(src_ref.get('page', 0) or 0)
+            cached_doc = _pdf_doc_cache.get(path)
+            if cached_doc is not None:
+                # Same source reused by another command: insert its page from the
+                # already-open doc (no disk read, no re-parse).
+                _append_pdf_source(doc, None, page, pdf_doc=cached_doc)
+                continue
             source_bytes = read_source_bytes(src_ref)
-            _append_pdf_source(doc, source_bytes, int(src_ref.get('page', 0) or 0))
+            if path in _repeated:
+                # Open once, keep for sibling commands, close in finally below.
+                src_doc = fitz.open(stream=source_bytes)
+                _pdf_doc_cache[path] = src_doc
+                _append_pdf_source(doc, None, page, pdf_doc=src_doc)
+            else:
+                # Distinct source: original per-command open/close (no retained memory).
+                _append_pdf_source(doc, source_bytes, page)
 
         if progress:
             for cmd in commands:
@@ -172,5 +216,7 @@ def execute_export_render(commands, progress=None):
 
         data = doc.tobytes()
     finally:
+        for sd in _pdf_doc_cache.values():
+            sd.close()
         doc.close()
     return data
