@@ -31,6 +31,7 @@ import os
 import threading
 import uuid
 import shutil
+import atexit
 from threading import Timer as _Timer
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
@@ -335,6 +336,13 @@ def flush_oplog_buffer() -> None:
     """公开接口：立即将 oplog 缓冲区刷盘（批量操作后可主动调用）"""
     with _rw_lock.gen_wlock():
         _flush_oplog_buffer_locked()
+
+
+# 进程正常退出时强制刷盘（atexit）：oplog 写路径有 0.5s 缓冲 Timer，
+# 若进程在写入后 0.5s 内退出（守护 Timer 随解释器退出被杀），缓冲条目会丢失，
+# 导致重启后 _invoices=0 / 详情 404。注册 atexit 保证正常退出（sys.exit / 自然结束）
+# 时落盘；不含 SIGKILL 等强杀场景。必须在 flush_oplog_buffer 定义之后注册。
+atexit.register(flush_oplog_buffer)
 
 
 def _rebuild_indexes() -> None:
