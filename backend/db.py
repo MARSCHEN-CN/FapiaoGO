@@ -526,28 +526,25 @@ def _replay_oplog() -> None:
                 data = entry.get("data") or {}
 
                 if op == "upsert":
-                    hash_val = data.get("hash_sha256")
-                    if hash_val and hash_val in _invoice_index_by_hash:
-                        idx = _invoice_index_by_hash[hash_val]
-                        _invoices[idx].update({
-                            k: v for k, v in data.items()
-                            if k not in ("id", "created_at", "deleted_at")
-                        })
-                    else:
-                        # 归一化：历史 oplog 中 data["id"] 为 int
-                        if not isinstance(data.get("id"), str):
-                            data["id"] = str(data.get("id"))
-                        _invoices.append(data)
-                        # 维护索引，使同批后续 oplog 操作能定位刚追加的记录
-                        _idx = len(_invoices) - 1
-                        if data.get("id"):
-                            _invoice_index_by_id[data["id"]] = _idx
-                        if data.get("hash_sha256"):
-                            _invoice_index_by_hash[data["hash_sha256"]] = _idx
-                        if data.get("file_name"):
-                            _invoice_index_by_filename[invoice_index_key(data["file_name"])] = _idx
-                        if data.get("number"):
-                            _invoice_index_by_number.setdefault(str(data["number"]), []).append(_idx)
+                    # oplog 中每条 "upsert" 对应 upsert_invoice 的一次「新建」记录
+                    # （含重复标记 is_duplicate/duplicate_of）。回放必须 append，
+                    # 不得按 hash_sha256 合并 —— 否则重启会重新触发 identity merge，
+                    # 内容重复的两份文件再次塌缩成一条，使保留文件查不到（与
+                    # 2026-07-22 修复的写入路径保持一致；同文件重解析走 "update" op）。
+                    # 归一化：历史 oplog 中 data["id"] 可能为 int
+                    if not isinstance(data.get("id"), str):
+                        data["id"] = str(data.get("id"))
+                    _invoices.append(data)
+                    # 维护索引，使同批后续 oplog 操作能定位刚追加的记录
+                    _idx = len(_invoices) - 1
+                    if data.get("id"):
+                        _invoice_index_by_id[data["id"]] = _idx
+                    if data.get("hash_sha256"):
+                        _invoice_index_by_hash[data["hash_sha256"]] = _idx
+                    if data.get("file_name"):
+                        _invoice_index_by_filename[invoice_index_key(data["file_name"])] = _idx
+                    if data.get("number"):
+                        _invoice_index_by_number.setdefault(str(data["number"]), []).append(_idx)
 
                 elif op == "update":
                     if entry_id in _invoice_index_by_id:
@@ -897,24 +894,41 @@ def upsert_invoice(row: Dict) -> Dict:
         row['file_name'] = normalize_filename(row['file_name'])
 
     with _rw_lock.gen_wlock():
-        # 按 hash 去重（使用索引）
+        # 内容去重策略（2026-07-22 修订，fix duplicate invoice identity）：
+        #   hash 命中不再「覆盖旧记录」，而是区分两种语义，保证 File Entity 与
+        #   Invoice Data 的 identity 不被合并：
+        #   1) 同 hash 且同 file_name → 视为同一文件重新解析，原地刷新字段
+        #      （保留 id，兼容重命名回填 upsert）。
+        #   2) 同 hash 但不同 file_name → 视为「内容重复的另一份文件」，新建独立
+        #      记录并标记 duplicate 关系（is_duplicate=1, duplicate_of=原件 id），
+        #      不覆盖原件 file_name、不污染原件索引。hash 索引保持指向原件（root），
+        #      使所有重复文件都链回原件，且各自可用自身 file_name 查询。
+        #   3) 同 hash 但原件已软删 → 当作新的原件创建（is_duplicate=0），接管 hash 索引。
         hash_val = row.get('hash_sha256')
+        duplicate_of_id = None
         if hash_val and hash_val in _invoice_index_by_hash:
-            idx = _invoice_index_by_hash[hash_val]
-            inv = _invoices[idx]
-            if not inv.get('deleted_at'):
-                # 用新解析数据覆盖旧记录（保留内部元数据）
-                for key, value in row.items():
-                    if key not in _PRESERVED_KEYS:
-                        inv[key] = value
-                inv['updated_at'] = now_str
-                _refresh_search_text(inv)
-                _append_oplog("update", inv['id'], {k: v for k, v in row.items() if k not in _PRESERVED_KEYS})
-                _maybe_compact()
-                _invalidate_search_cache()
-                return {'id': inv['id'], 'is_new': False}
+            idx0 = _invoice_index_by_hash[hash_val]
+            orig = _invoices[idx0]
+            if not orig.get('deleted_at'):
+                new_file_name = invoice_index_key(row['file_name']) if row.get('file_name') else None
+                orig_file_name = invoice_index_key(orig['file_name']) if orig.get('file_name') else None
+                if new_file_name and new_file_name == orig_file_name:
+                    # 情况 1：同一文件重新解析 → 原地刷新（保留旧行为）
+                    for key, value in row.items():
+                        if key not in _PRESERVED_KEYS:
+                            orig[key] = value
+                    orig['updated_at'] = now_str
+                    _refresh_search_text(orig)
+                    _append_oplog("update", orig['id'], {k: v for k, v in row.items() if k not in _PRESERVED_KEYS})
+                    _maybe_compact()
+                    _invalidate_search_cache()
+                    return {'id': orig['id'], 'is_new': False}
 
-        # 新建记录
+                # 情况 2：内容重复的另一份文件 → 标记后走下方新建分支
+                duplicate_of_id = orig['id']
+            # 情况 3（原件已软删）duplicate_of_id 保持 None，下方作为新原件创建
+
+        # 新建记录（含情况 2 的重复标记；情况 3 接管为新的原件）
         new_id = uuid.uuid4().hex
         new_invoice = {
             **row,
@@ -922,25 +936,27 @@ def upsert_invoice(row: Dict) -> Dict:
             'created_at': now_str,
             'updated_at': now_str,
             'deleted_at': None,
-            'is_duplicate': 0,
-            'duplicate_of': None,
+            'is_duplicate': 1 if duplicate_of_id else 0,
+            'duplicate_of': duplicate_of_id,
         }
         _invoices.append(new_invoice)
         # 更新索引
         idx = len(_invoices) - 1
         if new_invoice.get('id'):
             _invoice_index_by_id[new_invoice['id']] = idx
-        if new_invoice.get('hash_sha256'):
-            _invoice_index_by_hash[new_invoice['hash_sha256']] = idx
         if new_invoice.get('file_name'):
             _invoice_index_by_filename[invoice_index_key(new_invoice['file_name'])] = idx
         if new_invoice.get('number'):
             _invoice_index_by_number.setdefault(str(new_invoice['number']), []).append(idx)
+        # hash 索引：仅当「非指向活跃原件的重复」才接管为最新记录
+        # （情况 2 保持指向 root；情况 3 接管为新的 root）
+        if new_invoice.get('hash_sha256') and not duplicate_of_id:
+            _invoice_index_by_hash[new_invoice['hash_sha256']] = idx
         _refresh_search_text(new_invoice)
         _append_oplog("upsert", new_id, new_invoice)
         _maybe_compact()
         _invalidate_search_cache()
-        return {'id': new_id, 'is_new': True}
+        return {'id': new_id, 'is_new': True, 'is_duplicate': bool(duplicate_of_id)}
 
 
 def batch_upsert_invoices(rows: List[Dict]) -> List[Dict]:
@@ -976,19 +992,27 @@ def batch_upsert_invoices(rows: List[Dict]) -> List[Dict]:
     with _rw_lock.gen_wlock():
         for row in rows:
             hash_val = row.get('hash_sha256')
+            duplicate_of_id = None
             if hash_val and hash_val in _invoice_index_by_hash:
-                idx = _invoice_index_by_hash[hash_val]
-                inv = _invoices[idx]
-                if not inv.get('deleted_at'):
-                    for key, value in row.items():
-                        if key not in _PRESERVED_KEYS:
-                            inv[key] = value
-                    inv['updated_at'] = now_str
-                    _refresh_search_text(inv)
-                    _append_oplog("update", inv['id'],
-                                  {k: v for k, v in row.items() if k not in _PRESERVED_KEYS})
-                    results.append({'id': inv['id'], 'is_new': False})
-                    continue
+                idx0 = _invoice_index_by_hash[hash_val]
+                orig = _invoices[idx0]
+                if not orig.get('deleted_at'):
+                    new_file_name = row.get('file_name')
+                    orig_file_name = orig.get('file_name')
+                    if new_file_name and new_file_name == orig_file_name:
+                        # 同一文件重新解析 → 原地刷新（保留旧行为）
+                        for key, value in row.items():
+                            if key not in _PRESERVED_KEYS:
+                                orig[key] = value
+                        orig['updated_at'] = now_str
+                        _refresh_search_text(orig)
+                        _append_oplog("update", orig['id'],
+                                      {k: v for k, v in row.items() if k not in _PRESERVED_KEYS})
+                        results.append({'id': orig['id'], 'is_new': False})
+                        continue
+                    # 内容重复的另一份文件 → 标记后走下方新建分支
+                    duplicate_of_id = orig['id']
+                # 原件已软删 → duplicate_of_id 保持 None，下方作为新原件创建
 
             new_id = uuid.uuid4().hex
             new_invoice = {
@@ -997,22 +1021,22 @@ def batch_upsert_invoices(rows: List[Dict]) -> List[Dict]:
                 'created_at': now_str,
                 'updated_at': now_str,
                 'deleted_at': None,
-                'is_duplicate': 0,
-                'duplicate_of': None,
+                'is_duplicate': 1 if duplicate_of_id else 0,
+                'duplicate_of': duplicate_of_id,
             }
             _invoices.append(new_invoice)
             idx = len(_invoices) - 1
             if new_invoice.get('id'):
                 _invoice_index_by_id[new_invoice['id']] = idx
-            if new_invoice.get('hash_sha256'):
-                _invoice_index_by_hash[new_invoice['hash_sha256']] = idx
             if new_invoice.get('file_name'):
                 _invoice_index_by_filename[invoice_index_key(new_invoice['file_name'])] = idx
             if new_invoice.get('number'):
                 _invoice_index_by_number.setdefault(str(new_invoice['number']), []).append(idx)
+            if new_invoice.get('hash_sha256') and not duplicate_of_id:
+                _invoice_index_by_hash[new_invoice['hash_sha256']] = idx
             _refresh_search_text(new_invoice)
             _append_oplog("upsert", new_id, new_invoice)
-            results.append({'id': new_id, 'is_new': True})
+            results.append({'id': new_id, 'is_new': True, 'is_duplicate': bool(duplicate_of_id)})
 
         # 批量操作后主动 flush + 单次压缩检查
         _flush_oplog_buffer_locked()
