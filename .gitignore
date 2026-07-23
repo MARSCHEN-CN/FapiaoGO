@@ -29,6 +29,9 @@ test_fixtures/
 # 仅放行 contract 子目录；其余前端 *.test.js 仍按仓库既有规则忽略。
 !frontend/tests/contract/
 !frontend/tests/contract/**
+# IS-1 验收 harness（前端编排层）：与 contract 同策略，刻意纳入版本控制
+!frontend/tests/acceptance/
+!frontend/tests/acceptance/**
 mimo.exe
 
 # 前端依赖与构建产物
