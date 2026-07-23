@@ -19,7 +19,7 @@ import { runParseTask } from '../runners/parseRunner'
 import { runSplitTask } from '../runners/splitRunner'
 import { runFallbackParseTask } from '../runners/fallbackParseRunner'
 import { mapParseResultToFileUpdate } from '../mappers/parseResultMapper'
-import { createImportSession, addFilesToSession, replaceFileItems, updateProgress, updateSessionStatus, updateFileError } from '../stores/ImportSessionStore'
+import { createImportSession, addFilesToSession, replaceFileItems, updateProgress, updateSessionStatus, updateFileError, addChildBatch, getChildBatchIds, attachFilesToBatch } from '../stores/ImportSessionStore'
 import { ensureDocumentFromFileObj, flushDocumentNotifications, getDocument } from '../stores/DocumentStore'
 import { processImportedFiles } from '../processors/invoicePostProcessor'
 import { consumeParseResult } from '../consumers/parseResultConsumer'
@@ -437,12 +437,13 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
       setTaskAbortController(task.id, abortController)
       updateTaskStatus(task.id, 'running')
 
+      // 声明在 try 之外，供 catch 块访问（提交阶段致命失败时用 loopIndex 计算未提交 chunk 范围）
+      let loopIndex = 0
       try {
         // IS-1 Commit 2: 顺序分块提交（合同 §4：顺序，不并行）。
         // 一次用户导入 = 一个 session 聚合多个 batch；后端 SUBMIT_WINDOW=50 兜底背压。
         const eventSources = []
         const batchProgress = new Map() // batchId -> {current,total}
-        let loopIndex = 0
         // fileKeys 已达终态（parsed/error/cancelled）；abort 时只回退未达终态的文件
         const terminalFileKeys = new Set()
 
