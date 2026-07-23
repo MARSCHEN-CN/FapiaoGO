@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { getFileFormat } from '../utils'
 import { generateFileKey } from '../utils/fileHelpers'
+import { groupFilesByDocument } from '../utils/groupDocuments'
 
 export function useRenamePack({ files, settings, setFiles, parseFiles, parseProgress, electronAPIRef }) {
   const [packing, setPacking] = useState(false)
@@ -37,7 +38,11 @@ export function useRenamePack({ files, settings, setFiles, parseFiles, parseProg
     const ipc = electronAPIRef.current?.ipcRenderer
     if (!ipc) return
 
-    const filesToRename = files.filter(f => f.status === 'parsed')
+    // R2：document-level 聚合——多页 PDF 在 rename 预览中显示为 1 条（而非每页 1 条）。
+    // representative（pageNum 最小页）携带解析字段（invoiceNumber/amount 等）。
+    // 多页发票视作 1 个文件：所有页共享同一物理路径，confirm 只操作 representative。
+    const documentFiles = groupFilesByDocument(files)
+    const filesToRename = documentFiles.filter(f => f.status === 'parsed')
     if (filesToRename.length === 0) {
       setAlertModal({
         visible: true,
@@ -160,6 +165,8 @@ export function useRenamePack({ files, settings, setFiles, parseFiles, parseProg
     ipc.on('rename-progress', onProgress)
 
     try {
+      // R2：多页发票视作 1 个文件（所有页共享同一物理路径），只 rename representative。
+      // selectedKeys 来自 document-level 预览（groupFilesByDocument），已是 document 粒度。
       const filesToRename = files.filter(f => selectedKeys.includes(f.key) && f.status === 'parsed')
       const filesWithValidPath = filesToRename.filter(f => {
         const p = f.printPath || f.path || ''
