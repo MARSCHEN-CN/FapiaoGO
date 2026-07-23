@@ -23,6 +23,12 @@ const WHEEL_ZOOM_MIN = 10     // 最小 10%（相对 fit）
 const WHEEL_ZOOM_MAX = 500    // 最大 500%
 
 // ✅ 懒加载 PDF 渲染模块，避免首屏加载 1.4 MB 的 pdfjs-dist + react-pdf
+// ── Legacy boundary (Step 12.3) ──────────────────────────────────
+// renderers.js 仍有 3 个活跃消费者，不可移除：
+//   1. merge PreviewCanvas（renderMultipleItemsToCanvas 合成画布）
+//   2. image/OFD canvas（switchPreviewImage 绘制）
+//   3. PDF RE-blocked fallback（switchPreviewFile 回退渲染）
+// 打印链独立导入 renderers.js（usePrint / printRenderer），不经过此处。
 let _renderers = null
 async function getRenderers() {
   if (!_renderers) {
@@ -797,7 +803,10 @@ export function usePreview({ files, settings, electronAPIRef }) {
 
             // 按内容类型渲染
             if (previewFile._pdfData) {
-              // PDF：通过 pdfDocCache 加载 + page.render
+              // ── Legacy fallback (Step 12.3) ────────────────────────
+              // 正常 RE 注册 PDF 走 DocumentViewer（<img> 路径），不经过此处。
+              // 此分支仅在 RE 被 block（reBlockedDocId 匹配）时作为回退激活。
+              // 不可删除：RE 容灾场景仍需 pdf.js canvas 渲染。
               const pdfDoc = await getOrLoadPdfDocument(previewFile._pdfData)
               if (pdfDoc) {
                 await switchPreviewFile(pdfDoc, 1, signal, currentRotation)
@@ -1615,61 +1624,12 @@ export function usePreview({ files, settings, electronAPIRef }) {
   }, [doLoadPreview])
 
   // ============================
-  // Hover 预加载：低优先级，可取消
+  // Hover 预加载（已禁用）
   // ============================
-  const preloadHD = useCallback(async (fileObj) => {
-    if (!fileObj?.key || !fileObj.name) return
-    // ✅ 全局 Canvas 统一处理所有格式，切换零开销，无需预渲染
-    return
-    if (fullCacheRef.current.has(fileObj.key)) return
-    // 取消上一个预加载
-    if (currentPreloadRef.current) {
-      currentPreloadRef.current.abort()
-    }
-
-    const controller = new AbortController()
-    currentPreloadRef.current = controller
-    const preloadVersion = Date.now()
-
-    try {
-      // 加载预览数据（填充 previewLoadCache）
-      const loadedFile = await loadFilePreview(fileObj, null, null, controller.signal)
-      if (controller.signal.aborted) return
-
-      // 计算渲染参数（与 render effect 中单文件逻辑保持一致）
-      const contentOrient = detectDocumentOrientation(loadedFile)
-      const paper = resolvePaper(settings.paperSize, settings.customPaper)
-      const paperOrient = paper.widthMM > paper.heightMM ? 'landscape' : 'portrait'
-      const isLandscape = contentOrient !== paperOrient
-      const rotation = fileRotations[fileObj.key] || 0
-      const effectiveLandscape = (rotation % 180 !== 0) ? !isLandscape : isLandscape
-
-      if (controller.signal.aborted) return
-
-      const { renderMultipleItemsToCanvas } = await getRenderers()
-      const userMargins = {
-        left: settings.marginLeft ?? 3, right: settings.marginRight ?? 3,
-        top: settings.marginTop ?? 3, bottom: settings.marginBottom ?? 3,
-      }
-      const canvas = await renderMultipleItemsToCanvas(
-        [{ ...loadedFile }],
-        settings.paperSize || 'A4', PREVIEW_DPI, effectiveLandscape,
-        { [fileObj.key]: rotation },
-        1, false,
-        false,  // showSafeMargin
-        { strategy: 'vertical', userMargins, customPaper: settings.customPaper }
-      )
-
-      if (controller.signal.aborted) return
-      if (canvas) {
-        setFullCache(fileObj.key, canvas)
-      }
-    } catch (e) {
-      // 预加载失败非关键错误，静默处理
-    }
-  }, [loadFilePreview, settings.paperSize, fileRotations,
-      settings.marginLeft, settings.marginRight, settings.marginTop, settings.marginBottom,
-      settings.customPaper?.widthMM, settings.customPaper?.heightMM])
+  // Legacy no-op (Step 12.3)：全局 Canvas + RE <img> 路径切换零开销，无需预渲染。
+  // 保留函数签名因为 App.jsx 仍作为 handleHoverFile 传入 FileList。
+  // 当确认 FileList 不再消费此 prop 时可连同 App 解构一并移除。
+  const preloadHD = useCallback(async () => {}, [])
 
   // ✅ 保存 handlePreview 最新引用，避免 useEffect 闭包陷阱
   useEffect(() => {
@@ -1902,6 +1862,10 @@ export function usePreview({ files, settings, electronAPIRef }) {
 
     /**
      * 缩放状态
+     * ── Legacy only (Step 12.3) ──────────────────────────────────
+     * 仅服务 PreviewCanvas 路径（image/OFD/merge）。
+     * PDF 正常路径使用 useViewerState + ZoomToolbar（D2-4），不消费此组。
+     * 当 image/OFD 迁移到后端渲染后可移除。
      */
     zoom: {
       percent: zoomPercent,
