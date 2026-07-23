@@ -755,8 +755,10 @@ def _encode_pixmap(pix, fmt: str, quality: int, chroma: str):
 
     Returns a tuple (bytes, actual_fmt) so the caller can set the correct
     Content-Type even when the requested format is unavailable.
-    Some PyMuPDF builds (e.g. 1.27.x wheels on certain platforms) are
-    compiled WITHOUT webp support, so we transparently fall back to jpeg.
+
+    PyMuPDF ≥1.28 removed WebP from Pixmap.tobytes() valid formats, so WebP
+    encoding is delegated to Pillow.  If Pillow is unavailable or its WebP
+    codec is missing, we fall back to JPEG with an explicit warning.
     """
     if fmt in ("jpeg", "jpg"):
         return pix.tobytes("jpeg", jpg_quality=quality), "jpeg"
@@ -764,11 +766,14 @@ def _encode_pixmap(pix, fmt: str, quality: int, chroma: str):
         return pix.tobytes("png"), "png"
     if fmt == "webp":
         try:
-            return pix.tobytes("webp", lossless=False, quality=quality), "webp"
-        except Exception:
-            # PyMuPDF built without webp — fall back to jpeg transparently.
-            logger.warning("webp encoding unavailable in this PyMuPDF build; "
-                           "falling back to jpeg")
+            from PIL import Image as PILImage
+            mode = "RGBA" if pix.alpha else "RGB"
+            img = PILImage.frombytes(mode, (pix.width, pix.height), pix.samples)
+            buf = io.BytesIO()
+            img.save(buf, format="WEBP", quality=quality)
+            return buf.getvalue(), "webp"
+        except Exception as exc:
+            logger.warning("WebP encode failed, fallback to JPEG: %s", exc)
             return pix.tobytes("jpeg", jpg_quality=quality), "jpeg"
     # unknown format → png
     return pix.tobytes("png"), "png"
