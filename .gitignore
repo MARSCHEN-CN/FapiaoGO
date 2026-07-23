@@ -24,6 +24,11 @@ test_fixtures/
 !backend/tests/test_render_executor_samesheet.py
 !backend/tests/test_export_render_service_sheet.py
 !backend/tests/test_excel_export_columns.py
+
+# IS-1 契约回归测试（前端）：刻意纳入版本控制，与 backend/tests 白名单同策略
+# 仅放行 contract 子目录；其余前端 *.test.js 仍按仓库既有规则忽略。
+!frontend/tests/contract/
+!frontend/tests/contract/**
 mimo.exe
 
 # 前端依赖与构建产物
