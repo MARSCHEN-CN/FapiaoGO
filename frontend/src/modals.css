@@ -512,7 +512,7 @@ button.pc-btn.outline,
   background: #fef3c7; padding: 1px 6px; border-radius: 4px;
 }
 
-.rp-footer { justify-content: space-between; }
+.rp-footer { justify-content: space-between; border-top: none; }
 .rp-footer--result { justify-content: flex-end; }
 .rp-footer-info { font-size: 12px; }
 .rp-footer-warning { color: #d97706; }
