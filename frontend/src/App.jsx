@@ -144,8 +144,9 @@ function AppContent() {
   // D2-4.1：DocumentViewer 路径是否激活（与 DisplayAdapter 路由条件严格一致）。
   // 激活时 control-bar 的缩放控件改由 ZoomToolbar 渲染（状态源 useViewerState，经 controller
   // 桥接上抬），UI 位置保持在用户习惯的 control-bar；detail 按钮与方向控件保留。
-  // legacy 路径（图片/OFD）继续用旧 preview.zoom 工具栏。
+  // legacy 路径（图片/OFD/merge）继续用旧 preview.zoom 工具栏。
   const documentViewerActive = isPdfFile(previewFile) && activeDocument && activeDocument.pageCount > 0
+    && !isMergeMode(settings.mergeMode)
 
   // D2-4.1：viewer 缩放控制桥接接收端。DocumentViewer 经 onViewerController 上抬
   // {mode, zoomPercent, actions}（仅 zoom 显示/档位相关值变化时更新，拖拽平移不触发）；
@@ -981,6 +982,7 @@ function AppContent() {
               containerSize={containerSize}
               grayscale={settings.grayscale}
               onViewerController={setViewerController}
+              mergeActive={mergeActive}
               previewCanvas={previewCanvas}
               previewUrl={previewUrl}
               previewRenderVersion={previewRenderVersion}

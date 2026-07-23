@@ -63,6 +63,9 @@ export function isPdfFile(file) {
  * @param {(controller: Object|null) => void} [props.onViewerController] -
  *   D2-4.1：DocumentViewer 缩放控制上抬回调（透传给 DocumentViewer，供 App control-bar ZoomToolbar）。
  *
+ * @param {boolean} [props.mergeActive=false] - 合并模式是否激活。
+ *   合并模式下 DocumentViewer 无法展示多票合成布局，必须回退到 PreviewCanvas。
+ *
  * ── 以下为 legacy PreviewCanvas 透传 props（新路径不使用） ──
  * @param {HTMLCanvasElement|null} [props.previewCanvas]
  * @param {string|null} [props.previewUrl]
@@ -77,6 +80,7 @@ export const DisplayAdapter = React.memo(function DisplayAdapter({
   containerSize,
   grayscale = false,
   onViewerController,
+  mergeActive = false,
   // legacy pass-through
   previewCanvas,
   previewUrl,
@@ -92,6 +96,26 @@ export const DisplayAdapter = React.memo(function DisplayAdapter({
   // 拆分页定位：fileObj.pageNum 为 1-based（后端 page_index），
   // 转为 Viewer 的 0-based 页 index。非拆分文件 pageNum 为 null → 第 1 页。
   const initialPage = (file?.pageNum || 1) - 1
+
+  // 合并模式守卫：DocumentViewer 只展示单页，无多票合成能力。
+  // merge 模式下必须走 PreviewCanvas（renderMultipleItemsToCanvas 合成画布）。
+  // 未来 Compose Backend 成熟后可移除此守卫。
+  if (mergeActive) {
+    return (
+      <PreviewCanvas
+        previewFile={file}
+        previewCanvas={previewCanvas}
+        previewUrl={previewUrl}
+        grayscale={grayscale}
+        previewRenderVersion={previewRenderVersion}
+        paperLayout={paperLayout}
+        contentLayout={contentLayout}
+        previewRotation={previewRotation}
+        previewLoading={previewLoading}
+        containerSize={containerSize}
+      />
+    )
+  }
 
   // 新路径：PDF 且已注册有效 Document（至少 1 页）。
   // 非 PDF（图片/OFD）后端 /preview 无法服务，保持 legacy 路径。
