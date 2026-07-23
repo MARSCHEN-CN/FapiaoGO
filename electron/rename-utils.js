@@ -68,6 +68,24 @@ function getFieldText(fieldKey, invoiceFields, fieldIndex, fieldDef) {
 }
 
 /**
+ * 将命名规则字段数组规整为统一结构 [{ key, ... }]
+ * 兼容历史版本保存的 string[] 格式（如 ["fphm","kprq"]），
+ * 避免 buildNameParts 取到 f.key 为 undefined 而整段被忽略、最终回退为「发票」。
+ * @param {Array} fields
+ * @returns {Array} 规整后的字段数组
+ */
+function normalizeRenameFields(fields = []) {
+  if (!Array.isArray(fields)) return []
+  return fields
+    .map((f) => {
+      if (typeof f === 'string') return { key: f }
+      if (f && typeof f === 'object') return f
+      return null
+    })
+    .filter(Boolean)
+}
+
+/**
  * 根据发票字段和命名规则，拼接文件名主体部分（不含扩展名）
  * @param {Object} invoiceFields - 发票字段数据
  * @param {Array} fields - 命名规则字段数组 [{ key, dateFormat?, customText? }, ...]
@@ -78,6 +96,7 @@ function getFieldText(fieldKey, invoiceFields, fieldIndex, fieldDef) {
  * @returns {string} 拼接后的文件名主体（不含扩展名），可能为空字符串
  */
 function buildNameParts(invoiceFields, fields, { separator = '_', showIndex = false, showPrefix = false } = {}) {
+  fields = normalizeRenameFields(fields)
   const parts = []
   for (let i = 0; i < fields.length; i++) {
     const f = fields[i]
@@ -104,9 +123,10 @@ function buildNameParts(invoiceFields, fields, { separator = '_', showIndex = fa
   // 去除尾部点/空格（Windows 不允许）
   result = result.replace(/[\.\s]+$/, '')
   if (!result) {
-    result = '发票'
+    // 字段全部缺失时，回退到发票号/购买方名称等可辨识信息，避免整批撞名「发票」
+    result = sanitizeFilenamePart(invoiceFields.fphm || invoiceFields.gmfmc || '未命名发票')
   }
   return result
 }
 
-module.exports = { FIELD_LABELS, formatDate, getFieldText, buildNameParts, sanitizeFilenamePart }
+module.exports = { FIELD_LABELS, formatDate, getFieldText, buildNameParts, sanitizeFilenamePart, normalizeRenameFields }

@@ -156,6 +156,11 @@ def parse_invoice_service(file_bytes, filename, auto_orient=True, force_ocr=Fals
     start_time = time.perf_counter()
     metrics = PerformanceMetrics()
     
+    import logging as _cmp_log
+    _cmp_log = logging.getLogger(__name__)
+    _cmp_log.info("[COMPARE] ENTER filename=%s auto_orient=%s enable_auto_ocr=%s file_bytes_len=%d",
+                  filename, auto_orient, enable_auto_ocr, len(file_bytes))
+
     # 直接使用传入的 bytes；构造 BytesIO 供向下兼容的解析器使用
     raw_bytes = file_bytes
     file = io.BytesIO(raw_bytes)
@@ -530,6 +535,16 @@ def parse_invoice_service(file_bytes, filename, auto_orient=True, force_ocr=Fals
         except Exception as e:
             logger.warning("发票自动入库失败: %s", e)
     # skip_db_write=True 时 db_result 保持 None，db_record 由调用方批量处理
+
+    # [COMPARE] 打印 gmfmc 用于 A/B 对比
+    import logging as _cmp_log
+    _cmp_log = logging.getLogger(__name__)
+    _cmp_log.info("[COMPARE] filename=%s gmfmc=%s extra_fields_keys=%s failed_fields=%s hash_sha256=%s",
+                  filename,
+                  extra_fields.get('gmfmc', '') if extra_fields else '(no extra_fields)',
+                  list(extra_fields.keys()) if extra_fields else 'none',
+                  extra_fields.get('failed_fields', []) if extra_fields else 'N/A',
+                  hash_sha256)
 
     return {
         'file_format': file_format,

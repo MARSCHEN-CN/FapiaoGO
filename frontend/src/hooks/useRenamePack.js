@@ -1,8 +1,8 @@
-import { useState, useCallback, useRef } from 'react'
+import { useState, useCallback, useRef, useEffect } from 'react'
 import { getFileFormat } from '../utils'
 import { generateFileKey } from '../utils/fileHelpers'
 
-export function useRenamePack({ files, settings, setFiles, parseFiles, electronAPIRef }) {
+export function useRenamePack({ files, settings, setFiles, parseFiles, parseProgress, electronAPIRef }) {
   const [packing, setPacking] = useState(false)
   const [packProgress, setPackProgress] = useState({ current: 0, total: 0 })
   const [packResult, setPackResult] = useState(null)
@@ -10,12 +10,25 @@ export function useRenamePack({ files, settings, setFiles, parseFiles, electronA
   const [renamePreviewFiles, setRenamePreviewFiles] = useState([])
   const [renameResult, setRenameResult] = useState(null)
   const [alertModal, setAlertModal] = useState(null)
+  const [reimporting, setReimporting] = useState(false)
+  const [reimportProgress, setReimportProgress] = useState(null)
   // 重命名完成后，供 App 重新导入（预览）该发票：记录首个重命名文件的 key，
   // App 用它在最新 files 状态里找到带 docId 的解析后对象，避免拿到无 docId 的本地占位对象
   // （无 docId 会让 Render Engine 预览 URL 缺失，回退 Canvas 路径，重演 Canvas/RE 视觉不一致）。
   const [renamedPreviewKey, setRenamedPreviewKey] = useState(null)
   // 缓存预览阶段算好的文件名，重命名时直接复用，避免后端重复计算
   const computedNamesRef = useRef({})  // { [key]: newBaseName }
+
+  // 重导入期间同步 parseProgress → reimportProgress
+  const reimportingRef = useRef(false)
+  useEffect(() => {
+    if (!reimportingRef.current) return
+    if (parseProgress.total > 0 && parseProgress.current !== undefined) {
+      setReimportProgress(
+        Math.round((parseProgress.current / parseProgress.total) * 100)
+      )
+    }
+  }, [parseProgress])
 
   // ============================
   // 重命名
@@ -53,7 +66,7 @@ export function useRenamePack({ files, settings, setFiles, parseFiles, electronA
       key: f.key,
       name: f.name,
       originalPath: f.printPath || f.path || '',
-      invoiceFields: f.invoiceFields || {
+      invoiceFields: (f.invoiceFields && Object.keys(f.invoiceFields).length) ? f.invoiceFields : {
         type: f.invoiceType || '',
         fphm: f.invoiceNumber || '',
         kprq: f.invoiceDate || '',
@@ -211,7 +224,7 @@ export function useRenamePack({ files, settings, setFiles, parseFiles, electronA
           const newFiles = result.renamedFiles.map((file, i) => {
             const original = pathToFileMap.get(file.originalPath)
             return {
-              key: generateFileKey(`renamed_${file.newPath}_${i}`),
+              key: generateFileKey(`${file.newName}_${i}`),
               name: file.newName, path: file.newPath, printPath: file.newPath,
               status: 'parsing', invoiceType: '', invoiceNumber: '', amount: '',
               invoiceDate: '', newName: '', parseMethod: '',
@@ -239,7 +252,13 @@ export function useRenamePack({ files, settings, setFiles, parseFiles, electronA
 
           // 等待解析完成
           try {
+            reimportingRef.current = true
+            setReimporting(true)
+            setReimportProgress(0)
             await parseFiles(newFiles)
+            setReimporting(false)
+            setReimportProgress(null)
+            reimportingRef.current = false
 
             // 解析成功后，原子性删除本次重命名的旧文件引用
             // 预处理 succeededOldPaths：统一小写并正斜杠化，放入 Set 实现 O(1) 查找
@@ -253,6 +272,9 @@ export function useRenamePack({ files, settings, setFiles, parseFiles, electronA
             }))
           } catch (parseError) {
             console.error('重命名后解析失败:', parseError)
+            setReimporting(false)
+            setReimportProgress(null)
+            reimportingRef.current = false
             // 精准回滚：仅移除本次事务创建的新文件，保留所有旧文件
             // 使用 transactionKeys（局部变量）精确定位，替代之前依赖 originalPath 字段的方式
             setFiles(prev => prev.filter(f => !transactionKeys.has(f.key)))
@@ -350,6 +372,8 @@ export function useRenamePack({ files, settings, setFiles, parseFiles, electronA
     packing, setPacking,
     packProgress, setPackProgress,
     packResult, setPackResult,
+    reimporting,
+    reimportProgress,
     renamePreviewVisible, setRenamePreviewVisible,
     renamePreviewFiles, setRenamePreviewFiles,
     renameResult, setRenameResult,

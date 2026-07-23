@@ -412,6 +412,29 @@ export default React.memo(function Sidebar({
                 </label>
               </div>
             </>
+          ) : duplicateGroupCount > 0 ? (
+            <>
+              <div className="sb-stat-summary">
+                共 <b>{documentView.documentCount}</b> 个文件 · 其中 <span className="sb-stat-summary-warn">{duplicateGroupCount} 组重复</span>
+              </div>
+              <div className="sb-seg-control">
+                <button
+                  className="sb-seg-btn sb-seg-btn-primary"
+                  onClick={(e) => { e.stopPropagation(); removeDuplicateFiles(removeSourceFile) }}
+                  title="移除重复文件"
+                >
+                  {ICONS.trash}
+                  <span>移除重复</span>
+                </button>
+                <label className="sb-seg-option">
+                  <input type="checkbox" checked={removeSourceFile} onChange={(e) => setRemoveSourceFile(e.target.checked)} />
+                  <span className="sb-seg-toggle-track">
+                    <span className="sb-seg-toggle-thumb"></span>
+                  </span>
+                  <span className="sb-seg-option-label">删源文件</span>
+                </label>
+              </div>
+            </>
           ) : hasPreviousYear && showPreviousYearWarning ? (
             <>
               <div className="sb-stat-summary">
@@ -441,29 +464,6 @@ export default React.memo(function Sidebar({
               >
                 {ICONS.clear}
               </button>
-            </>
-          ) : duplicateGroupCount > 0 ? (
-            <>
-              <div className="sb-stat-summary">
-                共 <b>{documentView.documentCount}</b> 个文件 · 其中 <span className="sb-stat-summary-warn">{duplicateGroupCount} 组重复</span>
-              </div>
-              <div className="sb-seg-control">
-                <button
-                  className="sb-seg-btn sb-seg-btn-primary"
-                  onClick={(e) => { e.stopPropagation(); removeDuplicateFiles(removeSourceFile) }}
-                  title="移除重复文件"
-                >
-                  {ICONS.trash}
-                  <span>移除重复</span>
-                </button>
-                <label className="sb-seg-option">
-                  <input type="checkbox" checked={removeSourceFile} onChange={(e) => setRemoveSourceFile(e.target.checked)} />
-                  <span className="sb-seg-toggle-track">
-                    <span className="sb-seg-toggle-thumb"></span>
-                  </span>
-                  <span className="sb-seg-option-label">删源文件</span>
-                </label>
-              </div>
             </>
           ) : (
             <>

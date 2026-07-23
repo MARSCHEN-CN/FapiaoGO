@@ -14,6 +14,7 @@ const ImportProgressModal = lazy(() => import('./components/ImportProgressModal'
 const ExportProgressModal = lazy(() => import('./components/ExportProgressModal'))
 const PdfExportConfirmModal = lazy(() => import('./components/PdfExportConfirmModal'))
 const ExcelExportFieldsModal = lazy(() => import('./components/ExcelExportFieldsModal'))
+const PackConfirmModal = lazy(() => import('./components/PackConfirmModal'))
 const TaskProgressModal = lazy(() => import('./components/TaskProgressModal'))
 const CalculatorWindow = lazy(() => import('./components/CalculatorWindow'))
 const DevDocumentViewerDemo = lazy(() => import('./components/DevDocumentViewerDemo').then(m => ({ default: m.DevDocumentViewerDemo })))
@@ -226,14 +227,19 @@ function AppContent() {
   // ── Excel 导出字段确认弹窗状态（Commit 4A） ──
   const [showExcelFields, setShowExcelFields] = useState(false)
 
+  // ── 压缩包导出确认弹窗状态 ──
+  const [showPackConfirm, setShowPackConfirm] = useState(false)
+
   const {
     packing, packProgress, packResult, setPackResult, setPacking,
+    reimporting,
+    reimportProgress,
     renamePreviewVisible, setRenamePreviewVisible,
     renamePreviewFiles, renameResult, setRenameResult,
     renamedPreviewKey,
     alertModal: renamePackAlert, closeAlert: closeRenamePackAlert,
     handleRename, handleRenameConfirm, handlePack,
-  } = useRenamePack({ files, settings, setFiles, parseFiles, electronAPIRef })
+  } = useRenamePack({ files, settings, setFiles, parseFiles, parseProgress, electronAPIRef })
 
   const handleRenameCancel = useCallback(() => {
     setRenamePreviewVisible(false)
@@ -528,6 +534,16 @@ function AppContent() {
     }
     setShowExcelFields(true)
   }, [files, handleExportExcel])
+
+  // 打开压缩包导出确认弹窗：无已解析文件时复用 handlePack 的无数据告警
+  const openPackConfirm = useCallback(() => {
+    const parsed = files.filter((f) => f.status === 'parsed')
+    if (parsed.length === 0) {
+      handlePack()
+      return
+    }
+    setShowPackConfirm(true)
+  }, [files, handlePack])
 
   const { clearExportSession } = useExportSession()
 
@@ -1021,6 +1037,7 @@ function AppContent() {
         <ActionBar
           handleRename={handleRename}
           handlePack={handlePack}
+          onExportZip={openPackConfirm}
           handlePrint={handlePrint}
           packing={packing}
           packProgress={packProgress}
@@ -1038,6 +1055,7 @@ function AppContent() {
           importing={importing}
           parsing={parsing}
           parseProgress={parseProgress}
+          visible={Boolean(importing || parsing) && !reimporting}
         />
         <PrintProgressModal
           printing={printing}
@@ -1050,6 +1068,7 @@ function AppContent() {
             visible
             files={renamePreviewFiles}
             executing={packing}
+            reimportProgress={reimportProgress}
             result={renameResult}
             onConfirm={handleRenameConfirm}
             onCancel={handleRenameCancel}
@@ -1110,6 +1129,20 @@ function AppContent() {
             handleExportExcel(cols)
           }}
           onCancel={() => setShowExcelFields(false)}
+        />
+        <PackConfirmModal
+          visible={showPackConfirm}
+          settings={settings}
+          saveSettings={saveSettings}
+          parsedFiles={files.filter(f => f.status === 'parsed')}
+          onConfirm={(packSettings) => {
+            setShowPackConfirm(false)
+            // 先同步写 settings，确保 handlePack 读到最新值
+            saveSettings({ ...settings, packSettings })
+            // 下一微任务让 React 状态收敛
+            setTimeout(() => handlePack(), 0)
+          }}
+          onCancel={() => setShowPackConfirm(false)}
         />
         <TaskProgressModal
           visible={!!pdfExportTask}

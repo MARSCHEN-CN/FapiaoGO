@@ -530,6 +530,14 @@ button.pc-btn.outline,
 }
 @keyframes rpSpin { to { transform: rotate(360deg); } }
 .rp-executing-text { font-size: 14px; color: var(--text-2); }
+.rp-progress { width: 100%; max-width: 320px; }
+.rp-progress-bar {
+  height: 6px; background: var(--surface); border-radius: 3px; overflow: hidden;
+}
+.rp-progress-fill {
+  height: 100%; background: var(--accent-gradient); border-radius: 3px;
+  transition: width 0.3s ease;
+}
 
 /* rename result */
 .rp-result-section {

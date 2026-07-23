@@ -64,6 +64,7 @@ export async function resolveFile(input, ipc) {
     try {
       const result = await ipc.invoke('read-file', filePath)
       if (result && result.success && result.data) {
+        console.log('[DIAG] FileResolver IPC read-file success:', input.name, 'size:', result.data.length)
         const ext = getExtension(input.name)
         const mimeType = getMimeType(ext)
         const blob = new Blob([new Uint8Array(result.data)], { type: mimeType })

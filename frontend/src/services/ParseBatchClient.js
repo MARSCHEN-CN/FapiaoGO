@@ -32,8 +32,10 @@ export async function prepareBatchRequest(filesToParse, { ipc, autoOrient }) {
   const preparedFiles = []
   for (const fileObj of filesToParse) {
     if (fileObj.file) {
+      console.log('[DIAG] prepareBatchRequest native file:', fileObj.name, 'size:', fileObj.file.size)
       preparedFiles.push(fileObj.file)
     } else if ((fileObj.printPath || fileObj.path) && ipc) {
+      console.log('[DIAG] prepareBatchRequest need IPC resolve:', fileObj.name, 'path:', fileObj.printPath || fileObj.path)
       const file = await resolveFile(fileObj, ipc)
       preparedFiles.push(file)
     } else {
@@ -65,6 +67,7 @@ export async function prepareBatchRequest(filesToParse, { ipc, autoOrient }) {
 export async function prepareSingleRequest(fileObj, { ipc, autoOrient }) {
   let file = fileObj.file
   if (!file && (fileObj.printPath || fileObj.path) && ipc) {
+    console.log('[DIAG] prepareSingleRequest no native file, reading via IPC:', fileObj.name, 'path:', fileObj.printPath || fileObj.path)
     file = await resolveFile(fileObj, ipc)
   }
   if (!file) return null

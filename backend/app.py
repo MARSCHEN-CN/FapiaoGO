@@ -35,6 +35,7 @@ from parse_job_manager import get_job_manager
 from import_batch_manager import get_import_batch_manager
 from services.decision_router import DecisionRouter
 from render_engine import registry, engine
+from render_engine.registry import _make_doc_id
 from render_engine.api import render_bp
 
 # 全局实例（惰性初始化）
@@ -1082,6 +1083,12 @@ def parse_invoice():
         return jsonify({"success": False, "error": "没有上传文件"}), 400
 
     file = request.files['file']
+    # [DIAG] A/B 对比：打印文件名和文件大小
+    import logging as _diag_log
+    _diag_log = logging.getLogger(__name__)
+    _diag_log.info("[DIAG] parse_invoice filename=%s  size=%d  mode=%s",
+                   file.filename, len(file.read()), request.form.get('mode', 'single'))
+    file.seek(0)
     if not allowed_file(file.filename):
         return jsonify({"success": False, "error": "不支持的文件格式"}), 400
 
@@ -1093,7 +1100,7 @@ def parse_invoice():
         file_bytes = file.read()  # 只读取一次，后续复用
         # Identity Contract v1.1：文档永久身份 = sha256(file_bytes)[:24]（content-only，filename 不进哈希）。
         # 与 /split_pdf、/preview/{doc_id} 共用同一 doc_id，使单文件 parse 也能闭合身份链（4.2.1-c）。
-        doc_id = registry._make_doc_id(file_bytes, file.filename or "")
+        doc_id = _make_doc_id(file_bytes, file.filename or "")
 
         auto_orient = request.form.get('autoOrient', '1') == '1'
         enable_auto_ocr = request.form.get('enableAutoOcr', '0') == '1'
@@ -1643,6 +1650,13 @@ if __name__ == '__main__':
         level=logging.DEBUG,
         format='%(asctime)s %(levelname)s %(name)s - %(message)s',
     )
+    # ── 冷启动诊断：确认运行时实际使用的数据库路径 ──
+    # 注意：db.py 模块级 logger.info（DB_DIR/INVOICES_PATH）在 import 时执行，
+    # 早于本 basicConfig，会被 lastResort(WARNING) 静默丢弃；此处补足可见输出。
+    logger.info("[DB-PATH] DB_DIR        = %s", db_module.DB_DIR)
+    logger.info("[DB-PATH] INVOICES_PATH = %s", db_module.INVOICES_PATH)
+    logger.info("[DB-PATH] OPLOG_PATH    = %s", db_module.OPLOG_PATH)
+    logger.info("[DB-PATH] MARSPRINT_DB_PATH env = %r", os.environ.get('MARSPRINT_DB_PATH', ''))
     from cache import _get_manager
     _cache_mgr = _get_manager()
     migrated = _cache_mgr.migrate_legacy()
