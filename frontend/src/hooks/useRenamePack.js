@@ -19,8 +19,6 @@ export function useRenamePack({ files, settings, setFiles, parseFiles, parseProg
   const [renamedPreviewKey, setRenamedPreviewKey] = useState(null)
   // 缓存预览阶段算好的文件名，重命名时直接复用，避免后端重复计算
   const computedNamesRef = useRef({})  // { [key]: newBaseName }
-  // document key → all page keys 映射（多页 PDF 聚合后，confirm 时展开回所有页）
-  const docPageKeysRef = useRef({})  // { [representativeKey]: [pageKey1, pageKey2, ...] }
 
   // 重导入期间同步 parseProgress → reimportProgress
   const reimportingRef = useRef(false)
@@ -42,6 +40,7 @@ export function useRenamePack({ files, settings, setFiles, parseFiles, parseProg
 
     // R2：document-level 聚合——多页 PDF 在 rename 预览中显示为 1 条（而非每页 1 条）。
     // representative（pageNum 最小页）携带解析字段（invoiceNumber/amount 等）。
+    // 多页发票视作 1 个文件：所有页共享同一物理路径，confirm 只操作 representative。
     const documentFiles = groupFilesByDocument(files)
     const filesToRename = documentFiles.filter(f => f.status === 'parsed')
     if (filesToRename.length === 0) {
@@ -53,15 +52,6 @@ export function useRenamePack({ files, settings, setFiles, parseFiles, parseProg
       })
       return
     }
-
-    // 建立 document key → all page keys 映射（confirm 时展开）
-    const pageKeysMap = {}
-    for (const f of filesToRename) {
-      if (f._isDocumentGroup && Array.isArray(f._pages)) {
-        pageKeysMap[f.key] = f._pages.map(p => p.key)
-      }
-    }
-    docPageKeysRef.current = pageKeysMap
 
     // 生成新文件名
     const renameSettings = settings.renameSettings || {}
@@ -175,17 +165,9 @@ export function useRenamePack({ files, settings, setFiles, parseFiles, parseProg
     ipc.on('rename-progress', onProgress)
 
     try {
-      // R2：展开 document key → all page keys（多页 PDF 聚合后 confirm 需操作所有页文件）
-      const expandedKeys = new Set()
-      for (const key of selectedKeys) {
-        const pageKeys = docPageKeysRef.current[key]
-        if (pageKeys) {
-          for (const pk of pageKeys) expandedKeys.add(pk)
-        } else {
-          expandedKeys.add(key)
-        }
-      }
-      const filesToRename = files.filter(f => expandedKeys.has(f.key) && f.status === 'parsed')
+      // R2：多页发票视作 1 个文件（所有页共享同一物理路径），只 rename representative。
+      // selectedKeys 来自 document-level 预览（groupFilesByDocument），已是 document 粒度。
+      const filesToRename = files.filter(f => selectedKeys.includes(f.key) && f.status === 'parsed')
       const filesWithValidPath = filesToRename.filter(f => {
         const p = f.printPath || f.path || ''
         return p.match(/^[a-zA-Z]:\\|^\\\\/)
