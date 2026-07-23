@@ -20,8 +20,9 @@ import uuid
 import logging
 import threading
 import time
+import io
 from dataclasses import dataclass, field
-from typing import Optional, Dict, Any, List, Callable, Tuple
+from typing import Optional, Dict, Any, List, Callable
 
 from time_utils import now
 from temp_file_registry import TempFileRegistry, LocalTempFileStorageBackend
@@ -61,6 +62,7 @@ class ImportBatch:
     updated_at: str = ''
     error: str = ''
     job_ids: List[str] = field(default_factory=list)  # 关联的 ParseJob ID 列表
+    file_inputs: List[Dict] = field(default_factory=list)  # IS-2：文件引用元数据(refId/clientKey)，不含字节内容
 
     def __post_init__(self):
         if not self.created_at:
@@ -186,8 +188,6 @@ class ImportBatchManager:
         self._job_manager = job_manager
         self._batches: Dict[str, ImportBatch] = {}
         self._batch_lock = threading.Lock()  # 保护 _batches 和 ImportBatch 计数器
-        # 运行时文件输入（调度器消费后即释放，不存在 ImportBatch 上）
-        self._batch_inputs: Dict[str, List[Dict]] = {}
         # 每个 batch 的结果缓冲
         self._result_buffers: Dict[str, ResultBuffer] = {}
         # 调度器线程
@@ -227,13 +227,30 @@ class ImportBatchManager:
             batch_id
         """
         batch_id = f"B{now().strftime('%Y%m%d%H%M%S')}_{uuid.uuid4().hex[:6]}"
+
+        # IS-2（Commit 3）：输入归一化为 refId 形态，manager 不再常驻 bytes。
+        # 旧 bytes 形态（手动脚本 test_step2_batch.py）在边界立即 spool 为 temp 文件
+        # 并替换为 refId，不进 RAM 峰值。此 transitional 分支在 IS-3 弃用 /parse_batch 时移除。
+        normalized = []
+        for fi in file_inputs:
+            if 'refId' in fi:
+                normalized.append(fi)
+            elif 'bytes' in fi:
+                rec = self._temp_registry.spool(io.BytesIO(fi['bytes']), fi.get('filename', ''))
+                normalized.append({
+                    'refId': rec.refId,
+                    'filename': rec.filename,
+                    'clientKey': fi.get('clientKey', ''),
+                })
+            else:
+                raise ValueError(f"file input 必须含 refId 或 bytes: {fi}")
+        file_inputs = normalized
         total = len(file_inputs)
 
-        batch = ImportBatch(id=batch_id, total=total, status='queued')
+        batch = ImportBatch(id=batch_id, total=total, status='queued', file_inputs=file_inputs)
 
         with self._batch_lock:
             self._batches[batch_id] = batch
-            self._batch_inputs[batch_id] = file_inputs
             self._result_buffers[batch_id] = ResultBuffer()
             self._cancel_flags[batch_id] = False
 
@@ -250,33 +267,27 @@ class ImportBatchManager:
         logger.info(f"[ImportBatch] 创建批次: {batch_id} (total={total})")
         return batch_id
 
-    # ─── IS-2：输入解析（spool + identity） ──────────────────
+    # ─── IS-2：ref → bytes 适配壳（Commit 3） ──────────────────
 
-    def _read_input(self, fi: Dict) -> Tuple[bytes, str, str]:
-        """把单条 file input 解析为 (file_bytes, file_hash, filename)。
+    def _parse_via_registry(self, input_ref: str, filename: str,
+                            auto_orient: bool = True, enable_auto_ocr: bool = False,
+                            skip_db_write: bool = False):
+        """ref→bytes 适配壳：scheduler 只传 ref_id，此处按需读 temp 文件字节喂给 worker。
 
-        IS-2（spool + identity）：
-        - 主路径：fi 含 refId → 从 TempFileRegistry 按 refId 即时读取 bytes，
-          并直接消费 spool 时已算定的 sha256（doc_id 同源），**不再重新 read+hash**。
-          这消除了上传期全量 bytes 常驻内存的峰值（INV-1）。
-        - 兼容回退（Commit 3 移除 bytes 路径后删除）：fi 含 bytes → 按旧方式
-          读取并计算 sha256（仅 test_step2_batch 等手动脚本使用）。
+        IS-2（Commit 3）：
+        - 这是"消灭生命周期级 bytes 持有"的关键边界——manager 调度时只搬运 refId，
+          bytes 在真正进 worker 的前一刻才从 temp 文件读出（瞬时、不常驻）。
+        - `parse_invoice_service` 签名保持不变（OCR 执行模型冻结，INV 边界不可破）。
+        - 释放点（_on_job_done / cancel / cleanup / startup sweep）由 Commit 5 接线。
         """
-        ref_id = fi.get("refId")
-        if ref_id:
-            rec = self._temp_registry.get(ref_id)
-            if rec is None:
-                raise KeyError(f"refId not retained in registry: {ref_id}")
-            file_bytes = self._temp_registry.read_bytes(ref_id)
-            file_hash = rec.sha256
-            filename = rec.filename
-            return file_bytes, file_hash, filename
-        # 兼容回退（transitional）
-        import hashlib
-        file_bytes = fi["bytes"]
-        file_hash = hashlib.sha256(file_bytes).hexdigest()
-        filename = fi["filename"]
-        return file_bytes, file_hash, filename
+        file_bytes = self._temp_registry.read_bytes(input_ref)
+        from services.invoice_service import parse_invoice_service
+        return parse_invoice_service(
+            file_bytes, filename,
+            auto_orient=auto_orient,
+            enable_auto_ocr=enable_auto_ocr,
+            skip_db_write=skip_db_write,
+        )
 
     def get_batch(self, batch_id: str) -> Optional[ImportBatch]:
         """获取批次状态"""
@@ -380,7 +391,7 @@ class ImportBatchManager:
 
         with self._batch_lock:
             batch = self._batches[batch_id]
-            inputs = self._batch_inputs[batch_id]
+            inputs = batch.file_inputs  # IS-2：refId 元数据随 batch 走，manager 无独立持有 dict
             batch.status = 'running'
             batch.touch()
 
@@ -406,12 +417,16 @@ class ImportBatchManager:
                         return
 
                     fi = inputs[i]
-                    # IS-2：按 refId 即时从 temp 文件读取 bytes + 已物化的 sha256
-                    file_bytes, file_hash, filename = self._read_input(fi)
+                    ref_id = fi.get('refId')
+                    if not ref_id:
+                        raise KeyError(f"file input 缺少 refId: {fi}")
+                    rec = self._temp_registry.get(ref_id)
+                    if rec is None:
+                        raise KeyError(f"refId not retained in registry: {ref_id}")
                     client_key = fi.get('clientKey', '')  # 护栏A：可选
 
-                    # 创建 job（携带 batch_id）
-                    job = jm.create_job(filename, file_hash, batch_id=batch_id)
+                    # 创建 job（携带 batch_id）；file_hash 直接用 spool 物化的 sha256（INV-2，不重算）
+                    job = jm.create_job(rec.filename, rec.sha256, batch_id=batch_id)
 
                     # 存储 clientKey 到 job.metrics（_execute_job 已修复为保留已有 key）
                     if client_key:
@@ -423,11 +438,11 @@ class ImportBatchManager:
                         if batch:
                             batch.job_ids.append(job.id)
 
-                    # 提交到 ParseJobManager（worker = parse_invoice_service）
-                    from services.invoice_service import parse_invoice_service
+                    # 提交到 ParseJobManager：只传 ref_id，bytes 由 _parse_via_registry 适配壳
+                    # 在 worker 边界按需读出（INV-1：manager 不再持 bytes；worker 签名不变）。
                     ok = jm.submit_job(
-                        job, parse_invoice_service,
-                        file_bytes, filename,
+                        job, self._parse_via_registry,
+                        ref_id, rec.filename,
                         auto_orient=auto_orient,
                         enable_auto_ocr=enable_auto_ocr,
                         skip_db_write=True,
@@ -439,14 +454,17 @@ class ImportBatchManager:
 
                 submitted = window_end
 
-                # 释放已提交的文件字节引用（允许 GC）
+                # 释放已提交的文件引用（只留未提交的 refId 元数据，字节从不在 manager 常驻）
                 with self._batch_lock:
-                    if batch_id in self._batch_inputs:
-                        self._batch_inputs[batch_id] = inputs[submitted:]
+                    batch = self._batches.get(batch_id)
+                    if batch:
+                        batch.file_inputs = inputs[submitted:]
 
-            # 全部提交完成，释放输入引用
+            # 全部提交完成，清空文件引用元数据（bytes 早已不在 manager）
             with self._batch_lock:
-                self._batch_inputs.pop(batch_id, None)
+                batch = self._batches.get(batch_id)
+                if batch:
+                    batch.file_inputs = []
 
             logger.info(f"[ImportBatch] 全部提交完成: {batch_id} ({submitted}/{total})")
 
@@ -583,11 +601,11 @@ class ImportBatchManager:
     def cleanup_batch(self, batch_id: str):
         """清理已完成批次的运行时数据（SSE 断开后调用）"""
         with self._batch_lock:
-            self._batch_inputs.pop(batch_id, None)
             self._result_buffers.pop(batch_id, None)
             self._cancel_flags.pop(batch_id, None)
             self._scheduler_threads.pop(batch_id, None)
-            # 注意：_batches 保留（供 get_batch 查询历史状态）
+            # 注意：_batches 保留（供 get_batch 查询历史状态）；
+            # temp 文件引用的释放由 Commit 5 接线（_on_job_done / cancel / startup sweep）。
 
     def shutdown(self):
         """关闭管理器（取消所有活跃批次）"""
