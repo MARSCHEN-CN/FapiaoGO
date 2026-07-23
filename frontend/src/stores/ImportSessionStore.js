@@ -22,7 +22,7 @@
  * @module stores/ImportSessionStore
  */
 
-import { createSession, createSessionFile } from '../models/ImportSession'
+import { createSession, createSessionFile } from '../models/ImportSession.js'
 
 // ── 会话存储 ────────────────────────────────────────────
 
@@ -139,6 +139,69 @@ export function replaceFileItems(sessionId, fileKey, newItems) {
 
   session.files.splice(idx, 1, ...newItems.map(i => createSessionFile(i)))
   session.progress.total = session.files.length
+  notify(sessionId)
+}
+
+// ── 批次聚合（合同 §2/§3：session 1:N batch） ──────────────
+
+/**
+ * 记录一个子批次 ID 到会话。
+ * 用于多批进度聚合、cancel cascade、retry mapping。
+ * @param {string} sessionId
+ * @param {string} batchId
+ */
+export function addChildBatch(sessionId, batchId) {
+  const session = sessions.get(sessionId)
+  if (!session) return
+  if (!session.childBatchIds.includes(batchId)) {
+    session.childBatchIds.push(batchId)
+  }
+  notify(sessionId)
+}
+
+/**
+ * 获取会话的子批次 ID 列表副本。
+ * @param {string} sessionId
+ * @returns {string[]}
+ */
+export function getChildBatchIds(sessionId) {
+  const session = sessions.get(sessionId)
+  return session ? [...session.childBatchIds] : []
+}
+
+/**
+ * 将一批文件绑定到某个子批次（chunk 提交后调用）。
+ * @param {string} sessionId
+ * @param {string[]} fileIds - 文件标识（= file.key / file.id）
+ * @param {string} batchId
+ */
+export function attachFilesToBatch(sessionId, fileIds, batchId) {
+  const session = sessions.get(sessionId)
+  if (!session) return
+  for (const fid of fileIds) {
+    const file = session.files.find(f => f.key === fid || f.id === fid)
+    if (file) file.batchId = batchId
+  }
+  notify(sessionId)
+}
+
+/**
+ * 回填文件级失败信息（合同 §6 file-level mapping）。
+ * 仅首次置为 error 时累加失败计数，避免重复调用重复计数。
+ * @param {string} sessionId
+ * @param {string} fileId
+ * @param {string|null} error
+ */
+export function updateFileError(sessionId, fileId, error) {
+  const session = sessions.get(sessionId)
+  if (!session) return
+  const file = session.files.find(f => f.key === fileId || f.id === fileId)
+  if (!file) return
+  file.error = error
+  if (file.status !== 'error') {
+    file.status = 'error'
+    session.progress.failed = (session.progress.failed || 0) + 1
+  }
   notify(sessionId)
 }
 
