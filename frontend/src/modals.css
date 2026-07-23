@@ -403,7 +403,7 @@ button.pc-btn.outline,
 .pc-footer-text { font-size: 12px; color: var(--text-3); }
 
 /* ======================== Rename Preview Modal (rp-) ======================== */
-.rp-panel { width: var(--modal-width-xl); max-width: 94vw; max-height: 85vh; }
+.rp-panel { width: var(--modal-width-xl); max-width: 94vw; height: 240px; display: flex; flex-direction: column; }
 
 .rp-header {
   display: flex; align-items: center; justify-content: space-between;
