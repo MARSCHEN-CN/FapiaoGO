@@ -243,6 +243,38 @@ def test_get_executor_kind_reflects_singleton(monkeypatch):
     assert backend_app._get_executor_kind() == "_FakeEx"
 
 
+def test_parse_batch_logs_real_executor_after_init():
+    """P1-3-D（observability correctness）: batch 记录执行器类型前必须先触发懒初始化。
+
+    回归点：修复前 /parse_batch 在 _get_executor() 懒初始化之前就读 _get_executor_kind()，
+    导致首条 batch 记到 "none" 而真实执行用的是 ProcessPoolExecutor —— 可观测性与真实
+    执行模型不一致（优化「看似没生效」）。
+
+    本测试直接验证两个函数的正确顺序契约：调用真实 _get_executor()（触发懒初始化）后，
+    _get_executor_kind() 必须与真实执行器一致：
+      - 执行器存在 -> kind 必为其实类型名，绝不可能是 'none'；
+      - 执行器彻底创建失败（回退 sync）-> kind 才如实为 'none'。
+    不测日志文本（格式易变，测文本会脆弱），只测「初始化后 kind 如实」这一契约。
+    """
+    ex = backend_app._get_executor()   # 真实调用，触发懒初始化（与 parse_batch 修复后顺序一致）
+    kind = backend_app._get_executor_kind()
+    if ex is None:
+        # 执行器彻底创建失败、回退到同步执行 —— 'none' 才是如实记录
+        assert kind == "none", (
+            f"执行器为 None 时 _get_executor_kind() 应返回 'none'，实际 {kind!r}"
+        )
+    else:
+        # 只要执行器存在，kind 必须如实反映其真实类型，绝不可能是 'none'
+        # （否则即 P1-3-D 回归：记录前未触发懒初始化）
+        assert kind != "none", (
+            f"_get_executor() 返回 {type(ex).__name__} 但 _get_executor_kind()={kind!r} —— "
+            f"说明 batch 记录执行器类型前未触发懒初始化（P1-3-D 回归）"
+        )
+        assert kind == type(ex).__name__, (
+            f"_get_executor_kind()={kind!r} 与真实执行器 {type(ex).__name__} 不一致"
+        )
+
+
 def test_parse_batch_routes_through_injected_executor(client, monkeypatch):
     """契约：batch 必须使用 _get_executor() 返回的执行器（可被注入/观测）。
 

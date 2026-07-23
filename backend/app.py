@@ -1215,6 +1215,12 @@ def parse_batch():
         # 执行器上（ProcessPoolExecutor / ThreadPoolExecutor / none=sync 回退）。目的仅为
         # 可观测——若静默回退到 ThreadPool/sync，优化等于未生效，INFO 级才能在生产日志发现。
         # 注意：OCR 并行度由 OCR_WORKERS 决定，与 BATCH_WORKERS / parse_semaphore 解耦。
+        # P1-3-D（observability correctness）: 先触发懒初始化，再读 kind。
+        # _get_executor() 内部才真正创建 ProcessPool/ThreadPool（首条 batch 前 _ocr_executor
+        # 仍是 None），若不先调用，日志会记到 "none" 而实际执行用的是 ProcessPoolExecutor ——
+        # 可观测性与真实执行模型不一致。日志应记录「本次 batch 真实将使用的执行模型」，
+        # 而非「调用瞬间尚未初始化的变量状态」。
+        _get_executor()
         logger.info("parse_batch OCR executor=%s workers=%s",
                     _get_executor_kind(), OCR_WORKERS)
 
