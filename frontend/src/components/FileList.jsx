@@ -20,12 +20,12 @@ const FileCardRow = memo(({ index, style, files, previewFileKey, previewFileDocI
   const isDupFirst = dupInfo?.isFirst
   const dupGroupIndex = dupInfo?.groupIndex
 
-  // 往年发票（derived flag，优先级低于失败、高于重复）
+  // 往年发票（derived flag，优先级低于失败、低于重复）
   const prevInfo = previousYearInfo?.get(fileObj.key)
   const isPrevYear = !!prevInfo?.isPreviousYear
   const hasFailed = fileObj.failedFields?.length > 0
-  const showPrevYear = !hasFailed && isPrevYear
-  const showDuplicate = !hasFailed && !showPrevYear && isDuplicate
+  const showDuplicate = !hasFailed && isDuplicate
+  const showPrevYear = !hasFailed && !showDuplicate && isPrevYear
 
   const handleClick = () => {
     if (typeof onPreview === 'function') onPreview(fileObj)
@@ -58,8 +58,8 @@ const FileCardRow = memo(({ index, style, files, previewFileKey, previewFileDocI
   let statusDotClass = 'pending'
   if (fileObj.status === 'parsed') {
     if (hasFailed) statusDotClass = 'failed'
+    else if (showDuplicate) statusDotClass = 'duplicate'
     else if (showPrevYear) statusDotClass = 'prevyear'
-    else if (isDuplicate) statusDotClass = 'duplicate'
     else statusDotClass = 'ready'
   }
 

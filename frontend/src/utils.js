@@ -253,7 +253,7 @@ export function getPreviousYearInfo(files, currentYear = new Date().getFullYear(
 }
 
 // ============================
-// 侧栏告警优先级（解析失败 > 往年发票 > 重复组）
+// 侧栏告警优先级（解析失败 > 重复组 > 往年发票）
 // ============================
 
 /**
@@ -261,8 +261,8 @@ export function getPreviousYearInfo(files, currentYear = new Date().getFullYear(
  */
 export const FILE_ALERT_PRIORITY = [
   'failed',
-  'previousYear',
   'duplicate',
+  'previousYear',
 ]
 
 /**
@@ -272,8 +272,8 @@ export const FILE_ALERT_PRIORITY = [
  */
 export function resolveStatsMode({ hasFailed, previousYearCount, duplicateCount }) {
   if (hasFailed) return 'failed'
-  if (previousYearCount) return 'previousYear'
   if (duplicateCount) return 'duplicate'
+  if (previousYearCount) return 'previousYear'
   return 'normal'
 }
 
@@ -291,23 +291,23 @@ export function isFailedFile(file) {
 export function applySort(list, field, order, duplicateInfo = null, previousYearInfo = null) {
   const dir = order === 'desc' ? -1 : 1
 
-  // 单次遍历分区：失败文件、往年发票、重复组、正常文件（优先级由高到低）
+  // 单次遍历分区：失败文件、重复组、往年发票、正常文件（优先级由高到低）
   const failedFiles = []
-  const previousYearFiles = []
   const duplicateGroups = new Map()
+  const previousYearFiles = []
   const normalFiles = []
   for (let i = 0; i < list.length; i++) {
     const file = list[i]
     if (isFailedFile(file)) {
       failedFiles.push(file)
-    } else if (previousYearInfo && previousYearInfo.get(file.key)?.isPreviousYear) {
-      previousYearFiles.push(file)
     } else if (duplicateInfo && duplicateInfo.has(file.key)) {
       const groupIndex = duplicateInfo.get(file.key).groupIndex
       if (!duplicateGroups.has(groupIndex)) {
         duplicateGroups.set(groupIndex, [])
       }
       duplicateGroups.get(groupIndex).push(file)
+    } else if (previousYearInfo && previousYearInfo.get(file.key)?.isPreviousYear) {
+      previousYearFiles.push(file)
     } else {
       normalFiles.push(file)
     }
@@ -374,8 +374,8 @@ export function applySort(list, field, order, duplicateInfo = null, previousYear
   
   normalFiles.sort(sortFn)
 
-  // 合并：失败文件在前，然后是往年发票，然后是重复组，最后是非重复文件
-  return [...failedFiles, ...previousYearFiles, ...sortedDuplicateGroups, ...normalFiles]
+  // 合并：失败文件在前，然后是重复组，然后是往年发票，最后是非重复文件
+  return [...failedFiles, ...sortedDuplicateGroups, ...previousYearFiles, ...normalFiles]
 }
 
 // ============================
