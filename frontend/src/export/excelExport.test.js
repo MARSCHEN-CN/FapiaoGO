@@ -9,7 +9,7 @@ import { computeTotals, countInvoices, roundMoney } from './excelTotals.js'
 
 // 后端 _db_record_to_export 实际产出的 row key 集合（Commit 1 已锁定，同源保证）
 const BACKEND_ROW_KEYS = new Set([
-  'serialNo', 'invoiceType', 'invoiceNumber', 'invoiceDate',
+  'recordId', 'serialNo', 'invoiceType', 'invoiceNumber', 'invoiceDate',
   'buyerName', 'buyerTaxNo', 'sellerName', 'sellerTaxNo',
   'amountWithoutTax', 'taxAmount', 'totalAmount', 'amountDx',
   'note', 'issuer', 'originalFilename',
@@ -39,9 +39,10 @@ test('所有列 key 必须与后端 row key 一致（同源保证，防止预览
   }
 })
 
-test('getInvoiceIdentity 三态：发票号 → 原文件名 → __ANON_{index}', () => {
+test('getInvoiceIdentity 四态：recordId → 原文件名 → 发票号 → __ANON_{index}', () => {
+  assert.equal(getInvoiceIdentity({ recordId: 'uuid1', invoiceNumber: '123' }), 'uuid1')
+  assert.equal(getInvoiceIdentity({ originalFilename: 'a.pdf', invoiceNumber: '123' }), 'a.pdf')
   assert.equal(getInvoiceIdentity({ invoiceNumber: '123' }), '123')
-  assert.equal(getInvoiceIdentity({ invoiceNumber: '', originalFilename: 'a.pdf' }), 'a.pdf')
   assert.equal(getInvoiceIdentity({}, 5), '__ANON_5')
   // 空号不同 index 必须不同（否则去重/共X张错乱）
   assert.notEqual(getInvoiceIdentity({}, 5), getInvoiceIdentity({}, 6))
@@ -49,9 +50,9 @@ test('getInvoiceIdentity 三态：发票号 → 原文件名 → __ANON_{index}'
 
 test('computeTotals：发票级去重 + 行级全加', () => {
   const rows = [
-    { invoiceNumber: 'A', amountWithoutTax: 100, taxAmount: 10, totalAmount: 110, lineAmount: 60, lineTax: 6 },
-    { invoiceNumber: 'A', amountWithoutTax: 100, taxAmount: 10, totalAmount: 110, lineAmount: 40, lineTax: 4 },
-    { invoiceNumber: 'B', amountWithoutTax: 200, taxAmount: 20, totalAmount: 220, lineAmount: 200, lineTax: 20 },
+    { recordId: 'A', invoiceNumber: '123', amountWithoutTax: 100, taxAmount: 10, totalAmount: 110, lineAmount: 60, lineTax: 6 },
+    { recordId: 'A', invoiceNumber: '123', amountWithoutTax: 100, taxAmount: 10, totalAmount: 110, lineAmount: 40, lineTax: 4 },
+    { recordId: 'B', invoiceNumber: '123', amountWithoutTax: 200, taxAmount: 20, totalAmount: 220, lineAmount: 200, lineTax: 20 },
   ]
   const cols = EXCEL_COLUMNS.filter((c) =>
     ['amountWithoutTax', 'taxAmount', 'totalAmount', 'lineAmount', 'lineTax'].includes(c.key))
@@ -66,8 +67,8 @@ test('computeTotals：发票级去重 + 行级全加', () => {
 test('computeTotals 浮点累加取整（行级 28.94 + 49513.01 → 49541.95，非 49541.950000000004）', () => {
   // 复现真实场景：行级「金额」(lineAmount) 两行明细累加触发浮点误差
   const rows = [
-    { invoiceNumber: 'A', lineAmount: 28.94 },
-    { invoiceNumber: 'A', lineAmount: 49513.01 },
+    { recordId: 'A', invoiceNumber: '123', lineAmount: 28.94 },
+    { recordId: 'A', invoiceNumber: '123', lineAmount: 49513.01 },
   ]
   const cols = EXCEL_COLUMNS.filter((c) => ['lineAmount'].includes(c.key))
   const t = computeTotals(rows, cols)
@@ -85,10 +86,10 @@ test('roundMoney 规避 1.005*100=100.4999 的经典坑，且保持正负', () =
 
 test('countInvoices 唯一发票数', () => {
   const rows = [
-    { invoiceNumber: 'A' },
-    { invoiceNumber: 'A' },
-    { invoiceNumber: 'B' },
-    { invoiceNumber: '', originalFilename: 'x.pdf' }, // 空号但有文件名 → 计 1 张
+    { recordId: 'A', invoiceNumber: '123' },
+    { recordId: 'A', invoiceNumber: '123' },
+    { recordId: 'B', invoiceNumber: '123' },
+    { recordId: 'C', invoiceNumber: '', originalFilename: 'x.pdf' }, // 空号但有文件名 → 计 1 张
   ]
   assert.equal(countInvoices(rows), 3)
 })
@@ -102,11 +103,11 @@ test('visibleColumns 保持规范顺序（A,B,D 勾 C → A,B,C,D）', () => {
 })
 
 test('groupInvoiceRows：多行明细按发票身份分组，顺序与去重同 getInvoiceIdentity', () => {
-  // 同发票 A 两行明细 → 1 组 2 行；发票 B 一行 → 1 组 1 行
+  // 同 recordId A 两行明细 → 1 组 2 行；recordId B 一行 → 1 组 1 行
   const rows = [
-    { invoiceNumber: 'A', xmmc: 'a1' },
-    { invoiceNumber: 'A', xmmc: 'a2' },
-    { invoiceNumber: 'B', xmmc: 'b1' },
+    { recordId: 'A', invoiceNumber: '123', xmmc: 'a1' },
+    { recordId: 'A', invoiceNumber: '123', xmmc: 'a2' },
+    { recordId: 'B', invoiceNumber: '123', xmmc: 'b1' },
   ]
   const groups = groupInvoiceRows(rows)
   assert.equal(groups.length, 2)
@@ -119,14 +120,14 @@ test('groupInvoiceRows：多行明细按发票身份分组，顺序与去重同 
 
   // 首现顺序：B 在前也应保持 B 组的首现位置
   const rows2 = [
-    { invoiceNumber: 'B' },
-    { invoiceNumber: 'A' },
-    { invoiceNumber: 'A' },
+    { recordId: 'B', invoiceNumber: '123' },
+    { recordId: 'A', invoiceNumber: '123' },
+    { recordId: 'A', invoiceNumber: '123' },
   ]
   const g2 = groupInvoiceRows(rows2)
   assert.equal(g2.length, 2)
-  assert.deepEqual(g2[0].map((r) => r.invoiceNumber), ['B'])
-  assert.deepEqual(g2[1].map((r) => r.invoiceNumber), ['A', 'A'])
+  assert.deepEqual(g2[0].map((r) => r.recordId), ['B'])
+  assert.deepEqual(g2[1].map((r) => r.recordId), ['A', 'A'])
 
   // 空号不同文件 → 不同组（不跨发票合并）
   const rows3 = [

@@ -17,8 +17,9 @@
 //   会全部错乱。所以空号兜底必须用稳定字符串 __ANON_{index}。
 export function getInvoiceIdentity(row, index = 0) {
   return (
-    row.invoiceNumber ||
+    row.recordId ||
     row.originalFilename ||
+    row.invoiceNumber ||
     `__ANON_${index}`
   )
 }

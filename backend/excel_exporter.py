@@ -78,10 +78,10 @@ INVOICE_LEVEL_KEYS = {
 def _invoice_identity(rec):
     """发票去重 / 分组身份（前后端共用规则）。
 
-    发票号 → 原文件名 → __ANON_{id}（稳定，不每次生成新对象）。
+    recordId → 原文件名 → 发票号 → __ANON_{id}（稳定，不每次生成新对象）。
     用于预览序号、合计行去重、XLSX 分组合并，保证「预览 == 导出」。
     """
-    return rec.get('invoiceNumber') or rec.get('file_name') or f"__ANON_{id(rec)}"
+    return rec.get('recordId') or rec.get('originalFilename') or rec.get('invoiceNumber') or f"__ANON_{id(rec)}"
 
 
 def sanitize_columns(columns):
