@@ -1569,17 +1569,21 @@ def import_batch_create():
     enable_auto_ocr = request.form.get('enableAutoOcr', '0') == '1'
     client_keys = request.form.getlist('clientKeys')  # 护栏A：可选，与 files 按索引对齐
 
-    # 在主线程预读取所有文件字节（Flask request context 不可跨线程访问）
+    mgr = get_import_batch_manager()
+    registry = mgr.temp_file_registry
+
+    # IS-2：在主线程把每个上传流 spool 到 temp 文件（不在 RAM 累积全量 bytes 峰值）。
+    # identity（sha256 + doc_id）在此边界一次性物化，scheduler 不再重算哈希。
     file_inputs = []
     for i, f in enumerate(files):
         f.seek(0)
+        record = registry.spool(f.stream, f.filename)
         file_inputs.append({
-            'bytes': f.read(),
-            'filename': f.filename,
+            'refId': record.refId,
+            'filename': record.filename,
             'clientKey': client_keys[i] if i < len(client_keys) else '',
         })
 
-    mgr = get_import_batch_manager()
     batch_id = mgr.create_batch(file_inputs, auto_orient=auto_orient,
                                 enable_auto_ocr=enable_auto_ocr)
 

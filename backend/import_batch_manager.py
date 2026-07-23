@@ -21,9 +21,10 @@ import logging
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Optional, Dict, Any, List, Callable
+from typing import Optional, Dict, Any, List, Callable, Tuple
 
 from time_utils import now
+from temp_file_registry import TempFileRegistry, LocalTempFileStorageBackend
 
 logger = logging.getLogger(__name__)
 
@@ -194,10 +195,19 @@ class ImportBatchManager:
         # 取消标志
         self._cancel_flags: Dict[str, bool] = {}
 
+        # IS-2：temp 文件所有权（spool → 落盘 → 读取 → release）。
+        # owner = ImportBatchManager；释放点由 Commit 5 接线（_on_job_done/cancel/cleanup）。
+        self._temp_registry = TempFileRegistry(LocalTempFileStorageBackend())
+
         # 注册完成回调（ParseJobManager 每个 job 终态时触发）
         self._job_manager.on_job_complete(self._on_job_done)
 
         logger.info("[ImportBatch] 初始化完成")
+
+    @property
+    def temp_file_registry(self) -> TempFileRegistry:
+        """供 app.py 在上传边界 spool 使用（opaque ref 入口）。"""
+        return self._temp_registry
 
     # ─── 公开 API ───────────────────────────────────────────
 
@@ -205,12 +215,14 @@ class ImportBatchManager:
                      auto_orient: bool = True,
                      enable_auto_ocr: bool = False) -> str:
         """创建批量导入任务
-        
+
         Args:
-            file_inputs: [{'bytes': b'...', 'filename': 'xxx.pdf'}, ...]
+            file_inputs: IS-2 起为 refId 形态：
+                [{'refId': 'imp-xxx', 'filename': 'xxx.pdf', 'clientKey': '...'}, ...]
+                兼容回退（Commit 3 删除）：也可含 'bytes'（旧路径/手动脚本）。
             auto_orient: 是否自动旋转
             enable_auto_ocr: 是否启用自动 OCR
-            
+
         Returns:
             batch_id
         """
@@ -237,6 +249,34 @@ class ImportBatchManager:
 
         logger.info(f"[ImportBatch] 创建批次: {batch_id} (total={total})")
         return batch_id
+
+    # ─── IS-2：输入解析（spool + identity） ──────────────────
+
+    def _read_input(self, fi: Dict) -> Tuple[bytes, str, str]:
+        """把单条 file input 解析为 (file_bytes, file_hash, filename)。
+
+        IS-2（spool + identity）：
+        - 主路径：fi 含 refId → 从 TempFileRegistry 按 refId 即时读取 bytes，
+          并直接消费 spool 时已算定的 sha256（doc_id 同源），**不再重新 read+hash**。
+          这消除了上传期全量 bytes 常驻内存的峰值（INV-1）。
+        - 兼容回退（Commit 3 移除 bytes 路径后删除）：fi 含 bytes → 按旧方式
+          读取并计算 sha256（仅 test_step2_batch 等手动脚本使用）。
+        """
+        ref_id = fi.get("refId")
+        if ref_id:
+            rec = self._temp_registry.get(ref_id)
+            if rec is None:
+                raise KeyError(f"refId not retained in registry: {ref_id}")
+            file_bytes = self._temp_registry.read_bytes(ref_id)
+            file_hash = rec.sha256
+            filename = rec.filename
+            return file_bytes, file_hash, filename
+        # 兼容回退（transitional）
+        import hashlib
+        file_bytes = fi["bytes"]
+        file_hash = hashlib.sha256(file_bytes).hexdigest()
+        filename = fi["filename"]
+        return file_bytes, file_hash, filename
 
     def get_batch(self, batch_id: str) -> Optional[ImportBatch]:
         """获取批次状态"""
@@ -366,13 +406,9 @@ class ImportBatchManager:
                         return
 
                     fi = inputs[i]
-                    file_bytes = fi['bytes']
-                    filename = fi['filename']
+                    # IS-2：按 refId 即时从 temp 文件读取 bytes + 已物化的 sha256
+                    file_bytes, file_hash, filename = self._read_input(fi)
                     client_key = fi.get('clientKey', '')  # 护栏A：可选
-
-                    # 计算文件哈希（用于去重）
-                    import hashlib
-                    file_hash = hashlib.sha256(file_bytes).hexdigest()
 
                     # 创建 job（携带 batch_id）
                     job = jm.create_job(filename, file_hash, batch_id=batch_id)
