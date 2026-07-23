@@ -457,7 +457,7 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
           updateProgress(session.id, { completed: current, total })
         }
 
-        // 用户取消：关闭所有 SSE + 取消所有子批次（Commit 3 再做 session CANCELLED 聚合）
+        // 用户取消：关闭所有 SSE + 取消所有子批次 + session 标记 CANCELLED（合同 §7 cooperative cancel）
         let currentResolve = null
         abortController.signal.addEventListener('abort', () => {
           wasAborted = true
@@ -468,6 +468,8 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
             if (!terminalFileKeys.has(fileObj.key)) queueUpdate(fileObj.key, 'cancelled')
           }
           updateTaskStatus(task.id, 'cancelled')
+          // Cooperative cancel 终态归属：session → CANCELLED（不保证 kill 在途 OCR worker，符合合同）
+          updateSessionStatus(session.id, 'cancelled')
           if (currentResolve) {
             const r = currentResolve
             currentResolve = null
