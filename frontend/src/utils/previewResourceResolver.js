@@ -33,12 +33,15 @@ export function resolvePreviewUrl(page, docId) {
 /**
  * 解析页面缩略图 URL。
  *
+ * 指向后端 /thumbnail 端点（'thumbnail' preset：低 dpi 小图，默认 WebP），
+ * 而非 /preview——/preview 会忽略 size 参数返回 150dpi 全尺寸预览图。
+ *
  * @param {import('../models/InvoiceDocument').PageMeta} page - 页面元数据
  * @param {string} docId - 文档 ID
- * @returns {string} - 400px 宽 WebP 缩略图 URL
+ * @returns {string} - thumbnail preset WebP 缩略图 URL
  */
 export function resolveThumbnailUrl(page, docId) {
-  return `${BACKEND_URL}/preview/${docId}?page=${page.index + 1}&size=thumb`
+  return `${BACKEND_URL}/thumbnail/${docId}?page=${page.index + 1}`
 }
 
 /**

@@ -153,8 +153,15 @@ def _render_spec_log_enabled() -> bool:
 
 @render_bp.route("/thumbnail/<doc_id>", methods=["GET"])
 def thumbnail(doc_id: str):
-    """Render page 1 with the 'thumbnail' preset."""
-    return _render_and_respond(doc_id, "thumbnail")
+    """Render a specific page with the 'thumbnail' preset.
+
+    Honors the ``?page=`` query param (1-based, default 1) so multi-page
+    documents can build a per-page thumbnail strip. The page flows into
+    ``engine.render`` and therefore into the render cache key, so distinct
+    pages never collide in cache.
+    """
+    page = _int_param("page", 1)
+    return _render_and_respond(doc_id, "thumbnail", page)
 
 
 # ── GET /render/{doc_id} ───────────────────────────────────────
