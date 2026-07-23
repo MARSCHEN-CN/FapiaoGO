@@ -39,6 +39,11 @@ export const USE_RENDER_ENGINE_PREVIEW = true
 // 注意：仅替换 parse 阶段，split 阶段不受影响
 export const IMPORT_SCALE_V1 = true
 
+// ── Import Scale v1: 客户端分块大小（IS-1）─────────────────
+// 语义 = 控制客户端上传压力，与后端 admission window（SUBMIT_WINDOW=50）解耦。
+// 不绑定后端 MAX_BATCH_SIZE（仅 legacy 路径硬上限）。顺序提交，背压由后端兜底。
+export const IMPORT_CHUNK_SIZE = 100
+
 /**
  * 构建 Render Engine 预览 URL。
  *

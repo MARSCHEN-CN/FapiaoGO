@@ -26,12 +26,15 @@
 
 /**
  * @typedef {Object} SessionFile
- * @property {string} id - 文件标识
+ * @property {string} id - 文件标识（= key，合同中的 fileId）
  * @property {string} key - React key
  * @property {string} name - 文件名
+ * @property {number|null} size - 文件大小（字节），IS-1 补充
  * @property {string|null} path - 文件路径
  * @property {string} format - 文件格式
  * @property {'uploading'|'splitting'|'ready'|'parsing'|'parsed'|'error'} status - 当前状态
+ * @property {string|null} batchId - 所属批次 ID（合同 §6 file-level mapping），IS-1 补充
+ * @property {string|null} error - 失败原因（合同 §6），IS-1 补充
  */
 
 /**
@@ -54,6 +57,7 @@
  * @property {SessionStatus} status - 会话状态
  * @property {SessionFile[]} files - 文件列表
  * @property {SessionTask[]} tasks - 任务列表
+ * @property {string[]} childBatchIds - 子批次 ID 列表（合同 §2/§3 聚合 / cancel cascade / retry mapping），IS-1 补充
  * @property {Array} results - 解析结果列表
  * @property {SessionProgress} progress - 进度遥测
  * @property {number} createdAt - 创建时间
@@ -82,6 +86,7 @@ export function createSession(files = []) {
     status: 'pending',
     files,
     tasks: [],
+    childBatchIds: [],
     results: [],
     progress: {
       total: files.length,
@@ -97,6 +102,7 @@ export function createSession(files = []) {
  * @param {Object} input - 文件输入
  * @param {string} input.key - React key
  * @param {string} input.name - 文件名
+ * @param {number} [input.size] - 文件大小（字节）
  * @param {string|null} [input.path] - 文件路径
  * @param {string} input.format - 文件格式
  * @returns {SessionFile}
@@ -106,8 +112,11 @@ export function createSessionFile(input) {
     id: input.key,
     key: input.key,
     name: input.name,
+    size: input.size != null ? input.size : null,
     path: input.path || null,
     format: input.format,
     status: 'uploading',
+    batchId: null,
+    error: null,
   }
 }

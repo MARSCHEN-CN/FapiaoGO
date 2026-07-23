@@ -211,6 +211,7 @@ def _db_record_to_export(rec: dict) -> list:
             tax_amount = 0
         amount_wo_tax = round(total_amount - tax_amount, 2)
         return {
+            "recordId": str(rec.get('id', '')),
             "serialNo": serial_no,
             "invoiceType": rec.get('type', ''),
             "invoiceNumber": rec.get('number', ''),

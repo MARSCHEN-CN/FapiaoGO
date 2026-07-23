@@ -29,14 +29,14 @@ def _sample_invoices():
     """模拟 _db_record_to_export 输出的扁平行（2 张发票 3 行明细）。"""
     return [
         # 发票 A：2 行明细
-        {'invoiceNumber': 'INV-001', 'file_name': 'a.pdf', 'buyerName': 'BuyerA',
+        {'recordId': 'REC-001', 'invoiceNumber': 'INV-001', 'originalFilename': 'a.pdf', 'buyerName': 'BuyerA',
          'amountWithoutTax': 300, 'taxAmount': 30, 'totalAmount': 330,
          'xmmc': '商品A1', 'lineAmount': 100, 'lineTax': 10},
-        {'invoiceNumber': 'INV-001', 'file_name': 'a.pdf', 'buyerName': 'BuyerA',
+        {'recordId': 'REC-001', 'invoiceNumber': 'INV-001', 'originalFilename': 'a.pdf', 'buyerName': 'BuyerA',
          'amountWithoutTax': 300, 'taxAmount': 30, 'totalAmount': 330,
          'xmmc': '商品A2', 'lineAmount': 200, 'lineTax': 20},
         # 发票 B：1 行明细
-        {'invoiceNumber': 'INV-002', 'file_name': 'b.pdf', 'buyerName': 'BuyerB',
+        {'recordId': 'REC-002', 'invoiceNumber': 'INV-002', 'originalFilename': 'b.pdf', 'buyerName': 'BuyerB',
          'amountWithoutTax': 50, 'taxAmount': 5, 'totalAmount': 55,
          'xmmc': '商品B1', 'lineAmount': 50, 'lineTax': 5},
     ]
@@ -81,11 +81,14 @@ class TestSanitizeColumns(unittest.TestCase):
 
 
 class TestInvoiceIdentity(unittest.TestCase):
-    def test_invoice_number_first(self):
-        self.assertEqual(ex._invoice_identity({'invoiceNumber': 'X'}), 'X')
+    def test_record_id_first(self):
+        self.assertEqual(ex._invoice_identity({'recordId': 'uuid1', 'invoiceNumber': 'X'}), 'uuid1')
 
-    def test_file_name_fallback(self):
-        self.assertEqual(ex._invoice_identity({'file_name': 'f.pdf'}), 'f.pdf')
+    def test_original_filename_fallback(self):
+        self.assertEqual(ex._invoice_identity({'originalFilename': 'f.pdf', 'invoiceNumber': 'X'}), 'f.pdf')
+
+    def test_invoice_number_fallback(self):
+        self.assertEqual(ex._invoice_identity({'invoiceNumber': 'X'}), 'X')
 
     def test_anon_fallback_stable(self):
         rec = {}
