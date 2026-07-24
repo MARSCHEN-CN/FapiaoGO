@@ -410,6 +410,16 @@ class RenderEngine:
 
         page_idx = max(0, page - 1)
 
+        # ── Adapter dispatch（13-A.3.5d）：adapter 优先于 pdf/image ──
+        # 与 /metadata 派发顺序一致（adapter → pdf → image）。
+        # OFD 的 doc.pdf is None、doc.adapter=OFDAdapter，此前会误入 image 分支
+        # 把 OFD zip 当图片解码而崩溃；此处在 spec/legacy 分流前短路，
+        # 使 adapter 文档（OFD 及未来 CAD/SVG/TIFF 等）走专属渲染器。
+        # page_idx 已是 0-based（经 max(0,page-1) 转换），直接喂 adapter.render(page_idx)
+        # （OFDAdapter 合同为 0-based）；1-based URL 契约不变，前端零改动。
+        if doc.adapter is not None:
+            return self._render_adapter_page(doc, preset, vs, page_idx, fmt)
+
         # ── Commit B dispatch ──
         # 两棵树完全独立、互不调用（⑥⑦）：Legacy 仅服务无 spec 的请求（Frozen Baseline），
         # RenderSpec 树独立消费 placement/paper/contentRotation（RenderCommand 纯执行）。
@@ -420,6 +430,33 @@ class RenderEngine:
         # RenderSpec 分支（B-1 起真实渲染；B-0 曾 shadow 走 Legacy）。
         return self._render_spec_page(doc, preset, render_spec, page_idx, fmt,
                                       highlights, pdf_doc)
+
+    def _render_adapter_page(self, doc, preset: RenderPreset, vs: dict,
+                             page_idx: int, fmt: str) -> Tuple[bytes, str]:
+        """Adapter-backed render path（13-A.3.5d，例如 OFDAdapter）。
+
+        顺序：adapter 优先于 pdf/image（与 /metadata 派发一致）。
+        - ``page_idx`` 已是 0-based（由 ``_render_page`` 经 ``max(0, page-1)`` 转换），
+          直接喂给 ``doc.adapter.render(page_idx)``（OFDAdapter 合同为 0-based）。
+          1-based URL 契约不变 → 前端零改动、PDF/Image 零回归。
+        - 越界（``page_idx < 0`` 或 ``>= adapter.page_count()``）→ ``ValueError``
+          → api 层统一映射 404，使「第 N+1 页」得到确定语义而非 500。
+        - ``render`` 返回 ``None``（字体缺失 / 单页 XML 损坏 / 资源丢失等）→ 抛
+          ``ValueError`` → 统一错误通道，**不影响其他页 / 其他文档**。
+        - adapter 产出 WebP；预览预设默认 webp，<img> 直接消费。即使客户端要求非
+          webp，也原样返回 webp 字节（Content-Type=image/webp），不做格式降级
+          （预览场景 webp 通用；如需严格格式协商可后续扩展）。
+        """
+        if doc.adapter is None:
+            raise ValueError("Document has no format adapter")
+        n_pages = doc.adapter.page_count()
+        if page_idx < 0 or page_idx >= n_pages:
+            raise ValueError(
+                f"Adapter page {page_idx + 1} out of range ({n_pages} pages)")
+        image = doc.adapter.render(page_idx)
+        if image is None:
+            raise ValueError(f"Adapter failed to render page {page_idx + 1}")
+        return image, "webp"
 
     def _render_legacy_page(self, doc, preset: RenderPreset, vs: dict,
                             page_idx: int, fmt: str, highlights: list = None,
