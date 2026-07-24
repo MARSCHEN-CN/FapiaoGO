@@ -1,19 +1,17 @@
 /**
- * DocumentViewer — 文档查看器主组件
+ * DocumentViewer — 文档查看器主组件（左缩略图 + 右预览）
  *
  * 职责：
- *   组合 ViewerViewport + useViewerState，提供完整的文档查看体验。
+ *   组合 ThumbnailStrip（左） + ViewerViewport（右），提供完整的文档查看体验。
  *   消费 InvoiceDocument 模型，通过 PreviewResourceResolver 获取资源 URL。
  *   不碰纸张/边距/打印（Architecture Law D1）。
  *
- * 所有权：
- *   由 App.jsx 渲染（替代 PreviewCanvas 的位置）。
- *   Phase 4 阶段用 mock 数据验证，Phase 6 接入真实导入。
+ * 布局：左侧 200px 缩略图边栏 + 右侧主预览区（flex-direction: row）。
  *
  * @module components/DocumentViewer
  */
 
-import React, { useMemo, useCallback, useEffect, useRef } from 'react'
+import React, { useMemo, useCallback, useEffect, useRef, useState } from 'react'
 import { ViewerViewport } from './ViewerViewport'
 import { ThumbnailStrip } from './ThumbnailStrip'
 import { useViewerState } from '../hooks/useViewerState'
@@ -92,9 +90,33 @@ export const DocumentViewer = React.memo(function DocumentViewer({
     }
   }, [document])
 
+  // ═══ 页面切换过渡动画 ═══
+  const transitionTimerRef = useRef(null)
+
+  const handleGoToPage = useCallback((index) => {
+    if (index === state.currentPage) return
+    if (transitionTimerRef.current) clearTimeout(transitionTimerRef.current)
+    transitionTimerRef.current = setTimeout(() => {
+      actions.goToPage(index)
+    }, 200)
+  }, [state.currentPage, actions])
+
+  useEffect(() => {
+    return () => {
+      if (transitionTimerRef.current) clearTimeout(transitionTimerRef.current)
+    }
+  }, [])
+
   return (
     <div className="document-viewer">
-      {/* 主视口（上方） */}
+      {/* 左侧缩略图边栏（多页时自动显示） */}
+      <ThumbnailStrip
+        document={document}
+        currentPage={state.currentPage}
+        onPageSelect={handleGoToPage}
+      />
+
+      {/* 右侧主预览区 */}
       <div className="document-viewer-main">
         <ViewerViewport
           page={currentPage}
@@ -122,13 +144,6 @@ export const DocumentViewer = React.memo(function DocumentViewer({
           </div>
         )}
       </div>
-
-      {/* 缩略图横向导航栏（底部，多页时自动显示） */}
-      <ThumbnailStrip
-        document={document}
-        currentPage={state.currentPage}
-        onPageSelect={actions.goToPage}
-      />
     </div>
   )
 })

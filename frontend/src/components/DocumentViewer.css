@@ -1,12 +1,15 @@
 /**
  * DocumentViewer 样式
- * Display Area Refactor Phase 4
+ * 布局：左侧 200px 缩略图边栏 + 右侧主预览区
+ * 色调：项目蓝 #4f7cff | 背景 #f5f6f8 | 白色卡片 | 极淡边框
  */
 
-/* ─── 主布局（上展示区 + 下缩略图横向导航栏） ─── */
+/* ═══════════════════════════════════════
+   主容器：水平两栏布局
+   ═══════════════════════════════════════ */
 .document-viewer {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   flex: 1;
   /* D2-2：作为 .canvas-scroll(row flex) 的 flex 子项，必须 min-width:0，
      否则 min-width:auto 会让内部 2480px transform-wrapper 的固有宽度
@@ -16,8 +19,10 @@
   min-height: 0;
   overflow: hidden;
   position: relative;
+  background: var(--bg);
 }
 
+/* ─── 右侧预览区 ─── */
 .document-viewer-main {
   flex: 1;
   min-width: 0;
@@ -28,156 +33,130 @@
   position: relative;
 }
 
-/* ─── ViewerViewport ─── */
-.viewer-viewport {
-  flex: 1;
-  min-width: 0;
-  min-height: 0;
-  overflow: hidden;
+/* ═══════════════════════════════════════
+   左侧缩略图边栏
+   ═══════════════════════════════════════ */
+.viewer-thumbnail-sidebar {
+  width: 200px;
+  min-width: 200px;
+  flex-shrink: 0;
   display: flex;
+  flex-direction: column;
+  background: var(--white);
+  border-right: 1px solid var(--border);
+  overflow: hidden;
+}
+
+/* 缩略图标题栏 */
+.thumbnail-sidebar-header {
+  display: flex;
+  justify-content: space-between;
   align-items: center;
-  justify-content: center;
-  cursor: grab;
-  position: relative;
-  padding: 16px 20px 20px;
-}
-
-.viewer-viewport.is-dragging {
-  cursor: grabbing;
-  user-select: none;
-}
-
-.viewer-transform-wrapper {
-  transform-origin: center center;
-  position: relative;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
 
-.viewer-image {
-  display: block;
-  border-radius: 8px;
-  box-shadow:
-    0 2px 6px rgba(0, 0, 0, 0.04),
-    0 12px 32px rgba(0, 0, 0, 0.08),
-    0 24px 60px rgba(0, 0, 0, 0.06),
-    0 0 0 1px rgba(0, 0, 0, 0.04);
+.thumbnail-sidebar-title {
+  font-size: 13px;
+  color: var(--text);
+  font-weight: 500;
 }
 
-/* ─── 占位符 ─── */
-.viewer-placeholder {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 100%;
-  height: 100%;
-  color: var(--text-tertiary, #999);
-  font-size: 14px;
-}
-
-/* ─── 加载遮罩 ─── */
-.viewer-loading-overlay {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(255, 255, 255, 0.6);
-  pointer-events: none;
-  z-index: 10;
-}
-
-.viewer-spinner {
-  width: 32px;
-  height: 32px;
-  border: 3px solid rgba(0, 0, 0, 0.1);
-  border-top-color: var(--accent, #4a90d9);
-  border-radius: 50%;
-  animation: viewerSpin 0.8s linear infinite;
-}
-
-@keyframes viewerSpin {
-  to { transform: rotate(360deg); }
-}
-
-/* ─── 页码指示器 ─── */
-.document-viewer-page-indicator {
-  position: absolute;
-  bottom: 12px;
-  right: 16px;
-  padding: 4px 10px;
-  border-radius: 12px;
-  background: rgba(0, 0, 0, 0.6);
-  color: #fff;
-  font-size: 12px;
+.thumbnail-sidebar-count {
+  font-size: 11px;
+  color: var(--text-3);
+  font-weight: 400;
   font-variant-numeric: tabular-nums;
-  pointer-events: none;
-  z-index: 5;
 }
 
-/* ─── Thumbnail Bar（横向底部导航）─── */
-.viewer-thumbnail-bar {
-  height: 96px;
-  min-height: 96px;
-  width: 100%;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  overflow: hidden;
-  background: transparent;
-  border-top: none;
-}
-
+/* ─── 缩略图列表（垂直滚动） ─── */
 .viewer-thumbnail-list {
+  flex: 1;
   display: flex;
-  flex-direction: row;
-  align-items: center;
-  gap: 12px;
-  max-width: 100%;
-  overflow-x: auto;
-  overflow-y: hidden;
-  padding: 8px 16px;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 12px;
   scrollbar-width: thin;
 }
 
-/* ─── ThumbnailItem ─── */
+/* 自定义细滚动条：6px 宽，thumb 半透明灰色 */
+.viewer-thumbnail-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.viewer-thumbnail-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.viewer-thumbnail-list::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.12);
+  border-radius: 3px;
+  transition: background 200ms;
+}
+
+.viewer-thumbnail-list::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.22);
+}
+
+/* ═══════════════════════════════════════
+   ThumbnailItem
+   ═══════════════════════════════════════ */
 .thumbnail-item {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 3px;
+  gap: 4px;
   cursor: pointer;
-  border-radius: 6px;
-  padding: 4px;
-  transition: background 0.15s ease;
+  border-radius: 8px;
+  padding: 6px;
+  transition: all 200ms cubic-bezier(0.4, 0, 0.2, 1);
   flex-shrink: 0;
-  min-width: 64px;
-  max-width: 100px;
+  width: 100%;
 }
 
+/* 缩略图 hover：上浮 2px + 淡蓝色边框 */
 .thumbnail-item:hover {
-  background: rgba(0, 0, 0, 0.04);
+  background: var(--accent-soft);
 }
 
+.thumbnail-item:hover .thumbnail-frame {
+  border-color: rgba(79, 124, 255, 0.30);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+  transform: translateY(-2px);
+}
+
+/* 缩略图选中：蓝色边框 + 蓝色光晕阴影 */
 .thumbnail-item--active {
-  background: rgba(74, 144, 217, 0.1);
+  background: var(--accent-soft);
 }
 
 .thumbnail-item--active .thumbnail-frame {
-  border-color: var(--accent, #4a90d9);
-  box-shadow: 0 0 0 1px var(--accent, #4a90d9);
+  border-color: var(--accent);
+  box-shadow: 0 2px 8px rgba(79, 124, 255, 0.18);
 }
 
+.thumbnail-item--active .thumbnail-label {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* 缩略图框架 */
 .thumbnail-frame {
-  width: 48px;
-  height: 64px;
-  border: 1.5px solid rgba(0, 0, 0, 0.1);
-  border-radius: 4px;
+  width: 100%;
+  aspect-ratio: 210 / 297;
+  max-height: 140px;
+  border: 1.5px solid var(--border);
+  border-radius: 6px;
   overflow: hidden;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #fff;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  background: var(--paper-bg, #fff);
+  box-shadow: var(--shadow-sm);
+  transition: all 200ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .thumbnail-img {
@@ -206,18 +185,124 @@
 }
 
 .thumbnail-label {
-  font-size: 10px;
-  color: var(--text-tertiary, #999);
+  font-size: 11px;
+  color: var(--text-3);
   font-variant-numeric: tabular-nums;
   line-height: 1;
 }
 
-.thumbnail-item--active .thumbnail-label {
-  color: var(--accent, #4a90d9);
-  font-weight: 600;
+/* ═══════════════════════════════════════
+   ViewerViewport
+   ═══════════════════════════════════════ */
+.viewer-viewport {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: grab;
+  position: relative;
+  padding: 20px;
+  background: var(--bg);
 }
 
-/* ─── OverlayLayer（Phase 7）─── */
+.viewer-viewport.is-dragging {
+  cursor: grabbing;
+  user-select: none;
+}
+
+.viewer-transform-wrapper {
+  transform-origin: center center;
+  position: relative;
+  flex-shrink: 0;
+  /* 进入动画：fade-in + 轻微上移 300ms */
+  animation: paperFadeIn 300ms cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+
+/* 纸张图片 - 柔和阴影 */
+.viewer-image {
+  display: block;
+  border-radius: 8px;
+  box-shadow:
+    0 2px 8px rgba(0, 0, 0, 0.04),
+    0 12px 28px rgba(0, 0, 0, 0.06);
+}
+
+/* ─── 占位符 ─── */
+.viewer-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  color: var(--text-3);
+  font-size: 14px;
+}
+
+/* ─── 加载遮罩 ─── */
+.viewer-loading-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.6);
+  pointer-events: none;
+  z-index: 10;
+}
+
+.viewer-spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid rgba(0, 0, 0, 0.1);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: viewerSpin 0.8s linear infinite;
+}
+
+@keyframes viewerSpin {
+  to { transform: rotate(360deg); }
+}
+
+/* ═══════════════════════════════════════
+   页码指示器
+   ═══════════════════════════════════════ */
+.document-viewer-page-indicator {
+  position: absolute;
+  bottom: 16px;
+  right: 20px;
+  padding: 4px 12px;
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+  z-index: 5;
+  backdrop-filter: blur(4px);
+}
+
+/* ═══════════════════════════════════════
+   动画
+   ═══════════════════════════════════════ */
+
+/* 纸张加载：fade-in + 轻微上移 */
+@keyframes paperFadeIn {
+  0% {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ═══════════════════════════════════════
+   OverlayLayer（Phase 7）
+   ═══════════════════════════════════════ */
 .overlay-layer {
   position: absolute;
   inset: 0;
@@ -235,11 +320,11 @@
 }
 
 .overlay-box:hover {
-  box-shadow: 0 0 0 2px rgba(74, 144, 217, 0.3);
+  box-shadow: 0 0 0 2px var(--accent-soft);
 }
 
 .overlay-box--active {
-  box-shadow: 0 0 0 2px rgba(74, 144, 217, 0.5);
+  box-shadow: 0 0 0 2px rgba(79, 124, 255, 0.5);
   z-index: 3;
 }
 
