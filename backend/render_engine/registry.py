@@ -5,9 +5,11 @@ Never exposes filesystem paths through API.
 """
 
 import hashlib
+import io
 import logging
 import threading
 import time
+import zipfile
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
@@ -257,6 +259,23 @@ class DocumentRegistry:
 def _sniff_pdf(file_bytes: bytes) -> bool:
     """True if the bytes look like a PDF (%PDF- header)."""
     return file_bytes[:5] == b"%PDF-"
+
+
+def _sniff_ofd(file_bytes: bytes) -> bool:
+    """True if bytes look like an OFD container.
+
+    OFD is a ZIP archive, but so are .docx/.xlsx/.zip, so the PK magic alone is
+    insufficient. Require a ZIP whose member list contains a canonical OFD
+    marker file — either root `OFD.xml` or a `*/Document.xml` page document.
+    """
+    if file_bytes[:4] != b"PK\x03\x04":
+        return False
+    try:
+        with zipfile.ZipFile(io.BytesIO(file_bytes)) as zf:
+            names = zf.namelist()
+    except Exception:
+        return False
+    return "OFD.xml" in names or any("/Document.xml" in n for n in names)
 
 
 def _sniff_image(file_bytes: bytes) -> bool:
