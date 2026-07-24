@@ -31,6 +31,7 @@ class Document:
     page_count: int = 0
     mtime: float = 0.0
     size: int = 0
+    file_bytes: Optional[bytes] = None
     content_hash: str = ""        # sha256 of file bytes (content-addressable)
     content_indexed: bool = False # whether ContentIndex has been built
     text_cache: Optional[Dict[int, List[TextSpan]]] = None  # lazy, page→TextSpan[]
