@@ -2,6 +2,7 @@ flask
 flask-cors
 pdfplumber
 rapidocr==3.9.0
+onnxruntime
 pdf2image
 numpy
 pillow
