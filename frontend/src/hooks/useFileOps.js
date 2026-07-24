@@ -466,6 +466,7 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
                 if (item) {
                   const hydrationResult = {
                     status: 'parsed',
+                    doc_id: item.docId || '',
                     fields: {
                       invoiceType: item.invoiceType || '',
                       invoiceNumber: item.invoiceNumber || '',

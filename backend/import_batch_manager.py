@@ -359,6 +359,7 @@ class ImportBatchManager:
                 'jobId': job_id,
                 'fileName': job_info.get('file_name', ''),
                 'fileHash': job_info.get('file_hash', ''),
+                'docId': result.get('doc_id', ''),
                 'invoiceType': result.get('invoice_type', ''),
                 'invoiceNumber': result.get('invoice_number', ''),
                 'amount': result.get('amount'),
