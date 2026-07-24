@@ -34,9 +34,11 @@ export const PUBLIC_BASE = import.meta.env.BASE_URL
 export const USE_RENDER_ENGINE_PREVIEW = true
 
 // ─── Import Scale v1（批量导入 Feature Flag）──────────────────────
-// true  = 使用 POST /import/batch + GET SSE 批量导入（服务端任务队列）
-// false = 回退旧 parseWorker（前端逐个 /parse_invoice，2 并发）
-// 注意：仅替换 parse 阶段，split 阶段不受影响
+// IS-3 P5-B1: legacy parseWorker path frozen.
+// IMPORT_SCALE_V1 remains permanently true.
+// Import Scale v1 is the only supported import orchestration path.
+// Legacy parse queue orchestration:/n// parseWorker / parseRunner / TaskScheduler.parseQueue
+// retired in IS-3 P5-B2.
 export const IMPORT_SCALE_V1 = true
 
 // ── Import Scale v1: 客户端分块大小（IS-1）─────────────────
