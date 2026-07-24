@@ -20,6 +20,10 @@
 
 import { BACKEND_URL } from '../config'
 
+// P6-D: POST /import/batch 网络级超时（与用户取消 signal 合并）。
+// POST 非幂等，仅超时中断、绝不重试（防重复创建 batch）。
+const CREATE_TIMEOUT_MS = 30000
+
 /**
  * @typedef {Object} BatchProgress
  * @property {string} taskId - 批次 ID
@@ -63,26 +67,46 @@ export async function createImportBatch(files, options = {}) {
   formData.append('autoOrient', autoOrient ? '1' : '0')
   formData.append('enableAutoOcr', enableAutoOcr ? '1' : '0')
 
-  const resp = await fetch(`${BACKEND_URL}/import/batch`, {
-    method: 'POST',
-    body: formData,
-    signal,
-  })
+  // P6-D: 网络级 timeout 与用户取消 signal 合并。AbortSignal.any 不可用时退回
+  // signal（保留用户取消能力，旧浏览器牺牲 timeout——POST 语义下用户取消优先）。
+  const timeoutController = new AbortController()
+  const timer = setTimeout(() => timeoutController.abort(), CREATE_TIMEOUT_MS)
+  const combinedSignal =
+    signal && AbortSignal.any
+      ? AbortSignal.any([signal, timeoutController.signal])
+      : signal || timeoutController.signal
 
-  if (!resp.ok) {
-    const text = await resp.text().catch(() => '')
-    throw new Error(`创建批量导入失败: HTTP ${resp.status} ${text}`)
-  }
+  try {
+    const resp = await fetch(`${BACKEND_URL}/import/batch`, {
+      method: 'POST',
+      body: formData,
+      signal: combinedSignal,
+    })
 
-  const data = await resp.json()
-  if (!data.success) {
-    throw new Error(data.error || '创建批量导入失败')
-  }
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => '')
+      throw new Error(`创建批量导入失败: HTTP ${resp.status} ${text}`)
+    }
 
-  return {
-    success: true,
-    batchId: data.batchId,
-    total: data.total,
+    const data = await resp.json()
+    if (!data.success) {
+      throw new Error(data.error || '创建批量导入失败')
+    }
+
+    return {
+      success: true,
+      batchId: data.batchId,
+      total: data.total,
+    }
+  } catch (err) {
+    // 用户取消：保持原生 AbortError 透传（cancel flow 不变）
+    // 网络超时：包装可读信息，但绝不标 _retryable / 不重试（防重复 batch）
+    if (err.name === 'AbortError' && !signal?.aborted) {
+      err.message = '创建导入批次超时，请检查网络连接'
+    }
+    throw err
+  } finally {
+    clearTimeout(timer)
   }
 }
 
