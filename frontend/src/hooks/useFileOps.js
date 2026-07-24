@@ -83,7 +83,6 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
   }, [flushUpdates])
 
   const queueUpdate = useCallback((key, newStatus, extra = {}) => {
-    // Map 去重：同一文件只保留最新状态
     // merge (patch accumulator) instead of overwrite; extra shallow-merged, nested objects replaced.
     const previous = pendingUpdatesRef.current.get(key)
     pendingUpdatesRef.current.set(key, mergePendingUpdate(previous, newStatus, extra))
