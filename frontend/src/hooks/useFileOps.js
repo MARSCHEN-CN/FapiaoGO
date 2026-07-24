@@ -19,6 +19,7 @@ import { runParseTask } from '../runners/parseRunner'
 import { runSplitTask } from '../runners/splitRunner'
 import { runFallbackParseTask } from '../runners/fallbackParseRunner'
 import { runChunkedImport } from '../import/runChunkedImport'
+import { ensureRenderContract } from '../services/renderDocument'
 import { mapParseResultToFileUpdate } from '../mappers/parseResultMapper'
 import { createImportSession, addFilesToSession, replaceFileItems, updateProgress } from '../stores/ImportSessionStore'
 import { ensureDocumentFromFileObj, flushDocumentNotifications, getDocument } from '../stores/DocumentStore'
@@ -135,6 +136,15 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
 
     updateTaskStatus(task.id, 'completed')
 
+    // 13-A.3.5b：消费前并行确保各文件已拿 render doc_id（OFD 等走 Render Contract）。
+    // 渲染契约为增强项，ensureRenderContract 内部已容错，不阻断主流程。
+    await Promise.all(
+      batchResult.items.map((item) => {
+        const fileObj = filesToParse[item.index]
+        return fileObj ? ensureRenderContract(fileObj) : Promise.resolve(null)
+      })
+    )
+
     // 4. 消费批量结果：Consumer 写入 Store + 收集 UI 更新
     const updates = new Map()
     for (const item of batchResult.items) {
@@ -210,6 +220,8 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
           // 通过 Consumer 写入 Store + 生成 UI 更新
           // Step 10.5：传入整批 filesToParse 作为 siblings，
           // 与批量路径（:145）一致，供 DocumentStore 聚合共享 docId 的拆分页。
+          // 13-A.3.5b：消费前确保 render doc_id（OFD 走 Render Contract，容错不阻断）
+          await ensureRenderContract(fileObj)
           consumeParseResult(outcome.result, fileObj, null, filesToParse)
 
           setFiles((prev) =>
@@ -338,8 +350,10 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
         queueUpdate(fileObj.key, 'parsing')
 
         try {
-          const result = await runParseTask(job, { ipc, autoOrient })
-          const update = consumeParseResult(result, fileObj, session.id)
+        const result = await runParseTask(job, { ipc, autoOrient })
+        // 13-A.3.5b：解析成功后、消费前确保 render doc_id（OFD 走 Render Contract）
+        await ensureRenderContract(fileObj)
+        const update = consumeParseResult(result, fileObj, session.id)
           queueUpdate(fileObj.key, result.status, update)
         } catch (err) {
           console.error(`[App] 解析失败: ${fileObj.name}`, err)
