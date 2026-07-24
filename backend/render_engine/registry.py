@@ -206,6 +206,23 @@ class DocumentRegistry:
             doc.page_count = 1
             doc.mtime = time.time()
             return doc
+        if _sniff_ofd(file_bytes):
+            # OFD contract: store raw bytes + attach a renderer adapter.
+            # NOT through fitz — fitz.open() is permissive and may open an OFD
+            # as a malformed PDF, silently mis-classifying it (the same class
+            # of bug we already hit with raster images). All OFD-specific
+            # behavior (page_count, dimensions, per-page render) lives in the
+            # adapter; do NOT fabricate page_count here.
+            doc.pdf = None
+            doc.file_bytes = file_bytes
+            try:
+                from .adapters.ofd_adapter import OFDAdapter
+                doc.adapter = OFDAdapter(file_bytes)
+            except Exception as e:
+                logger.warning("OFD sniffed but OFDAdapter init failed: %s", e)
+                doc.adapter = None
+            doc.mtime = time.time()
+            return doc
         # Unknown format: let fitz try its own detection (XPS, etc.); on
         # failure, fall back to storing raw bytes (image path).
         if fitz is not None:
