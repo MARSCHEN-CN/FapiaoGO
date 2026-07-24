@@ -32,6 +32,7 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
   const [importing, setImporting] = useState(false)   // 整个导入流程（处理+解析）
   const [parsing, setParsing] = useState(false)
   const [parseProgress, setParseProgress] = useState({ current: 0, total: 0 })
+  const taskIdRef = useRef(null) // 当前导入任务 id，供取消入口调用 cancelTask（P6-A）
 
   // ✅ 修复闭包陷阱：使用 ref 保存最新 settings
   const settingsRef = useRef(settings)
@@ -308,6 +309,7 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
 
       // 创建 TaskRegistry 任务（用于取消管理）
       const task = createTask(readyFiles.map((f) => f.key))
+      taskIdRef.current = task.id
       const abortController = new AbortController()
       setTaskAbortController(task.id, abortController)
       updateTaskStatus(task.id, 'running')
@@ -540,9 +542,19 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
     await processFilesForAddition(filesToAdd)
   }, [electronAPIRef, processFilesForAddition])
 
+  // ── 取消导入（P6-A）：闭环至 TaskRegistry.cancelTask ──
+  // UI 经 ImportProgressModal.onCancel 触发；cancelTask 内部 abort →
+  // runChunkedImport.onAbort → 关 SSE + cancelImportBatch(batch)。
+  const cancelImport = useCallback(() => {
+    if (taskIdRef.current) {
+      cancelTask(taskIdRef.current)
+    }
+  }, [])
+
   return {
     importing,
     parseFiles, parsing, parseProgress,
+    cancelImport,
     isNativeDragActive,
     handleNativeDrop, handleNativeDragOver, handleNativeDragLeave,
     getRootProps, getInputProps, isDragActive,
