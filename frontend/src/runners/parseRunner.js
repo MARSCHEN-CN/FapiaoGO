@@ -49,6 +49,9 @@ export async function runParseTask(job, { ipc, autoOrient }) {
     fd.append('file', f.file)
     fd.append('autoOrient', autoOrient ? '1' : '0')
     fd.append('mode', 'batch')
+    if (f.docId) fd.append('source_doc_id', f.docId)
+    if (f.pageNum != null) fd.append('page_num', String(f.pageNum))
+    if (f.totalPages) fd.append('total_pages', String(f.totalPages))
 
     resp = await fetch(`${BACKEND_URL}/parse_invoice`, {
       method: 'POST', body: fd,
@@ -60,6 +63,9 @@ export async function runParseTask(job, { ipc, autoOrient }) {
     fd.append('file', file)
     fd.append('autoOrient', autoOrient ? '1' : '0')
     fd.append('mode', 'batch')
+    if (f.docId) fd.append('source_doc_id', f.docId)
+    if (f.pageNum != null) fd.append('page_num', String(f.pageNum))
+    if (f.totalPages) fd.append('total_pages', String(f.totalPages))
 
     resp = await fetch(`${BACKEND_URL}/parse_invoice`, {
       method: 'POST', body: fd,

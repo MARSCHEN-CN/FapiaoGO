@@ -14,7 +14,7 @@ export function generateFileKey(name) {
 }
 
 // 构建文件对象
-export function buildFileObj(file, name, path, previewImage = null, docId = null, pageNum = null, contentHash = null) {
+export function buildFileObj(file, name, path, previewImage = null, docId = null, pageNum = null, contentHash = null, totalPages = null) {
   const key = generateFileKey(name)
   // Stage 4.1.3：注入统一身份出口（Identity Contract v1.1）。
   // 纯透传 docId/contentHash/pageNum；哈希计算权属 backend registry，前端不计算。
@@ -39,6 +39,7 @@ export function buildFileObj(file, name, path, previewImage = null, docId = null
     // 多页 PDF 拆页后，每个分页项携带其在原文档中的真实页码。
     // 预览 URL 必须用它而非硬编码 1，否则所有分页都显示第 1 页（串线）。
     pageNum: pageNum || null,
+    totalPages: totalPages || null,
     identity,
     // 预计算 searchText，确保所有文件（含未解析或解析失败的）都能快速搜索
     searchText: buildSearchText({ name }),
@@ -97,7 +98,7 @@ export async function processPdfFile(file, getPathFn) {
           const pageName = file.name.replace('.pdf', `_p${page.page_index}.pdf`)
           const pageFile = new File([blob], pageName, { type: 'application/pdf' })
 
-          const fileObj = buildFileObj(pageFile, pageName, getPathFn(file), page.preview_image, data.doc_id, page.page_index)
+          const fileObj = buildFileObj(pageFile, pageName, getPathFn(file), page.preview_image, data.doc_id, page.page_index, null, totalPages)
           toAdd.push(fileObj)
           toParse.push(fileObj)
         }
