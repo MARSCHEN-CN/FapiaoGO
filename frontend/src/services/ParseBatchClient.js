@@ -50,6 +50,14 @@ export async function prepareBatchRequest(filesToParse, { ipc, autoOrient }) {
       formData.append('files', preparedFiles[i], filesToParse[i].name)
     }
   }
+  // Phase C: 传递每文件的分组元信息（多页 PDF 拆分页共享 source_doc_id）
+  for (let i = 0; i < preparedFiles.length; i++) {
+    const f = filesToParse[i]
+    if (f.docId) formData.append('source_doc_ids', f.docId)
+    else formData.append('source_doc_ids', '')
+    formData.append('page_nums', f.pageNum != null ? String(f.pageNum) : '')
+    formData.append('total_pages_arr', f.totalPages ? String(f.totalPages) : '')
+  }
   formData.append('autoOrient', autoOrient ? '1' : '0')
 
   return {
@@ -76,6 +84,9 @@ export async function prepareSingleRequest(fileObj, { ipc, autoOrient }) {
   formData.append('file', file)
   formData.append('autoOrient', autoOrient ? '1' : '0')
   formData.append('mode', 'batch')
+  if (fileObj.docId) formData.append('source_doc_id', fileObj.docId)
+  if (fileObj.pageNum != null) formData.append('page_num', String(fileObj.pageNum))
+  if (fileObj.totalPages) formData.append('total_pages', String(fileObj.totalPages))
 
   return {
     url: `${BACKEND_URL}/parse_invoice`,

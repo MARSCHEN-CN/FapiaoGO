@@ -1283,23 +1283,56 @@ def parse_batch():
                 completed += 1
                 progress_queue.put({'current': completed, 'total': total})
 
-        # 批量入库
-        db_records = []
-        record_index_map = {}
-        for i, (idx, svc_result, error) in enumerate(results):
-            if svc_result and svc_result.get('db_record'):
-                record_index_map[len(db_records)] = idx
-                db_records.append(svc_result['db_record'])
+        # ── 批量入库（含多页组装路径） ──
+        # 读取前端传来的分组元信息（数组，与 files 顺序一致）
+        raw_src_ids = request.form.getlist('source_doc_ids')
+        raw_page_nums = request.form.getlist('page_nums')
+        raw_total_pages = request.form.getlist('total_pages_arr')
 
-        # 预构建反向映射 {file_idx: db_record 位置}，把下方「逐个文件匹配 db 结果」从 O(N·M) 降为 O(N)。
-        # 依赖 batch_upsert_invoices 返回顺序与入参 rows 对应的契约（见 db.py 文档）。
-        file_db_map = {idx: pos for pos, idx in record_index_map.items()}
+        # 按 source_doc_id 对解析结果分组
+        source_groups = {}  # source_doc_id → [(idx, svc_result)]
+        single_results = []  # (idx, svc_result) 不分组的文件
+        for i, (idx, svc_result, error) in enumerate(results):
+            if not svc_result:
+                continue
+            src_id = raw_src_ids[i].strip() if i < len(raw_src_ids) else ''
+            if src_id:
+                source_groups.setdefault(src_id, []).append((idx, svc_result))
+            else:
+                single_results.append((idx, svc_result))
+
+        # 组装分组后的发票文档
+        assembled_records = []  # [(file_idx, db_record_dict)]
+        for src_id, page_results in source_groups.items():
+            pages = [r for _, r in page_results]
+            invoice_docs = assemble_invoice(pages)
+            for inv_doc in invoice_docs:
+                fallback_rec = (page_results[0][1].get('db_record') or {})
+                inv_db = invoice_document_to_db_record(
+                    inv_doc,
+                    fallback_hash=fallback_rec.get('hash_sha256', ''),
+                    fallback_filename=fallback_rec.get('file_name', ''),
+                    fallback_raw_text=fallback_rec.get('raw_text', ''),
+                )
+                assembled_records.append((page_results[0][0], inv_db))
+
+        # 未分组的单文件
+        single_records = []
+        for idx, svc_result in single_results:
+            rec = svc_result.get('db_record')
+            if rec:
+                single_records.append((idx, rec))
+
+        # 合并所有待入库记录
+        all_records = assembled_records + single_records
+        db_records = [r for _, r in all_records]
+        file_db_map = {idx: pos for pos, (idx, _) in enumerate(all_records)}
 
         db_results = []
         if db_records:
             try:
                 db_results = db_module.batch_upsert_invoices(db_records)
-                logger.info("[parse_batch] 批量入库 %d 条记录", len(db_results))
+                logger.info("[parse_batch] 批量入库 %d 条记录（组装后）", len(db_results))
             except Exception as e:
                 logger.warning("[parse_batch] 批量入库失败: %s", e)
 
