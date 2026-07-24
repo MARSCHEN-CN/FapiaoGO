@@ -37,7 +37,7 @@ from services.decision_router import DecisionRouter
 from render_engine import registry, engine
 from render_engine.registry import _make_doc_id
 from render_engine.api import render_bp
-from temp_file_registry import TempFileRegistry, LocalTempFileStorageBackend
+from temp_file_registry import get_temp_registry
 
 # 全局实例（惰性初始化）
 _decision_router = None
@@ -998,11 +998,12 @@ _ocr_executor = None
 _ocr_executor_kind = None  # None=未初始化 | 'process' | 'thread' | False=不可用
 _executor_lock = threading.Lock()
 
-# IS-3 P2-2：/parse_invoice 与（退役前的）/parse_batch 经 _run_parse_offthread 提交时，
-# 由本 registry 把 bytes 固化为 ref，跨进程只传 refId。worker 解析后由 finally 释放。
-# 注：与 /import/batch 的 import_batch_manager._temp_registry 当前为独立实例
-# （跨端点共享单例归 P3 R1），但都落在同一 config.TEMP_ROOT 下，ref 解析一致。
-_import_temp_registry = TempFileRegistry(LocalTempFileStorageBackend())
+# IS-3 P3-A：/parse_invoice 与 /import/batch 共用同一 TempFileRegistry 单例（get_temp_registry，
+# R1 blocker 修复）。此前两者各 new 一个实例，会导致 spool 登记的 ref 被另一端 release 时
+# 找不到记录 → temp 文件成孤儿，违反 INV-IS3-6。统一单例后 spool/release 闭环。
+# 跨 ProcessPool 仍只传 refId（INV-IS3-3）；worker 不持有 registry，只按 refId 跨进程
+# read_bytes_by_ref（INV-IS3-6）。
+_import_temp_registry = get_temp_registry()
 
 
 def _get_executor():
@@ -1089,6 +1090,26 @@ def _run_parse_offthread(file_bytes, filename, auto_orient, enable_auto_ocr):
             _import_temp_registry.release(ref_id)
 
 
+def _run_parse_ref_offthread(ref_id, filename, auto_orient, enable_auto_ocr):
+    """IS-3 P3-B：提交已 spool 的 ref 到执行器（调用方负责本 ref 的 spool + release）。
+
+    与 _run_parse_offthread 的区别：bytes→ref 的固化已上移到 /parse_invoice 路由
+    （直接将上传流 spool 为 opaque ref，不把全量 bytes 读进 RAM，INV-1），本函数只承接
+    refId，跨 ProcessPool 仅传字符串 refId（不传 bytes，INV-IS3-3）。同步回退路径仍按
+    refId 读回 bytes 后交 service（同进程内读取，不跨进程传 bytes）。
+    /parse_batch 退役前继续用 _run_parse_offthread（P4 移除）。
+    """
+    executor = _get_executor()
+    if executor is None:
+        from temp_file_registry import read_bytes_by_ref
+        file_bytes = read_bytes_by_ref(ref_id)
+        return _parse_sync(file_bytes, filename, auto_orient, enable_auto_ocr)
+    # 超时略大于 MAX_PARSE_TIME，避免单任务无限挂起占用信号量
+    timeout = MAX_PARSE_TIME / 1000.0 + 30.0
+    future = executor.submit(ocr_pool_task.run_parse, ref_id, filename, auto_orient, enable_auto_ocr)
+    return future.result(timeout=timeout)
+
+
 # 供 parse_batch 使用的「提交层」并发限流（外层 ThreadPool 仅为调度层）。
 # 注意：OCR 实际并行度由 _get_executor() 的 ProcessPoolExecutor + OCR_WORKERS 决定，
 # 与 BATCH_WORKERS / parse_semaphore 解耦——调参时不要混淆两者。
@@ -1104,31 +1125,31 @@ def parse_invoice():
         return jsonify({"success": False, "error": "没有上传文件"}), 400
 
     file = request.files['file']
-    # [DIAG] A/B 对比：打印文件名和文件大小
-    import logging as _diag_log
-    _diag_log = logging.getLogger(__name__)
-    _diag_log.info("[DIAG] parse_invoice filename=%s  size=%d  mode=%s",
-                   file.filename, len(file.read()), request.form.get('mode', 'single'))
-    file.seek(0)
     if not allowed_file(file.filename):
         return jsonify({"success": False, "error": "不支持的文件格式"}), 400
 
     if not _parse_semaphore.acquire(blocking=False):
         return jsonify({"success": False, "error": "当前解析任务较多，请稍后重试"}), 429
 
+    # IS-3 P3-B：上传流直接 spool 为 opaque ref（不把全量 bytes 读进 RAM，INV-1）；
+    # exec 边界只传 refId（INV-IS3-3）；本 ref 的生命周期（spool/release）归本路由拥有
+    # （INV-IS3-6：worker 只读、不持有 registry）。doc_id 由 spool 边界物化
+    # （content-only，与 _make_doc_id 同规则），无需再次读取/重算全量 bytes。
+    ref_id = None
     try:
         file.seek(0)
-        file_bytes = file.read()  # 只读取一次，后续复用
-        # Identity Contract v1.1：文档永久身份 = sha256(file_bytes)[:24]（content-only，filename 不进哈希）。
-        # 与 /split_pdf、/preview/{doc_id} 共用同一 doc_id，使单文件 parse 也能闭合身份链（4.2.1-c）。
-        doc_id = _make_doc_id(file_bytes, file.filename or "")
+        rec = _import_temp_registry.spool(file.stream, file.filename or "")
+        ref_id = rec.refId
+        doc_id = rec.doc_id  # content-only 身份，等价于 _make_doc_id(content)
+        logger.info("[DIAG] parse_invoice filename=%s size=%d refId=%s mode=%s",
+                    rec.filename, rec.size, ref_id, request.form.get('mode', 'single'))
 
         auto_orient = request.form.get('autoOrient', '1') == '1'
         enable_auto_ocr = request.form.get('enableAutoOcr', '0') == '1'
         _legacy_start = time.time()
         # 交由执行器（进程池/线程池）执行，释放 Flask 请求线程；
-        # worker 内 skip_db_write=True，DB 写入改在主线程完成（见下方）。
-        result = _run_parse_offthread(file_bytes, file.filename, auto_orient, enable_auto_ocr)
+        # 只传 refId，worker(run_parse) 按 refId 跨进程读回 bytes（INV-IS3-3）。
+        result = _run_parse_ref_offthread(ref_id, rec.filename, auto_orient, enable_auto_ocr)
         _legacy_ms = round((time.time() - _legacy_start) * 1000, 2)
         logger.info("[PERF] 旧管道 parse_invoice_service 耗时: %.2fms (executor=%s)",
                     _legacy_ms, _ocr_executor_kind or 'sync')
@@ -1136,6 +1157,9 @@ def parse_invoice():
         logger.exception("发票解析失败")
         return jsonify({"success": False, "error": "发票解析失败"}), 500
     finally:
+        # 生命周期所有权归本路由（INV-IS3-6）：worker 只读，此处释放 temp 文件
+        if ref_id is not None:
+            _import_temp_registry.release(ref_id)
         _parse_semaphore.release()
 
     # ── 主进程完成 DB 写入（worker 中 skip_db_write=True，避免跨进程写库） ──

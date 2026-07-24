@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from typing import Optional, Dict, Any, List, Callable
 
 from time_utils import now
-from temp_file_registry import TempFileRegistry, LocalTempFileStorageBackend
+from temp_file_registry import TempFileRegistry, get_temp_registry
 
 logger = logging.getLogger(__name__)
 
@@ -195,9 +195,11 @@ class ImportBatchManager:
         # 取消标志
         self._cancel_flags: Dict[str, bool] = {}
 
-        # IS-2：temp 文件所有权（spool → 落盘 → 读取 → release）。
-        # owner = ImportBatchManager；释放点由 Commit 5 接线（_on_job_done/cancel/cleanup）。
-        self._temp_registry = TempFileRegistry(LocalTempFileStorageBackend())
+        # IS-3 P3-A：temp 文件所有权统一为跨端点单例 get_temp_registry()（R1 blocker 修复）。
+        # /parse_invoice 与 /import/batch 共用同一 TempFileRegistry 实例，确保 spool 登记的
+        # ref 与 release 查找落在同一 _records（INV-IS3-6 lifecycle mutation owner 唯一）。
+        # 释放点仍由 Commit 5 接线（_on_job_done/cancel/cleanup），owner 关系不变。
+        self._temp_registry = get_temp_registry()
 
         # 注册完成回调（ParseJobManager 每个 job 终态时触发）
         self._job_manager.on_job_complete(self._on_job_done)

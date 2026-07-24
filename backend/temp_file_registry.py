@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import threading
 import time
 import uuid
 from typing import Dict, Optional, Protocol, runtime_checkable
@@ -134,6 +135,40 @@ def read_bytes_by_ref(ref_id: str, base_dir: Optional[str] = None) -> bytes:
     """
     with open(resolve_ref_path(ref_id, base_dir), "rb") as f:
         return f.read()
+
+
+# ═══════════════════════════════════════════════════════════
+# IS-3 P3-A：跨端点单例（R1 blocker 修复）
+# ═══════════════════════════════════════════════════════════
+
+_temp_registry_singleton: Optional["TempFileRegistry"] = None
+_temp_registry_singleton_lock = threading.Lock()
+
+
+def get_temp_registry() -> "TempFileRegistry":
+    """返回进程内唯一的 TempFileRegistry 单例（跨端点共享生命周期所有者）。
+
+    R1 blocker（你审阅 P2-2 时指出）：此前 /parse_invoice（app._import_temp_registry）
+    与 /import/batch（import_batch_manager._temp_registry）各自 new 一个实例，导致
+    两套独立的 _records 内存索引。spool 登记的 ref 若由另一端 release，会"找不到记录
+    → 释放失败 → temp 文件成为孤儿"，直接违反 INV-IS3-6（lifecycle mutation owner 唯一）。
+
+    统一为本单例后：
+    - 两入口共用同一 _records，spool / release 闭环，不再有孤儿文件；
+    - retain / release / cancel 的 ownership 仍只属于"父进程入口"（worker 永不持有
+      registry，只凭 refId 跨进程 read_bytes_by_ref，INV-IS3-6 不变）；
+    - 配置（config.TEMP_ROOT / INVOICE_TEMP_ROOT env）仍由 LocalTempFileStorageBackend
+      注入，单例不引入新的配置维度。
+
+    T7 验证：get_temp_registry() is get_temp_registry()，且
+    app._import_temp_registry is import_batch_manager.get_import_batch_manager().temp_file_registry。
+    """
+    global _temp_registry_singleton
+    if _temp_registry_singleton is None:
+        with _temp_registry_singleton_lock:
+            if _temp_registry_singleton is None:
+                _temp_registry_singleton = TempFileRegistry(LocalTempFileStorageBackend())
+    return _temp_registry_singleton
 
 
 class TempFileRecord:
