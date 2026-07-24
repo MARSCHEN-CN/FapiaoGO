@@ -680,8 +680,30 @@ def _apply_grayscale(pix) -> "fitz.Pixmap":
         pix = fitz.Pixmap(fitz.csGRAY, pix)
     return pix
 
+def normalize_image_bytes(data: bytes) -> bytes:
+    """EXIF transpose: normalize image to correct visual orientation.
 
-def _open_image_doc(doc) -> "fitz.Document":
+    Handles EXIF Orientation metadata (e.g., phone photos with rotate 90 deg).
+    Outputs JPEG to strip all EXIF and provide stable input to fitz.
+    All image rendering paths (preview/thumbnail/print) share this function.
+    """
+    try:
+        from PIL import Image, ImageOps
+        img = Image.open(io.BytesIO(data))
+        img = ImageOps.exif_transpose(img)
+        if img.mode in ("RGBA", "PA", "P"):
+            img = img.convert("RGBA")
+        else:
+            img = img.convert("RGB")
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=95)
+        return buf.getvalue()
+    except Exception:
+        return data
+
+
+def _open_image_doc
+(doc) -> "fitz.Document":
     """Open an image document for rendering (Commit B-1 spec path; additive).
 
     新增 helper，供 `_render_spec_page` 的 image 分支使用；**不修改** Legacy 的
