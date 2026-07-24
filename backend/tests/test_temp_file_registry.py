@@ -23,7 +23,16 @@ from temp_file_registry import (  # noqa: E402
     TempFileRegistry,
     NullStorageBackend,
     LocalTempFileStorageBackend,
+    read_bytes_by_ref,
 )
+
+
+def _child_read_bytes_by_ref(ref_id, base_dir):
+    """模块级子进程 worker 模拟（必须模块级，Windows spawn 才能 pickle）。
+
+    模拟 ProcessPool 子进程：只持 refId + base_dir，无父进程 _records 索引。
+    """
+    return read_bytes_by_ref(ref_id, base_dir)
 
 
 class _SpyStorage:
@@ -197,3 +206,68 @@ class TestSpoolAndLocalBackend:
         import pytest
         with pytest.raises(AttributeError):
             reg.spool(io.BytesIO(b"x"), "x.pdf")
+
+    # ---- IS-3 P1：storage identity migration (INV-IS3-5) ----
+
+    def test_refId_is_storage_filename_no_extension(self, tmp_path):
+        """INV-IS3-5 单元护栏：refId == 存储文件名（无扩展名），path 确定性。
+
+        防止未来有人偷偷把 uuid 文件名与 refId 解耦，导致跨进程解析失效。
+        """
+        backend = LocalTempFileStorageBackend(base_dir=str(tmp_path))
+        reg = TempFileRegistry(backend)
+        rec = reg.spool(io.BytesIO(b"identity check"), "inv.pdf")
+        expected_path = os.path.join(str(tmp_path), rec.refId)
+        # 路径严格等于 base_dir/refId
+        assert rec.path == expected_path
+        # 文件确以 refId 命名（无扩展名；filename 的 .pdf 不应泄漏进存储名）
+        assert os.path.basename(rec.path) == rec.refId
+        assert not rec.refId.endswith(".pdf")
+        # 文件存在且内容一致
+        assert os.path.exists(expected_path)
+        with open(expected_path, "rb") as f:
+            assert f.read() == b"identity check"
+        # 确定性：backend.path_for(refId) 必须返回同一 path（跨进程解析契约）
+        assert backend.path_for(rec.refId) == expected_path
+
+    def test_read_bytes_by_ref_standalone(self, tmp_path):
+        """INV-IS3-5 单元：子进程用 read_bytes_by_ref 解析，无需父进程 _records。
+
+        模拟一个全新进程（无 registry 索引）也能按 refId + base_dir 读到字节。
+        """
+        backend = LocalTempFileStorageBackend(base_dir=str(tmp_path))
+        reg = TempFileRegistry(backend)
+        content = b"standalone cross-process read " * 20
+        rec = reg.spool(io.BytesIO(content), "s.pdf")
+        # 不经过任何 TempFileRegistry 实例，直接按 refId 解析
+        got = read_bytes_by_ref(rec.refId, base_dir=str(tmp_path))
+        assert got == content
+        # 反向证明：一个空 registry 没有该 ref 的索引（解析靠存储不靠内存）
+        orphan = TempFileRegistry(LocalTempFileStorageBackend(base_dir=str(tmp_path)))
+        assert orphan.get(rec.refId) is None
+
+    def test_read_bytes_by_ref_rejects_path_separator(self, tmp_path):
+        """refId 不得承载路径分隔符（opaque storage identity，INV-IS3-3）。"""
+        import pytest
+        with pytest.raises(ValueError):
+            read_bytes_by_ref("imp-../escape", base_dir=str(tmp_path))
+
+    def test_cross_process_resolve_via_ref(self, tmp_path):
+        """🔴 T1：真实 ProcessPoolExecutor 跨进程解析（非 mock）。
+
+        父进程 spool 出 refId；子进程仅凭 refId + base_dir 解析读取，其内存中
+        没有父进程的 _records 索引——验证 INV-IS3-5 实战成立。这是 IS-3 的
+        核心验收，必须用真实子进程（spawn 隔离内存）才能证明。
+        """
+        import concurrent.futures as cf
+        backend = LocalTempFileStorageBackend(base_dir=str(tmp_path))
+        reg = TempFileRegistry(backend)
+        content = b"%PDF-1.4 cross-process payload " * 50
+        rec = reg.spool(io.BytesIO(content), "x.pdf")
+        ref_id = rec.refId
+        base = str(tmp_path)
+
+        with cf.ProcessPoolExecutor(max_workers=1) as ex:
+            fut = ex.submit(_child_read_bytes_by_ref, ref_id, base)
+            got = fut.result(timeout=15)
+        assert got == content

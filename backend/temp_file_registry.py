@@ -3,6 +3,9 @@
 Commit 1：只建立所有权契约（retain/get/release + NullStorageBackend 占位，无 I/O）。
 Commit 2：新增 LocalTempFileStorageBackend（真实落盘/读取/删除）+ Registry.spool()/
          read_bytes()，并在 spool 边界一次性物化 identity（sha256 + doc_id）。
+IS-3 P1：storage identity 迁移——refId 即存储文件名（path = base_dir/refId，无扩展名），
+         跨进程由 resolve_ref_path()/read_bytes_by_ref() 确定性解析，不再依赖父进程
+         _records 内存索引（满足 INV-IS3-5）。
 
 设计原则（来自 Contract v1 INV-1..5）：
 - refId 是唯一 opaque 标识，绝不暴露 path 给 session / job contract。
@@ -54,15 +57,16 @@ class LocalTempFileStorageBackend:
         self._base_dir = base_dir
         os.makedirs(self._base_dir, exist_ok=True)
 
-    def spool(self, stream, filename: str):
-        """把 stream 写入临时文件，增量计算 sha256，返回 (path, size, sha256)。
+    def spool(self, ref_id: str, stream, filename: str):
+        """把 stream 写入以 ref_id 命名的临时文件，增量计算 sha256，返回 (path, size, sha256)。
 
+        ref_id 由调用方（Registry.spool）预先生成，保证 refId == 存储文件名
+        （无扩展名），从而跨进程可由 path_for(ref_id) 确定性解析（INV-IS3-5）。
         分块流式写入，避免一次性读入内存（大文件友好）。
-        filename 仅用于生成可读的临时名，绝不含进哈希（保持 content-only 身份）。
+        filename 仅保留为元数据/可读名，绝不含进哈希（保持 content-only 身份），
+        也不再进入存储文件名（存储文件名严格等于 refId）。
         """
-        ext = os.path.splitext(filename or "")[1] or ".bin"
-        name = "imp-" + uuid.uuid4().hex + ext
-        path = os.path.join(self._base_dir, name)
+        path = self.path_for(ref_id)
         h = hashlib.sha256()
         size = 0
         with open(path, "wb") as out:
@@ -73,6 +77,16 @@ class LocalTempFileStorageBackend:
                 out.write(chunk)
                 size += len(chunk)
         return path, size, h.hexdigest()
+
+    def path_for(self, ref_id: str) -> str:
+        """refId -> 确定性存储路径（跨进程可解析，无需父进程内存索引）。
+
+        refId 即文件名（无扩展名）。若含路径分隔符则拒绝——refId 是 opaque
+        storage identity，绝不承载路径（INV-IS3-3）。
+        """
+        if "/" in ref_id or "\\" in ref_id:
+            raise ValueError(f"refId must not contain path separators: {ref_id!r}")
+        return os.path.join(self._base_dir, ref_id)
 
     def read_bytes(self, path: str) -> bytes:
         """读取已落盘的临时文件内容（scheduler 按 refId 即时读取用）。"""
@@ -85,6 +99,38 @@ class LocalTempFileStorageBackend:
             os.unlink(path)
         except FileNotFoundError:
             pass
+
+
+def _default_base_dir() -> str:
+    """IS-2/IS-3 默认 temp 根。生产应由显式 app config 注入（Plan R2），
+    此处仅作 fallback，保证跨进程默认同 root。
+    """
+    import tempfile
+    return os.path.join(tempfile.gettempdir(), "print706_import_tmp")
+
+
+def resolve_ref_path(ref_id: str, base_dir: Optional[str] = None) -> str:
+    """跨进程确定性解析：refId -> 存储路径。
+
+    不依赖任何父进程内存索引（INV-IS3-5）。ProcessPool 子进程只持 refId +
+    共享 base_dir，调用本函数即可定位文件。base_dir 为 None 时回退默认 root
+    （生产须显式注入，见 Plan R2）。
+    """
+    if "/" in ref_id or "\\" in ref_id:
+        raise ValueError(f"refId must not contain path separators: {ref_id!r}")
+    return os.path.join(base_dir or _default_base_dir(), ref_id)
+
+
+def read_bytes_by_ref(ref_id: str, base_dir: Optional[str] = None) -> bytes:
+    """跨进程安全读取：ProcessPool 子进程 worker 用（无父进程 _records）。
+
+    parent 侧同进程读取仍走 TempFileRegistry.read_bytes（带副本隔离）；本函数
+    专为子进程设计——只 resolve + read，绝不 retain/release（INV-IS3-6：
+    lifecycle mutation 由 parent 拥有）。worker 拿到 bytes 后交
+    parse_invoice_service(bytes)，签名不变（INV-IS3-2）。
+    """
+    with open(resolve_ref_path(ref_id, base_dir), "rb") as f:
+        return f.read()
 
 
 class TempFileRecord:
@@ -155,6 +201,11 @@ class TempFileRegistry:
     def spool(self, stream, filename: str, *, doc_id: Optional[str] = None) -> TempFileRecord:
         """Spool 一个上传流到临时存储，登记记录并返回（opaque refId）。
 
+        单一原子入口（IS-3 P1）：refId 在此内部生成，并作为存储文件名传给
+        backend.spool，保证 refId == 存储身份（INV-IS3-5）。先落盘、后登记，
+        避免“ref 已生成但文件写入失败留下悬挂记录”的两阶段分裂（IS-2 Commit 5
+        孤立 ref 回收纪律的延续）。
+
         身份物化边界（INV-2）：落盘 + sha256 + doc_id 在此一次性算定，
         manager/scheduler 之后只消费 record.sha256，绝不重新 read+hash 字节。
         doc_id 默认 = sha256[:24]，与 render_engine.registry._make_doc_id 的
@@ -162,13 +213,15 @@ class TempFileRegistry:
 
         Args:
             stream: 任意可读二进制流（werkzeug FileStorage.stream / BytesIO / 文件）
-            filename: 原始文件名（仅用于生成可读临时名，不含进哈希）
+            filename: 原始文件名（仅作元数据/可读名，不含进哈希，也不进存储文件名）
             doc_id: 可选，已知文档身份时传入；否则由 sha256[:24] 推导
         """
-        path, size, sha256 = self._storage.spool(stream, filename)
+        ref_id = "imp-" + uuid.uuid4().hex
+        path, size, sha256 = self._storage.spool(ref_id, stream, filename)
         if doc_id is None:
             doc_id = sha256[:24]
         rec = TempFileRecord(
+            refId=ref_id,
             path=path,
             filename=filename,
             size=size,
@@ -176,7 +229,7 @@ class TempFileRegistry:
             doc_id=doc_id,
             status="active",
         )
-        ref_id = self.retain(rec)
+        self.retain(rec)  # rec.refId 已非空 → retain 直接登记，不重新生成
         return self.get(ref_id)
 
     def read_bytes(self, ref_id: str) -> bytes:
