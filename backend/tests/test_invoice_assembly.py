@@ -8,11 +8,13 @@
 import sys
 import os
 
-# 确保 backend 在 sys.path 中
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+# 确保 project root 和 backend 都在 sys.path 中
+_root = os.path.join(os.path.dirname(__file__), '..', '..')
+sys.path.insert(0, _root)
+sys.path.insert(0, os.path.join(_root, 'backend'))
 
-from backend.page_result_store import PageResultStore
-from backend.invoice_assembly_pipeline import assemble
+from page_result_store import PageResultStore
+from invoice_assembly_pipeline import assemble
 
 
 def _make_page(

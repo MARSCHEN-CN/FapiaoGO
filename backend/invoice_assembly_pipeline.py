@@ -28,7 +28,7 @@ import logging
 from typing import List, Dict, Any
 from collections import defaultdict
 
-from backend.multi_page_merge import merge_page_results
+from multi_page_merge import merge_page_results
 
 logger = logging.getLogger(__name__)
 
