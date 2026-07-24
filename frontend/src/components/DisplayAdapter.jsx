@@ -43,10 +43,9 @@ export function resolveDocId(file) {
 /**
  * 判断文件是否为 PDF。
  *
- * Step 10 阶段 DocumentViewer 仅服务 PDF：
- * 后端 /preview/{docId} 只能栅格化 PDF（图片渲染分支尚未实现，恒 404），
- * 图片/OFD 文件必须继续走 legacy PreviewCanvas（客户端 canvas 回退），
- * 否则会被新路径路由到 DocumentViewer 后预览损坏。
+ * 仅用于需要区分 PDF 与图片/OFD 的少数调用点（如导出路径选择）。
+ * 注意：DocumentViewer 渲染路由不依赖本函数——PDF/Image/OFD 统一由
+ * docId + pageCount 驱动（13A-3 后 OFD 与 PDF/Image 同级）。
  *
  * @param {Object|null} file - fileObj
  * @returns {boolean}
@@ -118,9 +117,11 @@ export const DisplayAdapter = React.memo(function DisplayAdapter({
   }
 
   // 新路径：已注册有效 Document（至少 1 页）→ DocumentViewer（<img> 路径）。
-  // PDF + Image 后端均可服务 /preview/{docId}（13A-1 起 image 光栅化已通）。
-  // OFD 暂排除（13A-3 接入后端 adapter 后再放开）。
-  if (document && document.pageCount > 0 && file?.fileFormat !== 'ofd') {
+  // PDF / Image / OFD 后端均可服务 /preview/{docId}：
+  //   - Image 光栅化 13A-1 起已通；
+  //   - OFD 经 13A-3 后端 adapter（registry→metadata→preview）接入，与 PDF/Image 同级。
+  // 格式不再特判——前端不知道 fileFormat==='ofd'，统一由 docId+pageCount 驱动。
+  if (document && document.pageCount > 0) {
     return (
       <DocumentViewer
         document={document}
