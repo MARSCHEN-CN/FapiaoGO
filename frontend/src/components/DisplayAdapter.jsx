@@ -117,9 +117,10 @@ export const DisplayAdapter = React.memo(function DisplayAdapter({
     )
   }
 
-  // 新路径：PDF 且已注册有效 Document（至少 1 页）。
-  // 非 PDF（图片/OFD）后端 /preview 无法服务，保持 legacy 路径。
-  if (isPdfFile(file) && document && document.pageCount > 0) {
+  // 新路径：已注册有效 Document（至少 1 页）→ DocumentViewer（<img> 路径）。
+  // PDF + Image 后端均可服务 /preview/{docId}（13A-1 起 image 光栅化已通）。
+  // OFD 暂排除（13A-3 接入后端 adapter 后再放开）。
+  if (document && document.pageCount > 0 && file?.fileFormat !== 'ofd') {
     return (
       <DocumentViewer
         document={document}
