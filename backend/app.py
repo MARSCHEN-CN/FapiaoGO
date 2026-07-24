@@ -1133,11 +1133,14 @@ def parse_invoice():
 
             if source_doc_id and page_num_str.isdigit() and total_pages_str.isdigit():
                 # ── 多页组装路径 ──
+                # 传给 store 的是完整 parse 结果（含 extra_fields），
+                # 不是 db_record（db_record 格式与 assembly 期望不同）。
+                # assembly 后从合并结果重建 db_record。
                 page_num = int(page_num_str)
                 total_pages = int(total_pages_str)
 
                 store = get_page_result_store()
-                completed = store.put(source_doc_id, page_num, total_pages, db_record)
+                completed = store.put(source_doc_id, page_num, total_pages, result)
 
                 if completed:
                     # 所有页已收齐 → 组装 → 入库
@@ -1145,15 +1148,45 @@ def parse_invoice():
                     if all_pages:
                         invoice_docs = assemble_invoice(all_pages)
                         for inv_doc in invoice_docs:
-                            # 构造合并后的 db_record
-                            inv_db = inv_doc.get('db_record') or inv_doc
-                            if not inv_db.get('hash_sha256'):
-                                inv_db['hash_sha256'] = db_record.get('hash_sha256', '')
+                            # 从合并结果中重建 db_record
+                            inv_db = inv_doc.get('db_record')
+                            if not inv_db:
+                                # merge_page_results 不产出 db_record，
+                                # 从合并结果手动构造（取 result 结构中的字段）
+                                inv_db = {
+                                    'hash_sha256': db_record.get('hash_sha256', ''),
+                                    'file_name': db_record.get('file_name', ''),
+                                    'file_format': inv_doc.get('file_format', ''),
+                                    'file_size': db_record.get('file_size', 0),
+                                    'type': inv_doc.get('invoice_type', ''),
+                                    'number': inv_doc.get('invoice_number', ''),
+                                    'amount': inv_doc.get('amount', 0),
+                                    'date': inv_doc.get('invoice_date', ''),
+                                    'buyer': (inv_doc.get('extra_fields') or {}).get('gmfmc', ''),
+                                    'buyer_tax': (inv_doc.get('extra_fields') or {}).get('gmfsh', ''),
+                                    'seller': (inv_doc.get('extra_fields') or {}).get('xsfmc', ''),
+                                    'seller_tax': (inv_doc.get('extra_fields') or {}).get('xsfsh', ''),
+                                    'note': (inv_doc.get('extra_fields') or {}).get('note', ''),
+                                    'issuer': (inv_doc.get('extra_fields') or {}).get('kpr', ''),
+                                    'payee': (inv_doc.get('extra_fields') or {}).get('skr', ''),
+                                    'reviewer': (inv_doc.get('extra_fields') or {}).get('fhr', ''),
+                                    'tax_amount': (inv_doc.get('extra_fields') or {}).get('amountSe', 0),
+                                    'parse_method': inv_doc.get('parse_method', ''),
+                                    'parse_ok': 1,
+                                    'raw_text': db_record.get('raw_text', '')[:5000],
+                                    'thumbnail': '',
+                                    'line_items': (inv_doc.get('extra_fields') or {}).get('line_items', []),
+                                    'line_items_excel_rows': (inv_doc.get('extra_fields') or {}).get('line_items_excel_rows', []),
+                                }
                             try:
                                 db_module.upsert_invoice(inv_db)
+                                logger.info(
+                                    f"[Assembly] 发票入库: number={inv_doc.get('invoice_number', '?')}, "
+                                    f"items={len(inv_db.get('line_items', []))}"
+                                )
                             except Exception as e:
                                 logger.warning("合并发票入库失败: %s", e)
-                    # 从暂存中移除已处理的数据
+                    # 从暂存中移除已处理的数据（无论组装是否成功）
                     store.remove(source_doc_id)
 
                 result['db_result'] = None  # 单页不触发独立入库
