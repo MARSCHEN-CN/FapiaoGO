@@ -4,7 +4,7 @@
 //   解析结果（invoiceDate / amount / OCR fields 等）是权威业务数据，
 //   它**不应**因为状态机中间态竞争而被丢弃。
 //
-//   缓存命中场景下，parseWorker 的 `queueUpdate(key,'parsing')` 与
+//   缓存命中场景下，解析阶段的 `queueUpdate(key,'parsing')` 与
 //   `queueUpdate(key,'parsed',payload)` 在 flush 前先后入队，pendingUpdatesRef
 //   后写覆盖，pending 直接变成 {newStatus:'parsed', extra:payload}，中间态
 //   'parsing' 没机会 flush。等 flush 时文件还停在 'ready'，而旧逻辑

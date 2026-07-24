@@ -26,10 +26,6 @@
  * @module services/TaskScheduler
  */
 
-// ── 并发配置 ─────────────────────────────────────────────
-/** 多页 PDF 拆分的最大并发数 */
-export const DEFAULT_SPLIT_CONCURRENCY = 4
-
 // ── 任务队列 ────────────────────────────────────────────
 /** @type {Array} */
 const splitQueue = []
@@ -64,68 +60,4 @@ export function dequeueSplit() {
  */
 export function getSplitQueueLength() {
   return splitQueue.length
-}
-
-/**
- * 检查所有队列是否为空。
- * @returns {boolean}
- */
-export function isQueueEmpty() {
-  return splitQueue.length === 0
-}
-
-/**
- * 获取队列状态摘要（用于调试/进度）。
- * @returns {{ splitQueueLength: number }}
- */
-export function getQueueStatus() {
-  return {
-    splitQueueLength: splitQueue.length,
-  }
-}
-
-/**
- * 清空所有队列（用于取消/清理）。
- */
-export function clearQueues() {
-  splitQueue.length = 0
-}
-
-// ── 执行存根（Phase 1b-3-2/3 实现） ────────────────────
-
-/**
- * 执行下一个 split 任务。
- *
- * 调用方负责：
- *   1. dequeueSplit() 获取任务
- *   2. 调用 FileResolver.resolve() 获取文件
- *   3. 调用 /split_pdf API
- *   4. 将输出收集到就绪文件数组
- *   5. 调用 queueUpdate() 更新 UI
- *
- * @param {Function} runner - 实际执行函数
- * @returns {Promise<boolean>} 是否有任务被执行
- */
-export async function runNextSplit(runner) {
-  const job = dequeueSplit()
-  if (!job) return false
-  await runner(job)
-  return true
-}
-
-/**
- * 启动 split worker 池（并发执行）。
- *
- * @param {number} concurrency - 并发数
- * @param {Function} runner - 实际执行函数
- * @returns {Promise<void[]>}
- */
-export async function startSplitWorkers(concurrency = DEFAULT_SPLIT_CONCURRENCY, runner) {
-  const workers = []
-  for (let i = 0; i < Math.min(concurrency, getSplitQueueLength() || 1); i++) {
-    workers.push(runNextSplit(runner))
-  }
-  // 递归消费：当一个 worker 完成后，检查队列并继续
-  // （实际实现由 runner 内部决定，此处仅返回首次启动的 Promise）
-  return Promise.all(workers)
 }

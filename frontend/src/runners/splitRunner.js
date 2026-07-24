@@ -8,7 +8,7 @@
  * 调用方（orchestrator）负责：
  *   - 从队列取出任务
  *   - 调用 runSplitTask()
- *   - 根据结果执行 UI 更新（queueUpdate / replaceWithItems / enqueueParse）
+ *   - 根据结果执行 UI 更新（queueUpdate / replaceWithItems）
  *
  * 允许调用：
  *   - processPdfFile()
@@ -16,7 +16,7 @@
  *
  * 禁止：
  *   - setFiles() / queueUpdate()
- *   - TaskScheduler 操作（enqueueParse 等）
+ *   - TaskScheduler 队列操作（enqueueSplit / dequeueSplit）
  *   - 任何 React state
  *
  * @module runners/splitRunner
