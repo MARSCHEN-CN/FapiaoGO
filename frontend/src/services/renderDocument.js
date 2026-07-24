@@ -24,6 +24,11 @@
 // 无需 dev-only 的 env-shim loader。env 变量名与 config.js 保持一致。
 const BACKEND_URL = import.meta.env?.VITE_BACKEND_URL || 'http://localhost:5000'
 
+// metadata 驱动的 DocumentStore 注册入口（13-A.3.5c）。services 可依赖 stores：
+// DocumentStore 为纯数据层（无 React），与 renderDocument 之间无环（DocumentStore 不反向 import 本模块）。
+// 显式 .js 后缀：本模块需可被 node --test 直接加载（见 DocumentStore.js 注释）。
+import { ensureDocumentFromMetadata } from '../stores/DocumentStore.js'
+
 /**
  * 把文件主动注册进 backend render registry，换取稳定 doc_id。
  *
@@ -95,4 +100,69 @@ export async function ensureRenderContract(fileObj) {
     fileObj.docId = docId
   }
   return docId
+}
+
+/**
+ * 获取后端 render registry 的文档 metadata（统一 pages[] 合同）。
+ *
+ * @param {string} docId
+ * @param {{signal?: AbortSignal}} [options]
+ * @returns {Promise<{docId: string, pages: Array<{index:number,width:number,height:number,rotation:number}>}|null>}
+ *   失败（网络/HTTP/解析/未注册）返回 null（增强项，绝不抛出，不阻断主流程）。
+ */
+export async function fetchDocumentMetadata(docId, options = {}) {
+  if (!docId) return null
+  const { signal } = options
+
+  let resp
+  try {
+    resp = await fetch(`${BACKEND_URL}/api/metadata/${encodeURIComponent(docId)}`, {
+      method: 'GET',
+      signal,
+    })
+  } catch (err) {
+    // 渲染契约为增强项：网络错误 / 取消都降级，不向上抛出。
+    console.warn('[renderDocument] fetchDocumentMetadata 失败，降级:', err && err.message ? err.message : err)
+    return null
+  }
+
+  if (!resp.ok) {
+    // 404 = 该 docId 未走 render registry（PDF/Image 通常如此）→ 静默降级，保留既有注册。
+    return null
+  }
+
+  let data
+  try {
+    data = await resp.json()
+  } catch {
+    return null
+  }
+
+  if (!data || !data.success) return null
+  return {
+    docId: data.doc_id || docId,
+    pages: Array.isArray(data.pages) ? data.pages : [],
+  }
+}
+
+/**
+ * 确保 fileObj 对应 docId 已在 DocumentStore 注册为后端 metadata 驱动的 Document。
+ *
+ * 这是"所有带 render docId 的文档（当前 OFD，未来 PDF/Image/TIFF/CAD/HTML）进入
+ * DocumentStore 的 metadata 驱动入口"：fetch metadata → ensureDocumentFromMetadata。
+ *
+ * 由 import orchestration 层在 consumeParseResult **之后**调用：使后端 page contract
+ * 成为页面结构 + 尺寸的最终权威，纠正 siblings 聚合对单文件多页格式（OFD）的欠维注册。
+ * 不在本函数内判断格式（无 `if ofd`）；一切以 docId 是否存在为准。
+ *
+ * @param {Object} fileObj - 含 .docId / .name
+ * @param {{signal?: AbortSignal, silent?: boolean}} [options]
+ * @returns {Promise<Object|null>} 注册的 InvoiceDocument 或 null（降级）
+ */
+export async function ensureDocumentMetadata(fileObj, options = {}) {
+  const { signal, silent = false } = options
+  if (!fileObj || !fileObj.docId) return null
+  const meta = await fetchDocumentMetadata(fileObj.docId, { signal })
+  if (!meta) return null
+  return ensureDocumentFromMetadata({ ...meta, filename: fileObj.name }, { silent })
 }
