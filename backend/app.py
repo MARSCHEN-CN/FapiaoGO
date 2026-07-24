@@ -1705,23 +1705,42 @@ if __name__ == '__main__':
         level=logging.DEBUG,
         format='%(asctime)s %(levelname)s %(name)s - %(message)s',
     )
-    # ── 冷启动诊断：确认实际运行的 Python 解释器（venv vs 系统 Python）──
-    # 若日志显示 sys.executable 指向系统 Python（如 C:\Program Files\Python312），
-    # 说明 backend 未使用 backend/venv，onnxruntime 等依赖会缺失（图片 OCR 即报 ImportError）。
+    # ── 冷启动诊断：[Backend Runtime] 环境事实集中打印 ──
+    # 一处打印 Python 解释器 + OCR 依赖版本，用户反馈 OCR 问题时第一分钟即可定位：
+    #   Python 错？venv 错？包版本错？无需翻 traceback。
     import sys
-    logger.info("[App] Python executable = %s", sys.executable)
+    import platform
 
-    # ── 冷启动自检：OCR 运行时依赖（onnxruntime）──
-    # RapidOCR 3.9.0 未将 onnxruntime 列入 install_requires，缺包时只在用户导入
-    # 图片类发票时才暴露。此处提前在启动期报错，避免“运行到一半才发现”。
+    _rt = [
+        "Python:",
+        "  %s" % sys.executable,
+        "  (%s)" % platform.python_version(),
+    ]
+
+    # OCR 依赖：rapidocr + onnxruntime 的版本与可用性。
+    # RapidOCR 3.9.0 未将 onnxruntime 列入 install_requires，缺包时只在导入图片发票才暴露；
+    # 此处启动期集中探测并打印，缺失则 ERROR（非致命，不阻断启动）。
+    _ocr = []
+    try:
+        import rapidocr  # noqa: F401
+        _ocr.append("rapidocr=%s" % getattr(rapidocr, '__version__', '?'))
+    except Exception as _e:  # noqa: BLE001
+        _ocr.append("rapidocr=MISSING(%s)" % type(_e).__name__)
     try:
         import onnxruntime  # noqa: F401
-        logger.info("[OCR] onnxruntime 可用 (version=%s)", getattr(onnxruntime, '__version__', '?'))
+        _ocr.append("onnxruntime=%s" % getattr(onnxruntime, '__version__', '?'))
     except ImportError:
+        _ocr.append("onnxruntime=MISSING")
+    _rt.append("OCR:")
+    _rt.append("  " + "  ".join(_ocr))
+
+    logger.info("[Backend Runtime]\n%s", "\n".join(_rt))
+
+    if any(b.startswith("rapidocr=MISSING") or b.startswith("onnxruntime=MISSING") for b in _ocr):
         logger.error(
-            "[OCR] onnxruntime 未安装，图片类发票 OCR 将失败！当前解释器=%s。"
+            "[OCR] OCR 依赖缺失，图片类发票 OCR 将失败！当前解释器=%s。"
             " 请改用 backend/venv/Scripts/python.exe 运行，并执行"
-            " backend/venv/Scripts/pip install onnxruntime",
+            " backend/venv/Scripts/pip install -r backend/requirements.txt",
             sys.executable,
         )
 
