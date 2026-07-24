@@ -20,7 +20,6 @@ import uuid
 import logging
 import threading
 import time
-import io
 from dataclasses import dataclass, field
 from typing import Optional, Dict, Any, List, Callable
 
@@ -221,7 +220,7 @@ class ImportBatchManager:
         Args:
             file_inputs: IS-2 起为 refId 形态：
                 [{'refId': 'imp-xxx', 'filename': 'xxx.pdf', 'clientKey': '...'}, ...]
-                兼容回退（Commit 3 删除）：也可含 'bytes'（旧路径/手动脚本）。
+                IS-3 起不再接受 bytes（仅 refId 形态）。
             auto_orient: 是否自动旋转
             enable_auto_ocr: 是否启用自动 OCR
 
@@ -230,32 +229,13 @@ class ImportBatchManager:
         """
         batch_id = f"B{now().strftime('%Y%m%d%H%M%S')}_{uuid.uuid4().hex[:6]}"
 
-        # IS-2（Commit 3）：输入归一化为 refId 形态，manager 不再常驻 bytes。
-        # 旧 bytes 形态（手动脚本 test_step2_batch.py）在边界立即 spool 为 temp 文件
-        # 并替换为 refId，不进 RAM 峰值。此 transitional 分支在 IS-3 弃用 /parse_batch 时移除。
+        # IS-3：/parse_batch 退役后，create_batch 只接受 refId 形态（INV-IS3-1）。
+        # manager 不再在边界 spool bytes，调用方（/import/batch）已先行 spool 并传入 refId。
         normalized = []
-        try:
-            for fi in file_inputs:
-                if 'refId' in fi:
-                    normalized.append(fi)
-                elif 'bytes' in fi:
-                    # 兼容回退（IS-3 移除）：旧 bytes 形态在边界立即 spool 为 temp 文件
-                    rec = self._temp_registry.spool(io.BytesIO(fi['bytes']), fi.get('filename', ''))
-                    normalized.append({
-                        'refId': rec.refId,
-                        'filename': rec.filename,
-                        'clientKey': fi.get('clientKey', ''),
-                    })
-                else:
-                    raise ValueError(f"file input 必须含 refId 或 bytes: {fi}")
-        except Exception:
-            # 归一化失败：已 spool 的 temp 文件引用立即释放，避免孤立文件泄漏。
-            # （例如 file_inputs 中第 N 个非法，前 N-1 个已 spool 的 ref 必须回收）
-            for fi in normalized:
-                ref = fi.get('refId')
-                if ref:
-                    self._temp_registry.release(ref)
-            raise
+        for fi in file_inputs:
+            if 'refId' not in fi:
+                raise ValueError(f"file input 必须含 refId: {fi}")
+            normalized.append(fi)
         file_inputs = normalized
         total = len(file_inputs)
 

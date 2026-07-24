@@ -1,5 +1,4 @@
 import hashlib
-import io
 import json
 import logging
 import os
@@ -981,7 +980,6 @@ def download_page(page_id):
 #       释放 Flask 请求线程；
 #   (2) 并发上限降为 CPU 核数相关值（OCR_WORKERS，默认 2：2 × ONNX(cpu_count//2) ≈ cpu_count，避免超卖）；
 #   (3) DB 写入改在主进程完成（worker 内 skip_db_write=True），避免多进程写库与跨进程回传连接。
-from concurrent.futures import ThreadPoolExecutor, as_completed  # 仍供 parse_batch 使用
 from timer_utils import MAX_PARSE_TIME
 
 import os as _os
@@ -1058,46 +1056,13 @@ def _parse_sync(file_bytes, filename, auto_orient, enable_auto_ocr):
     )
 
 
-def _run_parse_offthread(file_bytes, filename, auto_orient, enable_auto_ocr):
-    """将解析任务提交到执行器，释放 Flask 请求线程。
-
-    返回 parse_invoice_service 的结果字典（worker 内 skip_db_write=True）。
-    任何异常（进程池不可用 / 任务超时 / 子进程故障）均回退为同步执行，保证端点不中断。
-
-    IS-3 P2-2：入参 file_bytes 在提交前固化为 opaque ref_id，跨 ProcessPool 只传
-    字符串 refId（不再 pickle 全量 bytes，INV-IS3-3）；worker(run_parse) 按 ref_id
-    读回字节。调用方签名保持 file_bytes 以维持 /parse_invoice、/parse_batch 稳定，
-    内部完成 bytes→ref 转换；P3 将让 /parse_invoice 直接 spool 上传流并传 ref_id。
-    """
-    executor = _get_executor()
-    if executor is None:
-        return _parse_sync(file_bytes, filename, auto_orient, enable_auto_ocr)
-    # bytes → ref：spool 落盘并返回 refId，submit 只传 refId（不传 bytes）
-    ref_id = None
-    try:
-        rec = _import_temp_registry.spool(io.BytesIO(file_bytes), filename or "")
-        ref_id = rec.refId
-        # 超时略大于 MAX_PARSE_TIME，避免单任务无限挂起占用信号量
-        timeout = MAX_PARSE_TIME / 1000.0 + 30.0
-        future = executor.submit(ocr_pool_task.run_parse, ref_id, filename, auto_orient, enable_auto_ocr)
-        return future.result(timeout=timeout)
-    except Exception as e:
-        logger.warning("OCR 执行器执行失败，回退同步解析: %s", e)
-        return _parse_sync(file_bytes, filename, auto_orient, enable_auto_ocr)
-    finally:
-        # 生命周期所有权归父进程：worker 只读，此处释放 temp 文件（INV-IS3-6）
-        if ref_id is not None:
-            _import_temp_registry.release(ref_id)
-
-
 def _run_parse_ref_offthread(ref_id, filename, auto_orient, enable_auto_ocr):
     """IS-3 P3-B：提交已 spool 的 ref 到执行器（调用方负责本 ref 的 spool + release）。
 
-    与 _run_parse_offthread 的区别：bytes→ref 的固化已上移到 /parse_invoice 路由
-    （直接将上传流 spool 为 opaque ref，不把全量 bytes 读进 RAM，INV-1），本函数只承接
-    refId，跨 ProcessPool 仅传字符串 refId（不传 bytes，INV-IS3-3）。同步回退路径仍按
-    refId 读回 bytes 后交 service（同进程内读取，不跨进程传 bytes）。
-    /parse_batch 退役前继续用 _run_parse_offthread（P4 移除）。
+    /parse_invoice 路由已将上传流 spool 为 opaque ref（不把全量 bytes 读进 RAM，INV-1），
+    本函数只承接 refId，跨 ProcessPool 仅传字符串 refId（不传 bytes，INV-IS3-3）。
+    同步回退路径仍按 refId 读回 bytes 后交 service（同进程内读取，不跨进程传 bytes）。
+    P4 退役 /parse_batch 后，本函数即唯一 off-thread 解析入口。
     """
     executor = _get_executor()
     if executor is None:
@@ -1110,12 +1075,6 @@ def _run_parse_ref_offthread(ref_id, filename, auto_orient, enable_auto_ocr):
     return future.result(timeout=timeout)
 
 
-# 供 parse_batch 使用的「提交层」并发限流（外层 ThreadPool 仅为调度层）。
-# 注意：OCR 实际并行度由 _get_executor() 的 ProcessPoolExecutor + OCR_WORKERS 决定，
-# 与 BATCH_WORKERS / parse_semaphore 解耦——调参时不要混淆两者。
-# 该 semaphore 仅限制「同时向进程池提交的任务数」，上限与 CPU 核数挂钩：
-# max(2, cpu_count())；cpu_count() 为 None 时回退到 2。
-parse_semaphore = threading.Semaphore(max(2, os.cpu_count() or 1))
 
 
 @app.route('/parse_invoice', methods=['POST'])
@@ -1194,187 +1153,6 @@ def parse_invoice():
         from_cache=result.get('from_cache', False),
         filename=result.get('safe_filename', ''),
         doc_id=doc_id,
-    )
-
-
-@app.route('/parse_batch', methods=['POST'])
-def parse_batch():
-    """批量解析多个发票文件（并行解析 + SSE 流式进度 + 批量 DB 写入）
-
-    前端通过 multipart/form-data 提交多个文件（字段名 'files'），
-    后端用线程池并行解析，通过 SSE 流实时推送进度。
-    """
-    files = request.files.getlist('files')
-    if not files:
-        return jsonify({"success": False, "error": "没有上传文件"}), 400
-
-    auto_orient = request.form.get('autoOrient', '1') == '1'
-    enable_auto_ocr = request.form.get('enableAutoOcr', '0') == '1'
-
-    MAX_BATCH_SIZE = 100
-    if len(files) > MAX_BATCH_SIZE:
-        return jsonify({"success": False,
-                        "error": f"单次最多处理 {MAX_BATCH_SIZE} 个文件"}), 400
-
-    # 在主线程预读取所有文件字节（Flask request context 不可跨线程访问）
-    file_inputs = []
-    for f in files:
-        f.seek(0)
-        file_inputs.append({
-            'bytes': f.read(),
-            'filename': f.filename,
-        })
-
-    progress_queue = queue.Queue()
-    result_queue = queue.Queue()
-
-    def run_batch():
-        total = len(file_inputs)
-        BATCH_WORKERS = min(4, total)
-        results = [None] * total
-
-        def _parse_one(index, fi):
-            if not parse_semaphore.acquire(timeout=30):
-                return index, None, "服务器繁忙，请稍后重试"
-            try:
-                if not allowed_file(fi['filename']):
-                    return index, None, f"不支持的文件格式: {fi['filename']}"
-                # P1-3: 收敛到已有 OCR 进程池（ProcessPoolExecutor，绕过 GIL），与单文件
-                # /parse_invoice 共用同一执行器与 OCR_WORKERS 并行度。外层 ThreadPool +
-                # parse_semaphore 仅做调度/提交限流，不再在 batch 线程内直接跑 OCR。
-                # _run_parse_offthread 内部 skip_db_write=True，DB 写入仍由主进程批量完成。
-                svc_result = _run_parse_offthread(
-                    fi['bytes'], fi['filename'],
-                    auto_orient, enable_auto_ocr,
-                )
-                if svc_result is None:
-                    return index, None, f"无法识别的文件格式: {fi['filename']}"
-                return index, svc_result, None
-            except Exception as e:
-                logger.error("[parse_batch] 解析失败 [%d] %s: %s", index, fi['filename'], e)
-                return index, None, str(e)
-            finally:
-                parse_semaphore.release()
-
-        # P1-3-b: 一次 batch 仅记录一次执行器类型，便于生产确认 batch OCR 实际跑在哪个
-        # 执行器上（ProcessPoolExecutor / ThreadPoolExecutor / none=sync 回退）。目的仅为
-        # 可观测——若静默回退到 ThreadPool/sync，优化等于未生效，INFO 级才能在生产日志发现。
-        # 注意：OCR 并行度由 OCR_WORKERS 决定，与 BATCH_WORKERS / parse_semaphore 解耦。
-        # P1-3-D（observability correctness）: 先触发懒初始化，再读 kind。
-        # _get_executor() 内部才真正创建 ProcessPool/ThreadPool（首条 batch 前 _ocr_executor
-        # 仍是 None），若不先调用，日志会记到 "none" 而实际执行用的是 ProcessPoolExecutor ——
-        # 可观测性与真实执行模型不一致。日志应记录「本次 batch 真实将使用的执行模型」，
-        # 而非「调用瞬间尚未初始化的变量状态」。
-        _get_executor()
-        logger.info("parse_batch OCR executor=%s workers=%s",
-                    _get_executor_kind(), OCR_WORKERS)
-
-        with ThreadPoolExecutor(max_workers=BATCH_WORKERS,
-                                thread_name_prefix='batch-parse') as pool:
-            futures = {pool.submit(_parse_one, i, fi): i
-                       for i, fi in enumerate(file_inputs)}
-            completed = 0
-            for fut in as_completed(futures):
-                idx, svc_result, error = fut.result()
-                results[idx] = (idx, svc_result, error)
-                completed += 1
-                progress_queue.put({'current': completed, 'total': total})
-
-        # 批量入库
-        db_records = []
-        record_index_map = {}
-        for i, (idx, svc_result, error) in enumerate(results):
-            if svc_result and svc_result.get('db_record'):
-                record_index_map[len(db_records)] = idx
-                db_records.append(svc_result['db_record'])
-
-        # 预构建反向映射 {file_idx: db_record 位置}，把下方「逐个文件匹配 db 结果」从 O(N·M) 降为 O(N)。
-        # 依赖 batch_upsert_invoices 返回顺序与入参 rows 对应的契约（见 db.py 文档）。
-        file_db_map = {idx: pos for pos, idx in record_index_map.items()}
-
-        db_results = []
-        if db_records:
-            try:
-                db_results = db_module.batch_upsert_invoices(db_records)
-                logger.info("[parse_batch] 批量入库 %d 条记录", len(db_results))
-            except Exception as e:
-                logger.warning("[parse_batch] 批量入库失败: %s", e)
-
-        # 构建每个文件的响应项
-        response_items = []
-        for i, (idx, svc_result, error) in enumerate(results):
-            item = {
-                'index': idx,
-                'file_name': file_inputs[idx]['filename'],
-                'success': svc_result is not None,
-            }
-            if svc_result:
-                db_res = None
-                rec_idx = file_db_map.get(idx)
-                if rec_idx is not None and rec_idx < len(db_results):
-                    db_res = db_results[rec_idx]
-                item['db_result'] = db_res
-
-                extra = svc_result.get('extra_fields', {}) or {}
-                raw_failed = extra.get('failed_fields', [])
-                failed_ids = [f.get('field', '') for f in raw_failed
-                              if isinstance(f, dict) and f.get('field')] if raw_failed else []
-
-                item['data'] = {
-                    'db_record': svc_result.get('db_record'),
-                    'invoice_type': svc_result.get('invoice_type', ''),
-                    'invoice_number': svc_result.get('invoice_number', ''),
-                    'amount': svc_result.get('amount', ''),
-                    'invoice_date': svc_result.get('invoice_date', ''),
-                    'new_name': svc_result.get('safe_filename', ''),
-                    'parse_method': svc_result.get('parse_method', ''),
-                    'file_format': svc_result.get('file_format', ''),
-                    'failed_fields': failed_ids,
-                    'preview_image': svc_result.get('preview_image', '') if svc_result.get('file_format') == 'ofd' else '',
-                    'invoice_fields': extra,
-                    'from_cache': svc_result.get('from_cache', False),
-                }
-            else:
-                item['error'] = error or '解析失败'
-            response_items.append(item)
-
-        success_count = sum(1 for it in response_items if it['success'])
-        logger.info("[parse_batch] 完成: %d/%d 成功", success_count, total)
-        result_queue.put({
-            'success': True,
-            'total': total,
-            'success_count': success_count,
-            'fail_count': total - success_count,
-            'items': response_items,
-        })
-
-    thread = threading.Thread(target=run_batch, daemon=True)
-    thread.start()
-
-    def generate():
-        yield ": keepalive\n\n"
-        # 阻塞等待事件：进度到达即唤醒（零额外延迟），而非 time.sleep 忙轮询
-        while True:
-            # 先消费已就绪的进度消息
-            while not progress_queue.empty():
-                msg = progress_queue.get_nowait()
-                yield f"data: {_json.dumps(msg, ensure_ascii=False)}\n\n"
-            # 结果已就绪则发送并结束（解析完成）
-            if not result_queue.empty():
-                msg = result_queue.get_nowait()
-                yield f"data: {_json.dumps(msg, ensure_ascii=False)}\n\n"
-                break
-            # 阻塞等待下一个进度事件（最多 0.1s），超时再探活 result_queue；无空转
-            try:
-                msg = progress_queue.get(timeout=0.1)
-                yield f"data: {_json.dumps(msg, ensure_ascii=False)}\n\n"
-            except queue.Empty:
-                continue
-
-    return Response(
-        stream_with_context(generate()),
-        mimetype='text/event-stream',
-        headers={'Cache-Control': 'no-cache', 'Connection': 'keep-alive', 'X-Accel-Buffering': 'no'},
     )
 
 
