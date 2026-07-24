@@ -17,7 +17,9 @@
  * @module stores/DocumentStore
  */
 
-import { createDocument, createPageMeta } from '../models/InvoiceDocument'
+// 显式 .js 后缀：本模块需可被 node --test 直接加载（前端其余文件靠 bundler 解析
+// extensionless，但 DocumentStore 是 13-A.3.5c 单测的入口，须 ESM 可解析）。webpack 两种写法皆兼容。
+import { createDocument, createPageMeta } from '../models/InvoiceDocument.js'
 
 /** @type {Map<string, import('../models/InvoiceDocument').InvoiceDocument>} */
 const documents = new Map()
@@ -170,27 +172,75 @@ export function ensureDocumentFromFileObj(fileObj, siblings = null, options = {}
 }
 
 /**
- * 从 Coordinator 结果注册多页 Document。
+ * 从后端 metadata 合同注册/更新 InvoiceDocument（metadata 驱动入口）。
  *
- * @param {Object} coordinatorResult - { docId, pages: [{index, width, height, sourceRotation}] }
- * @param {string} [fileKey='']
- * @param {string} [sourceHash='']
- * @returns {import('../models/InvoiceDocument').InvoiceDocument}
+ * 13-A.3.5c：所有非 PDF 文档（OFD / 未来 TIFF / 多页图 / CAD / HTML）进入
+ * DocumentStore 的唯一 metadata 驱动入口。只认后端 page contract，不感知具体
+ * 格式（无 `if ofd` 分支）。命名为 FromMetadata 以区别于死代码 registerFromCoordinator。
+ *
+ * 与 ensureDocumentFromFileObj 的关系：
+ *   - ensureDocumentFromFileObj 由 parseResultConsumer 驱动，基于 siblings 拆分页
+ *     聚合（pageNum）；对单文件多页格式（OFD）会把 N 页压成 1 页，且不携带真实尺寸。
+ *   - ensureDocumentFromMetadata 由 render contract 驱动，携带后端权威 pages[]
+ *     （index / width / height / rotation），是页面结构 + 尺寸的最终权威来源。
+ *   二者作用于同一 docId 时，本函数结果应作为最后写入（覆盖 siblings 的欠维注册）。
+ *
+ * 字段映射：API 层 pages[] 用 `rotation`（统一命名），PageMeta 用 `sourceRotation`，
+ * 在此完成映射。metadata 缺维（width/height 为 0）时回退保留既有 Document 的真实尺寸。
+ *
+ * @param {Object} meta - { docId, pages: [{index, width, height, rotation}], filename? }
+ * @param {{silent?: boolean}} [options] - silent=true 时注册后不立即 notify（批处理统一 flush）
+ * @returns {import('../models/InvoiceDocument').InvoiceDocument|null}
  */
-export function registerFromCoordinator(coordinatorResult, fileKey = '', sourceHash = '') {
-  const { docId, pages: rawPages } = coordinatorResult
-  const pages = rawPages.map((p) =>
-    createPageMeta({
+export function ensureDocumentFromMetadata(meta, options = {}) {
+  const { silent = false } = options
+  if (!meta || !meta.docId) return null
+  const { docId, pages: rawPages = [], filename } = meta
+
+  const existing = documents.get(docId)
+  const prevByIndex = new Map()
+  if (existing) {
+    for (const p of existing.pages) {
+      if (p.width || p.height || p.sourceRotation) prevByIndex.set(p.index, p)
+    }
+  }
+
+  // API 层字段为 rotation；PageMeta 用 sourceRotation。metadata 缺维时保留既有真实尺寸。
+  const pages = rawPages.map((p) => {
+    const index = p.index ?? 0
+    const prev = prevByIndex.get(index)
+    return createPageMeta({
       docId,
-      index: p.index,
-      width: p.width || 0,
-      height: p.height || 0,
-      sourceRotation: p.sourceRotation || 0,
+      index,
+      width: p.width || prev?.width || 0,
+      height: p.height || prev?.height || 0,
+      sourceRotation: p.rotation || p.sourceRotation || prev?.sourceRotation || 0,
     })
-  )
-  const doc = createDocument({ docId, fileKey, sourceHash, pages })
+  })
+
+  // 与现有 Document 完全一致时直接返回，避免无意义通知
+  if (
+    existing &&
+    existing.pageCount === pages.length &&
+    existing.pages.every(
+      (p, i) =>
+        p.index === pages[i].index &&
+        p.width === pages[i].width &&
+        p.height === pages[i].height &&
+        p.sourceRotation === pages[i].sourceRotation
+    )
+  ) {
+    return existing
+  }
+
+  const doc = createDocument({
+    docId,
+    fileKey: existing?.fileKey || filename || '',
+    sourceHash: existing?.sourceHash || '',
+    pages,
+  })
   documents.set(docId, doc)
-  notify()
+  if (!silent) notify()
   return doc
 }
 
