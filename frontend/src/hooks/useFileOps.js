@@ -491,9 +491,13 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
                   queueUpdate(fileObj.key, 'parsed')
                   terminalFileKeys.add(fileObj.key)
                 }
-                if (fileObj.docId) {
-                  const prev = getDocument(fileObj.docId)
-                  const doc = ensureDocumentFromFileObj(fileObj, readyFiles, { silent: true })
+                const effectiveDocId = (item && item.docId) || fileObj.docId
+                if (effectiveDocId) {
+                  const docFileObj = effectiveDocId !== fileObj.docId
+                    ? { ...fileObj, docId: effectiveDocId }
+                    : fileObj
+                  const prev = getDocument(effectiveDocId)
+                  const doc = ensureDocumentFromFileObj(docFileObj, readyFiles, { silent: true })
                   if (doc && doc !== prev) docsTouched = true
                 }
               }
