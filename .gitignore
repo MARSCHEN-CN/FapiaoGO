@@ -28,6 +28,8 @@ test_fixtures/
 !backend/tests/test_temp_file_registry.py
 # IS-2 Commit 2: spool + manager 接线测试（backend）
 !backend/tests/test_import_batch_spool.py
+# IS-3 P2-2: ProcessPool ref adapter 测试（backend）
+!backend/tests/test_ocr_pool_ref.py
 
 # IS-1 契约回归测试（前端）：刻意纳入版本控制，与 backend/tests 白名单同策略
 # 仅放行 contract 子目录；其余前端 *.test.js 仍按仓库既有规则忽略。

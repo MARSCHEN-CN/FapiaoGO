@@ -37,6 +37,7 @@ from services.decision_router import DecisionRouter
 from render_engine import registry, engine
 from render_engine.registry import _make_doc_id
 from render_engine.api import render_bp
+from temp_file_registry import TempFileRegistry, LocalTempFileStorageBackend
 
 # 全局实例（惰性初始化）
 _decision_router = None
@@ -997,6 +998,12 @@ _ocr_executor = None
 _ocr_executor_kind = None  # None=未初始化 | 'process' | 'thread' | False=不可用
 _executor_lock = threading.Lock()
 
+# IS-3 P2-2：/parse_invoice 与（退役前的）/parse_batch 经 _run_parse_offthread 提交时，
+# 由本 registry 把 bytes 固化为 ref，跨进程只传 refId。worker 解析后由 finally 释放。
+# 注：与 /import/batch 的 import_batch_manager._temp_registry 当前为独立实例
+# （跨端点共享单例归 P3 R1），但都落在同一 config.TEMP_ROOT 下，ref 解析一致。
+_import_temp_registry = TempFileRegistry(LocalTempFileStorageBackend())
+
 
 def _get_executor():
     """返回 OCR 执行器；不可用时返回 None（调用方应同步执行）。"""
@@ -1055,18 +1062,31 @@ def _run_parse_offthread(file_bytes, filename, auto_orient, enable_auto_ocr):
 
     返回 parse_invoice_service 的结果字典（worker 内 skip_db_write=True）。
     任何异常（进程池不可用 / 任务超时 / 子进程故障）均回退为同步执行，保证端点不中断。
+
+    IS-3 P2-2：入参 file_bytes 在提交前固化为 opaque ref_id，跨 ProcessPool 只传
+    字符串 refId（不再 pickle 全量 bytes，INV-IS3-3）；worker(run_parse) 按 ref_id
+    读回字节。调用方签名保持 file_bytes 以维持 /parse_invoice、/parse_batch 稳定，
+    内部完成 bytes→ref 转换；P3 将让 /parse_invoice 直接 spool 上传流并传 ref_id。
     """
     executor = _get_executor()
     if executor is None:
         return _parse_sync(file_bytes, filename, auto_orient, enable_auto_ocr)
+    # bytes → ref：spool 落盘并返回 refId，submit 只传 refId（不传 bytes）
+    ref_id = None
     try:
+        rec = _import_temp_registry.spool(io.BytesIO(file_bytes), filename or "")
+        ref_id = rec.refId
         # 超时略大于 MAX_PARSE_TIME，避免单任务无限挂起占用信号量
         timeout = MAX_PARSE_TIME / 1000.0 + 30.0
-        future = executor.submit(ocr_pool_task.run_parse, file_bytes, filename, auto_orient, enable_auto_ocr)
+        future = executor.submit(ocr_pool_task.run_parse, ref_id, filename, auto_orient, enable_auto_ocr)
         return future.result(timeout=timeout)
     except Exception as e:
         logger.warning("OCR 执行器执行失败，回退同步解析: %s", e)
         return _parse_sync(file_bytes, filename, auto_orient, enable_auto_ocr)
+    finally:
+        # 生命周期所有权归父进程：worker 只读，此处释放 temp 文件（INV-IS3-6）
+        if ref_id is not None:
+            _import_temp_registry.release(ref_id)
 
 
 # 供 parse_batch 使用的「提交层」并发限流（外层 ThreadPool 仅为调度层）。
