@@ -136,8 +136,12 @@ export function addDocument(sessionId, doc) {
   const docId = doc?.id || doc?.docId
   if (!docId) return
   session.documents = session.documents || []
+  const pages = doc?.pages?.length ?? '?'
   if (!session.documents.some(d => (d.id || d.docId) === docId)) {
     session.documents.push(doc)
+    console.log(`[E1] addDocument: docId=${docId}, pages=${pages}, docsCount=${session.documents.length}`)
+  } else {
+    console.log(`[E1] addDocument: dedup skipped docId=${docId}, already exists (pages=${pages})`)
   }
 }
 
