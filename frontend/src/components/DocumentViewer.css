@@ -19,7 +19,7 @@
   min-height: 0;
   overflow: hidden;
   position: relative;
-  background: var(--bg);
+  background: transparent;
 }
 
 /* ─── 右侧预览区 ─── */
@@ -45,29 +45,6 @@
   background: var(--white);
   border-right: 1px solid var(--border);
   overflow: hidden;
-}
-
-/* 缩略图标题栏 */
-.thumbnail-sidebar-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 10px 10px;
-  border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
-}
-
-.thumbnail-sidebar-title {
-  font-size: 12px;
-  color: var(--text);
-  font-weight: 500;
-}
-
-.thumbnail-sidebar-count {
-  font-size: 10px;
-  color: var(--text-3);
-  font-weight: 400;
-  font-variant-numeric: tabular-nums;
 }
 
 /* ─── 缩略图列表（垂直滚动） ─── */
@@ -204,7 +181,7 @@
   cursor: grab;
   position: relative;
   padding: 20px;
-  background: var(--bg);
+  background: transparent;
 }
 
 .viewer-viewport.is-dragging {

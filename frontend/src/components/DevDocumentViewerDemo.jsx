@@ -176,10 +176,6 @@ function MockThumbnailStrip({ document, currentPage, onPageSelect, mockUrls }) {
 
   return (
     <div className="viewer-thumbnail-sidebar" role="navigation" aria-label="页面缩略图">
-      <div className="thumbnail-sidebar-header">
-        <span className="thumbnail-sidebar-title">页面预览</span>
-        <span className="thumbnail-sidebar-count">{document.pageCount}页</span>
-      </div>
       <div className="viewer-thumbnail-list">
         {document.pages.map((page, index) => (
           <div
