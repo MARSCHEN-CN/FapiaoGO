@@ -208,45 +208,96 @@ def print_page(doc_id: str):
 
 @render_bp.route("/metadata/<doc_id>", methods=["GET"])
 def metadata(doc_id: str):
-    """Return document metadata: page count, content hash, size, page dimensions."""
+    """Return document metadata: page count, content hash, size, page dimensions.
+
+    统一 page metadata contract：pages[] 是前端未来的唯一消费源；顶层
+    page_width/page_height/page_rotation 保留兼容旧消费者（取首页值）。
+    派发顺序 adapter → pdf → image：adapter 是格式专属渲染器的权威来源，
+    不再 sniff（doc.adapter 已标识类型）。
+    """
     doc = registry.get(doc_id)
     if doc is None:
         return jsonify({"success": False, "error": "DOC_NOT_REGISTERED", "doc_id": doc_id}), 404
 
-    # 获取第一页尺寸和旋转（用于方向检测），单位为 PDF points (1/72 inch)
-    # page.rect 不含 /Rotate；需配合 page.rotation 计算显示方向
-    page_width = 0
-    page_height = 0
-    page_rotation = 0
-    if doc.pdf is not None and doc.page_count > 0:
-        p = doc.pdf[0]
-        page_width = round(p.rect.width, 2)
-        page_height = round(p.rect.height, 2)
-        page_rotation = getattr(p, 'rotation', 0)
+    # adapter 优先（OFD 等），其次 pdf，最后 image；不做格式 sniff
+    if doc.adapter is not None:
+        pages = _pages_from_adapter(doc.adapter)
+    elif doc.pdf is not None and doc.page_count > 0:
+        pages = _pages_from_pdf(doc)
     elif doc.file_bytes and doc.page_count > 0:
-        try:
-            from PIL import Image, ImageOps
-            with Image.open(io.BytesIO(doc.file_bytes)) as img:
-                oriented = ImageOps.exif_transpose(img)
-                if oriented is not None:
-                    img = oriented
-                page_width = img.width
-                page_height = img.height
-                page_rotation = 0
-        except Exception:
-            pass
+        pages = _pages_from_image(doc)
+    else:
+        pages = []
+
+    page_count = len(pages)
+    # 顶层兼容字段 = 首页（无页时全 0）；多页 PDF 仅表征第 0 页，pages[] 才是全量
+    first = pages[0] if pages else {"width": 0, "height": 0, "rotation": 0}
 
     return jsonify({
         "success": True,
         "doc_id": doc.doc_id,
-        "page_count": doc.page_count,
+        "page_count": page_count,
         "content_hash": doc.content_hash,
         "size": doc.size,
         "content_indexed": doc.content_indexed,
-        "page_width": page_width,
-        "page_height": page_height,
-        "page_rotation": page_rotation,
+        "page_width": first["width"],
+        "page_height": first["height"],
+        "page_rotation": first["rotation"],
+        "pages": pages,
     })
+
+
+def _pages_from_adapter(adapter) -> list:
+    """格式专属适配器的页面合同 → 统一 pages[]。
+
+    adapter.metadata() 返回 {pageCount, pages:[{index,width,height,sourceRotation}]}；
+    映射 sourceRotation → rotation，使 API 不感知具体格式（无 if ofd 分支）。
+    """
+    meta = adapter.metadata() or {}
+    out = []
+    for p in meta.get("pages", []):
+        out.append({
+            "index": p.get("index", len(out)),
+            "width": p.get("width", 0),
+            "height": p.get("height", 0),
+            "rotation": p.get("sourceRotation", 0),
+        })
+    return out
+
+
+def _pages_from_pdf(doc) -> list:
+    """PDF 每页几何 → pages[]（含 /Rotate）。"""
+    pages = []
+    for i in range(doc.page_count):
+        try:
+            p = doc.pdf[i]
+            pages.append({
+                "index": i,
+                "width": round(p.rect.width, 2),
+                "height": round(p.rect.height, 2),
+                "rotation": getattr(p, "rotation", 0),
+            })
+        except Exception:
+            pages.append({"index": i, "width": 0, "height": 0, "rotation": 0})
+    return pages
+
+
+def _pages_from_image(doc) -> list:
+    """单页图像 → pages[]（含 EXIF 方向校正）。"""
+    try:
+        from PIL import Image, ImageOps
+        with Image.open(io.BytesIO(doc.file_bytes)) as img:
+            oriented = ImageOps.exif_transpose(img)
+            if oriented is not None:
+                img = oriented
+            return [{
+                "index": 0,
+                "width": img.width,
+                "height": img.height,
+                "rotation": 0,
+            }]
+    except Exception:
+        return []
 
 
 # ── GET /search ────────────────────────────────────────────────
