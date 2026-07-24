@@ -551,6 +551,22 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
     }
   }, [])
 
+  // ── P6-B: React 生命周期退出时主动取消在途导入 ──
+  // best-effort：关闭窗口/标签页 (beforeunload) 或 hook 卸载时调用既有
+  // cancelImport()。不监听 SSE onerror —— disconnect ≠ cancel（冻结语义）。
+  // cancelImport → cancelTask 已对终态/缺失 task 做 no-op 守卫，重复调用幂等安全；
+  // idle 态（无 running/pending task）不会触发任何 fetch。
+  useEffect(() => {
+    const handleUnload = () => {
+      cancelImport()
+    }
+    window.addEventListener('beforeunload', handleUnload)
+    return () => {
+      window.removeEventListener('beforeunload', handleUnload)
+      cancelImport() // SPA 卸载路径（App 为根级常驻，正常不触发，仅防御性）
+    }
+  }, [cancelImport])
+
   return {
     importing,
     parseFiles, parsing, parseProgress,
