@@ -9,7 +9,7 @@ import logging
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from .types import TextSpan
 
@@ -28,6 +28,7 @@ class Document:
     path: str                     # internal only, never returned to client
     pdf: Optional["fitz.Document"] = None
     file_bytes: Optional[bytes] = None  # raw bytes for non-PDF (image/OFD); PDF uses fitz handle
+    adapter: Optional[Any] = None       # format-specific renderer (e.g. OFDAdapter); PDF/Image=None
     page_count: int = 0
     mtime: float = 0.0
     size: int = 0
