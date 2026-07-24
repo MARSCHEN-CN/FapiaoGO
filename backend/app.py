@@ -1656,6 +1656,9 @@ def import_batch_create():
     auto_orient = request.form.get('autoOrient', '1') == '1'
     enable_auto_ocr = request.form.get('enableAutoOcr', '0') == '1'
     client_keys = request.form.getlist('clientKeys')  # 护栏A：可选，与 files 按索引对齐
+    doc_ids = request.form.getlist('sourceDocIds')  # C.6：多页 PDF 分组
+    page_nums = request.form.getlist('pageNums')
+    total_pages_arr = request.form.getlist('totalPagesArr')
 
     mgr = get_import_batch_manager()
     registry = mgr.temp_file_registry
@@ -1670,6 +1673,9 @@ def import_batch_create():
             'refId': record.refId,
             'filename': record.filename,
             'clientKey': client_keys[i] if i < len(client_keys) else '',
+            'sourceDocId': doc_ids[i] if i < len(doc_ids) else '',
+            'pageNum': page_nums[i] if i < len(page_nums) else '',
+            'totalPages': total_pages_arr[i] if i < len(total_pages_arr) else '',
         })
 
     batch_id = mgr.create_batch(file_inputs, auto_orient=auto_orient,

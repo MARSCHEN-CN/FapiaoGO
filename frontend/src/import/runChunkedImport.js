@@ -128,6 +128,9 @@ export async function runChunkedImport({ sessionId, taskId, files, chunkSize, au
         file: fileObj.file,
         name: fileObj.name,
         clientKey: fileObj.key,
+        sourceDocId: fileObj.docId || '',
+        pageNum: fileObj.pageNum != null ? String(fileObj.pageNum) : '',
+        totalPages: fileObj.totalPages ? String(fileObj.totalPages) : '',
       }))
 
       // 提交本批（createImportBatch 抛错 = 致命，跳出循环交由 catch 处理剩余 chunk）

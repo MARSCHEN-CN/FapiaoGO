@@ -56,11 +56,15 @@ export async function createImportBatch(files, options = {}) {
   const { autoOrient = true, enableAutoOcr = false, signal } = options
 
   const formData = new FormData()
-  for (const { file, name, clientKey } of files) {
+  for (const { file, name, clientKey, sourceDocId, pageNum, totalPages } of files) {
     // 使用原始文件名，后端通过 filename 识别
     formData.append('files', file, name)
     // 护栏A：clientKey 可选，后端按索引与 files 对齐
     formData.append('clientKeys', clientKey || '')
+    // Phase C.6：多页 PDF 分组元信息
+    formData.append('sourceDocIds', sourceDocId || '')
+    formData.append('pageNums', pageNum || '')
+    formData.append('totalPagesArr', totalPages || '')
   }
   formData.append('autoOrient', autoOrient ? '1' : '0')
   formData.append('enableAutoOcr', enableAutoOcr ? '1' : '0')
