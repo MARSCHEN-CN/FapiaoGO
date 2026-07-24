@@ -29,7 +29,7 @@ DB_AVAILABLE = True
 
 from response_builder import build_response
 from page_result_store import get_page_result_store
-from invoice_assembly_pipeline import assemble as assemble_invoice
+from invoice_assembly_pipeline import assemble as assemble_invoice, invoice_document_to_db_record
 from services.invoice_service import (
     parse_invoice_service, allowed_file, sanitize_filename, detect_file_format
 )
@@ -1148,36 +1148,13 @@ def parse_invoice():
                     if all_pages:
                         invoice_docs = assemble_invoice(all_pages)
                         for inv_doc in invoice_docs:
-                            # 从合并结果中重建 db_record
-                            inv_db = inv_doc.get('db_record')
-                            if not inv_db:
-                                # merge_page_results 不产出 db_record，
-                                # 从合并结果手动构造（取 result 结构中的字段）
-                                inv_db = {
-                                    'hash_sha256': db_record.get('hash_sha256', ''),
-                                    'file_name': db_record.get('file_name', ''),
-                                    'file_format': inv_doc.get('file_format', ''),
-                                    'file_size': db_record.get('file_size', 0),
-                                    'type': inv_doc.get('invoice_type', ''),
-                                    'number': inv_doc.get('invoice_number', ''),
-                                    'amount': inv_doc.get('amount', 0),
-                                    'date': inv_doc.get('invoice_date', ''),
-                                    'buyer': (inv_doc.get('extra_fields') or {}).get('gmfmc', ''),
-                                    'buyer_tax': (inv_doc.get('extra_fields') or {}).get('gmfsh', ''),
-                                    'seller': (inv_doc.get('extra_fields') or {}).get('xsfmc', ''),
-                                    'seller_tax': (inv_doc.get('extra_fields') or {}).get('xsfsh', ''),
-                                    'note': (inv_doc.get('extra_fields') or {}).get('note', ''),
-                                    'issuer': (inv_doc.get('extra_fields') or {}).get('kpr', ''),
-                                    'payee': (inv_doc.get('extra_fields') or {}).get('skr', ''),
-                                    'reviewer': (inv_doc.get('extra_fields') or {}).get('fhr', ''),
-                                    'tax_amount': (inv_doc.get('extra_fields') or {}).get('amountSe', 0),
-                                    'parse_method': inv_doc.get('parse_method', ''),
-                                    'parse_ok': 1,
-                                    'raw_text': db_record.get('raw_text', '')[:5000],
-                                    'thumbnail': '',
-                                    'line_items': (inv_doc.get('extra_fields') or {}).get('line_items', []),
-                                    'line_items_excel_rows': (inv_doc.get('extra_fields') or {}).get('line_items_excel_rows', []),
-                                }
+                            # 使用契约化转换函数生成 db_record
+                            inv_db = invoice_document_to_db_record(
+                                inv_doc,
+                                fallback_hash=db_record.get('hash_sha256', ''),
+                                fallback_filename=db_record.get('file_name', ''),
+                                fallback_raw_text=db_record.get('raw_text', ''),
+                            )
                             try:
                                 db_module.upsert_invoice(inv_db)
                                 logger.info(
