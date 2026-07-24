@@ -1289,6 +1289,10 @@ def parse_batch():
         raw_page_nums = request.form.getlist('page_nums')
         raw_total_pages = request.form.getlist('total_pages_arr')
 
+        # DIAG: 打印分组元信息
+        logger.info("[parse_batch] source_doc_ids=%s (len=%d, files=%d)",
+                    raw_src_ids, len(raw_src_ids), len(file_inputs))
+
         # 按 source_doc_id 对解析结果分组
         source_groups = {}  # source_doc_id → [(idx, svc_result)]
         single_results = []  # (idx, svc_result) 不分组的文件
@@ -1300,12 +1304,16 @@ def parse_batch():
                 source_groups.setdefault(src_id, []).append((idx, svc_result))
             else:
                 single_results.append((idx, svc_result))
+        logger.info("[parse_batch] 分组结果: groups=%d, single=%d, total_files=%d",
+                    len(source_groups), len(single_results), len(file_inputs))
 
         # 组装分组后的发票文档
         assembled_records = []  # [(file_idx, db_record_dict)]
         for src_id, page_results in source_groups.items():
             pages = [r for _, r in page_results]
             invoice_docs = assemble_invoice(pages)
+            logger.info("[parse_batch] 组装 %s: %d pages → %d InvoiceDocument(s)",
+                        src_id, len(pages), len(invoice_docs))
             for inv_doc in invoice_docs:
                 fallback_rec = (page_results[0][1].get('db_record') or {})
                 inv_db = invoice_document_to_db_record(
