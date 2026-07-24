@@ -12,6 +12,24 @@ import { printSingleSourceFile as printSingleSource, printMergedImages } from '.
 import { runMergedPrintTasks } from '../runners/printRunner'
 import { computePaperLayout } from '../previewState'
 
+// ═══ 多页发票去重工具 ═══
+// 多页 PDF 拆分后生成 N 个 fileObj（每页一个），但共享同一原始 PDF 文件。
+// 打印时只需提交一次，否则 SumatraPDF 会把同一份完整文档打印 N 次。
+// 规则：同 docId → 只保留第一个；无 docId → 不参与去重（保持独立）。
+function resolveDocId(f) {
+  return f?.identity?.docId || f?.docId || null
+}
+function dedupByDocId(files) {
+  const seen = new Set()
+  return files.filter((f) => {
+    const docId = resolveDocId(f)
+    if (!docId) return true          // 无 docId → 独立文件，不参与去重
+    if (seen.has(docId)) return false // 已见过该 docId → 跳过（只打一份）
+    seen.add(docId)
+    return true
+  })
+}
+
 // ✅ 懒加载 PDF 渲染模块，避免首屏加载 1.4 MB 的 pdfjs-dist + react-pdf
 let _printRenderers = null
 async function getPrintRenderers() {
@@ -366,12 +384,12 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
     const { signal } = abortController
 
     // 支持已解析和解析失败的文件（只要有 printPath 就能打印）
-    const parsedFiles = files.filter(f => {
+    const parsedFiles = dedupByDocId(files.filter(f => {
       if (!f.printPath) return false
       if (f.status !== 'parsed' && f.status !== 'error') return false
       if ((f.fileFormat === 'ofd') && !f.previewImage) return false
       return true
-    })
+    }))
     if (parsedFiles.length === 0) {
       setAlertModal({
         visible: true,
@@ -725,7 +743,7 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
       return doPrint()
     }
 
-    const allParsed = files.filter(f => f.status === 'parsed' && (f.printPath || f.path))
+    const allParsed = dedupByDocId(files.filter(f => f.status === 'parsed' && (f.printPath || f.path)))
     if (allParsed.length === 0) return
 
     // ── Source 管线：批量打印所有已解析文件 ──

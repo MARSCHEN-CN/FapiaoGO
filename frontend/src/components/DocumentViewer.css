@@ -57,6 +57,7 @@
   overflow-x: hidden;
   padding: 8px;
   scrollbar-width: thin;
+  background: transparent;
 }
 
 /* 自定义细滚动条：6px 宽，thumb 半透明灰色 */
