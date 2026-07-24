@@ -190,7 +190,7 @@ function MockThumbnailStrip({ document, currentPage, onPageSelect, mockUrls }) {
             tabIndex={0}
             aria-label={`第 ${index + 1} 页`}
           >
-            <div className="thumbnail-frame">
+            <div className="thumbnail-frame" style={page.width && page.height ? { aspectRatio: `${page.width / page.height}` } : undefined}>
               <img
                 src={mockUrls[index]}
                 alt=""

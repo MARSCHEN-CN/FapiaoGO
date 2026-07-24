@@ -266,7 +266,6 @@ function ViewerViewportInner({
       onDoubleClick={handleDoubleClick}
     >
       <div
-        key={previewUrl || 'empty'}
         className="viewer-transform-wrapper"
         style={{
           transform: transformStr,

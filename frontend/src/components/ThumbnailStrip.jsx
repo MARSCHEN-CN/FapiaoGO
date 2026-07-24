@@ -3,20 +3,17 @@
  *
  * 职责：
  *   垂直显示文档所有页面缩略图，支持点击切页。
- *   Lazy 加载：当前页 ± 5 页加载真实缩略图，其余 placeholder。
+ *   全部页面加载真实缩略图。
  *   当前页高亮 + 自动垂直滚动到可视区。
  *
- * 布局：左侧缩略图边栏（200px）+ 右侧主预览区（ViewerViewport）。
+ * 布局：左侧缩略图边栏（120px）+ 右侧主预览区（ViewerViewport）。
  *
-
  * @module components/ThumbnailStrip
  */
 
 import React, { useRef, useEffect, useMemo, useCallback } from 'react'
 import { ThumbnailItem } from './ThumbnailItem'
 import { resolveThumbnailUrl } from '../utils/previewResourceResolver'
-
-const LAZY_RANGE = 5 // 当前页 ± 5 页加载真实缩略图
 
 /**
  * @param {Object} props
@@ -37,10 +34,14 @@ export function ThumbnailStrip({ document, currentPage, onPageSelect }) {
     return document.pages.map((page) => resolveThumbnailUrl(page, document.docId))
   }, [document])
 
-  // 判断某页是否应加载（当前页 ± LAZY_RANGE）
-  const shouldLoadPage = useCallback((index) => {
-    return Math.abs(index - currentPage) <= LAZY_RANGE
-  }, [currentPage])
+  // 计算每页的宽高比（用于缩略图动态 aspect-ratio）
+  const aspectRatios = useMemo(() => {
+    if (!document?.pages) return []
+    return document.pages.map((page) => {
+      if (page.width && page.height) return page.width / page.height
+      return null
+    })
+  }, [document])
 
   // 当前页变化时自动滚动到可视区
   useEffect(() => {
@@ -77,7 +78,8 @@ export function ThumbnailStrip({ document, currentPage, onPageSelect }) {
               index={index}
               thumbnailUrl={thumbnailUrls[index]}
               active={index === currentPage}
-              shouldLoad={shouldLoadPage(index)}
+              shouldLoad={true}
+              aspectRatio={aspectRatios[index]}
               onClick={handlePageSelect}
             />
           </div>
