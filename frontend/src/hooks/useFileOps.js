@@ -8,6 +8,7 @@ import {
 import { buildDocumentViewModel, buildPageDuplicateInfo } from '../utils/documentViewModel'
 import { stripIdentity } from '../utils/fileHelpers'
 import { applyFileUpdate } from '../utils/fileStateTransitions'
+import { mergePendingUpdate } from '../utils/pendingUpdate'
 import { createPlaceholders } from '../utils/placeholderGenerator'
 import { resolveFile } from '../services/FileResolver'
 import { prepareBatchRequest } from '../services/ParseBatchClient'
@@ -83,7 +84,9 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
 
   const queueUpdate = useCallback((key, newStatus, extra = {}) => {
     // Map 去重：同一文件只保留最新状态
-    pendingUpdatesRef.current.set(key, { newStatus, extra })
+    // merge (patch accumulator) instead of overwrite; extra shallow-merged, nested objects replaced.
+    const previous = pendingUpdatesRef.current.get(key)
+    pendingUpdatesRef.current.set(key, mergePendingUpdate(previous, newStatus, extra))
     scheduleFlush()
   }, [scheduleFlush])
 
