@@ -1705,6 +1705,26 @@ if __name__ == '__main__':
         level=logging.DEBUG,
         format='%(asctime)s %(levelname)s %(name)s - %(message)s',
     )
+    # ── 冷启动诊断：确认实际运行的 Python 解释器（venv vs 系统 Python）──
+    # 若日志显示 sys.executable 指向系统 Python（如 C:\Program Files\Python312），
+    # 说明 backend 未使用 backend/venv，onnxruntime 等依赖会缺失（图片 OCR 即报 ImportError）。
+    import sys
+    logger.info("[App] Python executable = %s", sys.executable)
+
+    # ── 冷启动自检：OCR 运行时依赖（onnxruntime）──
+    # RapidOCR 3.9.0 未将 onnxruntime 列入 install_requires，缺包时只在用户导入
+    # 图片类发票时才暴露。此处提前在启动期报错，避免“运行到一半才发现”。
+    try:
+        import onnxruntime  # noqa: F401
+        logger.info("[OCR] onnxruntime 可用 (version=%s)", getattr(onnxruntime, '__version__', '?'))
+    except ImportError:
+        logger.error(
+            "[OCR] onnxruntime 未安装，图片类发票 OCR 将失败！当前解释器=%s。"
+            " 请改用 backend/venv/Scripts/python.exe 运行，并执行"
+            " backend/venv/Scripts/pip install onnxruntime",
+            sys.executable,
+        )
+
     # ── 冷启动诊断：确认运行时实际使用的数据库路径 ──
     # 注意：db.py 模块级 logger.info（DB_DIR/INVOICES_PATH）在 import 时执行，
     # 早于本 basicConfig，会被 lastResort(WARNING) 静默丢弃；此处补足可见输出。
