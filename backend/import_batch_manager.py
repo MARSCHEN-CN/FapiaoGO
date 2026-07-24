@@ -180,6 +180,10 @@ class ImportBatchManager:
         - 解析结果：ocr_cache（由 ParseJobManager._execute_job 写入）
     """
 
+    # P6-C：终态批次保留窗口（小时），超时后由 evict_old_batches 回收。
+    # running/queued 永不回收，保证活跃批次的 GET /import/batch/{id} 历史语义。
+    _TERMINAL_EVICT_HOURS = {'completed': 0.5, 'failed': 2.0, 'cancelled': 10 / 60}
+
     def __init__(self, job_manager):
         """
         Args:
@@ -669,6 +673,29 @@ class ImportBatchManager:
             self._scheduler_threads.pop(batch_id, None)
         # 在锁外释放（registry.release 幂等，重复释放无害）
         self._release_inputs(pending)
+        # P6-C：每次批次清理后顺带回收超龄终态批次，避免 _batches 无限增长
+        self.evict_old_batches()
+
+    def evict_old_batches(self, now_ts: Optional[float] = None) -> int:
+        """回收超龄终态批次（P6-C），防止 _batches 无限增长。
+
+        分层 TTL（小时）：completed 0.5 / failed 2.0 / cancelled 10min。
+        running/queued 永不回收，保证活跃批次的 GET /import/batch/{id} 历史语义。
+        仅删除 _batches 条目（运行时数据已由 cleanup_batch 释放），不触碰磁盘结果。
+        """
+        from time_utils import from_isoformat, to_timestamp
+        now_ts = now_ts if now_ts is not None else time.time()
+        with self._batch_lock:
+            stale = [
+                bid for bid, b in self._batches.items()
+                if b.status in self._TERMINAL_EVICT_HOURS
+                and to_timestamp(from_isoformat(b.updated_at)) < now_ts - self._TERMINAL_EVICT_HOURS[b.status] * 3600
+            ]
+            for bid in stale:
+                del self._batches[bid]
+        if stale:
+            logger.info(f"[ImportBatch] evicted {len(stale)} stale batches")
+        return len(stale)
 
     def shutdown(self):
         """关闭管理器（取消所有活跃批次）"""

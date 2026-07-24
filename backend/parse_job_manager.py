@@ -344,9 +344,33 @@ class ParseJobManager:
         
         # 启动队列处理器
         self._start_queue_processor()
+        self._start_cleanup_sweep()
         
         logger.info(f"[JobManager] 初始化完成 (workers={max_workers}, queue_size={max_queue_size})")
     
+    def _start_cleanup_sweep(self):
+        """启动周期性任务清理线程（P6-C）：触发 JobStore.cleanup_old_jobs 回收超龄终态 job。
+
+        cleanup_old_jobs 的淘汰逻辑早已实现，但此前从未被调用，导致
+        ParseJobManager._jobs（内存）与 parse_jobs.json（磁盘）随导入次数无限增长。
+        此处以守护线程周期触发（默认 24h TTL，与既有语义一致），并在启动时立即做一次。
+        """
+        try:
+            self.store.cleanup_old_jobs(24)
+        except Exception as e:
+            logger.error(f"[JobManager] 启动清理失败: {e}")
+
+        def sweep_loop():
+            while True:
+                time.sleep(3600)  # 每小时一次
+                try:
+                    self.store.cleanup_old_jobs(24)
+                except Exception as e:
+                    logger.error(f"[JobManager] 周期清理失败: {e}")
+
+        t = threading.Thread(target=sweep_loop, daemon=True, name='JobSweep')
+        t.start()
+
     def _start_queue_processor(self):
         """启动队列处理线程
         

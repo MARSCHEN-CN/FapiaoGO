@@ -15,10 +15,13 @@ Commit 2：新增 LocalTempFileStorageBackend（真实落盘/读取/删除）+ R
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import time
 import uuid
 from typing import Dict, Optional, Protocol, runtime_checkable
+
+logger = logging.getLogger(__name__)
 
 
 @runtime_checkable
@@ -151,6 +154,8 @@ class TempFileRegistry:
     def __init__(self, storage: Optional[StorageBackend] = None):
         self._storage = storage if storage is not None else NullStorageBackend()
         self._records: Dict[str, TempFileRecord] = {}
+        # P6-C：启动期回收上次进程遗留的孤儿 temp 文件（不删当前在册活跃文件）
+        self.sweep_stale()
 
     def spool(self, stream, filename: str, *, doc_id: Optional[str] = None) -> TempFileRecord:
         """Spool 一个上传流到临时存储，登记记录并返回（opaque refId）。
@@ -229,3 +234,44 @@ class TempFileRegistry:
     def active_refs(self):
         """当前在册 refId 列表（供测试 / 审计）。"""
         return list(self._records.keys())
+
+    def sweep_stale(self, max_age_hours: float = 24) -> int:
+        """启动期回收孤儿 temp 文件（P6-C）。
+
+        规划于 IS-3 P2（retain 注释预留 "startup sweep"），此前未实现。
+        仅删除 _records 中不存在、且 mtime 超龄的文件——即上一次进程崩溃 /
+        浏览器关闭 / worker 异常导致的孤儿 spool 文件。当前在册 refId 对应的
+        活跃 temp 文件绝不删除（INV-3 所有权边界）。
+        NullStorageBackend（测试 no-op）无磁盘文件，直接返回 0。
+        """
+        storage = self._storage
+        if not isinstance(storage, LocalTempFileStorageBackend):
+            return 0
+        base_dir = storage._base_dir
+        if not os.path.isdir(base_dir):
+            return 0
+        cutoff = time.time() - (max_age_hours * 3600)
+        removed = 0
+        try:
+            entries = list(os.scandir(base_dir))
+        except OSError as e:
+            logger.error(f"[TempRegistry] 扫描 spool 目录失败: {e}")
+            return 0
+        for entry in entries:
+            if not entry.is_file():
+                continue
+            if entry.name in self._records:
+                continue  # 当前在册，绝不删
+            try:
+                mtime = entry.stat().st_mtime
+            except OSError:
+                continue
+            if mtime < cutoff:
+                try:
+                    storage.delete(entry.path)
+                    removed += 1
+                except OSError as e:
+                    logger.error(f"[TempRegistry] 删除孤儿 temp 失败 {entry.path}: {e}")
+        if removed:
+            logger.info(f"[TempRegistry] startup sweep 回收 {removed} 个孤儿 temp 文件")
+        return removed
