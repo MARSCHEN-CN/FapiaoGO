@@ -31,7 +31,6 @@ class Document:
     page_count: int = 0
     mtime: float = 0.0
     size: int = 0
-    file_bytes: Optional[bytes] = None
     content_hash: str = ""        # sha256 of file bytes (content-addressable)
     content_indexed: bool = False # whether ContentIndex has been built
     text_cache: Optional[Dict[int, List[TextSpan]]] = None  # lazy, page→TextSpan[]
@@ -185,20 +184,39 @@ class DocumentRegistry:
             content_hash=content_hash,
             size=len(file_bytes),
         )
-        if fitz is not None:
-            try:
+        if _sniff_pdf(file_bytes):
+            # PDF contract: hold fitz handle, route to _render_pdf_page.
+            if fitz is not None:
                 doc.pdf = fitz.open(stream=file_bytes, filetype="pdf")
                 doc.page_count = len(doc.pdf)
-                doc.mtime = time.time()
-            except Exception:
-                # Not a PDF — store raw bytes for image rendering (_render_image_page)
-                doc.pdf = None
+            else:
                 doc.file_bytes = file_bytes
                 doc.page_count = 1
-                doc.mtime = time.time()
-        else:
+            doc.mtime = time.time()
+            return doc
+        if _sniff_image(file_bytes):
+            # Image contract: store raw bytes, route to _render_image_page.
+            # NOT through fitz — fitz.open(filetype="pdf") is permissive and
+            # would silently mis-classify raster images as 1-page "PDFs".
+            doc.pdf = None
             doc.file_bytes = file_bytes
             doc.page_count = 1
+            doc.mtime = time.time()
+            return doc
+        # Unknown format: let fitz try its own detection (XPS, etc.); on
+        # failure, fall back to storing raw bytes (image path).
+        if fitz is not None:
+            try:
+                doc.pdf = fitz.open(stream=file_bytes)
+                doc.page_count = len(doc.pdf)
+                doc.mtime = time.time()
+                return doc
+            except Exception:
+                logger.debug("fitz cannot open %s; storing raw bytes", filename)
+        doc.pdf = None
+        doc.file_bytes = file_bytes
+        doc.page_count = 1
+        doc.mtime = time.time()
         return doc
 
     def _release_doc(self, doc: Document):
@@ -228,6 +246,41 @@ class DocumentRegistry:
             del self._docs[to_remove]
             logger.debug("evicted doc %s (LRU, last_access=%.0fs ago)",
                          to_remove[:12], time.time() - oldest)
+
+
+# ── content-type sniffing ─────────────────────────────────────
+# Magic-byte detection is preferred over extension: a file named .jpg may
+# actually be a PNG. fitz.open(filetype="pdf") is permissive and opens raster
+# images as 1-page "PDFs", so we must classify BEFORE touching fitz.
+
+def _sniff_pdf(file_bytes: bytes) -> bool:
+    """True if the bytes look like a PDF (%PDF- header)."""
+    return file_bytes[:5] == b"%PDF-"
+
+
+def _sniff_image(file_bytes: bytes) -> bool:
+    """True if the bytes look like a raster image fitz can render."""
+    if len(file_bytes) < 12:
+        return False
+    # PNG
+    if file_bytes[:8] == b"\x89PNG\r\n\x1a\n":
+        return True
+    # JPEG (SOI marker FFD8FF — covers EXIF/JFIF)
+    if file_bytes[:3] == b"\xff\xd8\xff":
+        return True
+    # GIF87a / GIF89a
+    if file_bytes[:6] in (b"GIF87a", b"GIF89a"):
+        return True
+    # BMP
+    if file_bytes[:2] == b"BM":
+        return True
+    # WEBP (RIFF....WEBP)
+    if file_bytes[:4] == b"RIFF" and file_bytes[8:12] == b"WEBP":
+        return True
+    # TIFF (little-endian II*\x00 / big-endian MM\x00*)
+    if file_bytes[:4] in (b"II*\x00", b"MM\x00*"):
+        return True
+    return False
 
 
 # ── helpers ────────────────────────────────────────────────────
