@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { useDropzone } from 'react-dropzone'
-import { BACKEND_URL, SUPPORTED_EXTENSIONS, IMPORT_SCALE_V1, IMPORT_CHUNK_SIZE } from '../config'
+import { BACKEND_URL, SUPPORTED_EXTENSIONS, IMPORT_CHUNK_SIZE } from '../config'
 import {
   getElectronAPI, getFilePath, getExtension, getExtensionWithDot,
   getMimeType, concurrentBatch, applySort, getPreviousYearInfo,
@@ -12,9 +12,8 @@ import { mergePendingUpdate } from '../utils/pendingUpdate'
 import { createPlaceholders } from '../utils/placeholderGenerator'
 import { resolveFile } from '../services/FileResolver'
 import { createTask, setTaskAbortController, updateTaskStatus, getTask, setTaskStream, cancelTask } from '../services/TaskRegistry'
-import { createQueues, enqueueSplit, enqueueParse, dequeueSplit, dequeueParse, getSplitQueueLength, getParseQueueLength } from '../services/TaskScheduler'
+import { createQueues, enqueueSplit, dequeueSplit, getSplitQueueLength } from '../services/TaskScheduler'
 import { createImportBatch, subscribeBatchProgress, cancelImportBatch, getBatchResults } from '../services/ImportBatchClient'
-import { runParseTask } from '../runners/parseRunner'
 import { runSplitTask } from '../runners/splitRunner'
 import { runFallbackParseTask } from '../runners/fallbackParseRunner'
 import { runChunkedImport } from '../import/runChunkedImport'
@@ -211,13 +210,11 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
 
     // ── Step 2: 并发 split_pdf + parse 流水线 ────────────
     const SPLIT_CONCURRENCY = 4
-    const PARSE_CONCURRENCY = 2
 
     // 队列所有权已迁移至 TaskScheduler（Phase 1b-3-2/3）
     createQueues()
     const splitJobs = placeholders.map((p, i) => ({ p, file: files[i] }))
     enqueueSplit(splitJobs)
-    let parsePipelineDone = false
 
     // 进度计数（同步写入 ImportSessionStore）
     let progressTotal = 0
@@ -225,54 +222,15 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
     let splitDone = 0  // 拆分阶段完成计数（Phase Progress）
 
     // ── Import Scale v1: 批量收集器 ──────────────────────
-    // 当 IMPORT_SCALE_V1 启用时，split 后的文件收集到此数组，
-    // 待 split 全部完成后一次性提交到后端 batch API。
-    // 当禁用时，走旧路径 enqueueParse → parseWorker。
+    // split 后的文件收集到此数组，待 split 全部完成后一次性提交到后端 batch API。
     const readyFiles = []
 
     /**
-     * 根据 feature flag 决定：收集到 readyFiles 或入队 parseQueue。
+     * 收集 split 后的就绪文件，待统一提交后端 batch API。
      * @param {Object} fileObj - 就绪文件对象
      */
     const collectOrEnqueue = (fileObj) => {
-      if (IMPORT_SCALE_V1) {
-        readyFiles.push(fileObj)
-      } else {
-        enqueueParse([{ fileObj }])
-      }
-    }
-
-    // Parse 流水线（执行委托给 parseRunner，UI 更新在 orchestrator）
-    // 仅在 IMPORT_SCALE_V1 = false 时启动（fallback 路径）
-    async function parseWorker() {
-      while (true) {
-        if (getParseQueueLength() === 0 && parsePipelineDone) break
-        if (getParseQueueLength() === 0) {
-          await new Promise((r) => setTimeout(r, 50))
-          continue
-        }
-        const job = dequeueParse()
-        if (!job) continue
-
-        const { fileObj } = job
-        queueUpdate(fileObj.key, 'parsing')
-
-        try {
-          const result = await runParseTask(job, { ipc, autoOrient })
-          const update = consumeParseResult(result, fileObj, session.id)
-          queueUpdate(fileObj.key, result.status, update)
-        } catch (err) {
-          console.error(`[App] 解析失败: ${fileObj.name}`, err)
-          queueUpdate(fileObj.key, 'error')
-        } finally {
-          progressDone += 1
-          updateProgress(session.id, { completed: progressDone, total: progressTotal })
-          setParseProgress({
-            current: progressDone,
-            total: progressTotal,
-          })
-        }
-      }
+      readyFiles.push(fileObj)
     }
 
     // Split worker — 执行委托给 splitRunner，UI 更新在 orchestrator
@@ -335,11 +293,10 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
     setParsing(true)
     setParseProgress({ current: 0, total: placeholders.length })
     await Promise.all(splitWorkers)
-    parsePipelineDone = true
 
     // ── Import Scale v1: 批量解析路径 ────────────────────
     // split 完成后，根据 feature flag 选择执行路径
-    if (IMPORT_SCALE_V1 && readyFiles.length > 0) {
+    if (readyFiles.length > 0) {
       // 批量路径：POST /import/batch + GET SSE
       console.log(`[ImportScale] 批量解析 ${readyFiles.length} 个文件`)
 
@@ -429,17 +386,6 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
         },
         signal: abortController.signal,
       })
-    } else {
-      // Fallback 路径：旧 parseWorker（逐个 /parse_invoice，2 并发）
-      console.log(`[ImportScale] Fallback 到旧 parseWorker (${readyFiles.length} 个文件)`)
-
-      // 注意：当 IMPORT_SCALE_V1 = false 时，文件已在 splitWorker 中通过 enqueueParse 入队
-      // 当 IMPORT_SCALE_V1 = true 但 readyFiles.length = 0 时，无需解析
-      const parseWorkers = []
-      for (let i = 0; i < PARSE_CONCURRENCY; i++) {
-        parseWorkers.push(parseWorker())
-      }
-      await Promise.all(parseWorkers)
     }
 
     // 解析完成后：强制刷新所有待处理更新（hydration 结果），再后处理
