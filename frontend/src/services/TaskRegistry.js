@@ -13,9 +13,10 @@
  *   Task 持有 fileIds，不持有 File 对象。
  *   文件读取通过 FileResolver 在 worker 内部完成。
  *
- * 与 StreamConsumer 的关系：
- *   Task 持有 stream (EventSource) 引用，方便取消时关闭连接。
- *   StreamConsumer 负责解析事件并更新 TaskRegistry / ProgressStore。
+ * 与 SSE stream 的关系（P5-A 后）：
+ *   Task 持有 stream (EventSource) 引用，仅用于取消时关闭连接。
+ *   事件解析与进度更新由 runChunkedImport 通过 subscribeBatchProgress 注入的回调负责，
+ *   不再依赖已在 P5-A 删除的 StreamConsumer。
  *
  * 这是 Import State Model v2 (docs/architecture/import-state-model-v2.md)
  * 定义的 TaskRegistry 实现。Phase 1b Commit 1b-1: 仅新增模块，不迁移调用点。
@@ -58,6 +59,31 @@ let taskIdCounter = 0
 function generateTaskId() {
   taskIdCounter++
   return `task-${Date.now()}-${taskIdCounter}`
+}
+
+// ── 自动回收（P6-A）────────────────────────────────────
+// 终态任务（completed / cancelled）在 TASK_TTL_MS 后由 registry 自身从内存移除，
+// 避免 tasks Map 在长会话中单调增长。生命周期 owner 是 registry，
+// 调用方 / UI 无需显式 removeTask。
+const TASK_TTL_MS = 60000
+/** @type {Map<string, ReturnType<typeof setTimeout>>} */
+const cleanupTimers = new Map()
+
+function scheduleCleanup(id) {
+  if (cleanupTimers.has(id)) return
+  const timer = setTimeout(() => {
+    cleanupTimers.delete(id)
+    removeTask(id)
+  }, TASK_TTL_MS)
+  cleanupTimers.set(id, timer)
+}
+
+function clearCleanupTimer(id) {
+  const timer = cleanupTimers.get(id)
+  if (timer) {
+    clearTimeout(timer)
+    cleanupTimers.delete(id)
+  }
 }
 
 // ── Public API ──────────────────────────────────────────
@@ -103,6 +129,7 @@ export function getTask(id) {
  * @returns {boolean} 是否成功删除
  */
 export function removeTask(id) {
+  clearCleanupTimer(id)
   const task = tasks.get(id)
   if (!task) return false
 
@@ -142,6 +169,12 @@ export function updateTaskStatus(id, status) {
   }
 
   task.status = status
+
+  // P6-A: 终态任务自动回收（completed / cancelled 在 TTL 后由 registry 移除）
+  if (status === 'completed' || status === 'cancelled') {
+    scheduleCleanup(id)
+  }
+
   return true
 }
 

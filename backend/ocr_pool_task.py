@@ -10,6 +10,8 @@
 
 import logging
 
+from temp_file_registry import read_bytes_by_ref  # IS-3 P2-2：worker 按 refId 跨进程读回字节
+
 logger = logging.getLogger(__name__)
 
 
@@ -26,15 +28,21 @@ def init_ocr():
         logger.warning("[OCR worker] 模型预热失败（任务时将重试）: %s", e)
 
 
-def run_parse(file_bytes, filename, auto_orient, enable_auto_ocr):
+def run_parse(ref_id, filename, auto_orient, enable_auto_ocr):
     """在 worker 中执行完整解析；DB 写入由主进程完成（skip_db_write=True）。
 
+    IS-3 P2-2：入参由 bytes 改为 opaque ref_id。worker 仅按 ref_id 跨进程解析读取
+    字节（read_bytes_by_ref，依赖 config.TEMP_ROOT 共享 root，INV-IS3-5），绝不接收/
+    持有 bytes（INV-IS3-3），也绝不 retain/release（INV-IS3-6：lifecycle mutation 由
+    父进程 _run_parse_offthread 的 finally 负责）。
+
     Args 与返回值均为可 pickle 类型：
-      - file_bytes: bytes
+      - ref_id: str（opaque storage identity，跨 ProcessPool 仅传字符串）
       - filename: str
       - auto_orient / enable_auto_ocr: bool
       - 返回值: parse_invoice_service 的结果 dict（base64 字符串 / 普通 dict / list）
     """
+    file_bytes = read_bytes_by_ref(ref_id)
     from services.invoice_service import parse_invoice_service
     return parse_invoice_service(
         file_bytes, filename,

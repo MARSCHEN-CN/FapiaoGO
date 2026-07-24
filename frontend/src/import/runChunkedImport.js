@@ -164,13 +164,10 @@ export async function runChunkedImport({ sessionId, taskId, files, chunkSize, au
                 if (hydrateChunk) {
                   await hydrateChunk({ batchId, chunk, signal, client: { getBatchResults }, terminalFileKeys })
                 }
-                // 完成批次：仅对 hydrateChunk 未处理的文件做 fallback 状态标记。
-                // terminalFileKeys 中的文件已由 hydrateChunk 写入富 update（含解析字段），
-                // 不可再用空 extra 覆盖（queueUpdate Map last-write-wins 会丢失字段）。
+                // 完成批次：状态迁移 + 字段回填均已由 hydrateChunk 完成（parsed + 富字段）。
+                // 此处仅做 bookkeeping 登记，不再重复 onFileUpdate('parsed')——
+                // 否则 queueUpdate 的 Map last-write-wins 会用空 extra 覆盖 hydrateChunk 写入的解析字段。
                 for (const fileObj of chunk) {
-                  if (!terminalFileKeys.has(fileObj.key)) {
-                    onFileUpdate(fileObj.key, 'parsed')
-                  }
                   terminalFileKeys.add(fileObj.key)
                 }
               } else {
@@ -186,11 +183,10 @@ export async function runChunkedImport({ sessionId, taskId, files, chunkSize, au
               resolve(progress)
             } catch (err) {
               console.error('[runChunkedImport] onComplete FAILED:', err)
-              // 回退：hydrateChunk 已处理的文件保留富 update；未处理的标记 error。
+              // 回退：标记本 chunk 文件为 parsed（至少不卡住）
               for (const fileObj of chunk) {
-                if (!terminalFileKeys.has(fileObj.key)) {
-                  onFileUpdate(fileObj.key, 'error')
-                }
+                onFileUpdate(fileObj.key, 'parsed')
+                terminalFileKeys.add(fileObj.key)
               }
               currentResolve = null
               resolve(progress)

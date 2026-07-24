@@ -50,7 +50,7 @@ export function createPlaceholders(files) {
     name: f.name,
     path: f.path,
     // lazy file loading: browser drag 有 File，dialog/folder 路径为 null
-    // parseWorker 等下游在需要时通过 printPath / path 读取
+    // 解析阶段等下游在需要时通过 printPath / path 读取
     file: f.file || null,
     status: 'uploading',
     fileFormat: getFileFormat(f.name),

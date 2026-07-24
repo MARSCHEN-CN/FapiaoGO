@@ -181,7 +181,7 @@ function AppContent() {
   }, [])
 
   const {
-    importing, parseFiles, parsing, parseProgress,
+    importing, parseFiles, parsing, parseProgress, cancelImport,
     isNativeDragActive,
     handleNativeDrop, handleNativeDragOver, handleNativeDragLeave,
     getRootProps, getInputProps, isDragActive,
@@ -1058,6 +1058,7 @@ function AppContent() {
           parsing={parsing}
           parseProgress={parseProgress}
           visible={Boolean(importing || parsing) && !reimporting}
+          onCancel={cancelImport}
         />
         <PrintProgressModal
           printing={printing}

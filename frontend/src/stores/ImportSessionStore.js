@@ -34,6 +34,29 @@ const sessions = new Map()
 /** @type {Set<(sessionId: string) => void>} */
 const subscribers = new Set()
 
+// ── Session 自动回收（P6-C，与 TaskRegistry TTL 同模式）──
+// 会话到达终态后延迟移除，期间仍可被 UI 查询（最近历史），
+// 避免长会话下 sessions Map 单调增长。owner = 本 store 自身。
+const SESSION_TTL_MS = 60000
+const cleanupTimers = new Map()
+
+function scheduleSessionCleanup(id) {
+  clearSessionCleanupTimer(id)
+  const t = setTimeout(() => {
+    cleanupTimers.delete(id)
+    removeSession(id)
+  }, SESSION_TTL_MS)
+  cleanupTimers.set(id, t)
+}
+
+function clearSessionCleanupTimer(id) {
+  const t = cleanupTimers.get(id)
+  if (t) {
+    clearTimeout(t)
+    cleanupTimers.delete(id)
+  }
+}
+
 /**
  * 订阅会话变化。
  * @param {(sessionId: string) => void} fn - 回调函数
@@ -82,6 +105,7 @@ export function getSession(id) {
  * @param {string} id
  */
 export function removeSession(id) {
+  clearSessionCleanupTimer(id)
   sessions.delete(id)
   notify(id)
 }
@@ -260,6 +284,10 @@ export function updateSessionStatus(sessionId, status) {
   if (!session) return
   session.status = status
   notify(sessionId)
+  // 终态自动回收（P6-C）：completed/cancelled 后延迟移除，保留最近历史供 UI 查询
+  if (status === 'completed' || status === 'cancelled') {
+    scheduleSessionCleanup(sessionId)
+  }
 }
 
 // ── 结果管理 ────────────────────────────────────────────

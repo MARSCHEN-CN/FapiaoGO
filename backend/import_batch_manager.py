@@ -20,12 +20,11 @@ import uuid
 import logging
 import threading
 import time
-import io
 from dataclasses import dataclass, field
 from typing import Optional, Dict, Any, List, Callable
 
 from time_utils import now
-from temp_file_registry import TempFileRegistry, LocalTempFileStorageBackend
+from temp_file_registry import TempFileRegistry, get_temp_registry
 
 logger = logging.getLogger(__name__)
 
@@ -180,6 +179,10 @@ class ImportBatchManager:
         - 解析结果：ocr_cache（由 ParseJobManager._execute_job 写入）
     """
 
+    # P6-C：终态批次保留窗口（小时），超时后由 evict_old_batches 回收。
+    # running/queued 永不回收，保证活跃批次的 GET /import/batch/{id} 历史语义。
+    _TERMINAL_EVICT_HOURS = {'completed': 0.5, 'failed': 2.0, 'cancelled': 10 / 60}
+
     def __init__(self, job_manager):
         """
         Args:
@@ -195,9 +198,11 @@ class ImportBatchManager:
         # 取消标志
         self._cancel_flags: Dict[str, bool] = {}
 
-        # IS-2：temp 文件所有权（spool → 落盘 → 读取 → release）。
-        # owner = ImportBatchManager；释放点由 Commit 5 接线（_on_job_done/cancel/cleanup）。
-        self._temp_registry = TempFileRegistry(LocalTempFileStorageBackend())
+        # IS-3 P3-A：temp 文件所有权统一为跨端点单例 get_temp_registry()（R1 blocker 修复）。
+        # /parse_invoice 与 /import/batch 共用同一 TempFileRegistry 实例，确保 spool 登记的
+        # ref 与 release 查找落在同一 _records（INV-IS3-6 lifecycle mutation owner 唯一）。
+        # 释放点仍由 Commit 5 接线（_on_job_done/cancel/cleanup），owner 关系不变。
+        self._temp_registry = get_temp_registry()
 
         # 注册完成回调（ParseJobManager 每个 job 终态时触发）
         self._job_manager.on_job_complete(self._on_job_done)
@@ -219,7 +224,7 @@ class ImportBatchManager:
         Args:
             file_inputs: IS-2 起为 refId 形态：
                 [{'refId': 'imp-xxx', 'filename': 'xxx.pdf', 'clientKey': '...'}, ...]
-                兼容回退（Commit 3 删除）：也可含 'bytes'（旧路径/手动脚本）。
+                IS-3 起不再接受 bytes（仅 refId 形态）。
             auto_orient: 是否自动旋转
             enable_auto_ocr: 是否启用自动 OCR
 
@@ -228,32 +233,13 @@ class ImportBatchManager:
         """
         batch_id = f"B{now().strftime('%Y%m%d%H%M%S')}_{uuid.uuid4().hex[:6]}"
 
-        # IS-2（Commit 3）：输入归一化为 refId 形态，manager 不再常驻 bytes。
-        # 旧 bytes 形态（手动脚本 test_step2_batch.py）在边界立即 spool 为 temp 文件
-        # 并替换为 refId，不进 RAM 峰值。此 transitional 分支在 IS-3 弃用 /parse_batch 时移除。
+        # IS-3：/parse_batch 退役后，create_batch 只接受 refId 形态（INV-IS3-1）。
+        # manager 不再在边界 spool bytes，调用方（/import/batch）已先行 spool 并传入 refId。
         normalized = []
-        try:
-            for fi in file_inputs:
-                if 'refId' in fi:
-                    normalized.append(fi)
-                elif 'bytes' in fi:
-                    # 兼容回退（IS-3 移除）：旧 bytes 形态在边界立即 spool 为 temp 文件
-                    rec = self._temp_registry.spool(io.BytesIO(fi['bytes']), fi.get('filename', ''))
-                    normalized.append({
-                        'refId': rec.refId,
-                        'filename': rec.filename,
-                        'clientKey': fi.get('clientKey', ''),
-                    })
-                else:
-                    raise ValueError(f"file input 必须含 refId 或 bytes: {fi}")
-        except Exception:
-            # 归一化失败：已 spool 的 temp 文件引用立即释放，避免孤立文件泄漏。
-            # （例如 file_inputs 中第 N 个非法，前 N-1 个已 spool 的 ref 必须回收）
-            for fi in normalized:
-                ref = fi.get('refId')
-                if ref:
-                    self._temp_registry.release(ref)
-            raise
+        for fi in file_inputs:
+            if 'refId' not in fi:
+                raise ValueError(f"file input 必须含 refId: {fi}")
+            normalized.append(fi)
         file_inputs = normalized
         total = len(file_inputs)
 
@@ -292,12 +278,23 @@ class ImportBatchManager:
         """
         file_bytes = self._temp_registry.read_bytes(input_ref)
         from services.invoice_service import parse_invoice_service
-        return parse_invoice_service(
+        result = parse_invoice_service(
             file_bytes, filename,
             auto_orient=auto_orient,
             enable_auto_ocr=enable_auto_ocr,
             skip_db_write=skip_db_write,
         )
+        # 注册到 Render Engine，使 /preview/{doc_id} 可服务，并回传 doc_id 供前端建链。
+        # registry.open 幂等（content-hash → doc_id），重复注册返回已有条目。
+        # 注册失败不阻塞解析主路径（图片/OFD 仍走 legacy 预览）。
+        if result is not None:
+            try:
+                from render_engine import registry as re_registry
+                doc = re_registry.open(file_bytes, filename=filename)
+                result['doc_id'] = doc.doc_id
+            except Exception:
+                logger.debug("[ImportBatch] render engine 注册跳过: %s", filename)
+        return result
 
     # ─── IS-2：temp 文件释放（Commit 5） ─────────────────────
 
@@ -669,6 +666,29 @@ class ImportBatchManager:
             self._scheduler_threads.pop(batch_id, None)
         # 在锁外释放（registry.release 幂等，重复释放无害）
         self._release_inputs(pending)
+        # P6-C：每次批次清理后顺带回收超龄终态批次，避免 _batches 无限增长
+        self.evict_old_batches()
+
+    def evict_old_batches(self, now_ts: Optional[float] = None) -> int:
+        """回收超龄终态批次（P6-C），防止 _batches 无限增长。
+
+        分层 TTL（小时）：completed 0.5 / failed 2.0 / cancelled 10min。
+        running/queued 永不回收，保证活跃批次的 GET /import/batch/{id} 历史语义。
+        仅删除 _batches 条目（运行时数据已由 cleanup_batch 释放），不触碰磁盘结果。
+        """
+        from time_utils import from_isoformat, to_timestamp
+        now_ts = now_ts if now_ts is not None else time.time()
+        with self._batch_lock:
+            stale = [
+                bid for bid, b in self._batches.items()
+                if b.status in self._TERMINAL_EVICT_HOURS
+                and to_timestamp(from_isoformat(b.updated_at)) < now_ts - self._TERMINAL_EVICT_HOURS[b.status] * 3600
+            ]
+            for bid in stale:
+                del self._batches[bid]
+        if stale:
+            logger.info(f"[ImportBatch] evicted {len(stale)} stale batches")
+        return len(stale)
 
     def shutdown(self):
         """关闭管理器（取消所有活跃批次）"""
