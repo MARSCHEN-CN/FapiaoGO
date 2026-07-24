@@ -19,7 +19,7 @@ import { runParseTask } from '../runners/parseRunner'
 import { runSplitTask } from '../runners/splitRunner'
 import { runFallbackParseTask } from '../runners/fallbackParseRunner'
 import { runChunkedImport } from '../import/runChunkedImport'
-import { ensureRenderContract } from '../services/renderDocument'
+import { ensureRenderContract, ensureDocumentMetadata } from '../services/renderDocument'
 import { mapParseResultToFileUpdate } from '../mappers/parseResultMapper'
 import { createImportSession, addFilesToSession, replaceFileItems, updateProgress } from '../stores/ImportSessionStore'
 import { ensureDocumentFromFileObj, flushDocumentNotifications, getDocument } from '../stores/DocumentStore'
@@ -157,6 +157,12 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
         // 共享 docId 的拆分页为多页 Document（单页文件不受影响）。
         const update = consumeParseResult(result, fileObj, task.id, filesToParse)
         updates.set(fileObj.key, { ...update, status: result.status })
+
+        // 13-A.3.5c：metadata 驱动纠正（OFD 多页 / 真实尺寸）。
+        // 置 consume 之后为最终权威：后端 page contract 覆盖 siblings 对单文件多页的欠维注册。
+        // 无 OFD 特判——以 docId 是否存在为准（PDF/PNG 未走 render registry 时 /metadata 404 静默降级）。
+        if (update?.docId) fileObj.docId = update.docId
+        await ensureDocumentMetadata(fileObj)
       } else {
         updates.set(fileObj.key, { status: 'error', errorMsg: item.error || '解析失败' })
       }
@@ -222,7 +228,11 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
           // 与批量路径（:145）一致，供 DocumentStore 聚合共享 docId 的拆分页。
           // 13-A.3.5b：消费前确保 render doc_id（OFD 走 Render Contract，容错不阻断）
           await ensureRenderContract(fileObj)
-          consumeParseResult(outcome.result, fileObj, null, filesToParse)
+          const update = consumeParseResult(outcome.result, fileObj, null, filesToParse)
+
+          // 13-A.3.5c：metadata 驱动纠正（OFD 多页 / 真实尺寸），置 consume 之后为最终权威
+          if (update?.docId) fileObj.docId = update.docId
+          await ensureDocumentMetadata(fileObj)
 
           setFiles((prev) =>
             prev.map((f) =>
@@ -355,6 +365,10 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
         await ensureRenderContract(fileObj)
         const update = consumeParseResult(result, fileObj, session.id)
           queueUpdate(fileObj.key, result.status, update)
+
+          // 13-A.3.5c：metadata 驱动纠正（OFD 多页 / 真实尺寸），置 consume 之后为最终权威
+          if (update?.docId) fileObj.docId = update.docId
+          await ensureDocumentMetadata(fileObj)
         } catch (err) {
           console.error(`[App] 解析失败: ${fileObj.name}`, err)
           queueUpdate(fileObj.key, 'error')
@@ -512,7 +526,12 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
                     : fileObj
                   const prev = getDocument(effectiveDocId)
                   const doc = ensureDocumentFromFileObj(docFileObj, readyFiles, { silent: true })
-                  if (doc && doc !== prev) docsTouched = true
+                  // 13-A.3.5c：metadata 驱动纠正（OFD 多页 / 真实尺寸），silent 跟随批处理统一 flush
+                  const metaDoc = await ensureDocumentMetadata(
+                    { ...docFileObj, docId: effectiveDocId },
+                    { silent: true }
+                  )
+                  if ((doc && doc !== prev) || (metaDoc && metaDoc !== prev)) docsTouched = true
                 }
               }
               if (docsTouched) {
