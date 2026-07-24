@@ -271,3 +271,28 @@ class TestSpoolAndLocalBackend:
             fut = ex.submit(_child_read_bytes_by_ref, ref_id, base)
             got = fut.result(timeout=15)
         assert got == content
+
+    # ---- IS-3 P2-1：explicit temp root config (INV-IS3-5 cross-process premise) ----
+
+    def test_backend_default_root_is_config_temp_root(self, tmp_path):
+        """P2-1：LocalTempFileStorageBackend() 无参默认根必须来自 config.TEMP_ROOT，
+        而非隐式 tempfile.gettempdir()，保证父子进程同 root（INV-IS3-5 前提）。
+        """
+        import config
+        import tempfile
+        backend = LocalTempFileStorageBackend()
+        assert backend._base_dir == config.TEMP_ROOT
+        # 不是裸 gettempdir——否则 spawn 子进程可能落到不同 root
+        assert backend._base_dir != tempfile.gettempdir()
+
+    def test_resolver_fallback_uses_config_temp_root(self, tmp_path):
+        """P2-1：read_bytes_by_ref(refId) 不传 base_dir 时回退 config.TEMP_ROOT，
+        且能读到默认 backend spool 出的文件——验证 fallback 链在进程内闭环。
+        （跨进程 env 注入由 Bash smoke 单独验证，此处验证 fallback 接线正确。）
+        """
+        backend = LocalTempFileStorageBackend()  # 默认根 = config.TEMP_ROOT
+        reg = TempFileRegistry(backend)
+        content = b"resolver fallback via config.TEMP_ROOT " * 10
+        rec = reg.spool(io.BytesIO(content), "fb.pdf")
+        # 不传 base_dir -> 走 config.TEMP_ROOT fallback
+        assert read_bytes_by_ref(rec.refId) == content

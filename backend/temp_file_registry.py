@@ -6,6 +6,9 @@ Commit 2：新增 LocalTempFileStorageBackend（真实落盘/读取/删除）+ R
 IS-3 P1：storage identity 迁移——refId 即存储文件名（path = base_dir/refId，无扩展名），
          跨进程由 resolve_ref_path()/read_bytes_by_ref() 确定性解析，不再依赖父进程
          _records 内存索引（满足 INV-IS3-5）。
+IS-3 P2-1：temp root 改为显式 config.TEMP_ROOT（env INVOICE_TEMP_ROOT 注入），父子进程
+          共用同一 root——这是 INV-IS3-5 跨进程解析能成立的前提（否则 spawn 子进程
+          可能落到不同 gettempdir 导致 FileNotFoundError）。
 
 设计原则（来自 Contract v1 INV-1..5）：
 - refId 是唯一 opaque 标识，绝不暴露 path 给 session / job contract。
@@ -22,6 +25,8 @@ import os
 import time
 import uuid
 from typing import Dict, Optional, Protocol, runtime_checkable
+
+import config  # IS-3 P2-1：显式共享 temp root（config.TEMP_ROOT，env INVOICE_TEMP_ROOT 注入）
 
 
 @runtime_checkable
@@ -51,10 +56,9 @@ class LocalTempFileStorageBackend:
     """
 
     def __init__(self, base_dir: Optional[str] = None):
-        if base_dir is None:
-            import tempfile
-            base_dir = os.path.join(tempfile.gettempdir(), "print706_import_tmp")
-        self._base_dir = base_dir
+        # P2-1：默认根来自 config.TEMP_ROOT（env INVOICE_TEMP_ROOT 注入），
+        # 不再隐式依赖 tempfile.gettempdir()，保证父子进程同 root（INV-IS3-5）。
+        self._base_dir = base_dir or config.TEMP_ROOT
         os.makedirs(self._base_dir, exist_ok=True)
 
     def spool(self, ref_id: str, stream, filename: str):
@@ -102,11 +106,10 @@ class LocalTempFileStorageBackend:
 
 
 def _default_base_dir() -> str:
-    """IS-2/IS-3 默认 temp 根。生产应由显式 app config 注入（Plan R2），
-    此处仅作 fallback，保证跨进程默认同 root。
+    """IS-2/IS-3 默认 temp 根。生产由 config.TEMP_ROOT 显式注入（Plan R2 / P2-1），
+    此处仅作语义别名，保证跨进程默认同 root。
     """
-    import tempfile
-    return os.path.join(tempfile.gettempdir(), "print706_import_tmp")
+    return config.TEMP_ROOT
 
 
 def resolve_ref_path(ref_id: str, base_dir: Optional[str] = None) -> str:

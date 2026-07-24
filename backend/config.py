@@ -1,4 +1,5 @@
 import os
+import tempfile
 
 # OCR 结果缓存目录 - 位于项目根目录的 database 文件夹下
 BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -50,3 +51,12 @@ ENABLE_CACHE = os.environ.get('ENABLE_CACHE', '1') == '1'
 
 # 是否启用详细缓存日志  修改后（默认启用调试）
 CACHE_DEBUG = os.environ.get('CACHE_DEBUG', '1') == '1'
+
+# 导入临时文件根目录（IS-3 P2-1）
+# 所有 temp 文件组件（parent registry + ProcessPool 子进程 worker）必须共用同一 root，
+# 否则子进程按 refId 解析会 FileNotFoundError（INV-IS3-5 跨进程解析前提）。
+# 优先级：环境变量 INVOICE_TEMP_ROOT（部署显式注入，spawn 子进程通过环境继承）>
+#         默认专用子目录（gettempdir()/print706_import_tmp，单机确定性 fallback）。
+TEMP_ROOT = os.environ.get('INVOICE_TEMP_ROOT') or os.path.join(
+    tempfile.gettempdir(), 'print706_import_tmp'
+)
