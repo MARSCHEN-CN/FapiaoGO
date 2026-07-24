@@ -13,9 +13,7 @@
  *   TaskRegistry 持有 EventSource 引用，用于取消时关闭连接。
  *   本模块只负责创建 EventSource 并返回。
  *
- * 与 StreamConsumer 的区别：
- *   StreamConsumer 消费 POST 请求的 SSE 响应（旧 /parse_batch）。
- *   ImportBatchClient 消费独立的 GET SSE 端点（新 /import/batch）。
+ * 消费独立的 GET SSE 端点（/import/batch 生命周期）。
  *
  * @module services/ImportBatchClient
  */

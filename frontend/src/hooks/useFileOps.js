@@ -11,8 +11,6 @@ import { applyFileUpdate } from '../utils/fileStateTransitions'
 import { mergePendingUpdate } from '../utils/pendingUpdate'
 import { createPlaceholders } from '../utils/placeholderGenerator'
 import { resolveFile } from '../services/FileResolver'
-import { prepareBatchRequest } from '../services/ParseBatchClient'
-import { consumeBatchStream } from '../services/StreamConsumer'
 import { createTask, setTaskAbortController, updateTaskStatus, getTask, setTaskStream, cancelTask } from '../services/TaskRegistry'
 import { createQueues, enqueueSplit, enqueueParse, dequeueSplit, dequeueParse, getSplitQueueLength, getParseQueueLength } from '../services/TaskScheduler'
 import { createImportBatch, subscribeBatchProgress, cancelImportBatch, getBatchResults } from '../services/ImportBatchClient'
@@ -25,7 +23,6 @@ import { createImportSession, addFilesToSession, replaceFileItems, updateProgres
 import { ensureDocumentFromFileObj, flushDocumentNotifications, getDocument } from '../stores/DocumentStore'
 import { processImportedFiles } from '../processors/invoicePostProcessor'
 import { consumeParseResult } from '../consumers/parseResultConsumer'
-import { createParseResult } from '../models/ParseResult'
 
 // ── 状态迁移规则 ─────────────────────────────────────────
 // 仅允许正向状态迁移，阻止回退（Import Pipeline Contract v1.2）
@@ -102,70 +99,6 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
     CANCELLED: 'cancelled',
   }
 
-  // ============================
-  // 批量解析文件（单次请求提交所有文件）
-  // ============================
-  const parseFilesBatch = useCallback(async (filesToParse) => {
-    const ipc = electronAPIRef.current?.ipcRenderer
-    const autoOrient = settingsRef.current.autoOrient ?? false
-
-    // 1. 通过 ParseBatchClient 准备请求（FormData + URL）
-    const { url, formData } = await prepareBatchRequest(filesToParse, { ipc, autoOrient })
-
-    // 2. 标记所有文件为 uploading（UI 状态初始同步）
-    setFiles((prev) =>
-      prev.map((f) =>
-        filesToParse.some((fp) => fp.key === f.key)
-          ? { ...f, status: 'uploading' }
-          : f
-      )
-    )
-
-    // 3. 通过 StreamConsumer + TaskRegistry 消费 SSE 流
-    //    SSE 生命周期由 TaskRegistry 管理（AbortController 统一取消）
-    //    ParseResultConsumer 将结果写入 ImportSessionStore + 返回 UI 更新
-    const abortController = new AbortController()
-    const task = createTask(filesToParse.map((f) => f.key))
-    setTaskAbortController(task.id, abortController)
-
-    const batchResult = await consumeBatchStream(url, formData, {
-      signal: abortController.signal,
-      onProgress: (msg) => {
-        setParseProgress({ current: msg.current, total: msg.total })
-      },
-    })
-
-    updateTaskStatus(task.id, 'completed')
-
-    // 4. 消费批量结果：Consumer 写入 Store + 收集 UI 更新
-    const updates = new Map()
-    for (const item of batchResult.items) {
-      const fileObj = filesToParse[item.index]
-      if (!fileObj) continue
-
-      if (item.success && item.data) {
-        const result = createParseResult(item.data, fileObj.name)
-        // Step 10.5：传入整批文件作为 siblings，供 DocumentStore 聚合
-        // 共享 docId 的拆分页为多页 Document（单页文件不受影响）。
-        const update = consumeParseResult(result, fileObj, task.id, filesToParse)
-        updates.set(fileObj.key, { ...update, status: result.status })
-      } else {
-        updates.set(fileObj.key, { status: 'error', errorMsg: item.error || '解析失败' })
-      }
-    }
-
-    // 5. 批量同步到 React UI
-    if (updates.size > 0) {
-      setFiles((prev) =>
-        prev.map((f) => {
-          const update = updates.get(f.key)
-          return update ? { ...f, ...update } : f
-        })
-      )
-    }
-
-    // 6. 进度已由 SSE onProgress 实时更新，不再重复计算
-  }, [electronAPIRef])
 
   // ============================
   // 解析文件（带重试和限流处理）
@@ -184,25 +117,10 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
       const ipc = electronAPIRef.current?.ipcRenderer
       const autoOrient = settingsRef.current.autoOrient ?? false
 
-      // 多文件时优先使用批量接口，失败时回退到逐个解析
-      if (filesToParse.length > 1) {
-        try {
-          await parseFilesBatch(filesToParse)
-          setFiles((prev) => {
-            // D1：重复检测以 document 为单位，再投影到页 key 供 applySort 分区
-            const { duplicateGroups } = buildDocumentViewModel(prev)
-            return applySort(prev, sortByRef.current, sortOrderRef.current, buildPageDuplicateInfo(duplicateGroups), getPreviousYearInfo(prev))
-          })
-          return
-        } catch (batchErr) {
-          console.warn('[parseFiles] 批量解析失败，回退逐个解析:', batchErr)
-          fallbackDoneCount = 0  // 重置计数器，准备逐个解析
-          setParseProgress({ current: 0, total: filesToParse.length })
-          // 继续执行下方的逐个解析逻辑
-        }
-      }
+      // 统一走逐文件解析路径（单文件与多文件均经 runFallbackParseTask → /parse_invoice，
+    // 失败由 runner 内部重试）。旧的 /parse_batch 批量端点已在 IS-3 P4 退役，无需再尝试。
 
-      await concurrentBatch(filesToParse, async (fileObj) => {
+    await concurrentBatch(filesToParse, async (fileObj) => {
         // 通过 fallbackParseRunner 执行单文件解析
         // Runner 处理：文件读取 + FormData + fetch + retry → ParseResult
         const task = { fileObj }
@@ -245,7 +163,7 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
       setParsing(false)
       setParseProgress({ current: 0, total: 0 })
     }
-  }, [electronAPIRef, parseFilesBatch])
+  }, [electronAPIRef])
 
   /**
    * 处理文件添加（公共函数，消除重复逻辑）

@@ -3,10 +3,10 @@
  *
  * 职责：
  *   - 解析文件输入，构建 FormData
- *   - 返回 { url, formData } 供 StreamConsumer 消费
+ *   - 返回 { url, formData } 供调用方通过 fetch 提交
  *
  * 不负责：
- *   ❌ SSE 流消费（StreamConsumer 负责）
+ *   ❌ SSE 流消费（由调用方负责）
  *   ❌ 结果映射（ParseResultConsumer 负责）
  *   ❌ 状态管理（ImportSessionStore 负责）
  *   ❌ React state
@@ -20,43 +20,6 @@
 import { BACKEND_URL } from '../config'
 import { resolveFile } from './FileResolver'
 
-/**
- * 准备批量解析请求的 FormData。
- *
- * @param {Array<{file?: File, path?: string, printPath?: string, name: string, key: string}>} filesToParse
- * @param {{ ipc: object, autoOrient: boolean }} options
- * @returns {Promise<{ url: string, formData: FormData }>}
- */
-export async function prepareBatchRequest(filesToParse, { ipc, autoOrient }) {
-  // ── 准备所有文件的 File 对象 ──────────────────────────
-  const preparedFiles = []
-  for (const fileObj of filesToParse) {
-    if (fileObj.file) {
-      console.log('[DIAG] prepareBatchRequest native file:', fileObj.name, 'size:', fileObj.file.size)
-      preparedFiles.push(fileObj.file)
-    } else if ((fileObj.printPath || fileObj.path) && ipc) {
-      console.log('[DIAG] prepareBatchRequest need IPC resolve:', fileObj.name, 'path:', fileObj.printPath || fileObj.path)
-      const file = await resolveFile(fileObj, ipc)
-      preparedFiles.push(file)
-    } else {
-      preparedFiles.push(null)
-    }
-  }
-
-  // ── 构造 FormData ────────────────────────────────────
-  const formData = new FormData()
-  for (let i = 0; i < preparedFiles.length; i++) {
-    if (preparedFiles[i]) {
-      formData.append('files', preparedFiles[i], filesToParse[i].name)
-    }
-  }
-  formData.append('autoOrient', autoOrient ? '1' : '0')
-
-  return {
-    url: `${BACKEND_URL}/parse_batch`,
-    formData,
-  }
-}
 
 /**
  * 单文件解析请求构造（用于 fallback 路径）。
