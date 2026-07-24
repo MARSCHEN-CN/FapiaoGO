@@ -27,6 +27,7 @@ class Document:
     doc_id: str
     path: str                     # internal only, never returned to client
     pdf: Optional["fitz.Document"] = None
+    file_bytes: Optional[bytes] = None  # raw bytes for non-PDF (image/OFD); PDF uses fitz handle
     page_count: int = 0
     mtime: float = 0.0
     size: int = 0
@@ -189,22 +190,25 @@ class DocumentRegistry:
                 doc.page_count = len(doc.pdf)
                 doc.mtime = time.time()
             except Exception:
-                # Not a PDF — fitz can still open as image later
+                # Not a PDF — store raw bytes for image rendering (_render_image_page)
                 doc.pdf = None
+                doc.file_bytes = file_bytes
                 doc.page_count = 1
                 doc.mtime = time.time()
         else:
+            doc.file_bytes = file_bytes
             doc.page_count = 1
         return doc
 
     def _release_doc(self, doc: Document):
-        """Close fitz handle if open."""
+        """Close fitz handle if open and release raw bytes."""
         if doc.pdf is not None:
             try:
                 doc.pdf.close()
             except Exception as e:
                 logger.debug("release_doc fitz.close error: %s", e)
             doc.pdf = None
+        doc.file_bytes = None
 
     def _evict_oldest(self):
         """Evict the least recently accessed document with ref_count == 0."""

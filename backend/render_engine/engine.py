@@ -628,26 +628,28 @@ class RenderEngine:
 
     def _render_image_page(self, doc, preset: RenderPreset, vs: dict,
                            page_idx: int, fmt: str) -> bytes:
-        """Render an image (non-PDF) to a pixmap with margins."""
-        # For images, create a blank page and place the image on it
-        img_bytes = doc.get("file_bytes") if hasattr(doc, "get") else None
-        if img_bytes is None:
-            # Try opening with fitz as image
-            try:
-                img_doc = fitz.open(stream=doc.get("file_bytes", b""),
-                                    filetype=doc.path.split(".")[-1] if doc.path else "png")
-            except Exception:
-                img_doc = None
+        """Render an image (non-PDF) to a pixmap with margins.
 
-            if img_doc is None:
-                raise ValueError(f"Cannot render image: {doc.path}")
+        Uses doc.file_bytes stored by Registry at registration time.
+        fitz opens the image as a single-page document and rasterizes it.
+        """
+        if not doc.file_bytes:
+            raise ValueError(f"Cannot render image (no file_bytes): {doc.path}")
 
-            # Render first page (image documents have 1 page)
+        filetype = doc.path.rsplit(".", 1)[-1].lower() if doc.path else "png"
+        # fitz 支持的图片 filetype 映射（常见格式）
+        _FITZ_IMAGE_TYPES = {"png", "jpg", "jpeg", "gif", "bmp", "tiff", "tif", "webp"}
+        if filetype not in _FITZ_IMAGE_TYPES:
+            filetype = "png"  # 安全回退
+
+        try:
+            img_doc = fitz.open(stream=doc.file_bytes, filetype=filetype)
+        except Exception as exc:
+            raise ValueError(f"Cannot open image with fitz ({filetype}): {exc}") from exc
+
+        try:
             pix = img_doc[0].get_pixmap(dpi=preset.dpi)
-            img_doc.close()
-        else:
-            img_doc = fitz.open(stream=img_bytes, filetype=doc.path.split(".")[-1])
-            pix = img_doc[0].get_pixmap(dpi=preset.dpi)
+        finally:
             img_doc.close()
 
         # --- grayscale ---
@@ -685,10 +687,13 @@ def _open_image_doc(doc) -> "fitz.Document":
     新增 helper，供 `_render_spec_page` 的 image 分支使用；**不修改** Legacy 的
     `_render_image_page`（⑥ Frozen Baseline）。打开逻辑与其等价，但集中为一处。
     """
-    filetype = doc.path.split(".")[-1] if getattr(doc, "path", None) else "png"
-    img_bytes = doc.get("file_bytes") if hasattr(doc, "get") else None
-    if img_bytes is None:
-        img_bytes = b""
+    filetype = doc.path.rsplit(".", 1)[-1].lower() if getattr(doc, "path", None) else "png"
+    _FITZ_IMAGE_TYPES = {"png", "jpg", "jpeg", "gif", "bmp", "tiff", "tif", "webp"}
+    if filetype not in _FITZ_IMAGE_TYPES:
+        filetype = "png"
+    img_bytes = getattr(doc, "file_bytes", None)
+    if not img_bytes:
+        raise ValueError(f"Cannot open image document (no file_bytes): {getattr(doc, 'path', '?')}")
     try:
         return fitz.open(stream=img_bytes, filetype=filetype)
     except Exception as e:
