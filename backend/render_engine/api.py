@@ -223,6 +223,18 @@ def metadata(doc_id: str):
         page_width = round(p.rect.width, 2)
         page_height = round(p.rect.height, 2)
         page_rotation = getattr(p, 'rotation', 0)
+    elif doc.file_bytes and doc.page_count > 0:
+        try:
+            from PIL import Image, ImageOps
+            with Image.open(io.BytesIO(doc.file_bytes)) as img:
+                oriented = ImageOps.exif_transpose(img)
+                if oriented is not None:
+                    img = oriented
+                page_width = img.width
+                page_height = img.height
+                page_rotation = 0
+        except Exception:
+            pass
 
     return jsonify({
         "success": True,
