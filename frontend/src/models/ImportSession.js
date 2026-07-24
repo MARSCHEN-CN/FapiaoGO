@@ -85,6 +85,7 @@ export function createSession(files = []) {
     id: generateSessionId(),
     status: 'pending',
     files,
+    documents: [],
     tasks: [],
     childBatchIds: [],
     results: [],

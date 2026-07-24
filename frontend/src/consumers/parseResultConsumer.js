@@ -18,8 +18,8 @@
  */
 
 import { mapParseResultToFileUpdate } from '../mappers/parseResultMapper'
-import { updateFileStatus, addResult } from '../stores/ImportSessionStore'
-import { ensureDocumentFromFileObj } from '../stores/DocumentStore'
+import { updateFileStatus, addResult, addDocument } from '../stores/ImportSessionStore'
+import { ensureDocumentFromFileObj, getDocument } from '../stores/DocumentStore'
 
 /**
  * 消费单个解析结果。
@@ -43,6 +43,13 @@ export function consumeParseResult(result, fileObj, sessionId, siblings = null) 
   // 未传时退化为单页构建。OCR/ParseResult 合并仍属 Coordinator 职责。
   if (update.docId) {
     ensureDocumentFromFileObj({ ...fileObj, docId: update.docId, identity: update.identity }, siblings)
+    // Phase E-1：双写模式 — 将 DocumentStore 的 InvoiceDocument 同步到
+    // ImportSessionStore.documents[]，为前端从 file 模型迁移到 document 模型铺路。
+    // 当前 UI 仍从 files[] 消费，documents[] 仅建立并存状态。
+    const doc = getDocument(update.docId)
+    if (doc && sessionId) {
+      addDocument(sessionId, doc)
+    }
   }
 
   return update

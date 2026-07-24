@@ -125,6 +125,23 @@ export function updateFileStatus(sessionId, fileKey, updates) {
 }
 
 /**
+ * 向会话中添加一个 InvoiceDocument（双写模式，E-1）。
+ * 通过 docId 去重：同 docId 的文档不会被重复添加。
+ * @param {string} sessionId
+ * @param {Object} doc - InvoiceDocument（来自 DocumentStore）
+ */
+export function addDocument(sessionId, doc) {
+  const session = sessions.get(sessionId)
+  if (!session) return
+  const docId = doc?.id || doc?.docId
+  if (!docId) return
+  session.documents = session.documents || []
+  if (!session.documents.some(d => (d.id || d.docId) === docId)) {
+    session.documents.push(doc)
+  }
+}
+
+/**
  * 替换会话中某个文件的占位项（多页 PDF 拆分后）。
  * @param {string} sessionId
  * @param {string} fileKey - 被替换的占位 key
