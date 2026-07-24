@@ -144,9 +144,10 @@ function AppContent() {
   // D2-4.1：DocumentViewer 路径是否激活（与 DisplayAdapter 路由条件严格一致）。
   // 激活时 control-bar 的缩放控件改由 ZoomToolbar 渲染（状态源 useViewerState，经 controller
   // 桥接上抬），UI 位置保持在用户习惯的 control-bar；detail 按钮与方向控件保留。
-  // legacy 路径（OFD/merge）继续用旧 preview.zoom 工具栏。
+  // legacy 路径（merge）继续用旧 preview.zoom 工具栏；OFD 经 13A-3 接入后与 PDF/Image
+  // 同级走 DocumentViewer，统一由 documentViewerActive 驱动新 ZoomToolbar。
   const documentViewerActive = activeDocument && activeDocument.pageCount > 0
-    && !isMergeMode(settings.mergeMode) && previewFile?.fileFormat !== 'ofd'
+    && !isMergeMode(settings.mergeMode)
 
   // D2-4.1：viewer 缩放控制桥接接收端。DocumentViewer 经 onViewerController 上抬
   // {mode, zoomPercent, actions}（仅 zoom 显示/档位相关值变化时更新，拖拽平移不触发）；
@@ -926,11 +927,6 @@ function AppContent() {
                   <p className="canvas-empty-sub">支持 PDF、OFD、图片格式的发票文件</p>
                 </div>
               )
-            }
-
-            // OFD 不支持预览
-            if (previewFile._fileFormat === 'ofd' && !previewFile._previewImageUrl) {
-              return <div className="canvas-center-overlay canvas-loading">OFD 文件不支持预览</div>
             }
 
             // 加载中：有预览文件但渲染尚未就绪
