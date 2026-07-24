@@ -274,12 +274,23 @@ class ImportBatchManager:
         """
         file_bytes = self._temp_registry.read_bytes(input_ref)
         from services.invoice_service import parse_invoice_service
-        return parse_invoice_service(
+        result = parse_invoice_service(
             file_bytes, filename,
             auto_orient=auto_orient,
             enable_auto_ocr=enable_auto_ocr,
             skip_db_write=skip_db_write,
         )
+        # 注册到 Render Engine，使 /preview/{doc_id} 可服务，并回传 doc_id 供前端建链。
+        # registry.open 幂等（content-hash → doc_id），重复注册返回已有条目。
+        # 注册失败不阻塞解析主路径（图片/OFD 仍走 legacy 预览）。
+        if result is not None:
+            try:
+                from render_engine import registry as re_registry
+                doc = re_registry.open(file_bytes, filename=filename)
+                result['doc_id'] = doc.doc_id
+            except Exception:
+                logger.debug("[ImportBatch] render engine 注册跳过: %s", filename)
+        return result
 
     # ─── IS-2：temp 文件释放（Commit 5） ─────────────────────
 
