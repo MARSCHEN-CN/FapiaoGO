@@ -134,15 +134,41 @@ image renderer                 ← doc.file_bytes 单页图像
 
 **禁止：OFD → `previewImage` → Viewer**
 
-`previewImage`（base64 JPEG，旧链 `parse_ofd() → render_ofd_page_preview()`）**不是 Viewer 契约**：
+`previewImage`（base64 JPEG，旧链 `parse_ofd() → render_ofd_page_preview()`，`backend/ofd_parser/_parser.py:114`）**不是 Viewer 契约**。Viewer 主链（DocumentViewer）**只走** `GET /preview/{docId}?page=N` → adapter/pdf/image，绝不读 `previewImage`。
 
-- 旧链生产者：`backend/ofd_parser/_parser.py:114` `render_ofd_page_preview(raw, dpi=150)` → `preview_image` base64 JPEG。
-- 旧链消费者（仅 legacy，非 Viewer）：
-  - Import 缩略图：`import_batch_manager.py:393`、`app.py:1289`
-  - OCR 详情 fallback：`app.py:1146`、`response_builder.py:147-150`
-  - Print（另一条链，见 §5）：前端 `usePrint.js` 消费 `f.previewImage`
+其负向消费边界（谁可以用、谁禁止用、迁移状态）在 **§4.1** 冻结，并由 `previewImageBoundary.test.js` 锁死。
 
-Viewer 主链（DocumentViewer）**只走** `GET /preview/{docId}?page=N` → adapter/pdf/image，绝不读 `previewImage`。
+---
+
+## 4.1 Legacy previewImage Boundary（负向边界冻结，13-B.3 C0）
+
+> 13-B.2 冻结**正向契约**（docId → metadata → adapter.render → image）。
+> 本节约等于**负向边界**：`previewImage` 这个旧字段还能在哪出现、不能在哪出现。
+> 来源：13-B.3 C0 只读审计（2026-07-25），逐文件核实，非设计。
+
+**定义：** `previewImage` = 后端 `parse_ofd() → render_ofd_page_preview()` 产出的 base64 JPEG，挂在 `ParseResult.previewImage`（`models/ParseResult.js:69`、`mappers/parseResultMapper.js:37`；`utils/fileHelpers.js:36` 由 base64 拼成 `data:image/jpeg;base64,…`）。
+
+**Allowed consumers（仅以下位置允许出现 `previewImage`）：**
+- **Print legacy pipeline**：`frontend/src/hooks/usePrint.js`（`:184` OFD/图片 blob、`:253` OFD 硬依赖、`:259` 图片、`:372` 可打印判定）；`frontend/src/contexts/FileContext.jsx:61`（OFD 无 previewImage 则不可打印）。
+- **Viewer 安全网（非主路径）**：`frontend/src/hooks/usePreview.js:1189` — 仅当 `docId` 缺失时回退 base64，正常流程走 `buildPreviewUrl(docId)`。**刻意保留**，不计入禁止项。
+
+**Forbidden consumers（以下位置禁止出现 `previewImage`，由回归测试锁死）：**
+- `DocumentViewer.jsx` / `DisplayAdapter.jsx` / `OverlayLayer.jsx` / `previewResourceResolver.js` — Viewer 渲染链格式无关，已被 13-A.3.7 + 本守卫锁死。
+- `ThumbnailStrip.jsx` — 翻页缩略图必须走 `resolveThumbnailUrl(docId)`（`previewResourceResolver.js:43`），不得读 `page.previewImage`。
+- Import 文件列表 UI（`FileList.jsx` / `ImportProgress*.jsx`）— 纯文本/进度，**无任何缩略图 `<img>`**，不消费 `previewImage`。
+- OCR 详情（`OverlayLayer` + `DocumentViewer`）— 栅格走 `buildPreviewUrl(docId)`，OCR 框叠在上面，不 fallback `previewImage`。
+
+**Migration status（13-B.3 C0 结论）：**
+| 域 | 状态 | 说明 |
+| --- | --- | --- |
+| Viewer | ✅ 已迁移 | docId-first；previewImage 仅缺失 docId 安全网 |
+| OCR | ✅ 已迁移 | DocumentViewer + OverlayLayer，docId-first |
+| Import UI | ❌ 无消费者 | 列表从不渲染 thumbnail；previewImage 仅透传字段 |
+| Print | ⏳ 待 13-B.5 | 唯一活消费者；删旧链前须先迁移 |
+
+**关键约束（影响 13-B.3 是否可删旧链）：**
+- **13-B.3 不删 `render_ofd_page_preview()` / `preview_image`**：`usePrint.js` 对 OFD（`:253`）与 image（`:259`）仍以 `f.previewImage` 为唯一渲染来源；删旧链会让 OFD/图片打印直接崩溃。
+- 删旧链前提 = 13-B.5 把 Print 迁到 Render Contract（`/print/{docId}` WebP），使 `usePrint` 不再依赖 `previewImage`。
 
 ---
 
@@ -156,14 +182,14 @@ Viewer 主链（DocumentViewer）**只走** `GET /preview/{docId}?page=N` → ad
 | Preview API (`/preview`) | Render Contract | **冻结** | adapter→pdf→image 派发（13-A.3.5d 锁死） |
 | Metadata API (`/metadata`) | Render Contract | **冻结** | pages[] 权威，rotation 统一命名 |
 | Thumbnail API (`/thumbnail`) | Render Contract | 13-B.3 | 同派发链，确认无 OFD 特判即可 |
-| Import `previewImage` | Legacy | 13-B.3 迁移 | → 改用 `/thumbnail` 或 `/preview` |
-| OCR `previewImage` | Legacy | 13-B.3 迁移 | → 改用 `/preview` detail |
+| Import `previewImage` | Legacy | **已无消费者** | 列表 UI 不渲染缩略图；字段仅透传，13-B.3 不改 |
+| OCR `previewImage` | Legacy | **已迁移** | OCR 详情走 `buildPreviewUrl(docId)`，13-B.3 不改 |
 | Print `previewImage` | Legacy（独立链） | **13-B.5 独立** | Print Contract ≠ Viewer Contract，**不在 13-B.3 触碰** |
 | OFD Export (`ofd_handler.py`) | Dead | 删除/重做 | 与 Viewer 渲染无关，独立处理 |
 
 **关键边界：**
 - **13-B.3 不碰 Print**（Print Contract 是另一条大链，混入会导致回退，13-A 安全推进即因两域未混）。
-- `previewImage` 旧链与 Viewer 新链消费者**隔离**（api.py:55-57 注释确认），删旧链前须先迁移 import / OCR 消费者。
+- `previewImage` 旧链与 Viewer 新链消费者**隔离**（api.py:55-57 注释确认）；13-B.3 C0 核实唯一活消费者是 **Print**（`usePrint.js`），删旧链前须先迁移 **Print** 消费者（13-B.5）。
 
 ---
 
@@ -178,6 +204,7 @@ Viewer 主链（DocumentViewer）**只走** `GET /preview/{docId}?page=N` → ad
 
 **Frontend：**
 - `frontend/src/audit/ofdBranchCleanup.test.js` — DisplayAdapter / App 不再含 `ofd` viewer 特判；`previewResourceResolver` 无 ofd 分支（13-A.3.7 锁死）。
+- `frontend/src/services/__tests__/previewImageBoundary.test.js` — Viewer/OCR/ThumbnailStrip/Resolver 渲染链不含 `previewImage`；`usePrint.js` / `FileContext.jsx` 仍合法持有（反向锚点，证明守卫非真空通过）。13-B.3 C0 锁死。
 
 > 改任何 Render Contract 相关代码前，先跑上述测试。任一变红 = 契约被破坏。
 
@@ -187,10 +214,7 @@ Viewer 主链（DocumentViewer）**只走** `GET /preview/{docId}?page=N` → ad
 
 ```
 13-B.2  Render Contract 文档冻结 ✅（本文档）
-13-B.3  Legacy previewImage 收敛（不碰 Print）
-          ├ backend import thumbnail → /thumbnail
-          ├ OCR detail → /preview
-          └ 删除 OFD 特殊 previewImage 依赖
+13-B.3  Legacy previewImage 收敛 → **C0 审计结论：Viewer/OCR 已迁移、Import 无消费者、唯一活消费者=Print（13-B.5）**；冻结负向边界（§4.1）+ 加回归守卫；**不删旧链**
 13-B.4  cache / etag / prefetch 审计（docId/page/dpi/format/rotation 防碰撞）
 13-B.5  Print Contract 单独迁移（独立链）
 ```
