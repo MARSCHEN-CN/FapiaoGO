@@ -215,6 +215,54 @@ image renderer                 ← doc.file_bytes 单页图像
 ```
 13-B.2  Render Contract 文档冻结 ✅（本文档）
 13-B.3  Legacy previewImage 收敛 → **C0 审计结论：Viewer/OCR 已迁移、Import 无消费者、唯一活消费者=Print（13-B.5）**；冻结负向边界（§4.1）+ 加回归守卫；**不删旧链**
-13-B.4  cache / etag / prefetch 审计（docId/page/dpi/format/rotation 防碰撞）
+13-B.4  Cache Contract 审计 ✅（C0 只读，全 PASS，见 §9）；不删旧链
 13-B.5  Print Contract 单独迁移（独立链）
 ```
+
+---
+
+## 9. Cache Contract Audit（13-B.4 C0 只读审计，2026-07-25）
+
+> 只读审计：确认 Render Cache 的 key / etag / prefetch 不会跨格式 / 跨 preset 碰撞，且所有
+> 改变输出字节的参数都进入身份。来源：逐文件核实 `cache.py` / `engine.py` / `preset.py` /
+> `api.py` / `prefetch.py` / `render_spec_sig.py` + 前端 `previewResourceResolver.js` / `previewCacheKey.js`。
+> **不改代码**——仅冻结结论，供 13-B.5 引用。
+
+### Cache Identity — ✅ PASS
+- key = `make_cache_key(doc_id, preset, page, vs_hash, hl)` = `doc_id|preset|page|[vs_hash]|[hl_token]`（`cache.py:152-160`）。
+- `doc_id` = content-addressed（sha256(file_bytes)[:24]）；`doc.content_hash` = 同字节全 sha256（`registry.py:68`）。PDF/Image/OFD 内容不同 → `doc_id`/`content_hash` 不同 → key/etag 不同。**共用一个 namespace，但内容寻址保证不碰撞。**
+
+### Preset Isolation — ✅ PASS
+- `preset_name` 是 key 与 etag 的显式段；`PRESETS` 绑定 dpi/quality/format（`preset.py:25-55`）。
+- `GET /preview/{A}?page=1`（150dpi）与 `GET /thumbnail/{A}?page=1`（48dpi）→ 不同 preset 段 → **thumbnail 不会覆盖 preview**。
+
+### Page Semantics — ✅ PASS
+- URL `?page=` 1-based（api `_int_param("page",1)`；前端 `page.index+1`）；cache key 直接用该 1-based 值；render 内部 `max(0,page-1)` 转 0-based。
+- preview/thumbnail/render/print 同一约定，无 0/1-based 混用。
+
+### Rotation in Cache Identity — ✅ PASS
+- 两条路径都把 rotation 纳入身份：
+  - Legacy `?rotation=` → `vs["rotation"]` → `_hash_view_state` → `vs_hash`（`engine.py:315`，`api.py:392`）。
+  - Commit-B `?spec=`(rotation/contentRotation) → `render_spec_signature` 含 rotation（`render_spec_sig.py:58/191/194`）→ `spec_tag`（`engine.py:320`）→ key+etag。
+- 当前前端 preview URL 未带 rotation/spec → 服务端按基准方向渲染（rotation-agnostic）；待 Commit-B 把 rotation 收归后端（B-2.1），经 `?spec=` 进 `spec_tag` 即纳入身份。
+- 防御：`/preview` 路由刻意用 `Cache-Control: public, max-age=0, must-revalidate`（非 immutable，`api.py:112`），因 rotation/isLandscape 在迁移期可能未全部进 URL，靠 304 协商纠正陈旧方向响应（符合 `cache.py:123-150` 不变式）。
+
+### ETag Isolation — ✅ PASS
+- `etag = md5(content_hash | preset_name | view_state_hash | v | hl)`（`cache.py:102-107`）。content-based（content_hash=字节 sha）+ 含 `preset_name`。
+- 危险形态 `etag = docId + page` **不存在**：`/preview` 与 `/thumbnail` 因 `preset_name` 不同 → etag 不同。
+
+### Prefetch Safety — ✅ PASS
+- `prefetch_neighbors`（`prefetch.py:15`）只排队 `current_page ± 1` 且 `1 < page < page_count` → **绝不预取越界页 / 错误页**。
+- `_prefetch_render` 包裹 `engine.render` 于 try/except；`cache.put` 仅成功路径触发 → **错误页永不入缓存**。
+- 与常规渲染同 namespace（同 doc_id/preset/page/vs）。
+
+### 发现（非阻塞）
+- 💭 **协商 format 未进 key/etag**：key/etag 不含 webp/jpeg/png（Accept 协商）。当前安全：①`/preview` 用 must-revalidate；②Electron 单客户端恒 webp。若未来出现 png/jpeg 客户端，须把协商 format 纳入 key（或 URL 扩展名），否则同一 URL 不同 Accept 会命中首赢者格式（轻微违背 `cache.py:123-150` 自身不变式）。建议：非 webp 客户端出现时再补。
+- 💭 **prefetch 未转发 render_spec**：prefetch 调 `engine.render` 不带 `render_spec` → Commit-B spec 模式下预热 `doc_id|preview|N`（无 spec_tag），而 spec 客户端请求 `doc_id|preview|N|spec:<sig>` → 预热 miss（仅浪费预热，不返回错误字节）。
+- 💭 **前端 canvas 缓存键用 `fileKey` 而非 `docId`**（`previewCacheKey.js:47`）：前端 in-memory Canvas 快照缓存，`fileKey` 会话内唯一，非正确性 Bug；但与 Identity Contract「禁 fileObj.key 进 Cache 标识」略有出入，前端作用域、低风险。其键设计本身良好（`fileKey_r{rotation}@{paperSize,isLandscape,paperLandscape,mergeMode,customPaper,margins}`），**无 `docId+page` 危险简化**。
+
+### Required Changes
+**none（只读审计，不改代码）。** 6 项全部 PASS；3 个 💭 发现均为非阻塞，可在相关功能出现时再处理。
+
+### 下一步
+全部 PASS → 进入 **13-B.5 Print Contract Migration**（Print 是唯一 legacy `previewImage` 活消费者；迁到 `/print/{docId}` WebP 后解锁删除 `render_ofd_page_preview`）。
