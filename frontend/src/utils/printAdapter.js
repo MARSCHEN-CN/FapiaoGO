@@ -23,7 +23,7 @@
  */
 
 import { getDocument } from '../stores/DocumentStore'
-import { resolvePreviewUrl } from './previewResourceResolver'
+import { resolvePrintUrl } from './previewResourceResolver'
 
 /**
  * @typedef {Object} PrintJobItem
@@ -38,8 +38,9 @@ import { resolvePreviewUrl } from './previewResourceResolver'
 /**
  * 从 fileObj 构建打印任务项。
  *
- * 如果 fileObj 有关联的 InvoiceDocument（多页），则从 Document 模型获取页信息。
- * 否则回退到单页模式（现有行为不变）。
+ * 如果 fileObj 有关联的 InvoiceDocument，则从 Document 模型获取页信息，
+ * 逐页打印 URL 统一走 Render Contract 的 /print 端点（200dpi 高质）。
+ * 否则回退到单页模式（pageUrls 为空，由 usePrint 走 read-file / previewImage 兜底）。
  *
  * @param {Object} fileObj - 前端文件对象
  * @returns {PrintJobItem}
@@ -48,19 +49,19 @@ export function buildPrintJobItem(fileObj) {
   const docId = fileObj.docId || fileObj.documentId || ''
   const doc = docId ? getDocument(docId) : null
 
-  // 多页文档：从 Document 模型获取页信息
-  if (doc && doc.pageCount > 1) {
+  // 有 Document：逐页打印 URL 统一走 Render Contract 的 /print 端点（200dpi）
+  if (doc) {
     return {
       key: fileObj.key,
       printPath: fileObj.printPath || fileObj.path || '',
       fileFormat: fileObj.fileFormat || 'pdf',
       pageCount: doc.pageCount,
-      pageUrls: doc.pages.map((page) => resolvePreviewUrl(page, doc.docId)),
+      pageUrls: doc.pages.map((page) => resolvePrintUrl(page, doc.docId)),
       docId: doc.docId,
     }
   }
 
-  // 单页 / 无 Document：保持现有行为
+  // 无 Document / 无 docId：保持现有行为（pageUrls 空，usePrint 走兜底）
   return {
     key: fileObj.key,
     printPath: fileObj.printPath || fileObj.path || '',
@@ -69,6 +70,27 @@ export function buildPrintJobItem(fileObj) {
     pageUrls: [],
     docId,
   }
+}
+
+/**
+ * 从 Render Contract 取单页打印栅格（docId-first）。
+ *
+ * GET /print/{docId}?page=N（print preset, 200dpi WebP/PNG）→ Blob。
+ * 替代旧链 previewImage(base64) 作为打印源；OFD 无前端可读字节，必须走此路径。
+ *
+ * @param {string} docId - 文档 ID
+ * @param {number} [pageNum=1] - 1-based 页码
+ * @param {{ signal?: AbortSignal }} [opts]
+ * @returns {Promise<Blob>}
+ */
+export async function fetchPrintRaster(docId, pageNum = 1, { signal } = {}) {
+  if (!docId) throw new Error('fetchPrintRaster: docId 缺失，无法走 Render Contract')
+  const url = resolvePrintUrl({ index: pageNum - 1 }, docId)
+  const res = await fetch(url, { signal })
+  if (!res.ok) {
+    throw new Error(`fetchPrintRaster HTTP ${res.status} for ${docId} page=${pageNum}`)
+  }
+  return res.blob()
 }
 
 /**

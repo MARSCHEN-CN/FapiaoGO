@@ -11,6 +11,7 @@ import { detectDocumentOrientation } from '../utils/detectOrientation'
 import { printSingleSourceFile as printSingleSource, printMergedImages } from '../services/PrintService'
 import { runMergedPrintTasks } from '../runners/printRunner'
 import { computePaperLayout } from '../previewState'
+import { fetchPrintRaster } from '../utils/printAdapter'
 
 // ✅ 懒加载 PDF 渲染模块，避免首屏加载 1.4 MB 的 pdfjs-dist + react-pdf
 let _printRenderers = null
@@ -178,19 +179,39 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
           console.error('[usePrint] 读取 PDF 文件失败:', f.printPath)
           return null
         }
-      } else if (f.fileFormat === 'image' || f.fileFormat === 'ofd') {
-        // 图片或 OFD 文件
-        let blob
-        if (f.previewImage) {
-          blob = b64toBlob(f.previewImage, 'image/png')
-        } else {
-          const fileData = await ipc.invoke('read-file', f.printPath)
-          if (fileData.success) {
-            blob = new Blob([fileData.data])
-          } else {
-            console.error('[usePrint] 读取图片文件失败:', f.printPath)
-            return null
+      } else if (f.fileFormat === 'ofd') {
+        // OFD：无前端可读字节，必须走 Render Contract（docId → /print）或旧 previewImage 兜底
+        let blob = null
+        if (f.docId) {
+          try {
+            blob = await fetchPrintRaster(f.docId, 1)
+          } catch (e) {
+            console.warn('[usePrint] OFD docId 打印栅格获取失败，回退 previewImage:', f.docId, e?.message)
           }
+        }
+        if (!blob && f.previewImage) {
+          blob = b64toBlob(f.previewImage, 'image/png')
+          console.warn('[usePrint] OFD 使用 previewImage 兜底（旧 session 无 docId）:', f.name)
+        }
+        if (!blob) {
+          console.error('[usePrint] OFD 无 docId 且无 previewImage，无法打印:', f.name)
+          return null
+        }
+        const blobUrl = createAndTrackBlobUrl(blob, localBlobUrls)
+        items.push({ ...f, _previewImageUrl: blobUrl })
+      } else if (f.fileFormat === 'image') {
+        // 图片：read-file 优先（docId 无关、保留原图分辨率），previewImage 仅旧 session 兜底
+        let blob = null
+        const fileData = await ipc.invoke('read-file', f.printPath)
+        if (fileData.success) {
+          blob = new Blob([fileData.data])
+        }
+        if (!blob && f.previewImage) {
+          blob = b64toBlob(f.previewImage, 'image/png')
+        }
+        if (!blob) {
+          console.error('[usePrint] 读取图片文件失败:', f.printPath)
+          return null
         }
         const blobUrl = createAndTrackBlobUrl(blob, localBlobUrls)
         items.push({ ...f, _previewImageUrl: blobUrl })
@@ -250,25 +271,40 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
             if (fileData.success) {
               return { ...f, _pdfData: new Uint8Array(await fileData.data.arrayBuffer()) }
             }
-          } else if (f.fileFormat === 'ofd' && f.previewImage) {
-            const blob = b64toBlob(f.previewImage, 'image/png')
+          } else if (f.fileFormat === 'ofd') {
+            // OFD：docId → /print 优先，previewImage 兜底（旧 session）
+            let blob = null
+            if (f.docId) {
+              try {
+                blob = await fetchPrintRaster(f.docId, 1)
+              } catch (e) {
+                console.warn('[usePrint] 合并项 OFD docId 栅格失败，回退 previewImage:', f.docId, e?.message)
+              }
+            }
+            if (!blob && f.previewImage) {
+              blob = b64toBlob(f.previewImage, 'image/png')
+            }
+            if (!blob) {
+              console.error('[usePrint] 合并项 OFD 无 docId 且无 previewImage:', f.name)
+              return null
+            }
             const blobUrl = URL.createObjectURL(blob)
             localBlobUrls.push(blobUrl)
             return { ...f, _previewImageUrl: blobUrl }
           } else if (f.fileFormat === 'image') {
-            if (f.previewImage) {
-              const blob = b64toBlob(f.previewImage, 'image/png')
-              const blobUrl = URL.createObjectURL(blob)
-              localBlobUrls.push(blobUrl)
-              return { ...f, _previewImageUrl: blobUrl }
-            }
+            // 图片：read-file 优先（保留原图分辨率），previewImage 兜底
+            let blob = null
             const fileData = await ipc.invoke('read-file', f.printPath)
             if (fileData.success) {
-              const blob = new Blob([fileData.data])
-              const blobUrl = URL.createObjectURL(blob)
-              localBlobUrls.push(blobUrl)
-              return { ...f, _previewImageUrl: blobUrl }
+              blob = new Blob([fileData.data])
             }
+            if (!blob && f.previewImage) {
+              blob = b64toBlob(f.previewImage, 'image/png')
+            }
+            if (!blob) return null
+            const blobUrl = URL.createObjectURL(blob)
+            localBlobUrls.push(blobUrl)
+            return { ...f, _previewImageUrl: blobUrl }
           }
         } catch (e) {
           console.error('加载合并项失败:', f.name, e)
@@ -369,7 +405,8 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
     const parsedFiles = files.filter(f => {
       if (!f.printPath) return false
       if (f.status !== 'parsed' && f.status !== 'error') return false
-      if ((f.fileFormat === 'ofd') && !f.previewImage) return false
+      // OFD 允许 docId（Render Contract）或 previewImage（旧 session）任一即打印
+      if ((f.fileFormat === 'ofd') && !f.docId && !f.previewImage) return false
       return true
     })
     if (parsedFiles.length === 0) {

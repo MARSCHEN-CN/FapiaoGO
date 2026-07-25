@@ -311,30 +311,32 @@ image renderer                 ← doc.file_bytes 单页图像
 | Print Entry | ✅ PASS | 两管线已识别，source=active |
 | docId Availability | ✅ PASS | `fileObj.docId` 导入即填充 |
 | Print Render Capability | ✅ PASS | `GET /print/{docId}`(api.py:180) + `PRESETS["print"]`(preset.py:33) 已就绪，adapter 短路含 OFD |
-| previewImage Dependency | ❌ FAIL | Legacy V2 canvas 路径（`usePrint.js:184/253/259`）+ `parsedFiles` 过滤(:372) + `FileContext.jsx:61` 仍要求 OFD `previewImage` |
-| Migration Plan | keep / migrate / delete | 见下 |
-| Legacy Delete Gate (`render_ofd_page_preview`) | 🔴 **BLOCKED** | 见下 |
+| previewImage Dependency | ⚠️ C1 已迁 docId-first | Legacy V2 canvas 路径(:184/253/259) OFD 已改读 `fetchPrintRaster(docId)`；`parsedFiles`(:372)/`FileContext.jsx:61` 放宽 `!docId && !previewImage`；`previewImage` 仅旧 session 兜底 |
+| Migration Plan | keep / migrate / delete | C1 ✅ 已完成；C2 待删旧链 |
+| Legacy Delete Gate (`render_ofd_page_preview`) | 🟡 **PARTIALLY UNBLOCKED** | docId-bearing OFD 不再需 `previewImage`；C2 删生产者前仍须保旧 session 兜底 + 回归守卫同步 |
 
 ### Migration Plan（keep / migrate / delete）
 
 - **KEEP（不改）**：Source 管线（`file.printPath`→Sumatra）。它本就不依赖 `previewImage`，OFD 打印与旧链解耦。
-- **MIGRATE（C1）**：Legacy V2 canvas 路径把 OFD/Image 源栅格从 `b64toBlob(f.previewImage)` 改为 `fetch GET /preview/{docId}?page=1 → blob`（或 `/print/{docId}` 取 200dpi 更贴合 Print Contract）。涉及 `usePrint.js`：
-  - `renderFileToPrintImage`(:184) 单文件 OFD/Image 分支
-  - `renderMergeGroupToPrintImage`(:253 OFD / :259 Image) 合并分支（**merge 模式强制走此路，是 13-B.5 真正的硬约束**）
-  - `parsedFiles` 过滤(:372)：OFD 可打印条件由 `!f.previewImage` 放宽为 `!f.docId && !f.previewImage`（docId 优先，previewImage 仅作 docId 缺失兜底，与 Viewer §4.1 一致）
-  - `FileContext.jsx:61` 可打印计数：同步放宽（OFD 有 `docId` 即计入）
-  - 建议接 `printAdapter.buildPrintJobItem(f).pageUrls`（已有 `resolvePreviewUrl` 映射），消除 orphan。
+- **MIGRATE（C1 ✅ 已完成）**：Legacy V2 canvas 路径把 OFD 源栅格从 `b64toBlob(f.previewImage)` 改为 `fetchPrintRaster(docId,1)`（`/print/{docId}` 端点，200dpi WebP，更贴合 Print Contract）；Image 保留 `read-file` 优先（保原图分辨率）+ `previewImage` 兜底。涉及 `usePrint.js`：
+  - `renderFileToPrintImage` 单文件 OFD 分支 → `fetchPrintRaster(f.docId,1)`（docId-first），Image 保留 `read-file` 优先
+  - `renderMergeGroupToPrintImage` 合并 OFD 分支（**merge 模式强制走此路，是 13-B.5 真正的硬约束**）→ 同上 docId-first
+  - `parsedFiles` 过滤：OFD 可打印条件由 `!f.previewImage` 放宽为 `!f.docId && !f.previewImage`（docId 优先，previewImage 仅作 docId 缺失兜底，与 Viewer §4.1 一致）
+  - `FileContext.jsx` OFD 可打印计数：同步放宽（OFD 有 `docId` 即计入）
+  - 实际落点：`printAdapter.fetchPrintRaster(docId)` + `previewResourceResolver.resolvePrintUrl`（消除 orphan；`buildPrintJobItem` 的 `pageUrls` 也改走 `resolvePrintUrl`）
 - **DELETE（C2，gate 解锁后）**：停止 `parse_ofd → render_ofd_page_preview` 产出 `preview_image`（`app.py:1289` / `import_batch_manager.py:393`），并删除 `render_ofd_page_preview`。前提：全仓 `previewImage` 对 OFD 的读取归零（C1 完成 + 两 gate 放宽）。
 
-### Legacy Delete Gate — 🔴 BLOCKED
+### Legacy Delete Gate — 🔴 BLOCKED → 🟡 PARTIALLY UNBLOCKED（13-B.5 C1 已完成，2026-07-25）
 
-`render_ofd_page_preview` 当前被以下路径读取（删除前必须全部归零）：
-1. `usePrint.js:184` `renderFileToPrintImage`（legacy 普通模式，当前 config 不触发，但 legacy 配置/兜底可达）
-2. `usePrint.js:253` `renderMergeGroupToPrintImage`（**merge 模式强制**，任何 config 都可达 → 真正 blocker）
-3. `usePrint.js:372` `parsedFiles` 过滤（doPrint 内，OFD 无 previewImage 即被剔除）
-4. `FileContext.jsx:61` 可打印计数（OFD 无 previewImage 不计）
+`render_ofd_page_preview` 旧链生产者（`preview_image` 字段）当前仍被以下路径**读取**（删除前须归零）：
+1. ~~`usePrint.js:184` `renderFileToPrintImage`~~ → **C1 已迁**：OFD 改读 `fetchPrintRaster(f.docId,1)`（`/print` 端点）；`previewImage` 仅 docId 缺失兜底。
+2. ~~`usePrint.js:253` `renderMergeGroupToPrintImage`（merge 强制）~~ → **C1 已迁**：同上，OFD docId-first。
+3. `usePrint.js` `parsedFiles` 过滤 → **C1 已放宽**为 `!f.docId && !f.previewImage`（OFD 有 docId 即入队）。
+4. `FileContext.jsx` 可打印计数 → **C1 已放宽**为 `!f.docId && !f.previewImage`（OFD 有 docId 即计入）。
 
-→ C1 完成（legacy V2 改读 docId 渲染）+ 放宽 #3/#4 后，gate 转 **UNBLOCKED**，C2 才安全。
+→ **gate 现状**：docId-bearing OFD（即所有正常导入文件）已完全不依赖 `previewImage`，旧链生产者对**新导入**无任何消费者。
+→ **仍 BLOCKED 的部分（C2 须处理）**：①旧 session / 未导入直接打开的文件仍走 `previewImage` 兜底（C1 有意保留，避免历史数据崩）；②`previewImageBoundary.test.js` 反向锚点须同步改为「仅兜底」；③`render_ofd_page_preview` 生产者（app.py:1289 / import_batch_manager.py:393）删除须在上述归零后。
+→ 建议 C2 顺序：先更新反向锚点 → 再删生产者 → 跑全测试。
 
 ### 风险（非阻塞，但 C2 前须确认）
 
@@ -342,7 +344,7 @@ image renderer                 ← doc.file_bytes 单页图像
 - 💭 **`/print` 返回 200dpi WebP，Legacy V2 仍用 150dpi `PREVIEW_DPI` canvas 合成**：C1 取源栅格用 `/preview`(150) 即可（合成会重排）；若追求打印保真用 `/print`(200)。C1 决策点，非阻塞。
 
 ### Required Changes
-**none（只读审计，不改代码）。** 但 gate 为 BLOCKED：C2 删除旧链**必须**等 C1（迁移 Legacy V2 canvas 路径 + 放宽两 gate）落地且 `previewImageBoundary.test.js` 反向锚点同步更新。
+**C1 已完成（2026-07-25）**：迁移 Legacy V2 canvas 路径(:184/:253/:259) 源栅格 → `fetchPrintRaster(docId)`（`/print` 端点，Render Contract）；放宽 `parsedFiles` 与 `FileContext.jsx` OFD 判定（`!docId && !previewImage`）；`printAdapter.fetchPrintRaster` 接入、`previewResourceResolver.resolvePrintUrl` 新增。gate 转 **PARTIALLY UNBLOCKED**。C2 删旧链仍须：反向锚点同步 + 删 `render_ofd_page_preview` 生产者 + 跑全测试。
 
 ### 下一步
 - **C1**：迁移 `usePrint.js` Legacy V2 canvas 路径（:184/:253/:259）源栅格 previewImage → `GET /preview|print/{docId}?page=1`；放宽 `:372` 与 `FileContext.jsx:61` 的 OFD 可打印判定。

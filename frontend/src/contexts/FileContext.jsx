@@ -58,7 +58,8 @@ export function FileProvider({ children }) {
     let printableCount = 0
     for (const f of files) {
       if (f.printPath && (f.status === 'parsed' || f.status === 'error')) {
-        if (!((f.fileFormat === 'ofd') && !f.previewImage)) {
+        // OFD：docId（Render Contract）或 previewImage（旧 session 兜底）任一即可打印
+        if (!((f.fileFormat === 'ofd') && !f.docId && !f.previewImage)) {
           printableCount++
         }
       }
