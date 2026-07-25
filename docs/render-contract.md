@@ -333,7 +333,7 @@ image renderer                 ← doc.file_bytes 单页图像
   - `renderMergeGroupToPrintImage` 合并 OFD 分支（**merge 模式强制走此路，是 13-B.5 真正的硬约束**）→ 同上 docId-first
   - `parsedFiles` 过滤：OFD 可打印条件由 `!f.previewImage` 放宽为 `!f.docId && !f.previewImage`（docId 优先，previewImage 仅作 docId 缺失兜底，与 Viewer §4.1 一致）
   - `FileContext.jsx` OFD 可打印计数：同步放宽（OFD 有 `docId` 即计入）
-  - 实际落点：`printAdapter.fetchPrintRaster(docId)` + `previewResourceResolver.resolvePrintUrl`（消除 orphan；`buildPrintJobItem` 的 `pageUrls` 也改走 `resolvePrintUrl`）
+  - 实际落点：`printAdapter.fetchPrintRaster(docId)` + `previewResourceResolver.resolvePrintUrl`（消除 orphan；`buildPrintJobItem` 的 `pages` 经 `resolvePrintUrl` 构建，13-B.5.1a 已迁移为 pages[] 富模型）
 - **DELETE（C2，gate 解锁后）**：停止 `parse_ofd → render_ofd_page_preview` 产出 `preview_image`（`app.py:1289` / `import_batch_manager.py:393`），并删除 `render_ofd_page_preview`。前提：全仓 `previewImage` 对 OFD 的读取归零（C1 完成 + 两 gate 放宽）。
 
 ### Legacy Delete Gate — 🔴 BLOCKED → 🟡 PARTIALLY UNBLOCKED（13-B.5 C1 已完成，2026-07-25）
@@ -374,7 +374,7 @@ C1 把 `fetchPrintRaster(docId)` 接进了 `doPrint` 的 OFD 分支，但 `doPri
 
 1. **Source 面（active，非合并）**：`executePrint`(:769) → `printAllSourceFiles` → `printSingleSourceFile`（`PrintService.js:107`）→ IPC `print-source-file { filePath, fileFormat }`（`:126-130`）→ Sumatra 渲染**原生文件**。OFD 走 `file.printPath` 直送，**完全不碰 /print、不碰 previewImage**（§10 已记）。
 2. **doPrint 面（merge / legacy-trigger）**：`doPrint`(:384) → `renderFileToPrintImage`(:165)/`renderMergeGroupToPrintImage`(:262) → `fetchPrintRaster(f.docId, 1)`（`:187`/`:279`）→ `/print` → canvas。C1 贡献，**仅 page=1**。
-3. **buildPrintJobItem 面（ORPHAN）**：`printAdapter.buildPrintJobItem`(`printAdapter.js:48`) 返回 `PrintJobItem.pageUrls = doc.pages.map(resolvePrintUrl)`（**全页**走 /print）；同文件的 `needsPerPageRender`(:106)/`getPageUrlsForPrint`(:117)/`validatePrintJob`(:130) grep 全仓零调用方。
+3. **buildPrintJobItem 面（ORPHAN → 13-B.5.1a 已激活）**：`printAdapter.buildPrintJobItem` 返回 `PrintJobItem.pages = doc.pages.map(...)`（**全页**走 /print，富对象 `{index,url}`，身份为 docId+index）；同文件的 `needsPerPageRender`/`getPageUrlsForPrint`/`validatePrintJob` grep 全仓零调用方（→ 13-B.5.1b 已删除）。
 
 → **核心矛盾（精确表述）**：orphan 面(#3) 拥有 **Render Print 子系统**唯一正确的"全页模型"（docId→逐页 /print），但无人调用；live 的 doPrint 面(#2) 用错了单页模型（`page=1`）；active Source 面(#1) 是另一条**合法的物理打印路径**（`file.printPath`→Sumatra，绕过 rasterization），**不应**被 Render Contract 吞并，也**不在** 13-B.5.1 范围内。
 
@@ -401,15 +401,15 @@ for (const page of job.pages) {
 
 | 格式 | Source 面(#1) | doPrint 面(#2, C1) | buildPrintJobItem(#3) |
 | --- | --- | --- | --- |
-| PDF | ✅ Sumatra 原生全页 | ✅ read-file→pdfjs 全页 | ✅ pageUrls 全页 |
-| OFD | ✅(若 Sumatra 原生支持) / ❌(见风险) | ❌ **`fetchPrintRaster(docId,1)` 仅第 1 页** | ✅ pageUrls 全页（设计正确但死） |
+| PDF | ✅ Sumatra 原生全页 | ✅ read-file→pdfjs 全页 | ✅ pages 全页 |
+| OFD | ✅(若 Sumatra 原生支持) / ❌(见风险) | ❌ **`fetchPrintRaster(docId,1)` 仅第 1 页** | ✅ pages 全页（设计正确，13-B.5.1a 已激活为 Render Print 唯一模型） |
 
 → **不一致点**：多页 OFD 在 doPrint 面只打印第 1 页（C1 硬编码 `page=1`）。与 Source 面（全页）、buildPrintJobItem（全页）矛盾。PDF 三面对齐。
 → 此不一致**非 C1 引入**（旧链本就单 previewImage），但 Render Contract 已支持 `/print?page=N` 而 frontend consumer 未消费 → 暴露为潜在 bug。
 
 ### Q3 — `printAdapter.js` 是否应 orphan→active？
 
-**结论：应，且已半激活。** `fetchPrintRaster`(:86) 已被 `usePrint.js:14` import 并调用（#2 面活）；`buildPrintJobItem`/`needsPerPageRender`/`getPageUrlsForPrint`/`validatePrintJob`(:48/106/117/130) 全死。printAdapter 应成为**唯一 Render Print Model 模块**（不覆盖 Source 物理打印面，见 §10 双轨模型）：活的部分（fetchPrintRaster）保留，死的部分要么被 `doPrint` 消费（Q1 落点），要么在 13-B.5.1b 收尾时明确删除（避免维护者误以为"全页 pages 已生效"）。
+**结论：应，且已激活。** `fetchPrintRaster` 已被 `usePrint.js` import 并调用（#2 面活）；`buildPrintJobItem` 在 13-B.5.1a 被 `usePrint` 消费（`job.pages` 逐页渲染，#3 面激活）。printAdapter 现已成为**唯一 Render Print Model 模块**（不覆盖 Source 物理打印面，见 §10 双轨模型）：活的部分 `fetchPrintRaster` + `buildPrintJobItem` 保留；`needsPerPageRender`/`getPageUrlsForPrint`/`validatePrintJob` 在 13-B.5.1b 确认零调用方后删除（避免维护者误以为"全页 pages 已生效"）。
 
 ### 13-B.5.1 路线决策（回答"直接 C2 还是先合并"）
 
@@ -418,8 +418,8 @@ for (const page of job.pages) {
 - **13-B.5.1 范围（精确，且不吞并 Source 面）**：
   - ① `buildPrintJobItem` 改 `pages[]` 富模型（见 Q1）；② doPrint 两 render 函数改消费 `job.pages`（修多页 OFD + 统一 Image/PDF 多页行为）；③ `printAdapter` 死函数接活或删；④**不碰 Source 面**（`file.printPath`→Sumatra，属 Render Contract 外、§10 确认不依赖 previewImage，且**不应**改为经栅格化）。
 - **13-B.5.1 Commit 拆分（与 C2 严格隔离）**：
-  - **Commit 13-B.5.1a — Promote PrintAdapter Render Model**：`buildPrintJobItem` 改 `pages[]` 模型 + `usePrint` 接入 + 多页 OFD 修复 + 多页 Image/PDF 行为统一。测试：`printAdapter.test.js` / `multiPagePrint.test.js`。
-  - **Commit 13-B.5.1b — Remove dead PrintAdapter helpers**：删除 `needsPerPageRender` / `getPageUrlsForPrint` / `validatePrintJob`（确认无调用方后）。
+  - **Commit 13-B.5.1a — Promote PrintAdapter Render Model**（✅ 已完成：commit `0006deb2` / tag `13-B.5.1a-pages-model`）：`buildPrintJobItem` 改 `pages[]` 模型 + `usePrint` 接入 + 多页 OFD 修复 + 多页 Image/PDF 行为统一 + `flattenPrintData` 展开。测试：`printAdapter.test.js` / `multiPagePrint.test.js`。
+  - **Commit 13-B.5.1b — Render Print Model Cleanup & Contract Freeze**（✅ 已完成）：删除 `needsPerPageRender` / `getPageUrlsForPrint` / `validatePrintJob`（确认零调用方）；`flattenPrintData` 加 `.flat()` 硬化；新增 `renderPrintCardinality.test.js` 锁 Page Cardinality Contract；本文档 §10/§11 同步。
   - 两个 commit 均不混入 C2 的"删旧链"改动。
 
 ### Legacy Producer Delete Gate（C2 前置，冻结）
@@ -433,10 +433,12 @@ for (const page of job.pages) {
 **frontend（previewImage 仅 fallback）**
 - 允许：`usePreview` 安全网（§4.1）；`usePrint`/`FileContext` 的 `previewImage` 仅 `docId` 缺失兜底分支。
 - 禁止：`usePrint` 主渲染路径 primary 用 `previewImage`；`FileContext` primary gate 用 `previewImage`；`printAdapter` primary 用 `previewImage`。
-- 注：`buildPrintJobItem` 无 doc 时 `pageUrls=[]` 走兜底属预期，不视为 primary 依赖。
+- 注：`buildPrintJobItem` 无 doc 时 `pages=[]` 走兜底属预期，不视为 primary 依赖。
 
-**C2 新增前置条件 — Render Print 多页闭环**
-- 删 `render_ofd_page_preview` 前，必须确认 **Render Print 面**多页已闭环：OFD page1…pageN 全部经 `docId → /print?page=N → canvas → print` 输出（即 `buildPrintJobItem().pages` 全页被消费），而非仅 page=1。否则删旧链后多页 OFD 打印功能倒退（旧单 `previewImage` 行为虽也仅单页，但 Render Contract 已支持多页，消费者须跟上）。
+**C2 新增前置条件 — Render Print Page Cardinality Contract（取代原"多页闭环"）**
+- 删 `render_ofd_page_preview` 前，必须确认 **Render Print 面** page cardinality 已成立：`1 task → N render outputs（buildPrintJobItem().pages 逐页 fetchPrintRaster → Uint8Array[]）→ runMergedPrintTasks.flattenPrintData 展开 → N 物理页`。
+- 即 OFD page1…pageN 全部经 `docId → /print?page=N → canvas → print` 输出（`buildPrintJobItem().pages` 全页被消费），而非仅 page=1。否则删旧链后多页 OFD 打印功能倒退。
+- Verified（13-B.5.1a/b）：①OFD page1..pageN 全页输出 ②PDF 行为不变（read-file 原生多页，未触 pages[] 展开）③Image 单页不退化（read-file/previewImage 兜底，未触 pages[]）④merge composition 行为不变（`renderMergeGroupToPrintImage` 保持 page=1 单页合成，slot 非 Document.pages）。
 - Source 面多页由 Sumatra 原生处理，不在此条件范围（见 §10 双轨模型）。
 
 **tests（新增守卫）**
@@ -447,10 +449,10 @@ for (const page of job.pages) {
 - ⚠️ Sumatra 原生 OFD 支持未知（main 进程，本仓库不可见）。若不支持，active Source 面 OFD 打印可能本就非功能——与 previewImage 无关，C2 删旧链不改变，须单独确认。
 
 ### Required Changes
-- 13-B.5.1（待执行，拆 **13-B.5.1a** / **13-B.5.1b**）：`buildPrintJobItem` 改 `pages[]` 模型 + doPrint 两 render 函数消费 `job.pages`（修多页 OFD、统一 Image/PDF）+ 死函数接活或删。范围限定 **Render Print 子系统**，不碰 Source 面。
-- 13-B.5 C2（gate 满足后，含"Render Print 多页闭环"前置）：反向锚点同步 → 删 `render_ofd_page_preview` + 停产 `preview_image` → 跑全测试。
+- 13-B.5.1（✅ 已完成，拆 **13-B.5.1a** / **13-B.5.1b**）：`buildPrintJobItem` 改 `pages[]` 模型 + doPrint 两 render 函数消费 `job.pages`（修多页 OFD、统一 Image/PDF）+ `flattenPrintData` 展开 + 删 3 死函数 + 锁 Page Cardinality Contract。范围限定 **Render Print 子系统**，不碰 Source 面。
+- 13-B.5 C2（gate 满足后，含"Render Print Page Cardinality Contract"前置）：反向锚点同步 → 删 `render_ofd_page_preview` + 停产 `preview_image` → 跑全测试。
 
 ### 下一步
-- 执行 **13-B.5.1a**：`buildPrintJobItem` 改 `pages[]` 富模型 + `usePrint` 接入 + 多页 OFD/Image/PDF 统一；配 `printAdapter.test.js` / `multiPagePrint.test.js`。
-- 执行 **13-B.5.1b**：确认 `needsPerPageRender`/`getPageUrlsForPrint`/`validatePrintJob` 无调用方后删除。
-- 二者完成后 `buildPrintJobItem` 成为 **Render Print 子系统**唯一入口、多页 OFD 闭环，再进 C2。
+- ✅ **13-B.5.1a**（commit `0006deb2` / tag `13-B.5.1a-pages-model`）：`buildPrintJobItem` 改 `pages[]` 富模型 + `usePrint` 接入 + 多页 OFD 修复 + `flattenPrintData` + `printAdapter.test.js`/`multiPagePrint.test.js`。
+- ✅ **13-B.5.1b**（Render Print Model Cleanup & Contract Freeze）：删 3 死函数、`flattenPrintData` 加 `.flat()`、新增 `renderPrintCardinality.test.js` 锁 Page Cardinality Contract、本文档同步。
+- 二者完成后 `buildPrintJobItem` 成为 **Render Print 子系统**唯一入口、多页 OFD 闭环、Page Cardinality Contract 成立 → C2 gate 满足，可进 **13-B.5 C2**（删 `render_ofd_page_preview` + 停产 `preview_image`）。

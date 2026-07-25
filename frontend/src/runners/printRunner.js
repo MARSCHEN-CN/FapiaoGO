@@ -58,7 +58,10 @@ export async function runSourcePrintTasks(tasks, printFn, context = {}) {
  * @returns {Uint8Array[]}
  */
 function flattenPrintData(data) {
-  return Array.isArray(data) ? data : [data]
+  // 兼容两种 render 返回值：单页 Uint8Array（旧 renderer）/ 多页 Uint8Array[]
+  // （Render Print 子系统经 buildPrintJobItem().pages 逐页 fetchPrintRaster 产出）。
+  // .flat() 防御潜在的嵌套数组，对扁平 Uint8Array[] 是恒等操作。
+  return Array.isArray(data) ? data.flat() : [data]
 }
 
 /**

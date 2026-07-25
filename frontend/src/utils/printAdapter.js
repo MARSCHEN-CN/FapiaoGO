@@ -6,15 +6,15 @@
  *   确保多页文档完整输出，不遗漏任何页面。
  *   不读取 Viewer 状态（zoom/pan/viewRotation）— Architecture Law D1。
  *
- * 设计：
- *   打印系统有两种模式：
- *   - Source 模式：直接发送文件路径给 Sumatra，原生处理多页
- *   - Legacy 模式：读取二进制 → canvas 渲染 → PNG → 打印
+ * 设计（Render Print 子系统）：
+ *   本适配器只服务 **Render Print 面**——把 Document/fileObj 的页模型
+ *   表达为 Render Contract 栅格打印任务。
+ *     Document/fileObj → buildPrintJobItem() → pages[{index,url}]
+ *       → fetchPrintRaster(docId, page.index+1) → Uint8Array[] → canvas → 物理页
+ *   页面身份是 `docId + page.index`，url 仅作人类可读定位，取栅格走 fetchPrintRaster。
  *
- *   对于多页 InvoiceDocument：
- *   - Source 模式：printPath 指向原始文件，Sumatra 自动打印所有页
- *   - Legacy 模式：需要逐页渲染（通过 buildPrintJobItem().pages 获取每页引用，
- *     再 fetchPrintRaster(docId, page.index + 1) 取栅格 → 每页一 canvas → 一物理页）
+ *   另一面是 **Source 物理打印面**（`file.printPath` → Sumatra 直送，绕过 rasterization），
+ *   由 PrintService 处理，不在此模块范围，也不应被 Render Contract 吞并（见 docs §10 双轨模型）。
  *
  * 所有权：
  *   由 usePrint 在构建打印队列时调用。
@@ -106,48 +106,3 @@ export async function fetchPrintRaster(docId, pageNum = 1, { signal } = {}) {
   return res.blob()
 }
 
-/**
- * 判断打印任务是否需要逐页渲染（Legacy 模式多页）。
- *
- * Source 模式下 Sumatra 原生处理多页，不需要逐页。
- * Legacy 模式下多页需要逐页获取图像（pages[] 非空即表示有可渲染页）。
- *
- * @param {PrintJobItem} item
- * @param {'source'|'legacy'} pipelineMode
- * @returns {boolean}
- */
-export function needsPerPageRender(item, pipelineMode) {
-  if (pipelineMode === 'source') return false
-  const pages = item.pages || []
-  return item.pageCount > 1 && pages.length > 0
-}
-
-/**
- * 获取多页文档的所有页预览 URL（Legacy 模式逐页渲染用）。
- *
- * @param {PrintJobItem} item
- * @returns {string[]} - 每页的预览 URL
- */
-export function getPageUrlsForPrint(item) {
-  return (item.pages || []).map((p) => p.url)
-}
-
-/**
- * 验证打印任务完整性。
- *
- * Architecture Law D1：打印不读 Viewer 状态。
- * 此函数确认打印数据完全来自 Document 模型（pages[]）+ fileObj 路径。
- *
- * @param {PrintJobItem} item
- * @returns {{ valid: boolean, reason?: string }}
- */
-export function validatePrintJob(item) {
-  const pages = item.pages || []
-  if (!item.printPath && pages.length === 0) {
-    return { valid: false, reason: '无打印路径且无页面引用' }
-  }
-  if (item.pageCount > 1 && pages.length === 0 && !item.printPath) {
-    return { valid: false, reason: '多页文档缺少页面引用和打印路径' }
-  }
-  return { valid: true }
-}
