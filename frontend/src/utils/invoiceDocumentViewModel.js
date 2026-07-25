@@ -39,9 +39,13 @@ function restoreOriginalName(pageName) {
 export function invoiceDocumentToRow(invoiceDoc, allFiles) {
   if (!invoiceDoc?.docId) return null
 
-  // 通过 docId 匹配该 InvoiceDocument 对应的页面 fileObj
+  // 通过 sourceDocId 匹配该 InvoiceDocument 对应的页面 fileObj。
+  // E-2.2: InvoiceDocument.docId = 组装 identity（sourceDocId_inv_invoiceNumber），
+  // 而 session.files[].docId = 原始导入文件 identity（sourceDocId），
+  // 因此匹配字段使用 sourceDocId，回退到 docId（旧路径兼容）。
+  const matchDocId = invoiceDoc.sourceDocId || invoiceDoc.docId
   const pageFiles = allFiles.filter(
-    (f) => f.docId === invoiceDoc.docId && f.key
+    (f) => f.docId === matchDocId && f.key
   )
 
   // 无匹配 fileObj → 异常状态，不产生条目

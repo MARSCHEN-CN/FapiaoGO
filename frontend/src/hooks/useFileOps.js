@@ -520,6 +520,10 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
                   { silent: true },
                 )
                 if (doc && doc !== prev) docsTouched = true
+                // E-2.2: 记录 sourceDocId（原始导入文件 identity），供适配器匹配 fileObj
+                if (doc) {
+                  doc.sourceDocId = repFile.docId || assembled.sourceDocId || ''
+                }
                 if (doc && session?.id) {
                   addDocument(session.id, doc)
                 }
