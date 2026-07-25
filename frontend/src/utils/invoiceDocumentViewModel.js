@@ -44,9 +44,13 @@ export function invoiceDocumentToRow(invoiceDoc, allFiles) {
   // 而 session.files[].docId = 原始导入文件 identity（sourceDocId），
   // 因此匹配字段使用 sourceDocId，回退到 docId（旧路径兼容）。
   const matchDocId = invoiceDoc.sourceDocId || invoiceDoc.docId
-  const pageFiles = allFiles.filter(
+  const candidates = allFiles.filter(
     (f) => f.docId === matchDocId && f.key
   )
+  // E-2.2: 如果有精确页面 key 列表，按它过滤（避免同一 source 下多张发票互相包含页面）
+  const pageFiles = invoiceDoc._pageKeys
+    ? candidates.filter((f) => invoiceDoc._pageKeys.includes(f.key))
+    : candidates
 
   // 无匹配 fileObj → 异常状态，不产生条目
   if (pageFiles.length === 0) return null

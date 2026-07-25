@@ -520,9 +520,10 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
                   { silent: true },
                 )
                 if (doc && doc !== prev) docsTouched = true
-                // E-2.2: 记录 sourceDocId（原始导入文件 identity），供适配器匹配 fileObj
+                // E-2.2: 记录 sourceDocId + 该发票的精确页面 fileKey 列表
                 if (doc) {
                   doc.sourceDocId = repFile.docId || assembled.sourceDocId || ''
+                  doc._pageKeys = Array.from(matchingKeys)
                 }
                 if (doc && session?.id) {
                   addDocument(session.id, doc)
