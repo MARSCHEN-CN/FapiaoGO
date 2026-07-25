@@ -21,7 +21,8 @@ import { runFallbackParseTask } from '../runners/fallbackParseRunner'
 import { runChunkedImport } from '../import/runChunkedImport'
 import { mapParseResultToFileUpdate } from '../mappers/parseResultMapper'
 import { createImportSession, addFilesToSession, replaceFileItems, updateProgress, addDocument } from '../stores/ImportSessionStore'
-import { ensureDocumentFromFileObj, flushDocumentNotifications, getDocument } from '../stores/DocumentStore'
+import { ensureDocumentFromFileObj, flushDocumentNotifications, getDocument, registerDocument } from '../stores/DocumentStore'
+import { createDocument, createPageMeta } from '../models/InvoiceDocument'
 import { processImportedFiles } from '../processors/invoicePostProcessor'
 import { consumeParseResult } from '../consumers/parseResultConsumer'
 import { createParseResult } from '../models/ParseResult'
@@ -514,18 +515,29 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
                 const invDocId = `${assembled.sourceDocId || ''}_inv_${assembled.invoiceNumber || ''}`
                 const repFile = matchingFiles[0]
                 const prev = getDocument(invDocId)
-                const doc = ensureDocumentFromFileObj(
-                  { ...repFile, docId: invDocId },
-                  matchingFiles,
-                  { silent: true },
+                // 绕过 ensureDocumentFromFileObj（它按 docId 过滤文件，但 assembly 的 docId ≠ 文件 docId），
+                // 直接由 matchingFiles 构造 InvoiceDocument
+                const pages = matchingFiles.map((f, i) =>
+                  createPageMeta({
+                    docId: invDocId,
+                    index: i,
+                    width: 0,
+                    height: 0,
+                    sourceRotation: 0,
+                  })
                 )
-                if (doc && doc !== prev) docsTouched = true
+                const doc = createDocument({
+                  docId: invDocId,
+                  fileKey: repFile.key || '',
+                  sourceHash: repFile.identity?.sourceHash || '',
+                  pages,
+                })
+                registerDocument(doc)
+                if (doc !== prev) docsTouched = true
                 // E-2.2: 记录 sourceDocId + 该发票的精确页面 fileKey 列表
-                if (doc) {
-                  doc.sourceDocId = repFile.docId || assembled.sourceDocId || ''
-                  doc._pageKeys = Array.from(matchingKeys)
-                }
-                if (doc && session?.id) {
+                doc.sourceDocId = repFile.docId || assembled.sourceDocId || ''
+                doc._pageKeys = Array.from(matchingKeys)
+                if (session?.id) {
                   addDocument(session.id, doc)
                 }
                 assembledDocIds.add(invDocId)
