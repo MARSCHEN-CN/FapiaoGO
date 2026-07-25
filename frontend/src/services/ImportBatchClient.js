@@ -206,8 +206,12 @@ export async function getBatchResults(batchId, signal) {
     } catch (err) {
       clearTimeout(timer)
       if (err.name === 'AbortError' && !signal?.aborted) {
-        err._retryable = true
-        err.message = `获取批次结果超时 (${timeoutMs}ms)`
+        // AbortError 实为 DOMException，其 .message 是只读 getter，直接赋值会抛
+        // TypeError（ESM 严格模式）。改用新 Error 包裹，保留 _retryable 供外层重试判断。
+        const timeoutErr = new Error(`获取批次结果超时 (${timeoutMs}ms)`)
+        timeoutErr._retryable = true
+        timeoutErr.cause = err
+        throw timeoutErr
       }
       throw err
     }
