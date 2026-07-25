@@ -11,7 +11,7 @@ import { detectDocumentOrientation } from '../utils/detectOrientation'
 import { printSingleSourceFile as printSingleSource, printMergedImages } from '../services/PrintService'
 import { runMergedPrintTasks } from '../runners/printRunner'
 import { computePaperLayout } from '../previewState'
-import { fetchPrintRaster } from '../utils/printAdapter'
+import { fetchPrintRaster, buildPrintJobItem } from '../utils/printAdapter'
 
 // ✅ 懒加载 PDF 渲染模块，避免首屏加载 1.4 MB 的 pdfjs-dist + react-pdf
 let _printRenderers = null
@@ -180,7 +180,55 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
           return null
         }
       } else if (f.fileFormat === 'ofd') {
-        // OFD：无前端可读字节，必须走 Render Contract（docId → /print）或旧 previewImage 兜底
+        // OFD：无前端可读字节，必须走 Render Contract（docId → /print 逐页）。
+        // 多页 OFD 逐页 fetchPrintRaster(docId, page.index + 1) → 每页一 canvas → 一物理页。
+        const job = buildPrintJobItem(f)
+        const pages = job.pages || []
+
+        if (pages.length > 0) {
+          const { renderMultipleItemsToCanvas } = await getPrintRenderers()
+          const buffers = []
+          for (const page of pages) {
+            let blob = null
+            try {
+              blob = await fetchPrintRaster(job.docId, page.index + 1)
+            } catch (e) {
+              console.warn('[usePrint] OFD 逐页栅格获取失败 page=%d:', page.index + 1, job.docId, e?.message)
+            }
+            if (!blob && f.previewImage) {
+              blob = b64toBlob(f.previewImage, 'image/png')
+              console.warn('[usePrint] OFD 第 %d 页使用 previewImage 兜底（旧 session 无 docId）:', page.index + 1, f.name)
+            }
+            if (!blob) {
+              console.error('[usePrint] OFD 第 %d 页无栅格且无兜底，无法打印:', page.index + 1, f.name)
+              return null
+            }
+            const blobUrl = createAndTrackBlobUrl(blob, localBlobUrls)
+            const pageItem = { ...f, _previewImageUrl: blobUrl }
+            const canvas = await renderMultipleItemsToCanvas(
+              [pageItem],
+              settings.paperSize || 'A4',
+              PREVIEW_DPI,
+              settings.landscape,
+              { [f.key]: rotation },
+              1,  // slotCount = 1（单页）
+              false,  // ✅ isPrint = false（与预览保持一致）
+              false,  // showSafeMargin
+              { strategy: 'vertical', customPaper: settings.customPaper }
+            )
+            if (!canvas) {
+              console.warn('[usePrint] OFD 第 %d 页渲染失败:', page.index + 1, f.name)
+              return null
+            }
+            const data = await canvasToUint8Array(canvas)
+            if (data) buffers.push(data)
+          }
+          if (buffers.length === 0) return null
+          // data 为页 buffer 数组：runMergedPrintTasks 会展开为 N 张物理页
+          return { key: f.key, name: f.name, data: buffers, printPath: f.printPath }
+        }
+
+        // 无 pages（docId 缺 Document）：回退单页取栅格 + previewImage 兜底（保持原行为）
         let blob = null
         if (f.docId) {
           try {

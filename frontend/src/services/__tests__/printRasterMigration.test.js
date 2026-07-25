@@ -48,8 +48,8 @@ test('13-B.5 C1: printAdapter.js 导出 fetchPrintRaster（Render Contract 打�
 test('13-B.5 C1: usePrint.js 从 ../utils/printAdapter 引入 fetchPrintRaster', () => {
   const code = src('hooks/usePrint.js')
   assert.ok(
-    code.includes("import { fetchPrintRaster } from '../utils/printAdapter'"),
-    'usePrint.js 必须 import fetchPrintRaster from ../utils/printAdapter（接线到 Render Contract）'
+    /import\s*\{[^}]*\bfetchPrintRaster\b[^}]*\}\s*from\s*'\.\.\/utils\/printAdapter'/.test(code),
+    'usePrint.js 必须从 ../utils/printAdapter 引入 fetchPrintRaster（接线到 Render Contract；可同时引入 buildPrintJobItem 等符号）'
   )
 })
 
