@@ -451,7 +451,7 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
           onTaskStream: setTaskStream,
           hydrateChunk: async ({ batchId, chunk, signal, client, terminalFileKeys }) => {
             const HYDRATION_CHUNK = 100
-            const items = await client.getBatchResults(batchId, signal)
+            const { items, documents } = await client.getBatchResults(batchId, signal)
             const resultMap = new Map()
             for (const item of items) {
               if (item.clientKey) resultMap.set(item.clientKey, item)
@@ -491,6 +491,46 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
                   queueUpdate(fileObj.key, 'parsed')
                   terminalFileKeys.add(fileObj.key)
                 }
+              }
+            }
+
+            // E-2.2: 使用后端组装结果创建 InvoiceDocument
+            // 优先使用 backend assembly 的分组信息，避免前端按 docId 重新分组
+            const hasAssembledDocs = Array.isArray(documents) && documents.length > 0
+            const assembledDocIds = new Set()
+
+            if (hasAssembledDocs) {
+              for (const assembled of documents) {
+                // 找到属于该组装结果的 fileObj
+                const matchingItems = items.filter(i =>
+                  i.invoiceNumber === assembled.invoiceNumber
+                )
+                const matchingKeys = new Set(
+                  matchingItems.map(i => i.clientKey).filter(Boolean)
+                )
+                const matchingFiles = chunk.filter(f => matchingKeys.has(f.key))
+                if (matchingFiles.length === 0) continue
+
+                const invDocId = `${assembled.sourceDocId || ''}_inv_${assembled.invoiceNumber || ''}`
+                const repFile = matchingFiles[0]
+                const prev = getDocument(invDocId)
+                const doc = ensureDocumentFromFileObj(
+                  { ...repFile, docId: invDocId },
+                  matchingFiles,
+                  { silent: true },
+                )
+                if (doc && doc !== prev) docsTouched = true
+                if (doc && session?.id) {
+                  addDocument(session.id, doc)
+                }
+                assembledDocIds.add(invDocId)
+              }
+            }
+
+            // Fallback: 无 assembly 结果时使用旧 per-file Document 创建路径
+            if (!hasAssembledDocs) {
+              for (const fileObj of chunk) {
+                const item = resultMap.get(fileObj.key)
                 const effectiveDocId = (item && item.docId) || fileObj.docId
                 if (effectiveDocId) {
                   const docFileObj = effectiveDocId !== fileObj.docId
@@ -499,19 +539,15 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
                   const prev = getDocument(effectiveDocId)
                   const doc = ensureDocumentFromFileObj(docFileObj, readyFiles, { silent: true })
                   if (doc && doc !== prev) docsTouched = true
-                  // E-1：InvoiceDocument 同步到 ImportSessionStore.documents[]
                   if (doc && session?.id) {
                     addDocument(session.id, doc)
                   }
                 }
               }
-              if (docsTouched) {
-                flushDocumentNotifications()
-                docsTouched = false
-              }
-              if (j + HYDRATION_CHUNK < chunk.length) {
-                await new Promise((r) => setTimeout(r, 0))
-              }
+            }
+            if (docsTouched) {
+              flushDocumentNotifications()
+              docsTouched = false
             }
           },
         },

@@ -206,7 +206,10 @@ export async function getBatchResults(batchId, signal) {
       if (!data.success) {
         throw new Error(data.error || '获取批次结果失败')
       }
-      return data.items || []
+      return {
+        items: data.items || [],
+        documents: data.documents || [],
+      }
     } catch (err) {
       clearTimeout(timer)
       if (err.name === 'AbortError' && !signal?.aborted) {

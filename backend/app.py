@@ -1746,8 +1746,12 @@ def import_batch_results(batch_id):
     if mgr.get_batch(batch_id) is None:
         return jsonify({"success": False, "error": "批次不存在"}), 404
     
-    items = mgr.get_batch_results(batch_id)
-    return jsonify({"success": True, "items": items})
+    result = mgr.get_batch_results(batch_id)
+    return jsonify({
+        "success": True,
+        "items": result['items'],
+        "documents": result.get('documents', []),
+    })
 
 
 if __name__ == '__main__':

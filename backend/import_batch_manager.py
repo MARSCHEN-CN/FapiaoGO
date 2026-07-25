@@ -63,6 +63,7 @@ class ImportBatch:
     error: str = ''
     job_ids: List[str] = field(default_factory=list)  # 关联的 ParseJob ID 列表
     file_inputs: List[Dict] = field(default_factory=list)  # IS-2：文件引用元数据(refId/clientKey)，不含字节内容
+    assembled_documents: List[Dict] = field(default_factory=list)  # E-2.2: 组装后的 InvoiceDocument 元信息
 
     def __post_init__(self):
         if not self.created_at:
@@ -389,7 +390,10 @@ class ImportBatchManager:
                 'previewImage': result.get('preview_image'),
             })
         
-        return items
+        return {
+            'items': items,
+            'documents': batch.assembled_documents or [],
+        }
 
     def cancel_batch(self, batch_id: str) -> bool:
         """取消批次（停止调度 + 取消所有未完成 job）"""
@@ -658,6 +662,13 @@ class ImportBatchManager:
                                     if buf:
                                         buf.add(inv_db)
                                         should_flush = buf.should_flush()
+                                    # E-2.2: 存储组装后的 InvoiceDocument 元信息
+                                    batch.assembled_documents.append({
+                                        'sourceDocId': src_doc_id,
+                                        'invoiceNumber': inv_doc.get('invoice_number', ''),
+                                        'invoiceType': inv_doc.get('invoice_type', ''),
+                                        'pageCount': len(pages) if isinstance(pages, list) else 0,
+                                    })
                             store.remove(src_doc_id)
                         # 未收齐 → 不写入缓冲，等全部页到达后再组装
                     else:
