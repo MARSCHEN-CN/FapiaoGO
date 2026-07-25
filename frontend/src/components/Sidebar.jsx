@@ -105,11 +105,13 @@ export default React.memo(function Sidebar({
 
   // ── Step 10.5+：文件列表 document-level 聚合 ──
   // 拆分页（docId + pageNum）聚合为一条 document 条目，
-  // FileList 显示"一张发票"而非"每页一条"。底层 files[] 不变。
-  const displayFiles = useMemo(
-    () => groupFilesByDocument(isSearching ? filteredFiles : files),
-    [isSearching, filteredFiles, files],
-  )
+  // FileList 显示"一张发票"而非"每页一条"。
+  // E-2.2：优先使用 session.documents 驱动的视图模型（含后端 assembly 分组），
+  // 搜索时保持旧路径（groupFilesByDocument(filteredFiles)）。
+  const displayFiles = useMemo(() => {
+    if (isSearching) return groupFilesByDocument(filteredFiles)
+    return documentView.documents
+  }, [isSearching, filteredFiles, documentView.documents])
 
   // ── 统计区动画：仅值变化时触发 countPop ──
   // D1：统计单位 = Document（documentCount），重复组数来自视图模型

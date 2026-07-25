@@ -2,7 +2,7 @@ import { createContext, useContext, useReducer, useCallback, useState, useMemo, 
 import { filterFiles, isMergeMode } from '../utils'
 import { buildDocumentViewModel } from '../utils/documentViewModel'
 import { amountToChinese } from '../utils/amountConverter'
-import { getActiveSessionId, getSession, subscribe } from '../stores/ImportSessionStore'
+import { getActiveSessionId, getSession, subscribe, getDocumentVersion } from '../stores/ImportSessionStore'
 
 // ── Reducer ──────────────────────────────────────────────────
 
@@ -54,16 +54,19 @@ export function FileProvider({ children }) {
 
   // ── E-2.2：从 ImportSessionStore 获取 InvoiceDocument，注入视图模型 ──
   // useSyncExternalStore 保证 documents 变化时 React 重渲染
-  const sessionId = useSyncExternalStore(
+  // 快照 = sessionId + documentVersion，确保 addDocument 时触发重渲染
+  const storeSnap = useSyncExternalStore(
     subscribe,
-    () => getActiveSessionId(),
+    () => `${getActiveSessionId()}:${getDocumentVersion()}`,
     () => null,
   )
+  const sessionId = storeSnap ? storeSnap.split(':')[0] : null
   const invoiceDocs = useMemo(() => {
     if (!sessionId) return null
     const session = getSession(sessionId)
     return session?.documents?.length > 0 ? session.documents : null
-  }, [sessionId])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId, storeSnap])
 
   const documentView = useMemo(
     () => buildDocumentViewModel(files, invoiceDocs),

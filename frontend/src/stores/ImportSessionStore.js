@@ -32,6 +32,11 @@ const sessions = new Map()
 /** 最近活跃的 sessionId（供 FileContext 等 React 组件通过订阅获取） */
 let activeSessionId = null
 
+/** 文档版本计数器：每次 addDocument 递增，供 useSyncExternalStore 检测文档变更 */
+let documentVersion = 0
+
+export function getDocumentVersion() { return documentVersion }
+
 // ── 订阅者（用于 React 同步） ───────────────────────────
 
 /** @type {Set<(sessionId: string) => void>} */
@@ -151,6 +156,7 @@ export function addDocument(sessionId, doc) {
   const pages = doc?.pages?.length ?? '?'
   if (!session.documents.some(d => (d.id || d.docId) === docId)) {
     session.documents.push(doc)
+    documentVersion++
     console.log(`[E1] addDocument: docId=${docId}, pages=${pages}, docsCount=${session.documents.length}`)
   } else {
     console.log(`[E1] addDocument: dedup skipped docId=${docId}, already exists (pages=${pages})`)
