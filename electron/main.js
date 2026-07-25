@@ -7,6 +7,7 @@ const { app, BrowserWindow, ipcMain, dialog, Menu, MenuItem, screen, session } =
 const path = require('path')
 const fs = require('fs')
 const os = require('os')
+const http = require('http')
 const { extractMediaBoxAsync } = require('./shared/pdf-orientation')
 
 // ============================
@@ -652,7 +653,43 @@ function _getBackendPaths() {
   }
 }
 
-function startBackendServer() {
+/**
+ * 轮询后端 /health 直至就绪（或超时）。
+ * 解决「Electron spawn 后端后前端立即调用 → 后端仍在加载 → 连接被拒」的竞态。
+ * 使用 127.0.0.1 而非 localhost，避免 Chromium 优先解析 ::1(IPv6) 导致首跳被拒。
+ */
+function waitForBackendReady(timeoutMs = 30000, intervalMs = 250) {
+  return new Promise((resolve, reject) => {
+    const deadline = Date.now() + timeoutMs
+    let settled = false
+    const finish = (err) => {
+      if (settled) return
+      settled = true
+      if (err) reject(err)
+      else resolve()
+    }
+    const probe = () => {
+      const req = http.get({ host: '127.0.0.1', port: 5000, path: '/health', timeout: 2000 }, (res) => {
+        res.resume()
+        if (res.statusCode === 200) finish(null)
+        else if (Date.now() < deadline) setTimeout(probe, intervalMs)
+        else finish(new Error('[BACKEND] 等待后端就绪超时 (/health 非 200)'))
+      })
+      req.on('error', () => {
+        if (Date.now() < deadline) setTimeout(probe, intervalMs)
+        else finish(new Error('[BACKEND] 等待后端就绪超时 (连接被拒)'))
+      })
+      req.on('timeout', () => {
+        req.destroy()
+        if (Date.now() < deadline) setTimeout(probe, intervalMs)
+        else finish(new Error('[BACKEND] 等待后端就绪超时'))
+      })
+    }
+    probe()
+  })
+}
+
+async function startBackendServer() {
   // 开发模式下假定后端由开发者手动启动
   if (isDev) {
     console.log('[BACKEND] 开发模式：跳过自动启动，假定手动运行 Flask')
@@ -687,6 +724,11 @@ function startBackendServer() {
   backendProcess.on('exit', (code, signal) => {
     console.log(`[BACKEND] 进程退出: code=${code}, signal=${signal}`)
   })
+
+  // ✅ 后端就绪握手：等待 /health 返回 200 再放行渲染进程，消除启动竞态
+  console.log('[BACKEND] 等待后端就绪 (GET /health)...')
+  await waitForBackendReady()
+  console.log('[BACKEND] 就绪，继续创建窗口')
 }
 
 function stopBackendServer() {
@@ -1191,8 +1233,8 @@ if (!gotTheLock) {
       console.error('[BOOT] PaperRegistryProvider initialization failed:', err.message)
     }
 
-    // ✅ 启动 Flask 后端（生产模式下 spawn Python 进程）
-    startBackendServer()
+    // ✅ 启动 Flask 后端（生产模式下 spawn Python 进程）并等待就绪后再创建窗口
+    await startBackendServer()
 
     // ✅ 自动更新（ConfigService → Provider + Client → check + fallback）
     const config = loadConfig()

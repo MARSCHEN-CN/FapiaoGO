@@ -1729,4 +1729,10 @@ if __name__ == '__main__':
     @atexit.register
     def stop_page_cache_cleanup():
         _page_cache_stop_event.set()
-    app.run(port=5000, debug=True, threaded=True)
+
+    @app.route('/health')
+    def _health():
+        # 供 Electron 主进程探测后端就绪（生产环境启动握手），返回 200 即表示 Flask 已可服务
+        return 'ok', 200
+
+    app.run(host='127.0.0.1', port=5000, debug=False, threaded=True)

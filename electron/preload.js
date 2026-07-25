@@ -1,5 +1,5 @@
 // preload.js
-const { contextBridge, ipcRenderer, webUtils } = require('electron')
+const { contextBridge, ipcRenderer, webUtils, app } = require('electron')
 
 // IPC 通道白名单（精确匹配 — 仅保留前缀匹配无法覆盖的通道）
 const ALLOWED_SEND = ['open-settings-window', 'close-settings-window', 'open-calculator-window', 'window-minimize', 'window-maximize', 'window-close', 'window-drag-start', 'window-drag-move', 'window-drag-end', 'settings-changed', 'theme-changed']
@@ -119,4 +119,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     chrome: process.versions.chrome,
     node: process.versions.node,
   }),
+
+  // 打包资源根目录（production: process.resourcesPath；development: '' → 前端回退到 Vite 的 /cmaps/ 等静态资源）
+  resourcePath: app.isPackaged ? process.resourcesPath : '',
 })

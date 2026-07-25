@@ -53,11 +53,17 @@ function canUseSlotComposer(paperLayout, strategy) {
 // PDF.js worker 配置 — 使用 Vite 打包的本地 worker
 pdfjs.GlobalWorkerOptions.workerSrc = pdfjsWorkerUrl
 
-// PDF.js 字体、CMap 和 WASM 配置 — 使用 public/ 目录下的本地静态资源
-// 这些资源用于渲染 PDF 中的非嵌入字体、字符映射表和图像解码（如 JBIG2）
-const PDFJS_CMAP_URL = '/cmaps/'
-const PDFJS_STANDARD_FONT_URL = '/standard_fonts/'
-const PDFJS_WASM_URL = '/wasm/'
+// PDF.js 字体、CMap 和 WASM 配置 — 本地静态资源
+// 开发环境：Vite 从 public/ 以 /cmaps/ 等根相对路径提供。
+// 生产环境：页面 origin 是 file://，根相对路径会被解析成盘根（如 E:/cmaps/）导致加载失败。
+//   通过 preload 暴露的 electronAPI.resourcePath 拼真实文件路径（这些资源已通过 extraResources 放到 resources/ 下、在 asar 之外），
+//   dev 下 resourcePath 为空则回退到 /cmaps/ 等根相对路径。
+const RESOURCE_BASE = window.electronAPI?.resourcePath
+  ? `file://${window.electronAPI.resourcePath}/`
+  : '/'
+const PDFJS_CMAP_URL = `${RESOURCE_BASE}cmaps/`
+const PDFJS_STANDARD_FONT_URL = `${RESOURCE_BASE}standard_fonts/`
+const PDFJS_WASM_URL = `${RESOURCE_BASE}wasm/`
 
 
 // ========== 缓存 ==========

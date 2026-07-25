@@ -181,8 +181,8 @@ export async function cancelImportBatch(batchId, signal) {
  * @returns {Promise<Array<Object>>} 结果列表（每项含 clientKey, invoiceType, invoiceNumber 等）
  */
 export async function getBatchResults(batchId, signal) {
-  // 走 Vite 代理（相对路径），避免与 SSE/preview 争用 localhost:5000 的连接池
-  const url = `/import/batch/${batchId}/results`
+  // 生产环境页面 origin 为 file://，相对路径会被解析成盘上文件路径 → 必须走 BACKEND_URL 绝对地址
+  const url = `${BACKEND_URL}/import/batch/${batchId}/results`
   console.log('[ImportBatchClient] getBatchResults fetch START, url=', url)
 
   const doFetch = async (timeoutMs, label) => {
