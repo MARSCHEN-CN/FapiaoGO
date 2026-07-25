@@ -108,7 +108,7 @@ function AppContent() {
   // ============================
   // 共享状态
   // ============================
-  const { files, setFiles, setMergeMode, printableCount } = useFileContext()
+  const { files, setFiles, setMergeMode, printableCount, documentView } = useFileContext()
 
   // ============================
   // Hooks
@@ -1123,7 +1123,7 @@ function AppContent() {
         />
         <ExcelExportFieldsModal
           visible={showExcelFields}
-          files={files.filter(f => f.status === 'parsed')}
+          files={documentView?.documents?.length ? documentView.documents : files.filter(f => f.status === 'parsed')}
           initialColumns={excelExportSettings.columns}
           onPersist={excelExportSettings.persist}
           onConfirm={(cols) => {
