@@ -241,6 +241,7 @@ function AppContent() {
     renamedPreviewKey,
     alertModal: renamePackAlert, closeAlert: closeRenamePackAlert,
     handleRename, handleRenameConfirm, handlePack,
+    refreshRenamePreview,
   } = useRenamePack({ files, settings, setFiles, parseFiles, parseProgress, electronAPIRef })
 
   const handleRenameCancel = useCallback(() => {
@@ -1068,6 +1069,15 @@ function AppContent() {
             executing={packing}
             reimportProgress={reimportProgress}
             result={renameResult}
+            renameSettings={settings.renameSettings || {}}
+            onSaveRenameSettings={(renameSettings) => {
+              saveSettings({ ...settings, renameSettings })
+            }}
+            onApplySettings={() => {
+              // 应用规则后重新生成预览（refreshRenamePreview 使用 ref 读取最新 settings，无闭包过期问题）
+              refreshRenamePreview()
+            }}
+            electronAPI={getElectronAPI()}
             onConfirm={handleRenameConfirm}
             onCancel={handleRenameCancel}
             onCloseResult={handleRenameCloseResult}
@@ -1152,6 +1162,7 @@ function AppContent() {
           stage={pdfExportTask?.stage ?? ''}
           status={pdfExportTask?.status}
           errors={pdfExportTask?.errors ?? []}
+          outputPath={pdfExportTask?.path ?? ''}
           onCancel={cancelPdfExport}
           onClose={closePdfExportTask}
         />

@@ -1,5 +1,4 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import RenameSettings from './RenameSettings'
 import AutoSaveToast, { useAutoSaveToast } from './AutoSaveToast'
 import SettingsTitlebar from './SettingsTitlebar'
 import Toggle from './Toggle'
@@ -90,10 +89,6 @@ export default function SettingsWindow({ settings, saveSettings, printers, elect
     {
       key: 'printer', label: '打印机',
       icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" style={{ width: '14px', height: '14px' }}><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>,
-    },
-    {
-      key: 'rename', label: '重命名',
-      icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" style={{ width: '14px', height: '14px' }}><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>,
     },
   ]
 
@@ -455,22 +450,6 @@ export default function SettingsWindow({ settings, saveSettings, printers, elect
                 </div>
               </div>
 
-            </div>
-            {/* 重命名标签内容 */}
-            <div style={{
-              display: activeTab === 'rename' ? 'block' : 'none',
-              opacity: activeTab === 'rename' ? 1 : 0,
-              transform: activeTab === 'rename' ? 'translateX(0) translateY(0)' : 'translateX(8px) translateY(4px)',
-              transition: 'opacity 0.25s ease, transform 0.25s ease',
-              pointerEvents: activeTab === 'rename' ? 'auto' : 'none',
-              width: '100%',
-            }}>
-              <RenameSettings
-                renameSettings={settings.renameSettings || {}}
-                onSave={(renameSettings) => saveSettingsWithToast({ ...settings, renameSettings })}
-                electronAPI={electronAPI}
-                active={activeTab === 'rename'}
-              />
             </div>
 
           </div>
