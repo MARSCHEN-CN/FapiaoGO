@@ -155,6 +155,7 @@ export function addDocument(sessionId, doc) {
   } else {
     console.log(`[E1] addDocument: dedup skipped docId=${docId}, already exists (pages=${pages})`)
   }
+  notify(sessionId)
 }
 
 /**
