@@ -1286,7 +1286,7 @@ def parse_batch():
                     'parse_method': svc_result.get('parse_method', ''),
                     'file_format': svc_result.get('file_format', ''),
                     'failed_fields': failed_ids,
-                    'preview_image': svc_result.get('preview_image', '') if svc_result.get('file_format') == 'ofd' else '',
+                    'preview_image': '',  # 13-B.5 C2: import 表面停产 preview_image（Render Contract 取代）
                     'invoice_fields': extra,
                     'from_cache': svc_result.get('from_cache', False),
                 }

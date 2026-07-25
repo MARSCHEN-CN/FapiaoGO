@@ -96,4 +96,14 @@ test('13-B.5 C1: Print 域仍合法持有 previewImage（仅作 docId 缺失兜�
     ctx.includes('!f.docId && !f.previewImage'),
     'FileContext.jsx OFD gate 必须改为 !f.docId && !f.previewImage（兜底语义，非主路径）'
   )
+  // 13-B.5 C2: Viewer 安全网 usePreview.js 同样合法持有 previewImage（docId 缺失旧 session 兜底）
+  const viewer = src('hooks/usePreview.js')
+  assert.ok(
+    RE_BASE64_FIELD.test(viewer),
+    'usePreview.js 仍含 previewImage（仅作 docId 缺失 Viewer 兜底，docId-first 主路径）'
+  )
+  assert.ok(
+    viewer.includes('buildPreviewUrl'),
+    'usePreview.js 必须走 docId-first 主路径（buildPreviewUrl），previewImage 仅兜底'
+  )
 })

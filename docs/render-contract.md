@@ -334,19 +334,19 @@ image renderer                 ← doc.file_bytes 单页图像
   - `parsedFiles` 过滤：OFD 可打印条件由 `!f.previewImage` 放宽为 `!f.docId && !f.previewImage`（docId 优先，previewImage 仅作 docId 缺失兜底，与 Viewer §4.1 一致）
   - `FileContext.jsx` OFD 可打印计数：同步放宽（OFD 有 `docId` 即计入）
   - 实际落点：`printAdapter.fetchPrintRaster(docId)` + `previewResourceResolver.resolvePrintUrl`（消除 orphan；`buildPrintJobItem` 的 `pages` 经 `resolvePrintUrl` 构建，13-B.5.1a 已迁移为 pages[] 富模型）
-- **DELETE（C2，gate 解锁后）**：停止 `parse_ofd → render_ofd_page_preview` 产出 `preview_image`（`app.py:1289` / `import_batch_manager.py:393`），并删除 `render_ofd_page_preview`。前提：全仓 `previewImage` 对 OFD 的读取归零（C1 完成 + 两 gate 放宽）。
+- **DELETE（✅ C2 已完成，2026-07-25）**：停止 `parse_ofd → render_ofd_page_preview` 产出 `preview_image`（`app.py:1289` / `import_batch_manager.py:393` 已停产），并删除 `render_ofd_page_preview`（ofd_page_render.py 函数体 / __init__.py 再导出 / _parser.py 调用全移除）。前端 print/preview 模块已零引用该 Producer（见 renderOfdLegacyProducer.test.js）。`preview_image` carrier 保留为业务预览兼容字段（来自 OFD 内嵌图），不依赖已删 Producer。
 
-### Legacy Delete Gate — 🔴 BLOCKED → 🟡 PARTIALLY UNBLOCKED（13-B.5 C1 已完成，2026-07-25）
+### Legacy Delete Gate — ✅ UNBLOCKED（13-B.5 C2 已完成，2026-07-25）
 
-`render_ofd_page_preview` 旧链生产者（`preview_image` 字段）当前仍被以下路径**读取**（删除前须归零）：
+`render_ofd_page_preview` 旧链生产者（`preview_image` 字段）原被以下路径读取，**C1 已将主路径迁走、C2 已删生产者**：
 1. ~~`usePrint.js:184` `renderFileToPrintImage`~~ → **C1 已迁**：OFD 改读 `fetchPrintRaster(f.docId,1)`（`/print` 端点）；`previewImage` 仅 docId 缺失兜底。
 2. ~~`usePrint.js:253` `renderMergeGroupToPrintImage`（merge 强制）~~ → **C1 已迁**：同上，OFD docId-first。
 3. `usePrint.js` `parsedFiles` 过滤 → **C1 已放宽**为 `!f.docId && !f.previewImage`（OFD 有 docId 即入队）。
 4. `FileContext.jsx` 可打印计数 → **C1 已放宽**为 `!f.docId && !f.previewImage`（OFD 有 docId 即计入）。
 
-→ **gate 现状**：docId-bearing OFD（即所有正常导入文件）已完全不依赖 `previewImage`，旧链生产者对**新导入**无任何消费者。
-→ **仍 BLOCKED 的部分（C2 须处理）**：①旧 session / 未导入直接打开的文件仍走 `previewImage` 兜底（C1 有意保留，避免历史数据崩）；②`previewImageBoundary.test.js` 反向锚点须同步改为「仅兜底」；③`render_ofd_page_preview` 生产者（app.py:1289 / import_batch_manager.py:393）删除须在上述归零后。
-→ 建议 C2 顺序：先更新反向锚点 → 再删生产者 → 跑全测试。
+→ **gate 现状（C2 后）**：docId-bearing OFD（所有正常导入文件）完全不依赖 `previewImage`；旧链 Producer 已删除，import 表面停产 `preview_image`；`previewImage` 仅作 docId 缺失旧 session 兜底（Print + Viewer usePreview.js，均已纳入边界守卫）。
+→ **C2 已处理（2026-07-25）**：①旧 session / 未导入直接打开文件仍走 `previewImage` 兜底（有意保留，避免历史数据崩，非主路径）；②`previewImageBoundary.test.js` 反向锚点已同步为「仅兜底」，并扩展 `usePreview.js` 为合法 Viewer 兜底持有者；③`render_ofd_page_preview` 生产者已删除（app.py:1289 / import_batch_manager.py:393 停产）。
+→ C2 顺序已执行：更新反向锚点 → 删生产者 → 跑全测试（全绿）。
 
 ### 风险（非阻塞，但 C2 前须确认）
 
@@ -354,12 +354,13 @@ image renderer                 ← doc.file_bytes 单页图像
 - 💭 **`/print` 返回 200dpi WebP，Legacy V2 仍用 150dpi `PREVIEW_DPI` canvas 合成**：C1 取源栅格用 `/preview`(150) 即可（合成会重排）；若追求打印保真用 `/print`(200)。C1 决策点，非阻塞。
 
 ### Required Changes
-**C1 已完成（2026-07-25）**：迁移 Legacy V2 canvas 路径(:184/:253/:259) 源栅格 → `fetchPrintRaster(docId)`（`/print` 端点，Render Contract）；放宽 `parsedFiles` 与 `FileContext.jsx` OFD 判定（`!docId && !previewImage`）；`printAdapter.fetchPrintRaster` 接入、`previewResourceResolver.resolvePrintUrl` 新增。gate 转 **PARTIALLY UNBLOCKED**。C2 删旧链仍须：反向锚点同步 + 删 `render_ofd_page_preview` 生产者 + 跑全测试。
+**C1 已完成（2026-07-25）**：迁移 Legacy V2 canvas 路径(:184/:253/:259) 源栅格 → `fetchPrintRaster(docId)`（`/print` 端点，Render Contract）；放宽 `parsedFiles` 与 `FileContext.jsx` OFD 判定（`!docId && !previewImage`）；`printAdapter.fetchPrintRaster` 接入、`previewResourceResolver.resolvePrintUrl` 新增。gate 转 **PARTIALLY UNBLOCKED**。
+**C2 已完成（2026-07-25）**：反向锚点同步（`previewImageBoundary.test.js` 扩展 `usePreview.js` 为合法 Viewer 兜底）+ 删 `render_ofd_page_preview` 生产者（ofd_page_render.py / __init__.py / _parser.py）+ import 表面（app.py:1289 / import_batch_manager.py:393）停产 `preview_image` + 新增 `renderOfdLegacyProducer.test.js`（前端）+ `test_render_ofd_legacy_producer.py`（backend 静态门禁）。Legacy Delete Gate → ✅ **UNBLOCKED**。
 
 ### 下一步
-- **C1**：迁移 `usePrint.js` Legacy V2 canvas 路径（:184/:253/:259）源栅格 previewImage → `GET /preview|print/{docId}?page=1`；放宽 `:372` 与 `FileContext.jsx:61` 的 OFD 可打印判定。
-- **C2**：`previewImageBoundary.test.js` 反向锚点（`usePrint.js`/`FileContext.jsx` 仍持有 previewImage）改为「仅当 `docId` 缺失兜底」；然后删除 `render_ofd_page_preview` + 停产 `preview_image`。
-- 合并提交纪律：C0(doc) / C1(迁移) / C2(删旧链) 三个独立 commit，单职责，不 push。
+- **C1** ✅：迁移 `usePrint.js` Legacy V2 canvas 路径（:184/:253/:259）源栅格 previewImage → `GET /preview|print/{docId}?page=1`；放宽 `:372` 与 `FileContext.jsx:61` 的 OFD 可打印判定。
+- **C2** ✅：`previewImageBoundary.test.js` 反向锚点同步（含 `usePreview.js`）；删除 `render_ofd_page_preview` + import 表面停产 `preview_image`；13-B.5 全链路收尾。
+- 合并提交纪律：C0(doc) / C1(迁移) / 13-B.5.1a(pages 模型) / 13-B.5.1b(清理冻结) / C2(删旧链) 多个独立 commit，单职责，不 push。
 
 ## 11. Print Model Consolidation（13-B.5.1 C0 只读审计，2026-07-25）
 
@@ -422,12 +423,14 @@ for (const page of job.pages) {
   - **Commit 13-B.5.1b — Render Print Model Cleanup & Contract Freeze**（✅ 已完成）：删除 `needsPerPageRender` / `getPageUrlsForPrint` / `validatePrintJob`（确认零调用方）；`flattenPrintData` 加 `.flat()` 硬化；新增 `renderPrintCardinality.test.js` 锁 Page Cardinality Contract；本文档 §10/§11 同步。
   - 两个 commit 均不混入 C2 的"删旧链"改动。
 
-### Legacy Producer Delete Gate（C2 前置，冻结）
+### Legacy Producer Delete Gate（✅ C2 已完成，2026-07-25）
 
-满足以下全部方可删 `render_ofd_page_preview` + 停产 `preview_image`：
+> **冻结范围（C2-A，用户拍板）**：C2 删除的是 **OFD Legacy Render Producer**（`render_ofd_page_preview` 函数体 + 调用 + 再导出），**不删除 `ParseResult.preview_image` carrier**。`preview_image` 保留为业务预览兼容字段（来自 OFD 内嵌图，不再经 CTM 重渲染），禁止作为 Render Print / Viewer 主路径（仅 docId 缺失旧 session 兜底）。此边界防止 C2 偷偷扩大成"发票预览系统重构"。
 
-**backend（归零）**
-- `render_ofd_page_preview()` 调用者：`app.py` / `import_batch_manager.py` / `invoice_service` → 全部移除（grep 仅存生产者自身）。
+**backend（归零 / 停产）**
+- `render_ofd_page_preview()` 函数体已删除（ofd_page_render.py / __init__.py 再导出 / _parser.py 调用全移除）。
+- `app.py:1289` / `import_batch_manager.py:393` 不再 emit `preview_image`（import 表面停产）。
+- `invoice_service` 仍消费 `preview_image`（来自 `parse_ofd` 内嵌图兜底），不依赖已删 Producer —— P3 发票预览保留。
 - `preview_image` 字段不再被任何 `/metadata`/`/import` 响应写出。
 
 **frontend（previewImage 仅 fallback）**
@@ -441,18 +444,19 @@ for (const page of job.pages) {
 - Verified（13-B.5.1a/b）：①OFD page1..pageN 全页输出 ②PDF 行为不变（read-file 原生多页，未触 pages[] 展开）③Image 单页不退化（read-file/previewImage 兜底，未触 pages[]）④merge composition 行为不变（`renderMergeGroupToPrintImage` 保持 page=1 单页合成，slot 非 Document.pages）。
 - Source 面多页由 Sumatra 原生处理，不在此条件范围（见 §10 双轨模型）。
 
-**tests（新增守卫）**
-- 新增 `renderOfdLegacyProducer.test.js`：锁 `render_ofd_page_preview` 不被 Viewer/Print **主链**调用（仅允许 C2 前的 import 兜底语义消失）。
-- 既有 `previewImageBoundary.test.js` 反向锚点须保持"仅兜底"语义（C1 已设）。
+**tests（已新增守卫，均通过）**
+- ✅ 新增 `renderOfdLegacyProducer.test.js`（前端）：锁 `render_ofd_page_preview` 不被 print/preview 模块引用；`buildPrintJobItem` 产出 `pages[]`；usePrint OFD docId-first。
+- ✅ 新增 `test_render_ofd_legacy_producer.py`（backend 静态门禁，stdlib 可跑）：锁 Producer 函数体删除 + `_parser.py` 无调用 + `__init__` 无再导出 + import 表面停产 `preview_image`。
+- ✅ 既有 `previewImageBoundary.test.js` 反向锚点已扩展 `usePreview.js` 为合法 Viewer 兜底（"仅兜底"语义）。
 
 **前置风险（C2 不解决，须记录）**
 - ⚠️ Sumatra 原生 OFD 支持未知（main 进程，本仓库不可见）。若不支持，active Source 面 OFD 打印可能本就非功能——与 previewImage 无关，C2 删旧链不改变，须单独确认。
 
 ### Required Changes
 - 13-B.5.1（✅ 已完成，拆 **13-B.5.1a** / **13-B.5.1b**）：`buildPrintJobItem` 改 `pages[]` 模型 + doPrint 两 render 函数消费 `job.pages`（修多页 OFD、统一 Image/PDF）+ `flattenPrintData` 展开 + 删 3 死函数 + 锁 Page Cardinality Contract。范围限定 **Render Print 子系统**，不碰 Source 面。
-- 13-B.5 C2（gate 满足后，含"Render Print Page Cardinality Contract"前置）：反向锚点同步 → 删 `render_ofd_page_preview` + 停产 `preview_image` → 跑全测试。
+- **13-B.5 C2（✅ 已完成，2026-07-25，commit 待打 tag）**：反向锚点同步（含 `usePreview.js`）→ 删 `render_ofd_page_preview` 生产者（ofd_page_render.py / __init__.py / _parser.py）+ import 表面（app.py:1289 / import_batch_manager.py:393）停产 `preview_image` + 新增 `renderOfdLegacyProducer.test.js` / `test_render_ofd_legacy_producer.py` → 跑全测试（前端 6 测试文件全绿 + backend 静态门禁通过）。
 
 ### 下一步
 - ✅ **13-B.5.1a**（commit `0006deb2` / tag `13-B.5.1a-pages-model`）：`buildPrintJobItem` 改 `pages[]` 富模型 + `usePrint` 接入 + 多页 OFD 修复 + `flattenPrintData` + `printAdapter.test.js`/`multiPagePrint.test.js`。
 - ✅ **13-B.5.1b**（Render Print Model Cleanup & Contract Freeze）：删 3 死函数、`flattenPrintData` 加 `.flat()`、新增 `renderPrintCardinality.test.js` 锁 Page Cardinality Contract、本文档同步。
-- 二者完成后 `buildPrintJobItem` 成为 **Render Print 子系统**唯一入口、多页 OFD 闭环、Page Cardinality Contract 成立 → C2 gate 满足，可进 **13-B.5 C2**（删 `render_ofd_page_preview` + 停产 `preview_image`）。
+- ✅ **13-B.5 C2**（Legacy Producer Delete）：删 `render_ofd_page_preview` + import 表面停产 `preview_image` + 反向锚点同步（含 usePreview.js）+ 门禁测试。13-B.5 全链路收尾；Render Print 子系统经 `buildPrintJobItem().pages` → `fetchPrintRaster` → `flattenPrintData` → `printMergedImages` 完成多页闭环，旧 OFD 重渲染 Producer 退役。

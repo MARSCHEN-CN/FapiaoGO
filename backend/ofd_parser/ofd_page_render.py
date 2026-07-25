@@ -21,41 +21,10 @@ from .ofd_renderer import _OFDRenderer
 logger = logging.getLogger(__name__)
 
 
-def render_ofd_page_preview(raw_bytes, dpi=300):
-    """OFD 渲染：True CTM 管线 + 字体映射 + Unicode 回退。"""
-    try:
-        with zipfile.ZipFile(io.BytesIO(raw_bytes), 'r') as zf:
-            all_names = zf.namelist()
-            content_path = None
-            for name in all_names:
-                if name.lower().endswith('content.xml'):
-                    content_path = name
-                    break
-            if not content_path:
-                return None
-            content_raw = zf.read(content_path).decode('utf-8', errors='ignore')
-            content_clean = _strip_ofd_ns(content_raw)
-            try:
-                root = ET.fromstring(content_clean)
-            except ET.ParseError:
-                logger.error("Failed to parse OFD content XML", exc_info=True)
-                return None
-            renderer = _OFDRenderer(zf, all_names, dpi)
-            renderer.setup(content_clean)
-            return renderer.render(root)
-    except Exception as e:
-        logger.error("OFD页面渲染异常: %s", e, exc_info=True)
-        return None
-
-
-# ══════════════════════════════════════════════════════════════
-#  多页支持（13-A.3.3 新消费链）
-#
-#  新链：OFDAdapter → render_ofd_page() → WebP → DocumentViewer
-#  旧链：parse_ofd() → render_ofd_page_preview() → base64 JPEG
-#        （继续服务 OCR / 导入缩略 / 字段识别）
-#  两者消费者隔离，互不影响。render_ofd_page_preview 保持不动。
-# ══════════════════════════════════════════════════════════════
+# 旧链 render_ofd_page_preview（OFD CTM 重渲染 → base64 JPEG）已于
+# 13-B.5 C2 删除，被 Render Contract 取代：OFDAdapter → render_ofd_page()
+# → WebP → /preview|/print。preview_image 不再由重渲染产生，仅保留为
+# ParseResult 业务预览兼容字段（来自 OFD 内嵌图，见 ofd_parser/_parser.py）。
 
 
 def _natural_key(name: str):
@@ -194,7 +163,7 @@ def ofd_page_dimensions(raw_bytes, dpi=300):
 
 
 def render_ofd_page(raw_bytes, page_index, dpi=300):
-    """渲染指定 OFD 页为 WebP bytes（新消费链，独立于 render_ofd_page_preview）。
+    """渲染指定 OFD 页为 WebP bytes（Render Contract 新消费链）。
 
     无法渲染时返回 None。
     """

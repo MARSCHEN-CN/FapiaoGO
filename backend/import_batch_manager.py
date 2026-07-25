@@ -390,8 +390,7 @@ class ImportBatchManager:
                 'parseMethod': result.get('parse_method', ''),
                 'failedFields': result.get('failed_fields', []),
                 'newName': result.get('new_name', ''),
-                'previewImage': result.get('preview_image'),
-            })
+            })  # 13-B.5 C2: 删除 previewImage 字段（import 表面停产，Render Contract 取代）
         
         return items
 
