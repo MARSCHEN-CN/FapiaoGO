@@ -79,6 +79,11 @@ let pendingFilesFromSecondInstance = []
 
 // 开发模式判断
 const isDev = !app.isPackaged
+// 将资源根路径经 process.env 传给 preload（app 模块在 preload/sandbox 上下文不可见，
+// 只能由主进程计算后注入；渲染进程会继承主进程环境，preload 内 process.env 可读）。
+// 生产: process.resourcesPath（指向 …/resources，cmaps/ 等已通过 extraResources 放此）；
+// 开发: 空串 → renderers.js 回退到 Vite 的 /cmaps/ 等根相对静态资源。
+process.env.FAPAIAO_RESOURCE_PATH = app.isPackaged ? process.resourcesPath : ''
 console.log(`[main.js] 运行模式: ${isDev ? '开发模式' : '生产模式'}`)
 console.log(`[main.js] Electron version: ${process.versions.electron}`)
 console.log(`[main.js] Chromium version: ${process.versions.chrome}`)

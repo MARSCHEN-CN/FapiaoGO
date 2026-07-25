@@ -1,5 +1,5 @@
 // preload.js
-const { contextBridge, ipcRenderer, webUtils, app } = require('electron')
+const { contextBridge, ipcRenderer, webUtils } = require('electron')
 
 // IPC 通道白名单（精确匹配 — 仅保留前缀匹配无法覆盖的通道）
 const ALLOWED_SEND = ['open-settings-window', 'close-settings-window', 'open-calculator-window', 'window-minimize', 'window-maximize', 'window-close', 'window-drag-start', 'window-drag-move', 'window-drag-end', 'settings-changed', 'theme-changed']
@@ -120,6 +120,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     node: process.versions.node,
   }),
 
-  // 打包资源根目录（production: process.resourcesPath；development: '' → 前端回退到 Vite 的 /cmaps/ 等静态资源）
-  resourcePath: app.isPackaged ? process.resourcesPath : '',
+  // 打包资源根目录（production: 主进程经 process.env.FAPAIAO_RESOURCE_PATH 注入 process.resourcesPath；
+  //   development: 空串 → 前端 renderers.js 回退到 Vite 的 /cmaps/ 等根相对静态资源）。
+  //   注意：app 模块在 preload/sandbox 上下文不可见，不能用 app.isPackaged 自行判断。
+  resourcePath: process.env.FAPAIAO_RESOURCE_PATH || '',
 })
