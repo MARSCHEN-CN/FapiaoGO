@@ -184,7 +184,7 @@ image renderer                 ← doc.file_bytes 单页图像
 | Thumbnail API (`/thumbnail`) | Render Contract | 13-B.3 | 同派发链，确认无 OFD 特判即可 |
 | Import `previewImage` | Legacy | **已无消费者** | 列表 UI 不渲染缩略图；字段仅透传，13-B.3 不改 |
 | OCR `previewImage` | Legacy | **已迁移** | OCR 详情走 `buildPreviewUrl(docId)`，13-B.3 不改 |
-| Print `previewImage` | Legacy（独立链） | **13-B.5 独立** | Print Contract ≠ Viewer Contract，**不在 13-B.3 触碰** |
+| Print `previewImage` | Legacy（独立链） | **13-B.5 C0 结论**：source 管线已绕过（printPath→Sumatra）；仅 Legacy V2 canvas 路径(merge 强制)+FileContext:61 仍依赖 → **C1 迁 docId 渲染后 C2 删旧链** | Print Contract ≠ Viewer Contract；gate BLOCKED 待 C1 |
 | OFD Export (`ofd_handler.py`) | Dead | 删除/重做 | 与 Viewer 渲染无关，独立处理 |
 
 **关键边界：**
@@ -217,6 +217,7 @@ image renderer                 ← doc.file_bytes 单页图像
 13-B.3  Legacy previewImage 收敛 → **C0 审计结论：Viewer/OCR 已迁移、Import 无消费者、唯一活消费者=Print（13-B.5）**；冻结负向边界（§4.1）+ 加回归守卫；**不删旧链**
 13-B.4  Cache Contract 审计 ✅（C0 只读，全 PASS，见 §9）；不删旧链
 13-B.5  Print Contract 单独迁移（独立链）
+        └ C0 审计 ✅（2026-07-25）：source 管线已绕过 previewImage（printPath→Sumatra）；依赖仅在 Legacy V2 canvas 路径(merge 强制)+两 gate；backend /print+preset 已就绪；printAdapter.js orphan。Gate=BLOCKED → 先 C1 迁 Legacy V2 到 docId 渲染，再 C2 删 render_ofd_page_preview
 ```
 
 ---
@@ -266,3 +267,84 @@ image renderer                 ← doc.file_bytes 单页图像
 
 ### 下一步
 全部 PASS → 进入 **13-B.5 Print Contract Migration**（Print 是唯一 legacy `previewImage` 活消费者；迁到 `/print/{docId}` WebP 后解锁删除 `render_ofd_page_preview`）。
+
+---
+
+## 10. Print Contract Audit（13-B.5 C0 只读审计，2026-07-25）
+
+> 只读审计：确认 Print 当前真实链路、docId 可用性、backend print 能力、previewImage 依赖范围，
+> 以及删除 `render_ofd_page_preview` 旧链的 gate 状态。来源：逐文件核实
+> `frontend/src/hooks/usePrint.js` / `services/PrintService.js` / `utils/printAdapter.js` /
+> `contexts/FileContext.jsx` / `config.js` + `backend/render_engine/api.py:180` / `preset.py:33`。
+> **不改代码**——仅冻结结论，供 13-B.5 C1/C2 引用。
+
+### 审计发现（关键：Print 实际比预设更干净）
+
+**Q1 — Print 当前入口（两条管线，仅一条活）**
+- `config.js:9` `PRINT_PIPELINE.mode = 'source'`（active）。
+- **Source 管线（active）**：`executePrint`(:720) → `printAllSourceFiles` → `printSingleSourceFile`（`PrintService.js:107`）→ IPC `print-source-file` → Sumatra，参数 `{ filePath: file.printPath, fileFormat: 'ofd' }`。**全程不读 `previewImage`**——OFD 以原生文件路径直送 Sumatra。
+- **Legacy V2 管线（canvas bitmap）**：`doPrint`(:348) → `renderFileToPrintImage`(:164) / `renderMergeGroupToPrintImage`(:241) → `submitPrintIntent`（window.print / iframe）。OFD/Image 源栅格来自 `b64toBlob(f.previewImage)`（:184 / :253 / :259）。
+  - 触发条件：①`merge` 模式**强制**走 `doPrint`（`:723-726`，与 config 无关）；②`config.mode='legacy'`（当前非，故普通非合并打印不走此路）。
+
+**Q2 — Print 需要的 Render 能力**
+- Print ≠ Preview 放大：`print` preset = **dpi 200 / quality 95 / chroma 444**（`preset.py:33`），预览为 150dpi。`docId + page + preset(print) + rotation + paper` 即 Print Contract 输入。
+- `renderFileToPrintImage` 内部用 `PREVIEW_DPI`(150) 走前端 canvas 合成（安全边距/merge/纸张布局），Backend `/print` 仅作**源栅格**提供方（不参与前端合成）。
+
+**Q3 — backend 是否已有 print preset / 路由**
+- ✅ `PRESETS["print"]` 存在（`preset.py:33`）。
+- ✅ `GET /print/<doc_id>` 已存在（`api.py:180-204`），`_render_and_respond(doc_id, "print", page, vs, …)`，经 `_render_page` adapter 短路 → OFD 走 `OFDAdapter` → WebP(200dpi)。**Backend Print Contract 已实现，无需新增 endpoint。**
+
+**Q4 — Electron / Sumatra 链影响**
+- Source 管线 = Sumatra 直送（真实物理打印源）。Legacy V2 = canvas PNG → `submitPrintIntent` → iframe/window.print。
+- ⚠️ `print-source-file` IPC handler（Sumatra bridge）在 **Electron main 进程，不在本仓库**——OFD 是否被 Sumatra 原生渲染**无法从本仓库判定**。但这一点**独立于 previewImage**：active source 管线送 OFD 走 `printPath`，删旧链不改变其行为。
+
+**docId 可用性 — ✅ PASS**
+- `fileObj.docId` 在导入时即填充（`useFileOps.js:164/234/370`、`parseResultMapper.js:64-71`、`parseResultConsumer.js:44`）。Print 文件对象（源自 `files[]`）携带 `docId` → 可构造 `GET /preview|print/{docId}`。
+
+**迁移脚手架已存在（orphaned）**
+- `frontend/src/utils/printAdapter.js` 已编码 `fileObj → docId → getDocument → resolvePreviewUrl`（:47-71），但**全仓零 import**（grep 仅命中自身）→ 死适配器。可作 C1 迁移落点，但需先被 `usePrint.js` 引用。
+
+### 审计判定
+
+| 项目 | 结果 | 证据 |
+| --- | --- | --- |
+| Print Entry | ✅ PASS | 两管线已识别，source=active |
+| docId Availability | ✅ PASS | `fileObj.docId` 导入即填充 |
+| Print Render Capability | ✅ PASS | `GET /print/{docId}`(api.py:180) + `PRESETS["print"]`(preset.py:33) 已就绪，adapter 短路含 OFD |
+| previewImage Dependency | ❌ FAIL | Legacy V2 canvas 路径（`usePrint.js:184/253/259`）+ `parsedFiles` 过滤(:372) + `FileContext.jsx:61` 仍要求 OFD `previewImage` |
+| Migration Plan | keep / migrate / delete | 见下 |
+| Legacy Delete Gate (`render_ofd_page_preview`) | 🔴 **BLOCKED** | 见下 |
+
+### Migration Plan（keep / migrate / delete）
+
+- **KEEP（不改）**：Source 管线（`file.printPath`→Sumatra）。它本就不依赖 `previewImage`，OFD 打印与旧链解耦。
+- **MIGRATE（C1）**：Legacy V2 canvas 路径把 OFD/Image 源栅格从 `b64toBlob(f.previewImage)` 改为 `fetch GET /preview/{docId}?page=1 → blob`（或 `/print/{docId}` 取 200dpi 更贴合 Print Contract）。涉及 `usePrint.js`：
+  - `renderFileToPrintImage`(:184) 单文件 OFD/Image 分支
+  - `renderMergeGroupToPrintImage`(:253 OFD / :259 Image) 合并分支（**merge 模式强制走此路，是 13-B.5 真正的硬约束**）
+  - `parsedFiles` 过滤(:372)：OFD 可打印条件由 `!f.previewImage` 放宽为 `!f.docId && !f.previewImage`（docId 优先，previewImage 仅作 docId 缺失兜底，与 Viewer §4.1 一致）
+  - `FileContext.jsx:61` 可打印计数：同步放宽（OFD 有 `docId` 即计入）
+  - 建议接 `printAdapter.buildPrintJobItem(f).pageUrls`（已有 `resolvePreviewUrl` 映射），消除 orphan。
+- **DELETE（C2，gate 解锁后）**：停止 `parse_ofd → render_ofd_page_preview` 产出 `preview_image`（`app.py:1289` / `import_batch_manager.py:393`），并删除 `render_ofd_page_preview`。前提：全仓 `previewImage` 对 OFD 的读取归零（C1 完成 + 两 gate 放宽）。
+
+### Legacy Delete Gate — 🔴 BLOCKED
+
+`render_ofd_page_preview` 当前被以下路径读取（删除前必须全部归零）：
+1. `usePrint.js:184` `renderFileToPrintImage`（legacy 普通模式，当前 config 不触发，但 legacy 配置/兜底可达）
+2. `usePrint.js:253` `renderMergeGroupToPrintImage`（**merge 模式强制**，任何 config 都可达 → 真正 blocker）
+3. `usePrint.js:372` `parsedFiles` 过滤（doPrint 内，OFD 无 previewImage 即被剔除）
+4. `FileContext.jsx:61` 可打印计数（OFD 无 previewImage 不计）
+
+→ C1 完成（legacy V2 改读 docId 渲染）+ 放宽 #3/#4 后，gate 转 **UNBLOCKED**，C2 才安全。
+
+### 风险（非阻塞，但 C2 前须确认）
+
+- 💭 **Sumatra 是否原生渲染 OFD 未知**（handler 在 main 进程，本仓库不可见）。若不支持：active source 管线 OFD 打印可能本就非功能（独立于 previewImage）；此时 Legacy V2 canvas 路径（用 previewImage 栅格）反而是唯一可工作的 OFD 打印路径。**结论：C1 迁移 Legacy V2 到 docId 渲染是 OFD 打印保持可用的必要前提**，不可跳过直接删旧链。
+- 💭 **`/print` 返回 200dpi WebP，Legacy V2 仍用 150dpi `PREVIEW_DPI` canvas 合成**：C1 取源栅格用 `/preview`(150) 即可（合成会重排）；若追求打印保真用 `/print`(200)。C1 决策点，非阻塞。
+
+### Required Changes
+**none（只读审计，不改代码）。** 但 gate 为 BLOCKED：C2 删除旧链**必须**等 C1（迁移 Legacy V2 canvas 路径 + 放宽两 gate）落地且 `previewImageBoundary.test.js` 反向锚点同步更新。
+
+### 下一步
+- **C1**：迁移 `usePrint.js` Legacy V2 canvas 路径（:184/:253/:259）源栅格 previewImage → `GET /preview|print/{docId}?page=1`；放宽 `:372` 与 `FileContext.jsx:61` 的 OFD 可打印判定。
+- **C2**：`previewImageBoundary.test.js` 反向锚点（`usePrint.js`/`FileContext.jsx` 仍持有 previewImage）改为「仅当 `docId` 缺失兜底」；然后删除 `render_ofd_page_preview` + 停产 `preview_image`。
+- 合并提交纪律：C0(doc) / C1(迁移) / C2(删旧链) 三个独立 commit，单职责，不 push。
