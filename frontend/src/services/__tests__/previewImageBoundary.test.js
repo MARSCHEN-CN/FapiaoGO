@@ -20,8 +20,9 @@
  * 与 ofdBranchCleanup.test.js 同源：字符串静态断言（项目无 DOM 测试运行器，无法对
  * React 组件渲染做单元断言；而 13-B.3 的核心交付是「渲染链不依赖 previewImage」，故锁死）。
  *
- * 若 13-B.5 把 Print 迁到 Render Contract、删除 previewImage 依赖，本测试的反向锚点
- * 会先变红，提示同步更新 §4.1 的 Allowed consumers。
+ * 13-B.5 C1 已将 Print 迁到 Render Contract（docId-first，previewImage 仅作 docId 缺失兜底）。
+ * 本守卫反向锚点保留：usePrint/FileContext 仍合法持有 previewImage（兜底），并新增正向锚点
+ * 确认 fetchPrintRaster(f.docId ...) 已就位。若 13-B.5 C2 删除旧链，兜底锚点会先变红。
  *
  * @module services/__tests__/previewImageBoundary
  */
@@ -74,16 +75,25 @@ test('13-B.3: OCR 详情不 fallback previewImage（OverlayLayer 只吃 Document
   )
 })
 
-test('13-B.3 反向锚点: Print 域仍合法持有 previewImage（守卫非真空通过）', () => {
-  // 若 13-B.5 迁移 Print 后删除该依赖，此断言会变红 → 提示同步更新 docs/render-contract.md §4.1。
+test('13-B.5 C1: Print 域仍合法持有 previewImage（仅作 docId 缺失兜底，非主路径）', () => {
+  // 反向锚点：Print 是 §4.1 允许的 previewImage 消费者（旧 session 兜底）。
   const print = src('hooks/usePrint.js')
   assert.ok(
     RE_BASE64_FIELD.test(print),
-    'usePrint.js 当前仍以 previewImage 为 OFD/图片打印唯一来源（Allowed consumer，13-B.5 才迁移）'
+    'usePrint.js 仍含 previewImage（仅作 docId 缺失兜底，13-B.5 C1 已迁 docId-first）'
+  )
+  // 正向锚点：迁移后必须存在 docId-first 取栅格逻辑（证明不再是 previewImage 主路径）
+  assert.ok(
+    print.includes('fetchPrintRaster(f.docId'),
+    'usePrint.js 必须存在 fetchPrintRaster(f.docId ...) —— Print 已 docId-first（Render Contract）'
   )
   const ctx = src('contexts/FileContext.jsx')
   assert.ok(
     RE_BASE64_FIELD.test(ctx),
-    'FileContext.jsx:61 OFD 可打印判定仍依赖 previewImage（Print-adjacent，Allowed）'
+    'FileContext.jsx OFD 可打印判定仍含 previewImage（docId 缺失兜底）'
+  )
+  assert.ok(
+    ctx.includes('!f.docId && !f.previewImage'),
+    'FileContext.jsx OFD gate 必须改为 !f.docId && !f.previewImage（兜底语义，非主路径）'
   )
 })
