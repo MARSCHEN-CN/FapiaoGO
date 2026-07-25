@@ -21,8 +21,9 @@ import { runFallbackParseTask } from '../runners/fallbackParseRunner'
 import { runChunkedImport } from '../import/runChunkedImport'
 import { ensureRenderContract, ensureDocumentMetadata } from '../services/renderDocument'
 import { mapParseResultToFileUpdate } from '../mappers/parseResultMapper'
-import { createImportSession, addFilesToSession, replaceFileItems, updateProgress } from '../stores/ImportSessionStore'
-import { ensureDocumentFromFileObj, flushDocumentNotifications, getDocument } from '../stores/DocumentStore'
+import { createImportSession, addFilesToSession, replaceFileItems, updateProgress, addDocument } from '../stores/ImportSessionStore'
+import { ensureDocumentFromFileObj, flushDocumentNotifications, getDocument, registerDocument } from '../stores/DocumentStore'
+import { createDocument, createPageMeta } from '../models/InvoiceDocument'
 import { processImportedFiles } from '../processors/invoicePostProcessor'
 import { consumeParseResult } from '../consumers/parseResultConsumer'
 import { createParseResult } from '../models/ParseResult'
@@ -479,7 +480,10 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
           onTaskStream: setTaskStream,
           hydrateChunk: async ({ batchId, chunk, signal, client, terminalFileKeys }) => {
             const HYDRATION_CHUNK = 100
-            const items = await client.getBatchResults(batchId, signal)
+            // 兼容两种返回形态：历史返回 Array（data.items），未来可返回 { items, documents }
+            const _batchResults = await client.getBatchResults(batchId, signal)
+            const items = Array.isArray(_batchResults) ? _batchResults : (_batchResults?.items || [])
+            const documents = (!Array.isArray(_batchResults) && Array.isArray(_batchResults?.documents)) ? _batchResults.documents : []
             const resultMap = new Map()
             for (const item of items) {
               if (item.clientKey) resultMap.set(item.clientKey, item)
@@ -540,6 +544,60 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
               }
               if (j + HYDRATION_CHUNK < chunk.length) {
                 await new Promise((r) => setTimeout(r, 0))
+              }
+            }
+
+            // E-2.2: 使用后端组装结果创建 InvoiceDocument（多页分组）
+            // 仅当 backend assembly 返回 documents 时启用；否则 session.documents 保持空，
+            // buildDocumentViewModel 退化为 groupFilesByDocument（向后兼容）。
+            const hasAssembledDocs = Array.isArray(documents) && documents.length > 0
+            const assembledDocIds = new Set()
+
+            if (hasAssembledDocs) {
+              for (const assembled of documents) {
+                // 找到属于该组装结果的 fileObj（按 invoiceNumber 匹配）
+                const matchingItems = items.filter(i =>
+                  i.invoiceNumber === assembled.invoiceNumber
+                )
+                const matchingKeys = new Set(
+                  matchingItems.map(i => i.clientKey).filter(Boolean)
+                )
+                const matchingFiles = chunk.filter(f => matchingKeys.has(f.key))
+                if (matchingFiles.length === 0) continue
+
+                const invDocId = `${assembled.sourceDocId || ''}_inv_${assembled.invoiceNumber || ''}`
+                const repFile = matchingFiles[0]
+                const prev = getDocument(invDocId)
+                // 绕过 ensureDocumentFromFileObj（它按 docId 过滤文件，但 assembly 的 docId ≠ 文件 docId），
+                // 直接由 matchingFiles 构造 InvoiceDocument
+                const pages = matchingFiles.map((f, i) =>
+                  createPageMeta({
+                    docId: invDocId,
+                    index: i,
+                    width: 0,
+                    height: 0,
+                    sourceRotation: 0,
+                  })
+                )
+                const doc = createDocument({
+                  docId: invDocId,
+                  fileKey: repFile.key || '',
+                  sourceHash: repFile.identity?.sourceHash || '',
+                  pages,
+                })
+                registerDocument(doc)
+                if (doc !== prev) docsTouched = true
+                // E-2.2: 记录 sourceDocId + 该发票的精确页面 fileKey 列表
+                doc.sourceDocId = repFile.docId || assembled.sourceDocId || ''
+                doc._pageKeys = Array.from(matchingKeys)
+                if (session?.id) {
+                  addDocument(session.id, doc)
+                }
+                assembledDocIds.add(invDocId)
+              }
+              if (docsTouched) {
+                flushDocumentNotifications()
+                docsTouched = false
               }
             }
           },

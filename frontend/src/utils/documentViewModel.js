@@ -28,6 +28,7 @@
  */
 
 import { groupFilesByDocument } from './groupDocuments.js'
+import { invoiceDocumentsToRows } from './invoiceDocumentViewModel.js'
 import { detectDuplicateInvoices, isFailedFile, isPreviousYearFile } from '../utils.js'
 
 /**
@@ -72,18 +73,25 @@ function parseAmount(amountStr) {
 /**
  * 构建 Document 视图模型（纯函数，派生自 page-level files，不修改入参）。
  *
+ * E-2.2：新增可选 invoiceDocs 参数。当传入 InvoiceDocument[] 时，
+ * 优先使用 invoiceDocumentsToRows 替代 groupFilesByDocument。
+ *
  * @param {Object[]} files - page-level fileObj 数组（来自 FileContext）
+ * @param {Object[]} [invoiceDocs] - InvoiceDocument[]（来自 ImportSessionStore.documents）
  * @returns {{
- *   documents: Object[],            document 条目数组（groupFilesByDocument 产出）
+ *   documents: Object[],            document 条目数组
  *   documentCount: number,          文件数（统计单位 = document）
- *   duplicateGroups: Map<string, Object[]>,  重复组：invoiceNumber → document 条目数组（仅 size>1）
- *   totalAmount: number,            总金额（每 document 取 representative 金额一次）
- *   failedCount: number,            失败 document 数（任一页失败即计入）
+ *   duplicateGroups: Map<string, Object[]>,  重复组
+ *   totalAmount: number,            总金额
+ *   failedCount: number,            失败 document 数
  *   previousYearCount: number,      往年发票 document 数
  * }}
  */
-export function buildDocumentViewModel(files) {
-  const documents = groupFilesByDocument(files)
+export function buildDocumentViewModel(files, invoiceDocs = null) {
+  const USE_INVOICE_DOCUMENT_ROWS = Array.isArray(invoiceDocs) && invoiceDocs.length > 0
+  const documents = USE_INVOICE_DOCUMENT_ROWS
+    ? invoiceDocumentsToRows(invoiceDocs, files)
+    : groupFilesByDocument(files)
 
   // 重复检测：函数体不变（按 invoiceNumber 分组），输入升级为 document 条目
   const duplicateGroups = detectDuplicateInvoices(documents)

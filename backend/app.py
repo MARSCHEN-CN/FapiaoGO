@@ -28,6 +28,8 @@ import db as db_module
 DB_AVAILABLE = True
 
 from response_builder import build_response
+from page_result_store import get_page_result_store
+from invoice_assembly_pipeline import assemble as assemble_invoice, invoice_document_to_db_record
 from services.invoice_service import (
     parse_invoice_service, allowed_file, sanitize_filename, detect_file_format
 )
@@ -1118,15 +1120,60 @@ def parse_invoice():
     finally:
         _parse_semaphore.release()
 
-    # ── 主进程完成 DB 写入（worker 中 skip_db_write=True，避免跨进程写库） ──
+    # ── 主进程完成 DB 写入 —— 多页组装路径 vs 旧直写路径 ──
+    # Phase C：接收前端传递的 source_doc_id/page_num/total_pages，
+    # 有分组信息时走 PageResultStore + InvoiceAssemblyPipeline，
+    # 无分组信息时走 legacy upsert_invoice（兼容旧客户端/非分页文件）。
     if result is not None:
         db_record = result.get('db_record')
         if db_record:
-            try:
-                result['db_result'] = db_module.upsert_invoice(db_record)
-            except Exception as e:
-                logger.warning("发票自动入库失败: %s", e)
-                result['db_result'] = None
+            source_doc_id = request.form.get('source_doc_id', '').strip()
+            page_num_str = request.form.get('page_num', '').strip()
+            total_pages_str = request.form.get('total_pages', '').strip()
+
+            if source_doc_id and page_num_str.isdigit() and total_pages_str.isdigit():
+                # ── 多页组装路径 ──
+                # 传给 store 的是完整 parse 结果（含 extra_fields），
+                # 不是 db_record（db_record 格式与 assembly 期望不同）。
+                # assembly 后从合并结果重建 db_record。
+                page_num = int(page_num_str)
+                total_pages = int(total_pages_str)
+
+                store = get_page_result_store()
+                completed = store.put(source_doc_id, page_num, total_pages, result)
+
+                if completed:
+                    # 所有页已收齐 → 组装 → 入库
+                    all_pages = store.get_pages(source_doc_id)
+                    if all_pages:
+                        invoice_docs = assemble_invoice(all_pages)
+                        for inv_doc in invoice_docs:
+                            # 使用契约化转换函数生成 db_record
+                            inv_db = invoice_document_to_db_record(
+                                inv_doc,
+                                fallback_hash=db_record.get('hash_sha256', ''),
+                                fallback_filename=db_record.get('file_name', ''),
+                                fallback_raw_text=db_record.get('raw_text', ''),
+                            )
+                            try:
+                                db_module.upsert_invoice(inv_db)
+                                logger.info(
+                                    f"[Assembly] 发票入库: number={inv_doc.get('invoice_number', '?')}, "
+                                    f"items={len(inv_db.get('line_items', []))}"
+                                )
+                            except Exception as e:
+                                logger.warning("合并发票入库失败: %s", e)
+                    # 从暂存中移除已处理的数据（无论组装是否成功）
+                    store.remove(source_doc_id)
+
+                result['db_result'] = None  # 单页不触发独立入库
+            else:
+                # ── 旧路径：直写（无分组信息/非 PDF 单文件） ──
+                try:
+                    result['db_result'] = db_module.upsert_invoice(db_record)
+                except Exception as e:
+                    logger.warning("发票自动入库失败: %s", e)
+                    result['db_result'] = None
 
     if result is None:
         return jsonify({"success": False, "error": "无法识别的文件格式"}), 400

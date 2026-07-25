@@ -29,6 +29,14 @@ import { createSession, createSessionFile } from '../models/ImportSession.js'
 /** @type {Map<string, import('../models/ImportSession').ImportSessionData>} */
 const sessions = new Map()
 
+/** 最近活跃的 sessionId（供 FileContext 等 React 组件通过订阅获取） */
+let activeSessionId = null
+
+/** 文档版本计数器：每次 addDocument 递增，供 useSyncExternalStore 检测文档变更 */
+let documentVersion = 0
+
+export function getDocumentVersion() { return documentVersion }
+
 // ── 订阅者（用于 React 同步） ───────────────────────────
 
 /** @type {Set<(sessionId: string) => void>} */
@@ -64,8 +72,17 @@ function notify(sessionId) {
 export function createImportSession(files = []) {
   const session = createSession(files)
   sessions.set(session.id, session)
+  activeSessionId = session.id
   notify(session.id)
   return session
+}
+
+/**
+ * 获取当前活跃会话的 ID。
+ * @returns {string|null}
+ */
+export function getActiveSessionId() {
+  return activeSessionId
 }
 
 /**
@@ -121,6 +138,29 @@ export function updateFileStatus(sessionId, fileKey, updates) {
   if (!file) return
 
   Object.assign(file, updates)
+  notify(sessionId)
+}
+
+/**
+ * 向会话中添加一个 InvoiceDocument（双写模式，E-1）。
+ * 通过 docId 去重：同 docId 的文档不会被重复添加。
+ * @param {string} sessionId
+ * @param {Object} doc - InvoiceDocument（来自 DocumentStore）
+ */
+export function addDocument(sessionId, doc) {
+  const session = sessions.get(sessionId)
+  if (!session) return
+  const docId = doc?.id || doc?.docId
+  if (!docId) return
+  session.documents = session.documents || []
+  const pages = doc?.pages?.length ?? '?'
+  if (!session.documents.some(d => (d.id || d.docId) === docId)) {
+    session.documents.push(doc)
+    documentVersion++
+    console.log(`[E1] addDocument: docId=${docId}, pages=${pages}, docsCount=${session.documents.length}`)
+  } else {
+    console.log(`[E1] addDocument: dedup skipped docId=${docId}, already exists (pages=${pages})`)
+  }
   notify(sessionId)
 }
 
