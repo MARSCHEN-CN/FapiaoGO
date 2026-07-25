@@ -2,8 +2,12 @@
  * ThumbnailItem — 单个缩略图
  *
  * 职责：
- *   渲染单页缩略图，支持 lazy 加载（IntersectionObserver 触发）。
+ *   渲染单页缩略图，支持 lazy 加载（由父级 shouldLoad 控制）。
+ *   根据页面真实宽高比展示缩略图（通过 aspectRatio prop）。
  *   未加载时显示灰色骨架 placeholder。
+ *
+ * 来源：13-C Viewer Layout 资产级迁移（left-thumbnail-layout）。
+ *   aspectRatio 取自该分支；shouldLoad 懒加载门控取自 V16 HEAD 性能决策。
  *
  * @module components/ThumbnailItem
  */
@@ -15,10 +19,11 @@ import React, { useRef, useState, useEffect, memo } from 'react'
  * @param {number} props.index - 页索引（0-based）
  * @param {string} props.thumbnailUrl - 缩略图 URL
  * @param {boolean} props.active - 是否当前页
- * @param {boolean} props.shouldLoad - 是否应加载（当前页±5）
+ * @param {boolean} props.shouldLoad - 是否应加载（当前页±LAZY_RANGE，由 ThumbnailStrip 计算）
+ * @param {number} [props.aspectRatio] - 页面宽高比（width/height），用于适配缩略图比例
  * @param {(index: number) => void} props.onClick - 点击回调
  */
-function ThumbnailItemInner({ index, thumbnailUrl, active, shouldLoad, onClick }) {
+function ThumbnailItemInner({ index, thumbnailUrl, active, shouldLoad, aspectRatio, onClick }) {
   const [loaded, setLoaded] = useState(false)
   const [error, setError] = useState(false)
   const imgRef = useRef(null)
@@ -48,7 +53,7 @@ function ThumbnailItemInner({ index, thumbnailUrl, active, shouldLoad, onClick }
         }
       }}
     >
-      <div className="thumbnail-frame">
+      <div className="thumbnail-frame" style={aspectRatio ? { aspectRatio: `${aspectRatio}` } : undefined}>
         {shouldLoad && thumbnailUrl && !error ? (
           <img
             ref={imgRef}
