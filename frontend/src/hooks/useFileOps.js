@@ -20,7 +20,7 @@ import { runSplitTask } from '../runners/splitRunner'
 import { runFallbackParseTask } from '../runners/fallbackParseRunner'
 import { runChunkedImport } from '../import/runChunkedImport'
 import { mapParseResultToFileUpdate } from '../mappers/parseResultMapper'
-import { createImportSession, addFilesToSession, replaceFileItems, updateProgress } from '../stores/ImportSessionStore'
+import { createImportSession, addFilesToSession, replaceFileItems, updateProgress, addDocument } from '../stores/ImportSessionStore'
 import { ensureDocumentFromFileObj, flushDocumentNotifications, getDocument } from '../stores/DocumentStore'
 import { processImportedFiles } from '../processors/invoicePostProcessor'
 import { consumeParseResult } from '../consumers/parseResultConsumer'
@@ -499,6 +499,10 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
                   const prev = getDocument(effectiveDocId)
                   const doc = ensureDocumentFromFileObj(docFileObj, readyFiles, { silent: true })
                   if (doc && doc !== prev) docsTouched = true
+                  // E-1：InvoiceDocument 同步到 ImportSessionStore.documents[]
+                  if (doc && session?.id) {
+                    addDocument(session.id, doc)
+                  }
                 }
               }
               if (docsTouched) {
