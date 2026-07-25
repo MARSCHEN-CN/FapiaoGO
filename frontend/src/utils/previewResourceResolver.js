@@ -35,7 +35,7 @@ export function resolvePreviewUrl(page, docId) {
  *
  * 指向后端 /print 端点（'print' preset：200dpi 高质 WebP/PNG），
  * 与 /preview 不同——/print 用于打印输出，分辨率更高。
- * 这是 OFD 脱离旧链 base64 预览图后的唯一打印栅格来源（OFD 无前端可读字节）。
+ * 这是文档脱离旧链 base64 预览图后统一经 docId 栅格的唯一打印来源（原生文档无前端可读字节）。
  *
  * @param {import('../models/InvoiceDocument').PageMeta} page - 页面元数据
  * @param {string} docId - 文档 ID
