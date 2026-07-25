@@ -427,6 +427,13 @@ electron/node_modules/
 .DS_Store
 Thumbs.db
 *.json
+# 发布工程：恢复受控清单（13-F.2-B 把 build toolchain 纳入版本控制，使 clone 后可复现构建）
+!package.json
+!package-lock.json
+!electron/package.json
+!electron/package-lock.json
+!frontend/package.json
+!frontend/package-lock.json
 database
 resources/sumatra/SumatraPDF-settings.txt
 python-3.14.6-embed-amd64.zip
