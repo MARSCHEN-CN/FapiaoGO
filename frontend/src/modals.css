@@ -26,8 +26,8 @@
   transition: all 0.15s ease;
 }
 .modal-close-btn:hover {
-  background: var(--surface-hover);
-  color: var(--text);
+  background: rgba(220, 38, 38, 0.08);
+  color: var(--red);
 }
 
 /* ======================== Print Progress Modal ======================== */
