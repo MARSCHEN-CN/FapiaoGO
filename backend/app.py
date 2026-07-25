@@ -440,6 +440,9 @@ def api_export_excel_rows():
     """
     data = request.get_json() or {}
     file_names = data.get('fileNames', [])
+    if file_names:
+        import logging
+        logging.getLogger(__name__).info('[E2-Export] Backend received fileNames: %s', file_names)
     if not file_names:
         return jsonify({'success': False, 'error': '缺少 fileNames'}), 400
     rows = []

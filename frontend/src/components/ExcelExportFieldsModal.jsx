@@ -64,7 +64,13 @@ const ExcelExportFieldsModal = ({
 
   // 由 files 推导后端需要的 fileNames
   const fileNames = useMemo(
-    () => (files || []).map((f) => f.name || f.path || f.fileName || '').filter(Boolean),
+    () => {
+      const names = (files || []).map((f) => f.name || f.path || f.fileName || '').filter(Boolean)
+      if (names.length > 0) {
+        console.log('[E2-Export] Modal fileNames:', names)
+      }
+      return names
+    },
     [files],
   )
 

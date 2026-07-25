@@ -1123,7 +1123,19 @@ function AppContent() {
         />
         <ExcelExportFieldsModal
           visible={showExcelFields}
-          files={documentView?.documents?.length ? documentView.documents : files.filter(f => f.status === 'parsed')}
+          files={(() => {
+            const exportFiles = documentView?.documents?.length ? documentView.documents : files.filter(f => f.status === 'parsed')
+            if (exportFiles.length > 0) {
+              console.log('[E2-Export] documentView.documents:', exportFiles.map(d => ({
+                key: d.key,
+                name: d.name,
+                docId: d.docId,
+                invoiceNumber: d.invoiceNumber || d.invoiceNumber,
+                _isDocumentGroup: !!d._isDocumentGroup,
+              })))
+            }
+            return exportFiles
+          })()}
           initialColumns={excelExportSettings.columns}
           onPersist={excelExportSettings.persist}
           onConfirm={(cols) => {
