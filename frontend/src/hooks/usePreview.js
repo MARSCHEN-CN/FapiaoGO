@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useRef, useMemo, useLayoutEffect } from 'react'
 import { PREVIEW_DPI, GLOBAL_PREVIEW_DPI, ZOOM_STEPS, USE_RENDER_ENGINE_PREVIEW, buildPreviewUrl, BACKEND_URL } from '../config'
 import {
-  b64toBlob, getFileFormat, getExtension, isMergeMode, getMergePair,
+  getFileFormat, getExtension, isMergeMode, getMergePair,
 } from '../utils'
 import { detectDocumentOrientation } from '../utils/detectOrientation'
 import { getForcedLandscape } from '../utils/mergeMode'
@@ -1184,21 +1184,6 @@ export function usePreview({ files, settings, electronAPIRef }) {
         // 复用已加载的 blob URL
         if (fObj.key === currentKey && currentUrl) {
           _previewImageUrl = currentUrl
-        }
-        // 从 previewImage 加载（带 Blob 缓存，避免重复 b64toBlob）
-        else if (fObj.previewImage) {
-          const cacheKey = 'blob_' + fObj.key
-          let blob = lruGet(previewLoadCacheRef.current, cacheKey)
-          if (!blob || blob.size === 0) {
-            blob = b64toBlob(fObj.previewImage, 'image/png')
-            if (blob.size > 0) {
-              lruSet(previewLoadCacheRef.current, cacheKey, blob)
-            }
-          }
-          if (blob.size > 0) {
-            _previewImageUrl = URL.createObjectURL(blob)
-            pendingBlobUrlsRef.current.push(_previewImageUrl)
-          }
         }
         // 从 file 对象加载（仅图片）
         else if (fmt === 'image' && fObj.file) {

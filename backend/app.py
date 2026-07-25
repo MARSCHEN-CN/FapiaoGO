@@ -861,15 +861,7 @@ def split_pdf():
                 for (i, page_num, page_id) in page_items:
                     page_bytes = engine.extract_page_pdf(
                         doc.doc_id, page_num, pdf_doc=local_pdf)
-                    preview_data, _, _ = engine.render(
-                        doc_id=doc.doc_id,
-                        preset_name="preview",
-                        page=page_num,
-                        override_params={"dpi": 200, "fmt": "jpeg"},
-                        pdf_doc=local_pdf,
-                    )
-                    preview_b64 = base64.b64encode(preview_data).decode('ascii')
-                    chunk_out.append((i, page_num, page_id, page_bytes, preview_b64))
+                    chunk_out.append((i, page_num, page_id, page_bytes))
             return chunk_out
 
         def _register_and_collect(chunk_results):
@@ -877,7 +869,7 @@ def split_pdf():
             # chunk_results 为「list of per-chunk lists」，按 chunk 顺序展开即文档序
             # （ex.map 保 chunk 序；每个 chunk 内部按页序产出）。
             for chunk in chunk_results:
-                for (i, page_num, page_id, page_bytes, preview_b64) in chunk:
+                for (i, page_num, page_id, page_bytes) in chunk:
                     with _page_registry_lock:
                         _page_registry[page_id] = {"doc_id": doc.doc_id, "page": page_num}
                     with _page_cache_lock:
@@ -889,7 +881,6 @@ def split_pdf():
                     pages.append({
                         "page_index": page_num,
                         "page_id": page_id,
-                        "preview_image": preview_b64,
                         "page_bytes": base64.b64encode(page_bytes).decode('ascii'),
                     })
 
