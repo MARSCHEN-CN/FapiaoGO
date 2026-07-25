@@ -61,7 +61,7 @@ export function mapParseResultToFileUpdate(result, fileObj) {
   //   - 直接传顶层 doc_id（测试/兼容）：result.doc_id
   // 缺省 / OCR 失败：docId 保持 ''，绝不 fallback 到 path / key / filename。
   // 无 doc_id 时直接返回 fileUpdate，保持 immutable flow（不 mutate fileObj.identity）。
-  const docId = result?.doc_id ?? raw?.doc_id ?? ''
+  const docId = result?.doc_id ?? raw?.doc_id ?? raw?.docId ?? ''
   if (docId && fileObj) {
     // updateDocumentIdentity 返回完整新 fileObj；此处只摘 docId + identity，
     // 避免展开整个 fileObj 覆盖上面的业务字段（status / invoiceType 等）。
