@@ -62,7 +62,7 @@ const ExcelExportFieldsModal = ({
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
 
-  // 由 files 推导后端需要的 fileNames
+  // 由 files 推导后端需要的 fileNames 和 invoiceNumbers
   const fileNames = useMemo(
     () => {
       const names = (files || []).map((f) => f.name || f.path || f.fileName || '').filter(Boolean)
@@ -70,6 +70,21 @@ const ExcelExportFieldsModal = ({
         console.log('[E2-Export] Modal fileNames:', names)
       }
       return names
+    },
+    [files],
+  )
+  const invoiceNumbers = useMemo(
+    () => {
+      const numbers = (files || [])
+        .map((f) => f.invoiceNumber || f.invoice_number || '')
+        .filter(Boolean)
+      // E-2.2: 按 invoiceNumber 去重，避免同一 PDF 多页导出重复（_pN 后缀不参与 DB 匹配）
+      const seen = new Set()
+      return numbers.filter((n) => {
+        if (seen.has(n)) return false
+        seen.add(n)
+        return true
+      })
     },
     [files],
   )
@@ -87,10 +102,13 @@ const ExcelExportFieldsModal = ({
     const controller = new AbortController()
     setLoading(true)
     setError(null)
+    const body = invoiceNumbers.length > 0
+      ? { invoiceNumbers }
+      : { fileNames }
     fetch(`${BACKEND_URL}/api/export-excel-rows`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ fileNames }),
+      body: JSON.stringify(body),
       signal: controller.signal,
     })
       .then(async (res) => {

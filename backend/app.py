@@ -440,10 +440,19 @@ def api_export_excel_rows():
     """
     data = request.get_json() or {}
     file_names = data.get('fileNames', [])
+    invoice_numbers = data.get('invoiceNumbers', [])
     if file_names:
-        import logging
         logging.getLogger(__name__).info('[E2-Export] Backend received fileNames: %s', file_names)
-    if not file_names:
+    if invoice_numbers:
+        logging.getLogger(__name__).info('[E2-Export] Backend received invoiceNumbers: %s', invoice_numbers)
+    rows = []
+    if invoice_numbers:
+        for rec in db_module.get_invoices_by_numbers(invoice_numbers):
+            rows.extend(_db_record_to_export(rec))
+    elif file_names:
+        for rec in db_module.get_invoices_by_filenames(file_names):
+            rows.extend(_db_record_to_export(rec))
+    else:
         return jsonify({'success': False, 'error': '缺少 fileNames'}), 400
     rows = []
     for rec in db_module.get_invoices_by_filenames(file_names):

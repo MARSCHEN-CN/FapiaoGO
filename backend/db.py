@@ -1246,6 +1246,33 @@ def get_invoices_by_filenames(filenames: List[str]) -> List[Dict]:
     return results
 
 
+def get_invoices_by_numbers(numbers: List[str]) -> List[Dict]:
+    """按发票号码查找发票（E-2: 替代按文件名查询，避免 _pN 后缀合并到同一条记录）
+
+    Args:
+        numbers: 发票号码列表
+
+    Returns:
+        匹配的发票记录列表（保持 numbers 传入顺序），未匹配的条目跳过
+    """
+    if not numbers:
+        return []
+    _ensure_loaded()
+    with _rw_lock.gen_rlock():
+        results = []
+        seen = set()
+        for num in numbers:
+            if not num or num in seen:
+                continue
+            seen.add(num)
+            indices = _invoice_index_by_number.get(num, [])
+            if indices:
+                idx = indices[0]  # 取第一个匹配的记录
+                if idx < len(_invoices) and not _invoices[idx].get('deleted_at'):
+                    results.append(_invoices[idx].copy())
+    return results
+
+
 def get_all_invoices(limit: Optional[int] = None, offset: int = 0) -> List[Dict]:
     """获取所有未删除的发票记录（支持分页：limit<=0 或 None 时返回全部）"""
     _ensure_loaded()
