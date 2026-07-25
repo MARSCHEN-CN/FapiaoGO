@@ -9,6 +9,7 @@ import { isDocumentEngineEnabled } from './documentEngine.js'  // P2C 统一入�
 import { createPlacement } from './compose/composePlacement.js'  // [B1 p2] Virtual Paper 几何（contentRect fit）：Preview/Print 共用唯一几何来源
 import { drawRenderCommand } from './layout/renderDraw.js'  // [C3-2] 与 Worker 共用唯一 executor（drawRenderCommand 纯执行、DOM-free）
 import { buildSingleFileRenderCommand } from './layout/singleFileRenderCommand.js'  // [D1-2] 单文件预览 RenderCommand Producer（与 Compose/Print 同契约）
+import { fileObjToComposePagePlan } from './compose/composePagePlan.js'  // 13-E.1 B-lite：FileObj → ComposePagePlan（线程来源身份）
 // ✅ renderModel.js 为死代码，renderMultipleItemsToCanvas 直接做 transform，不经过 RenderModel
 // import { createRenderModels, applyTransformToContext, restoreContext } from './renderModel'
 
@@ -863,23 +864,14 @@ async function _renderViaWorker(items, paperKey, dpi, isLandscape, rotations, sl
 
   let layout, commands
   if (canUseSlotComposer(paperLayout, layoutOptions.strategy)) {
-    // V16 路径：MultiTicketComposer + buildRenderCommand（与 _renderDirect 同逻辑）
-    const { compose } = await import('./layout/MultiTicketComposer.js')
+    // V16 路径：FileObj → ComposePagePlan → MultiTicketComposer.composePlans + buildRenderCommand
+    const { composePlans } = await import('./layout/MultiTicketComposer.js')
     const { computeTicketSlots } = await import('./layout/SlotLayout.js')
     const forcedOrient = isLandscape ? 'landscape' : 'portrait'
-    const documents = items.map((item) => {
-      const id = item.id || item.key
-      const cs = contentSources.get(id)
-      const w = cs ? cs.width : (item.width || 0)
-      const h = cs ? cs.height : (item.height || 0)
-      return {
-        pageSize: { w, h },
-        pageOrientation: (w >= h) ? 'landscape' : 'portrait',
-        paperOrientation: forcedOrient,
-        rotation: (rotations && rotations[id]) || 0,
-      }
-    })
-    const result = compose({ paperLayout, documents, ticketCount: slotCount })
+    // 13-E.1：在 FileObj → RenderCommand 之间插入 ComposePagePlan，线程 docId/pageId 来源身份
+    const plans = items.map((item, i) =>
+      fileObjToComposePagePlan(item, i, contentSources.get(item.id || item.key), forcedOrient, rotations))
+    const result = composePlans({ paperLayout, plans, ticketCount: slotCount })
     commands = result.map(r => r.renderCommand)
     const slotPositions = computeTicketSlots(paperLayout, items.length)
     const effW = isLandscape ? paperLayout.paperRect.h : paperLayout.paperRect.w
@@ -1150,26 +1142,14 @@ async function _renderDirect(
   // （替代 createLayout + _buildComposeCommands 的老路径，使用同一套 createPlacement 几何）。
   let layout, commands, slotPositions
   if (canUseSlotComposer(paperLayout, layoutOptions.strategy)) {
-    const { compose } = await import('./layout/MultiTicketComposer.js')
+    const { composePlans } = await import('./layout/MultiTicketComposer.js')
     const { computeTicketSlots } = await import('./layout/SlotLayout.js')
 
-    // 构造 DocumentState 数组；paperOrientation 跟随合并模式强制方向（isLandscape），
-    // 使 buildRenderCommand 正确设置 paperLandscape 并做 slot→landscape 轴交换。
+    // 13-E.1：FileObj → ComposePagePlan，线程 docId/pageId 来源身份（documents 映射改为 plans）
     const forcedOrient = isLandscape ? 'landscape' : 'portrait'
-    const documents = items.map((item, i) => {
-      const id = item.id || item.key
-      const cs = contentSources.get(id)
-      const w = cs ? cs.width : (item.width || 0)
-      const h = cs ? cs.height : (item.height || 0)
-      return {
-        pageSize: { w, h },
-        pageOrientation: (w >= h) ? 'landscape' : 'portrait',
-        paperOrientation: forcedOrient,
-        rotation: (rotations && rotations[id]) || 0,
-      }
-    })
-
-    const result = compose({ paperLayout, documents, ticketCount: slotCount })
+    const plans = items.map((item, i) =>
+      fileObjToComposePagePlan(item, i, contentSources.get(item.id || item.key), forcedOrient, rotations))
+    const result = composePlans({ paperLayout, plans, ticketCount: slotCount })
     commands = result.map(r => r.renderCommand)
     slotPositions = computeTicketSlots(paperLayout, items.length)
 
