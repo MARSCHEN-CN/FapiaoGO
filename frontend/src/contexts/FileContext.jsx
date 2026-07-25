@@ -1,7 +1,8 @@
-import { createContext, useContext, useReducer, useCallback, useState, useMemo } from 'react'
+import { createContext, useContext, useReducer, useCallback, useState, useMemo, useSyncExternalStore } from 'react'
 import { filterFiles, isMergeMode } from '../utils'
 import { buildDocumentViewModel } from '../utils/documentViewModel'
 import { amountToChinese } from '../utils/amountConverter'
+import { getActiveSessionId, getSession, subscribe } from '../stores/ImportSessionStore'
 
 // ── Reducer ──────────────────────────────────────────────────
 
@@ -51,7 +52,23 @@ export function FileProvider({ children }) {
   // Document 视图模型统一出口：Sidebar / FileList / 排序 / 重复删除共用同一份派生结果，
   // 不再各自消费原始 page-level files（多页发票 = 一个发票，金额/计数不按页累加）。
 
-  const documentView = useMemo(() => buildDocumentViewModel(files), [files])
+  // ── E-2.2：从 ImportSessionStore 获取 InvoiceDocument，注入视图模型 ──
+  // useSyncExternalStore 保证 documents 变化时 React 重渲染
+  const sessionId = useSyncExternalStore(
+    subscribe,
+    () => getActiveSessionId(),
+    () => null,
+  )
+  const invoiceDocs = useMemo(() => {
+    if (!sessionId) return null
+    const session = getSession(sessionId)
+    return session?.documents?.length > 0 ? session.documents : null
+  }, [sessionId])
+
+  const documentView = useMemo(
+    () => buildDocumentViewModel(files, invoiceDocs),
+    [files, invoiceDocs],
+  )
 
   const fileStats = useMemo(() => {
     // 可打印计数：Print Pipeline 域，打印以页为单位，保持 page 级

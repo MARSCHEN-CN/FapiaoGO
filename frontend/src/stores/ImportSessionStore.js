@@ -29,6 +29,9 @@ import { createSession, createSessionFile } from '../models/ImportSession.js'
 /** @type {Map<string, import('../models/ImportSession').ImportSessionData>} */
 const sessions = new Map()
 
+/** 最近活跃的 sessionId（供 FileContext 等 React 组件通过订阅获取） */
+let activeSessionId = null
+
 // ── 订阅者（用于 React 同步） ───────────────────────────
 
 /** @type {Set<(sessionId: string) => void>} */
@@ -64,8 +67,17 @@ function notify(sessionId) {
 export function createImportSession(files = []) {
   const session = createSession(files)
   sessions.set(session.id, session)
+  activeSessionId = session.id
   notify(session.id)
   return session
+}
+
+/**
+ * 获取当前活跃会话的 ID。
+ * @returns {string|null}
+ */
+export function getActiveSessionId() {
+  return activeSessionId
 }
 
 /**
