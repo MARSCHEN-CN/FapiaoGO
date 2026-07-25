@@ -1,9 +1,6 @@
 import { useState, useCallback, useEffect, useRef, useMemo, Suspense, lazy } from 'react'
 import { FileProvider, useFileContext } from './contexts/FileContext'
 
-// 懒加载设置窗口（已有）
-const SettingsWindow = lazy(() => import('./components/SettingsWindow'))
-
 // 懒加载弹窗组件（优化首屏加载）
 const PrintProgressModal = lazy(() => import('./components/PrintProgressModal'))
 const RenamePreviewModal = lazy(() => import('./components/RenamePreviewModal'))
@@ -90,7 +87,6 @@ function App() {
 }
 
 function AppContent() {
-  const isSettingsWindow = window.location.hash === '#/settings'
   const isCalculatorWindow = window.location.hash === '#/calculator'
   const isDevViewer = window.location.hash === '#/dev-viewer' || new URLSearchParams(window.location.search).get('dev') === 'viewer'
 
@@ -115,8 +111,7 @@ function AppContent() {
   // ============================
   const {
     settings, setSettings, saveSettings, updateSettings,
-    settingsWindowOpen, setSettingsWindowOpen,
-    printers, setPrinters, openSettings,
+    printers, setPrinters,
   } = useSettings(electronAPIRef)
 
   // Excel 导出字段选择持久化（Commit 4B）
@@ -671,12 +666,6 @@ function AppContent() {
       }
       ipc.on('print-progress', handleProgress)
 
-      const handleSettingsClosed = () => {
-        setSettingsWindowOpen(false)
-        ipc.invoke('load-print-settings').then((saved) => { if (saved) setSettings(saved) })
-      }
-      ipc.on('settings-window-closed', handleSettingsClosed)
-
       // ✅ 实时监听设置变化（尤其是 mergeMode），立即更新预览
       const handleSettingsChanged = (_event, newSettings) => {
         setSettings((prev) => ({ ...prev, ...newSettings }))
@@ -699,7 +688,6 @@ function AppContent() {
 
       return () => {
         ipc.removeListener('print-progress', handleProgress)
-        ipc.removeListener('settings-window-closed', handleSettingsClosed)
         ipc.removeListener('settings-changed', handleSettingsChanged)
         ipc.removeListener('context-menu-files', handleContextMenuFiles)
         clearTimeout(printTimeoutRef.current)
@@ -710,20 +698,6 @@ function AppContent() {
   // 和 setState 函数式更新（setSettings(prev=>...)、setFiles(prev=>...) 等，引用稳定），
   // 不存在过期闭包风险。IPC 监听器应仅在挂载时注册一次。
   }, [])
-
-  // ============================
-  // 设置窗口模式
-  // ============================
-  useEffect(() => {
-    if (!isSettingsWindow) return
-    const api = getElectronAPI()
-    const ipc = api?.ipcRenderer
-    if (!ipc) return
-    ipc.invoke('load-print-settings').then((saved) => { if (saved) setSettings(saved) })
-    ipc.invoke('get-printers').then((list) => {
-      if (Array.isArray(list) && list.length > 0) setPrinters(list)
-    })
-  },       [isSettingsWindow, setSettings, setPrinters])
 
   // ============================
   // 自动预览：只在文件从空变非空时触发（导入场景）
@@ -737,14 +711,6 @@ function AppContent() {
     }
     prevFilesLengthRef.current = files.length
   }, [files.length, previewFile])
-
-  if (isSettingsWindow) {
-    return (
-      <Suspense fallback={<div></div>}>
-        <SettingsWindow settings={settings} saveSettings={saveSettings} printers={printers} electronAPI={getElectronAPI()} />
-      </Suspense>
-    )
-  }
 
   if (isCalculatorWindow) {
     return (
@@ -801,7 +767,6 @@ function AppContent() {
           numPages={numPages}
           prevPage={prevPage}
           nextPage={nextPage}
-          openSettings={openSettings}
           onSettingsChange={updateSettings}
           onRotate={handleRotate}
           previewRotation={previewRotation}
