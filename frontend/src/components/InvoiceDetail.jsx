@@ -62,12 +62,19 @@ export default function InvoiceDetail({ fileObj, onClose }) {
   // 组件挂载时从后端拉取导出数据
   useEffect(() => {
     const fileName = fileObj.name || fileObj.fileName || fileObj.originalFilename || ''
-    if (!fileName) {
-      setLoadError('无法获取文件名')
+    const invoiceNumber = fileObj.invoiceNumber || fileObj.invoice_number || ''
+    if (!fileName && !invoiceNumber) {
+      setLoadError('无法获取文件信息')
       setLoading(false)
       return
     }
-    fetch(`${BACKEND_URL}/api/invoice/export-data?file_name=${encodeURIComponent(fileName)}`)
+    const params = new URLSearchParams()
+    if (invoiceNumber) {
+      params.set('invoice_number', invoiceNumber)
+    } else if (fileName) {
+      params.set('file_name', fileName)
+    }
+    fetch(`${BACKEND_URL}/api/invoice/export-data?${params.toString()}`)
       .then(r => r.json())
       .then(data => {
         if (data.success) {

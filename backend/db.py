@@ -1222,6 +1222,27 @@ def _resolve_invoice_with_fallback(filename: str) -> Optional[Dict]:
     return None
 
 
+def get_invoice_by_number(number: str) -> Optional[Dict]:
+    """按发票号码查找发票记录（E-2.2: 替代按文件名查询，避免 _pN 合并问题）
+
+    Args:
+        number: 发票号码
+
+    Returns:
+        匹配的记录，或 None
+    """
+    if not number:
+        return None
+    _ensure_loaded()
+    with _rw_lock.gen_rlock():
+        indices = _invoice_index_by_number.get(number, [])
+        if indices:
+            idx = indices[0]
+            if idx < len(_invoices) and not _invoices[idx].get('deleted_at'):
+                return _invoices[idx].copy()
+    return None
+
+
 def get_invoices_by_filenames(filenames: List[str]) -> List[Dict]:
     """批量按文件名查找发票（使用 _resolve_invoice_with_fallback，O(K) 替代 O(N×K)）
 

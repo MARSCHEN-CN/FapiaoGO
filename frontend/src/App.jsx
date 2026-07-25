@@ -516,6 +516,12 @@ function AppContent() {
   // 导出（useExport hook）
   // 内聚 ~90 行 SSE 流式导出 + 状态管理
   // ============================
+  // E-2.2: 导出使用 document-level 身份（避免 _pN 文件名合并到同一条记录）
+  const exportFiles = useMemo(() => {
+    if (documentView?.documents?.length > 0) return documentView.documents
+    return files
+  }, [documentView?.documents, files])
+
   const {
     exporting, exportProgress, exportResult, exportAlert,
     closeExportAlert,
@@ -524,7 +530,7 @@ function AppContent() {
     pdfExportTask,
     cancelPdfExport,
     closePdfExportTask,
-  } = useExport({ files, electronAPIRef, previewState: preview.state, settings })
+  } = useExport({ files: exportFiles, electronAPIRef, previewState: preview.state, settings })
 
   // 打开 Excel 字段确认弹窗：无已解析发票时复用 handleExportExcel 的无数据告警
   const openExcelFields = useCallback(() => {

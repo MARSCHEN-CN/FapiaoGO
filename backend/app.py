@@ -324,10 +324,17 @@ def api_export_excel_sse():
     if columns is not None:
         options = {**options, 'columns': columns}
 
-    # 优先从数据库读取（fileNames），兼容旧版 invoices 传参
+    # E-2.2: 优先使用 invoiceNumbers（业务身份），fileNames 回退（旧兼容）
+    invoice_numbers = data.get('invoiceNumbers', [])
     file_names = data.get('fileNames', [])
-    if file_names:
-        invoices = []
+
+    invoices = []
+    if invoice_numbers:
+        for rec in db_module.get_invoices_by_numbers(invoice_numbers):
+            invoices.extend(_db_record_to_export(rec))
+        if not invoices:
+            return jsonify({"success": False, "error": "数据库中没有找到匹配的发票记录"}), 404
+    elif file_names:
         for rec in db_module.get_invoices_by_filenames(file_names):
             invoices.extend(_db_record_to_export(rec))
         if not invoices:
@@ -405,10 +412,17 @@ def api_export_excel():
     if columns is not None:
         options = {**options, 'columns': columns}
 
-    # 优先从数据库读取（fileNames），兼容旧版 invoices 传参
+    # E-2.2: 优先使用 invoiceNumbers（业务身份），fileNames 回退（旧兼容）
+    invoice_numbers = data.get('invoiceNumbers', [])
     file_names = data.get('fileNames', [])
-    if file_names:
-        invoices = []
+
+    invoices = []
+    if invoice_numbers:
+        for rec in db_module.get_invoices_by_numbers(invoice_numbers):
+            invoices.extend(_db_record_to_export(rec))
+        if not invoices:
+            return jsonify({"success": False, "error": "数据库中没有找到匹配的发票记录"}), 404
+    elif file_names:
         for rec in db_module.get_invoices_by_filenames(file_names):
             invoices.extend(_db_record_to_export(rec))
         if not invoices:
@@ -645,11 +659,18 @@ def _amount_to_chinese(amount: float) -> str:
 
 @app.route('/api/invoice/export-data', methods=['GET'])
 def api_invoice_export_data():
-    """返回指定文件的导出数据（与导出 Excel 使用的是同一套字段映射）"""
+    """返回指定文件的导出数据（与导出 Excel 使用的是同一套字段映射）
+
+    E-2.2: 新增 invoice_number 参数，优先使用发票号码查询。
+    """
     file_name = request.args.get('file_name', '')
-    if not file_name:
-        return jsonify({"success": False, "error": "缺少 file_name 参数"}), 400
-    rec = db_module.get_invoice_by_filename(file_name)
+    invoice_number = request.args.get('invoice_number', '')
+
+    rec = None
+    if invoice_number:
+        rec = db_module.get_invoice_by_number(invoice_number)
+    if not rec and file_name:
+        rec = db_module.get_invoice_by_filename(file_name)
     if not rec:
         return jsonify({"success": False, "error": "数据库中没有找到该文件"}), 404
     export_rows = _db_record_to_export(rec)
