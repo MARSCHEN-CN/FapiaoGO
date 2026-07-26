@@ -24,8 +24,21 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional
 
 from .cache import make_cache_key
+from .engine import _hash_view_state
 
 logger = logging.getLogger(__name__)
+
+# ── Module-level constants ────────────────────────────────────
+
+# engine.render() always calls _hash_view_state(vs), even for vs={}.
+# Compute the empty-view-state hash once so warm cache-key lookups
+# match the exact key that engine.render() produces — without
+# hardcoding a magic string or duplicating the hash algorithm.
+_EMPTY_VS_HASH = _hash_view_state({})
+
+# Phase A cap: maximum files to warm in a single import batch.
+# Prevents 1000-file import from spawning 1000 daemon render threads.
+MAX_WARM_FILES = 20
 
 
 @dataclass
@@ -68,12 +81,16 @@ class WarmPlanner:
             files: list of ``{"doc_id": str, "page_count": int}`` from the
                    completed import. ``doc_id`` == sha256(file_bytes)[:24].
         """
+        # Phase A cap: limit warm threads to prevent CPU storm on 1000+ imports.
+        files = files[:MAX_WARM_FILES]
         for f in files:
             req = RenderRequest(
                 sourceDocumentId=f["doc_id"],
                 page=1,
             )
             if self._already_ready(req):
+                logger.debug("warmup skip (cache HIT): %s p%d",
+                             req.sourceDocumentId[:12], req.page)
                 continue
             self._queue.submit(
                 "warm",
@@ -85,7 +102,8 @@ class WarmPlanner:
 
     def _already_ready(self, req: RenderRequest) -> bool:
         """Check whether the requested resource is already cached."""
-        key = make_cache_key(req.sourceDocumentId, req.renderProfile, req.page)
+        key = make_cache_key(req.sourceDocumentId, req.renderProfile, req.page,
+                             _EMPTY_VS_HASH)
         return self._cache.get(key) is not None
 
 
@@ -100,8 +118,10 @@ def _warm_render(engine, cache, req: RenderRequest):
     """
     try:
         # Double-check cache before rendering: an interactive request may have
-        # filled the cache while this warm task was queued.
-        key = make_cache_key(req.sourceDocumentId, req.renderProfile, req.page)
+        # filled the cache while this warm task was queued. Use the same
+        # vs_hash that engine.render() produces for empty view state.
+        key = make_cache_key(req.sourceDocumentId, req.renderProfile, req.page,
+                             _EMPTY_VS_HASH)
         if cache.get(key):
             logger.debug("warm_render skip (cache already filled): %s p%d",
                          req.sourceDocumentId[:12], req.page)
