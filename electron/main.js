@@ -1239,7 +1239,13 @@ if (!gotTheLock) {
     }
 
     // ✅ 启动 Flask 后端（生产模式下 spawn Python 进程）并等待就绪后再创建窗口
-    await startBackendServer()
+    // 后端就绪握手失败（spawn 失败 / /health 超时）不应阻断窗口创建：原 fire-and-forget
+    // 语义下窗口必出、仅运行时偶发 connection refused；此处 try/catch 保留该失败语义，避免黑屏无提示。
+    try {
+      await startBackendServer()
+    } catch (err) {
+      console.error('[BOOT] 后端启动/就绪失败，仍创建窗口（前端调用时可能 connection refused）:', err.message)
+    }
 
     // ✅ 自动更新（ConfigService → Provider + Client → check + fallback）
     const config = loadConfig()
