@@ -1687,11 +1687,16 @@ def import_batch_results(batch_id):
     返回 clientKey 用于精确匹配前端 fileObj。
     """
     mgr = get_import_batch_manager()
-    if mgr.get_batch(batch_id) is None:
+    batch = mgr.get_batch(batch_id)
+    if batch is None:
         return jsonify({"success": False, "error": "批次不存在"}), 404
     
-    items = mgr.get_batch_results(batch_id)
-    return jsonify({"success": True, "items": items})
+    result = mgr.get_batch_results(batch_id)
+    return jsonify({
+        "success": True,
+        "items": result,
+        "documents": batch.assembled_documents or [],
+    })
 
 
 if __name__ == '__main__':
