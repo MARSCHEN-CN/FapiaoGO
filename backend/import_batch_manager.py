@@ -208,6 +208,9 @@ class ImportBatchManager:
         # 注册完成回调（ParseJobManager 每个 job 终态时触发）
         self._job_manager.on_job_complete(self._on_job_done)
 
+        # P10 Phase A: Preview Warmup Planner (lazy init — uses global render_engine singletons)
+        self._warm_planner = None
+
         logger.info("[ImportBatch] 初始化完成")
 
     @property
@@ -293,6 +296,17 @@ class ImportBatchManager:
                 from render_engine import registry as re_registry
                 doc = re_registry.open(file_bytes, filename=filename)
                 result['doc_id'] = doc.doc_id
+                # P10 Phase A: fire-and-forget preview warmup (non-blocking, best-effort)
+                try:
+                    if self._warm_planner is None:
+                        from render_engine import engine, render_cache, render_queue
+                        from render_engine.warmup import WarmPlanner
+                        self._warm_planner = WarmPlanner(engine, render_queue, render_cache)
+                    self._warm_planner.warm_after_import([
+                        {"doc_id": doc.doc_id, "page_count": doc.page_count},
+                    ])
+                except Exception:
+                    logger.debug("[ImportBatch] warmup skipped (non-fatal): %s", filename)
             except Exception:
                 logger.debug("[ImportBatch] render engine 注册跳过: %s", filename)
         return result

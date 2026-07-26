@@ -6,7 +6,8 @@ Priority levels (lower number = higher priority):
     current    = 0   Active page (user is looking at it)
     next       = 1   Neighbor prefetch (page ±1)
     thumbnail  = 2   List thumbnail generation
-    background = 3   Everything else
+    background = 3   Existing background tasks
+    warm       = 5   Preview warmup (P10 Phase A, best-effort, lowest)
 """
 
 import logging
@@ -17,7 +18,7 @@ from typing import Callable, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
-PRIORITY = {"current": 0, "next": 1, "thumbnail": 2, "background": 3}
+PRIORITY = {"current": 0, "next": 1, "thumbnail": 2, "background": 3, "warm": 5}
 PRIORITY_NAMES = {v: k for k, v in PRIORITY.items()}
 
 
