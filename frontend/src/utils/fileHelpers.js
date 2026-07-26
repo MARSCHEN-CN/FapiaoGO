@@ -97,7 +97,7 @@ export async function processPdfFile(file, getPathFn) {
           const pageName = file.name.replace('.pdf', `_p${page.page_index}.pdf`)
           const pageFile = new File([blob], pageName, { type: 'application/pdf' })
 
-          const fileObj = buildFileObj(pageFile, pageName, getPathFn(file), page.preview_image, data.doc_id, page.page_index)
+          const fileObj = buildFileObj(pageFile, pageName, getPathFn(file), null, data.doc_id, page.page_index)
           toAdd.push(fileObj)
           toParse.push(fileObj)
         }

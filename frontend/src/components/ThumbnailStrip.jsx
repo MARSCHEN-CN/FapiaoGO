@@ -1,19 +1,17 @@
 /**
- * ThumbnailStrip — 缩略图横向导航栏（底部）
+ * ThumbnailStrip — 缩略图垂直边栏（左侧）
  *
  * 职责：
- *   横向显示文档所有页面缩略图，支持点击切页。
- *   Lazy 加载：当前页 ± 5 页加载真实缩略图，其余 placeholder。
- *   当前页高亮 + 自动横向滚动到可视区。
+ *   垂直显示文档所有页面缩略图，支持点击切页。
+ *   性能：当前页 ± LAZY_RANGE 页加载真实缩略图，其余灰色骨架
+ *   （企业发票场景：30/100/300 页，避免一次性拉取全部栅格）。
+ *   当前页高亮 + 自动垂直滚动到可视区。
  *
- * 布局：上展示区（ViewerViewport）+ 下缩略图栏（本组件）。
- * 发票场景：用户打开一张发票 → 查看内容 → 偶尔确认第几页。
- * 展示区优先级 > 翻页导航。
+ * 布局：左侧缩略图边栏（120px）+ 右侧主预览区（ViewerViewport）。
  *
- * 设计决策（来自 display-area-refactor.md）：
- *   - 不全量预加载（企业发票场景：30/100/300 页）
- *   - Lazy 规则：当前页 ± 5 页加载，其余灰色骨架
- *   - 已加载的不 revoke（保留缓存）
+ * 来源：13-C Viewer Layout 从 left-thumbnail-layout 资产级迁移。
+ *   左栏结构取自该分支；lazy 加载（±5）取自 V16 HEAD 既有性能决策，
+ *   二者合并，不恢复其旧 print / 旧 base64 预览图路径。
  *
  * @module components/ThumbnailStrip
  */
@@ -43,6 +41,15 @@ export function ThumbnailStrip({ document, currentPage, onPageSelect }) {
     return document.pages.map((page) => resolveThumbnailUrl(page, document.docId))
   }, [document])
 
+  // 计算每页的宽高比（用于缩略图动态 aspect-ratio）
+  const aspectRatios = useMemo(() => {
+    if (!document?.pages) return []
+    return document.pages.map((page) => {
+      if (page.width && page.height) return page.width / page.height
+      return null
+    })
+  }, [document])
+
   // 判断某页是否应加载（当前页 ± LAZY_RANGE）
   const shouldLoadPage = useCallback((index) => {
     return Math.abs(index - currentPage) <= LAZY_RANGE
@@ -52,7 +59,7 @@ export function ThumbnailStrip({ document, currentPage, onPageSelect }) {
   useEffect(() => {
     const el = itemRefs.current.get(currentPage)
     if (el && stripRef.current) {
-      el.scrollIntoView({ inline: 'nearest', behavior: 'smooth' })
+      el.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
     }
   }, [currentPage])
 
@@ -70,7 +77,7 @@ export function ThumbnailStrip({ document, currentPage, onPageSelect }) {
   }, [])
 
   return (
-    <div className="viewer-thumbnail-bar" role="navigation" aria-label="页面缩略图">
+    <div className="viewer-thumbnail-sidebar" role="navigation" aria-label="页面缩略图">
       <div className="viewer-thumbnail-list" ref={stripRef}>
         {document.pages.map((page, index) => (
           <div key={page.pageId} ref={(el) => setItemRef(index, el)}>
@@ -79,6 +86,7 @@ export function ThumbnailStrip({ document, currentPage, onPageSelect }) {
               thumbnailUrl={thumbnailUrls[index]}
               active={index === currentPage}
               shouldLoad={shouldLoadPage(index)}
+              aspectRatio={aspectRatios[index]}
               onClick={handlePageSelect}
             />
           </div>

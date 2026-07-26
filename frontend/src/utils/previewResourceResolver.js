@@ -31,6 +31,21 @@ export function resolvePreviewUrl(page, docId) {
 }
 
 /**
+ * 解析页面打印栅格 URL（Render Contract 打印端点）。
+ *
+ * 指向后端 /print 端点（'print' preset：200dpi 高质 WebP/PNG），
+ * 与 /preview 不同——/print 用于打印输出，分辨率更高。
+ * 这是文档脱离旧链 base64 预览图后统一经 docId 栅格的唯一打印来源（原生文档无前端可读字节）。
+ *
+ * @param {import('../models/InvoiceDocument').PageMeta} page - 页面元数据
+ * @param {string} docId - 文档 ID
+ * @returns {string} - print preset WebP/PNG 打印栅格 URL
+ */
+export function resolvePrintUrl(page, docId) {
+  return `${BACKEND_URL}/print/${docId}?page=${page.index + 1}`
+}
+
+/**
  * 解析页面缩略图 URL。
  *
  * 指向后端 /thumbnail 端点（'thumbnail' preset：低 dpi 小图，默认 WebP），

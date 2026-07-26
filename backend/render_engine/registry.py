@@ -5,11 +5,13 @@ Never exposes filesystem paths through API.
 """
 
 import hashlib
+import io
 import logging
 import threading
 import time
+import zipfile
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from .types import TextSpan
 
@@ -28,6 +30,7 @@ class Document:
     path: str                     # internal only, never returned to client
     pdf: Optional["fitz.Document"] = None
     file_bytes: Optional[bytes] = None  # raw bytes for non-PDF (image/OFD); PDF uses fitz handle
+    adapter: Optional[Any] = None       # format-specific renderer (e.g. OFDAdapter); PDF/Image=None
     page_count: int = 0
     mtime: float = 0.0
     size: int = 0
@@ -184,20 +187,56 @@ class DocumentRegistry:
             content_hash=content_hash,
             size=len(file_bytes),
         )
-        if fitz is not None:
-            try:
+        if _sniff_pdf(file_bytes):
+            # PDF contract: hold fitz handle, route to _render_pdf_page.
+            if fitz is not None:
                 doc.pdf = fitz.open(stream=file_bytes, filetype="pdf")
                 doc.page_count = len(doc.pdf)
-                doc.mtime = time.time()
-            except Exception:
-                # Not a PDF — store raw bytes for image rendering (_render_image_page)
-                doc.pdf = None
+            else:
                 doc.file_bytes = file_bytes
                 doc.page_count = 1
-                doc.mtime = time.time()
-        else:
+            doc.mtime = time.time()
+            return doc
+        if _sniff_image(file_bytes):
+            # Image contract: store raw bytes, route to _render_image_page.
+            # NOT through fitz — fitz.open(filetype="pdf") is permissive and
+            # would silently mis-classify raster images as 1-page "PDFs".
+            doc.pdf = None
             doc.file_bytes = file_bytes
             doc.page_count = 1
+            doc.mtime = time.time()
+            return doc
+        if _sniff_ofd(file_bytes):
+            # OFD contract: store raw bytes + attach a renderer adapter.
+            # NOT through fitz — fitz.open() is permissive and may open an OFD
+            # as a malformed PDF, silently mis-classifying it (the same class
+            # of bug we already hit with raster images). All OFD-specific
+            # behavior (page_count, dimensions, per-page render) lives in the
+            # adapter; do NOT fabricate page_count here.
+            doc.pdf = None
+            doc.file_bytes = file_bytes
+            try:
+                from .adapters.ofd_adapter import OFDAdapter
+                doc.adapter = OFDAdapter(file_bytes)
+            except Exception as e:
+                logger.warning("OFD sniffed but OFDAdapter init failed: %s", e)
+                doc.adapter = None
+            doc.mtime = time.time()
+            return doc
+        # Unknown format: let fitz try its own detection (XPS, etc.); on
+        # failure, fall back to storing raw bytes (image path).
+        if fitz is not None:
+            try:
+                doc.pdf = fitz.open(stream=file_bytes)
+                doc.page_count = len(doc.pdf)
+                doc.mtime = time.time()
+                return doc
+            except Exception:
+                logger.debug("fitz cannot open %s; storing raw bytes", filename)
+        doc.pdf = None
+        doc.file_bytes = file_bytes
+        doc.page_count = 1
+        doc.mtime = time.time()
         return doc
 
     def _release_doc(self, doc: Document):
@@ -227,6 +266,58 @@ class DocumentRegistry:
             del self._docs[to_remove]
             logger.debug("evicted doc %s (LRU, last_access=%.0fs ago)",
                          to_remove[:12], time.time() - oldest)
+
+
+# ── content-type sniffing ─────────────────────────────────────
+# Magic-byte detection is preferred over extension: a file named .jpg may
+# actually be a PNG. fitz.open(filetype="pdf") is permissive and opens raster
+# images as 1-page "PDFs", so we must classify BEFORE touching fitz.
+
+def _sniff_pdf(file_bytes: bytes) -> bool:
+    """True if the bytes look like a PDF (%PDF- header)."""
+    return file_bytes[:5] == b"%PDF-"
+
+
+def _sniff_ofd(file_bytes: bytes) -> bool:
+    """True if bytes look like an OFD container.
+
+    OFD is a ZIP archive, but so are .docx/.xlsx/.zip, so the PK magic alone is
+    insufficient. Require a ZIP whose member list contains a canonical OFD
+    marker file — either root `OFD.xml` or a `*/Document.xml` page document.
+    """
+    if file_bytes[:4] != b"PK\x03\x04":
+        return False
+    try:
+        with zipfile.ZipFile(io.BytesIO(file_bytes)) as zf:
+            names = zf.namelist()
+    except Exception:
+        return False
+    return "OFD.xml" in names or any("/Document.xml" in n for n in names)
+
+
+def _sniff_image(file_bytes: bytes) -> bool:
+    """True if the bytes look like a raster image fitz can render."""
+    if len(file_bytes) < 12:
+        return False
+    # PNG
+    if file_bytes[:8] == b"\x89PNG\r\n\x1a\n":
+        return True
+    # JPEG (SOI marker FFD8FF — covers EXIF/JFIF)
+    if file_bytes[:3] == b"\xff\xd8\xff":
+        return True
+    # GIF87a / GIF89a
+    if file_bytes[:6] in (b"GIF87a", b"GIF89a"):
+        return True
+    # BMP
+    if file_bytes[:2] == b"BM":
+        return True
+    # WEBP (RIFF....WEBP)
+    if file_bytes[:4] == b"RIFF" and file_bytes[8:12] == b"WEBP":
+        return True
+    # TIFF (little-endian II*\x00 / big-endian MM\x00*)
+    if file_bytes[:4] in (b"II*\x00", b"MM\x00*"):
+        return True
+    return False
 
 
 # ── helpers ────────────────────────────────────────────────────

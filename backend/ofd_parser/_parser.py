@@ -10,7 +10,6 @@ import xml.etree.ElementTree as ET
 from PIL import Image as PILImage
 
 from .xml_utils import _strip_ofd_ns
-from .ofd_page_render import render_ofd_page_preview
 
 
 def _find_text_in_xml(root, tag_names):
@@ -111,12 +110,9 @@ def parse_ofd(file):
                     except Exception:
                         continue
 
-            rendered_img = render_ofd_page_preview(raw, dpi=150)
-            if rendered_img:
-                buf = io.BytesIO()
-                rendered_img.save(buf, format='JPEG', quality=85, optimize=True)
-                result["preview_image"] = base64.b64encode(buf.getvalue()).decode('utf-8')
-            elif best_img_data and best_img_pixels > 10000:
+            # 13-B.5 C2: 旧链 render_ofd_page_preview（CTM 重渲染）已删除。
+            # preview_image 仅来自 OFD 内嵌图（无重渲染），缺失则留空。
+            if best_img_data and best_img_pixels > 10000:
                 result["preview_image"] = base64.b64encode(best_img_data).decode('utf-8')
 
             # 步骤 2：搜索发票 XML

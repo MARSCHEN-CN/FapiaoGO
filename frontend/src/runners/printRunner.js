@@ -48,15 +48,32 @@ export async function runSourcePrintTasks(tasks, printFn, context = {}) {
 }
 
 /**
+ * 将 render 结果 data 归一为物理页数组。
+ *
+ * 单页文档返回单个 Uint8Array；多页文档（如多页 OFD，由 buildPrintJobItem().pages
+ * 逐页渲染产出）返回 Uint8Array[]。runMergedPrintTasks 统一展开，使每个物理页成为
+ * 一张独立打印页，而非把整篇文档压成单页或嵌套数组。
+ *
+ * @param {Uint8Array|Uint8Array[]} data
+ * @returns {Uint8Array[]}
+ */
+function flattenPrintData(data) {
+  // 兼容两种 render 返回值：单页 Uint8Array（旧 renderer）/ 多页 Uint8Array[]
+  // （Render Print 子系统经 buildPrintJobItem().pages 逐页 fetchPrintRaster 产出）。
+  // .flat() 防御潜在的嵌套数组，对扁平 Uint8Array[] 是恒等操作。
+  return Array.isArray(data) ? data.flat() : [data]
+}
+
+/**
  * 批量合并打印（merged mode）：渲染所有 → 一次性发送打印。
  *
  * 流程：
  *   1. 分批渲染（控制并发，避免内存峰值）
- *   2. 收集所有渲染数据
+ *   2. 收集所有渲染数据（每个 render 任务的 data 可能是单页或多页数组，统一展开为物理页）
  *   3. 全部渲染完成后，一次性调用 merged print
  *
  * @param {object[]} tasks - PrintTask 数组
- * @param {Function} renderFn - 渲染函数：async (task) => { data: Uint8Array } | null
+ * @param {Function} renderFn - 渲染函数：async (task) => { data: Uint8Array | Uint8Array[] } | null
  * @param {Function} mergedPrintFn - 合并打印函数：async (images, context) => PrintResult
  * @param {object} context
  * @param {number} [context.batchSize=3] - 渲染批次大小
@@ -84,7 +101,8 @@ export async function runMergedPrintTasks(tasks, renderFn, mergedPrintFn, contex
           success: true,
           status: 'rendered',
         })
-        allRenderedData.push(renderResult.data)
+        // 展开单页/多页：Render Print 子系统通过 pages[] 产出 N 个页 buffer
+        allRenderedData.push(...flattenPrintData(renderResult.data))
       } else {
         results.push({
           taskId: batch[i].id ?? batch[i].fileId ?? 'unknown',

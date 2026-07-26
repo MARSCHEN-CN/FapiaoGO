@@ -7,7 +7,6 @@ export function useSettings(electronAPIRef) {
     marginLeft: 3, marginRight: 3, marginTop: 3, marginBottom: 3,
     marginPreset: 'default',
   })
-  const [settingsWindowOpen, setSettingsWindowOpen] = useState(false)
   const [printers, setPrinters] = useState([])
   const saveSettingsTimerRef = useRef(null)
 
@@ -27,14 +26,6 @@ export function useSettings(electronAPIRef) {
     saveSettings(newSettings)
   }, [settings, saveSettings])
 
-  const openSettings = useCallback(() => {
-    const ipc = electronAPIRef.current?.ipcRenderer
-    if (ipc) {
-      ipc.send('open-settings-window')
-      setSettingsWindowOpen(true)
-    }
-  }, [electronAPIRef])
-
   // 组件卸载时清理防抖 timer
   useEffect(() => {
     return () => {
@@ -53,13 +44,14 @@ export function useSettings(electronAPIRef) {
           setSettings(saved)
         }
       })
+      ipc.invoke('get-printers').then((list) => {
+        if (Array.isArray(list) && list.length > 0) setPrinters(list)
+      })
     }
   }, []) // 仅在首次挂载时执行
 
   return {
     settings, setSettings, saveSettings, updateSettings,
-    settingsWindowOpen, setSettingsWindowOpen,
     printers, setPrinters,
-    openSettings,
   }
 }

@@ -9,6 +9,7 @@ import { isDocumentEngineEnabled } from './documentEngine.js'  // P2C 统一入�
 import { createPlacement } from './compose/composePlacement.js'  // [B1 p2] Virtual Paper 几何（contentRect fit）：Preview/Print 共用唯一几何来源
 import { drawRenderCommand } from './layout/renderDraw.js'  // [C3-2] 与 Worker 共用唯一 executor（drawRenderCommand 纯执行、DOM-free）
 import { buildSingleFileRenderCommand } from './layout/singleFileRenderCommand.js'  // [D1-2] 单文件预览 RenderCommand Producer（与 Compose/Print 同契约）
+import { fileObjToComposePagePlan } from './compose/composePagePlan.js'  // 13-E.1 B-lite：FileObj → ComposePagePlan（线程来源身份）
 // ✅ renderModel.js 为死代码，renderMultipleItemsToCanvas 直接做 transform，不经过 RenderModel
 // import { createRenderModels, applyTransformToContext, restoreContext } from './renderModel'
 
@@ -52,11 +53,17 @@ function canUseSlotComposer(paperLayout, strategy) {
 // PDF.js worker 配置 — 使用 Vite 打包的本地 worker
 pdfjs.GlobalWorkerOptions.workerSrc = pdfjsWorkerUrl
 
-// PDF.js 字体、CMap 和 WASM 配置 — 使用 public/ 目录下的本地静态资源
-// 这些资源用于渲染 PDF 中的非嵌入字体、字符映射表和图像解码（如 JBIG2）
-const PDFJS_CMAP_URL = '/cmaps/'
-const PDFJS_STANDARD_FONT_URL = '/standard_fonts/'
-const PDFJS_WASM_URL = '/wasm/'
+// PDF.js 字体、CMap 和 WASM 配置 — 本地静态资源
+// 开发环境：Vite 从 public/ 以 /cmaps/ 等根相对路径提供。
+// 生产环境：页面 origin 是 file://，根相对路径会被解析成盘根（如 E:/cmaps/）导致加载失败。
+//   通过 preload 暴露的 electronAPI.resourcePath 拼真实文件路径（这些资源已通过 extraResources 放到 resources/ 下、在 asar 之外），
+//   dev 下 resourcePath 为空则回退到 /cmaps/ 等根相对路径。
+const RESOURCE_BASE = window.electronAPI?.resourcePath
+  ? `file://${window.electronAPI.resourcePath}/`
+  : '/'
+const PDFJS_CMAP_URL = `${RESOURCE_BASE}cmaps/`
+const PDFJS_STANDARD_FONT_URL = `${RESOURCE_BASE}standard_fonts/`
+const PDFJS_WASM_URL = `${RESOURCE_BASE}wasm/`
 
 
 // ========== 缓存 ==========
@@ -863,23 +870,14 @@ async function _renderViaWorker(items, paperKey, dpi, isLandscape, rotations, sl
 
   let layout, commands
   if (canUseSlotComposer(paperLayout, layoutOptions.strategy)) {
-    // V16 路径：MultiTicketComposer + buildRenderCommand（与 _renderDirect 同逻辑）
-    const { compose } = await import('./layout/MultiTicketComposer.js')
+    // V16 路径：FileObj → ComposePagePlan → MultiTicketComposer.composePlans + buildRenderCommand
+    const { composePlans } = await import('./layout/MultiTicketComposer.js')
     const { computeTicketSlots } = await import('./layout/SlotLayout.js')
     const forcedOrient = isLandscape ? 'landscape' : 'portrait'
-    const documents = items.map((item) => {
-      const id = item.id || item.key
-      const cs = contentSources.get(id)
-      const w = cs ? cs.width : (item.width || 0)
-      const h = cs ? cs.height : (item.height || 0)
-      return {
-        pageSize: { w, h },
-        pageOrientation: (w >= h) ? 'landscape' : 'portrait',
-        paperOrientation: forcedOrient,
-        rotation: (rotations && rotations[id]) || 0,
-      }
-    })
-    const result = compose({ paperLayout, documents, ticketCount: slotCount })
+    // 13-E.1：在 FileObj → RenderCommand 之间插入 ComposePagePlan，线程 docId/pageId 来源身份
+    const plans = items.map((item, i) =>
+      fileObjToComposePagePlan(item, i, contentSources.get(item.id || item.key), forcedOrient, rotations))
+    const result = composePlans({ paperLayout, plans, ticketCount: slotCount })
     commands = result.map(r => r.renderCommand)
     const slotPositions = computeTicketSlots(paperLayout, items.length)
     const effW = isLandscape ? paperLayout.paperRect.h : paperLayout.paperRect.w
@@ -1150,26 +1148,14 @@ async function _renderDirect(
   // （替代 createLayout + _buildComposeCommands 的老路径，使用同一套 createPlacement 几何）。
   let layout, commands, slotPositions
   if (canUseSlotComposer(paperLayout, layoutOptions.strategy)) {
-    const { compose } = await import('./layout/MultiTicketComposer.js')
+    const { composePlans } = await import('./layout/MultiTicketComposer.js')
     const { computeTicketSlots } = await import('./layout/SlotLayout.js')
 
-    // 构造 DocumentState 数组；paperOrientation 跟随合并模式强制方向（isLandscape），
-    // 使 buildRenderCommand 正确设置 paperLandscape 并做 slot→landscape 轴交换。
+    // 13-E.1：FileObj → ComposePagePlan，线程 docId/pageId 来源身份（documents 映射改为 plans）
     const forcedOrient = isLandscape ? 'landscape' : 'portrait'
-    const documents = items.map((item, i) => {
-      const id = item.id || item.key
-      const cs = contentSources.get(id)
-      const w = cs ? cs.width : (item.width || 0)
-      const h = cs ? cs.height : (item.height || 0)
-      return {
-        pageSize: { w, h },
-        pageOrientation: (w >= h) ? 'landscape' : 'portrait',
-        paperOrientation: forcedOrient,
-        rotation: (rotations && rotations[id]) || 0,
-      }
-    })
-
-    const result = compose({ paperLayout, documents, ticketCount: slotCount })
+    const plans = items.map((item, i) =>
+      fileObjToComposePagePlan(item, i, contentSources.get(item.id || item.key), forcedOrient, rotations))
+    const result = composePlans({ paperLayout, plans, ticketCount: slotCount })
     commands = result.map(r => r.renderCommand)
     slotPositions = computeTicketSlots(paperLayout, items.length)
 

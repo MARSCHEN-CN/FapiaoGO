@@ -175,7 +175,7 @@ function MockThumbnailStrip({ document, currentPage, onPageSelect, mockUrls }) {
   if (!document || document.pageCount <= 1) return null
 
   return (
-    <div className="viewer-thumbnail-bar" role="navigation" aria-label="页面缩略图">
+    <div className="viewer-thumbnail-sidebar" role="navigation" aria-label="页面缩略图">
       <div className="viewer-thumbnail-list">
         {document.pages.map((page, index) => (
           <div

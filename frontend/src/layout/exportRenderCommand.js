@@ -88,3 +88,18 @@ export function buildExportRenderCommands(docState) {
     }
   })
 }
+
+/**
+ * 13-E.1 B-lite：plan-native 单源 Export 入口。
+ * 不碰 exporter，仅从 ComposePagePlan 取出 documentState 委托既有
+ * buildExportRenderCommand（同一 createPlacement 几何来源），并在 RenderCommand
+ * 上附加 meta:{docId,pageId}（与 merge/preview 路径的 meta 同形，executor 忽略）。
+ *
+ * @param {Object} plan - ComposePagePlan（含 documentState + source）
+ * @returns {Object} RenderCommand（带 meta）
+ */
+export function buildExportRenderCommandFromPlan(plan) {
+  const { documentState, source } = plan || {}
+  const rc = buildExportRenderCommand(documentState || {})
+  return { ...rc, meta: source ?? null }
+}

@@ -1,0 +1,40 @@
+// src/compose/composePagePlan.js
+function fileObjToComposePagePlan(item, index = 0, cs = null, forcedOrient = "portrait", rotations = null) {
+  const it = item || {};
+  const id = it.id || it.key || `item-${index}`;
+  const docId = it.docId ?? id;
+  const pageId = it.pageId ?? `${docId}#p${(it.pageIndex ?? index) + 1}`;
+  const w = cs ? cs.width : it.width || 0;
+  const h = cs ? cs.height : it.height || 0;
+  const fileRotation = it.rotation || 0;
+  const rotation = rotations && rotations[id] ? rotations[id] : fileRotation;
+  const documentState = {
+    pageSize: { w, h },
+    pageOrientation: w >= h ? "landscape" : "portrait",
+    paperOrientation: forcedOrient,
+    rotation
+  };
+  return {
+    planId: `plan-${docId}-${pageId}-${index}`,
+    source: { docId, pageId },
+    // v1 保留占位：slot 几何由 compose 层 computeTicketSlots 自有，plan 不持有，
+    // 严格隔离「身份层」与「几何层」（slot 不应知道来源）。
+    placement: { slot: null },
+    documentState
+  };
+}
+function documentStateToPlan(documentState, index = 0) {
+  const ds = documentState || {};
+  const docId = ds.docId ?? null;
+  const pageId = ds.pageId ?? null;
+  return {
+    planId: `plan-ds-${index}-${docId || "none"}`,
+    source: docId && pageId ? { docId, pageId } : null,
+    placement: { slot: null },
+    documentState: ds
+  };
+}
+export {
+  documentStateToPlan,
+  fileObjToComposePagePlan
+};

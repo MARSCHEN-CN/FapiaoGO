@@ -1,9 +1,6 @@
 import { useState, useCallback, useEffect, useRef, useMemo, Suspense, lazy } from 'react'
 import { FileProvider, useFileContext } from './contexts/FileContext'
 
-// 懒加载设置窗口（已有）
-const SettingsWindow = lazy(() => import('./components/SettingsWindow'))
-
 // 懒加载弹窗组件（优化首屏加载）
 const PrintProgressModal = lazy(() => import('./components/PrintProgressModal'))
 const RenamePreviewModal = lazy(() => import('./components/RenamePreviewModal'))
@@ -90,7 +87,6 @@ function App() {
 }
 
 function AppContent() {
-  const isSettingsWindow = window.location.hash === '#/settings'
   const isCalculatorWindow = window.location.hash === '#/calculator'
   const isDevViewer = window.location.hash === '#/dev-viewer' || new URLSearchParams(window.location.search).get('dev') === 'viewer'
 
@@ -115,8 +111,7 @@ function AppContent() {
   // ============================
   const {
     settings, setSettings, saveSettings, updateSettings,
-    settingsWindowOpen, setSettingsWindowOpen,
-    printers, setPrinters, openSettings,
+    printers, setPrinters,
   } = useSettings(electronAPIRef)
 
   // Excel 导出字段选择持久化（Commit 4B）
@@ -144,9 +139,10 @@ function AppContent() {
   // D2-4.1：DocumentViewer 路径是否激活（与 DisplayAdapter 路由条件严格一致）。
   // 激活时 control-bar 的缩放控件改由 ZoomToolbar 渲染（状态源 useViewerState，经 controller
   // 桥接上抬），UI 位置保持在用户习惯的 control-bar；detail 按钮与方向控件保留。
-  // legacy 路径（OFD/merge）继续用旧 preview.zoom 工具栏。
+  // legacy 路径（merge）继续用旧 preview.zoom 工具栏；OFD 经 13A-3 接入后与 PDF/Image
+  // 同级走 DocumentViewer，统一由 documentViewerActive 驱动新 ZoomToolbar。
   const documentViewerActive = activeDocument && activeDocument.pageCount > 0
-    && !isMergeMode(settings.mergeMode) && previewFile?.fileFormat !== 'ofd'
+    && !isMergeMode(settings.mergeMode)
 
   // D2-4.1：viewer 缩放控制桥接接收端。DocumentViewer 经 onViewerController 上抬
   // {mode, zoomPercent, actions}（仅 zoom 显示/档位相关值变化时更新，拖拽平移不触发）；
@@ -240,6 +236,7 @@ function AppContent() {
     renamedPreviewKey,
     alertModal: renamePackAlert, closeAlert: closeRenamePackAlert,
     handleRename, handleRenameConfirm, handlePack,
+    refreshRenamePreview,
   } = useRenamePack({ files, settings, setFiles, parseFiles, parseProgress, electronAPIRef })
 
   const handleRenameCancel = useCallback(() => {
@@ -508,9 +505,6 @@ function AppContent() {
 
   // 合并模式下方向由 renderers 强制造纸，用户不可调（2/3 票强制竖向、4 票强制横向）
   const mergeActive = isMergeMode(settings.mergeMode)
-  const displayOrientation = mergeActive
-    ? (getForcedLandscape(settings.mergeMode, false) ? 'landscape' : 'portrait')
-    : paperOrientation
 
   // ============================
   // 导出（useExport hook）
@@ -669,12 +663,6 @@ function AppContent() {
       }
       ipc.on('print-progress', handleProgress)
 
-      const handleSettingsClosed = () => {
-        setSettingsWindowOpen(false)
-        ipc.invoke('load-print-settings').then((saved) => { if (saved) setSettings(saved) })
-      }
-      ipc.on('settings-window-closed', handleSettingsClosed)
-
       // ✅ 实时监听设置变化（尤其是 mergeMode），立即更新预览
       const handleSettingsChanged = (_event, newSettings) => {
         setSettings((prev) => ({ ...prev, ...newSettings }))
@@ -697,7 +685,6 @@ function AppContent() {
 
       return () => {
         ipc.removeListener('print-progress', handleProgress)
-        ipc.removeListener('settings-window-closed', handleSettingsClosed)
         ipc.removeListener('settings-changed', handleSettingsChanged)
         ipc.removeListener('context-menu-files', handleContextMenuFiles)
         clearTimeout(printTimeoutRef.current)
@@ -708,20 +695,6 @@ function AppContent() {
   // 和 setState 函数式更新（setSettings(prev=>...)、setFiles(prev=>...) 等，引用稳定），
   // 不存在过期闭包风险。IPC 监听器应仅在挂载时注册一次。
   }, [])
-
-  // ============================
-  // 设置窗口模式
-  // ============================
-  useEffect(() => {
-    if (!isSettingsWindow) return
-    const api = getElectronAPI()
-    const ipc = api?.ipcRenderer
-    if (!ipc) return
-    ipc.invoke('load-print-settings').then((saved) => { if (saved) setSettings(saved) })
-    ipc.invoke('get-printers').then((list) => {
-      if (Array.isArray(list) && list.length > 0) setPrinters(list)
-    })
-  },       [isSettingsWindow, setSettings, setPrinters])
 
   // ============================
   // 自动预览：只在文件从空变非空时触发（导入场景）
@@ -735,14 +708,6 @@ function AppContent() {
     }
     prevFilesLengthRef.current = files.length
   }, [files.length, previewFile])
-
-  if (isSettingsWindow) {
-    return (
-      <Suspense fallback={<div></div>}>
-        <SettingsWindow settings={settings} saveSettings={saveSettings} printers={printers} electronAPI={getElectronAPI()} />
-      </Suspense>
-    )
-  }
 
   if (isCalculatorWindow) {
     return (
@@ -799,7 +764,6 @@ function AppContent() {
           numPages={numPages}
           prevPage={prevPage}
           nextPage={nextPage}
-          openSettings={openSettings}
           onSettingsChange={updateSettings}
           onRotate={handleRotate}
           previewRotation={previewRotation}
@@ -876,37 +840,6 @@ function AppContent() {
               </>
               )}
             </div>
-
-            <div className="canvas-orient-control">
-              <div className="oco-segment">
-                <button className={`oco-btn ${(!mergeActive && autoActive) ? 'active' : ''}`} onClick={() => handlePaperOrientationChange('auto')} title="自动方向" disabled={mergeActive}>
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <circle cx="12" cy="12" r="3"/>
-                    <path d="M12 2v3m0 14v3M2 12h3m14 0h3M5 5l2 2m10 10l2 2M5 19l2-2m10-10l2-2"/>
-                  </svg>
-                  自动
-                </button>
-                <button className={`oco-btn ${displayOrientation === 'landscape' ? 'active' : ''}`} onClick={() => handlePaperOrientationChange('landscape')} title="横向" disabled={mergeActive}>
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <rect x="3" y="7" width="18" height="10" rx="1.5"/>
-                  </svg>
-                  横向
-                </button>
-                <button className={`oco-btn ${displayOrientation === 'portrait' ? 'active' : ''}`} onClick={() => handlePaperOrientationChange('portrait')} title="纵向" disabled={mergeActive}>
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <rect x="6.5" y="3" width="11" height="18" rx="1.5"/>
-                  </svg>
-                  纵向
-                </button>
-              </div>
-              <div className="oco-divider" />
-              <button className="oco-rotate" onClick={() => handleRotate()} title={`旋转 (${previewRotation}°)`}>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M21 12a9 9 0 11-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/>
-                  <path d="M21 3v5h-5"/>
-                </svg>
-              </button>
-            </div>
           </div>
         )}
 
@@ -926,11 +859,6 @@ function AppContent() {
                   <p className="canvas-empty-sub">支持 PDF、OFD、图片格式的发票文件</p>
                 </div>
               )
-            }
-
-            // OFD 不支持预览
-            if (previewFile._fileFormat === 'ofd' && !previewFile._previewImageUrl) {
-              return <div className="canvas-center-overlay canvas-loading">OFD 文件不支持预览</div>
             }
 
             // 加载中：有预览文件但渲染尚未就绪
@@ -1073,6 +1001,15 @@ function AppContent() {
             executing={packing}
             reimportProgress={reimportProgress}
             result={renameResult}
+            renameSettings={settings.renameSettings || {}}
+            onSaveRenameSettings={(renameSettings) => {
+              saveSettings({ ...settings, renameSettings })
+            }}
+            onApplySettings={() => {
+              // 应用规则后重新生成预览（refreshRenamePreview 使用 ref 读取最新 settings，无闭包过期问题）
+              refreshRenamePreview()
+            }}
+            electronAPI={getElectronAPI()}
             onConfirm={handleRenameConfirm}
             onCancel={handleRenameCancel}
             onCloseResult={handleRenameCloseResult}
@@ -1157,6 +1094,7 @@ function AppContent() {
           stage={pdfExportTask?.stage ?? ''}
           status={pdfExportTask?.status}
           errors={pdfExportTask?.errors ?? []}
+          outputPath={pdfExportTask?.path ?? ''}
           onCancel={cancelPdfExport}
           onClose={closePdfExportTask}
         />

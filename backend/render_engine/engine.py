@@ -410,6 +410,16 @@ class RenderEngine:
 
         page_idx = max(0, page - 1)
 
+        # ── Adapter dispatch（13-A.3.5d）：adapter 优先于 pdf/image ──
+        # 与 /metadata 派发顺序一致（adapter → pdf → image）。
+        # OFD 的 doc.pdf is None、doc.adapter=OFDAdapter，此前会误入 image 分支
+        # 把 OFD zip 当图片解码而崩溃；此处在 spec/legacy 分流前短路，
+        # 使 adapter 文档（OFD 及未来 CAD/SVG/TIFF 等）走专属渲染器。
+        # page_idx 已是 0-based（经 max(0,page-1) 转换），直接喂 adapter.render(page_idx)
+        # （OFDAdapter 合同为 0-based）；1-based URL 契约不变，前端零改动。
+        if doc.adapter is not None:
+            return self._render_adapter_page(doc, preset, vs, page_idx, fmt)
+
         # ── Commit B dispatch ──
         # 两棵树完全独立、互不调用（⑥⑦）：Legacy 仅服务无 spec 的请求（Frozen Baseline），
         # RenderSpec 树独立消费 placement/paper/contentRotation（RenderCommand 纯执行）。
@@ -420,6 +430,33 @@ class RenderEngine:
         # RenderSpec 分支（B-1 起真实渲染；B-0 曾 shadow 走 Legacy）。
         return self._render_spec_page(doc, preset, render_spec, page_idx, fmt,
                                       highlights, pdf_doc)
+
+    def _render_adapter_page(self, doc, preset: RenderPreset, vs: dict,
+                             page_idx: int, fmt: str) -> Tuple[bytes, str]:
+        """Adapter-backed render path（13-A.3.5d，例如 OFDAdapter）。
+
+        顺序：adapter 优先于 pdf/image（与 /metadata 派发一致）。
+        - ``page_idx`` 已是 0-based（由 ``_render_page`` 经 ``max(0, page-1)`` 转换），
+          直接喂给 ``doc.adapter.render(page_idx)``（OFDAdapter 合同为 0-based）。
+          1-based URL 契约不变 → 前端零改动、PDF/Image 零回归。
+        - 越界（``page_idx < 0`` 或 ``>= adapter.page_count()``）→ ``ValueError``
+          → api 层统一映射 404，使「第 N+1 页」得到确定语义而非 500。
+        - ``render`` 返回 ``None``（字体缺失 / 单页 XML 损坏 / 资源丢失等）→ 抛
+          ``ValueError`` → 统一错误通道，**不影响其他页 / 其他文档**。
+        - adapter 产出 WebP；预览预设默认 webp，<img> 直接消费。即使客户端要求非
+          webp，也原样返回 webp 字节（Content-Type=image/webp），不做格式降级
+          （预览场景 webp 通用；如需严格格式协商可后续扩展）。
+        """
+        if doc.adapter is None:
+            raise ValueError("Document has no format adapter")
+        n_pages = doc.adapter.page_count()
+        if page_idx < 0 or page_idx >= n_pages:
+            raise ValueError(
+                f"Adapter page {page_idx + 1} out of range ({n_pages} pages)")
+        image = doc.adapter.render(page_idx)
+        if image is None:
+            raise ValueError(f"Adapter failed to render page {page_idx + 1}")
+        return image, "webp"
 
     def _render_legacy_page(self, doc, preset: RenderPreset, vs: dict,
                             page_idx: int, fmt: str, highlights: list = None,
@@ -636,16 +673,23 @@ class RenderEngine:
         if not doc.file_bytes:
             raise ValueError(f"Cannot render image (no file_bytes): {doc.path}")
 
-        filetype = doc.path.rsplit(".", 1)[-1].lower() if doc.path else "png"
-        # fitz 支持的图片 filetype 映射（常见格式）
-        _FITZ_IMAGE_TYPES = {"png", "jpg", "jpeg", "gif", "bmp", "tiff", "tif", "webp"}
-        if filetype not in _FITZ_IMAGE_TYPES:
-            filetype = "png"  # 安全回退
-
+        # Normalize EXIF orientation + coerce to RGB JPEG (stable fitz input).
+        # normalize_image_bytes returns the normalized JPEG on success, or the
+        # original bytes unchanged on failure (identity check below).
+        img_bytes = normalize_image_bytes(doc.file_bytes)
         try:
-            img_doc = fitz.open(stream=doc.file_bytes, filetype=filetype)
+            if img_bytes is doc.file_bytes:
+                # normalize failed — fall back to path-derived filetype
+                filetype = doc.path.rsplit(".", 1)[-1].lower() if doc.path else "png"
+                _FITZ_IMAGE_TYPES = {"png", "jpg", "jpeg", "gif", "bmp", "tiff", "tif", "webp"}
+                if filetype not in _FITZ_IMAGE_TYPES:
+                    filetype = "png"  # 安全回退
+                img_doc = fitz.open(stream=img_bytes, filetype=filetype)
+            else:
+                # normalized to JPEG — fitz sniffs JPEG from content
+                img_doc = fitz.open(stream=img_bytes)
         except Exception as exc:
-            raise ValueError(f"Cannot open image with fitz ({filetype}): {exc}") from exc
+            raise ValueError(f"Cannot open image with fitz: {exc}") from exc
 
         try:
             pix = img_doc[0].get_pixmap(dpi=preset.dpi)
@@ -680,22 +724,48 @@ def _apply_grayscale(pix) -> "fitz.Pixmap":
         pix = fitz.Pixmap(fitz.csGRAY, pix)
     return pix
 
+def normalize_image_bytes(data: bytes) -> bytes:
+    """EXIF transpose: normalize image to correct visual orientation.
+
+    Handles EXIF Orientation metadata (e.g., phone photos with rotate 90 deg).
+    Outputs JPEG to strip all EXIF and provide stable input to fitz.
+    All image rendering paths (preview/thumbnail/print) share this function.
+    """
+    try:
+        from PIL import Image, ImageOps
+        img = Image.open(io.BytesIO(data))
+        img = ImageOps.exif_transpose(img)
+        if img.mode != "RGB":
+            img = img.convert("RGB")
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=95)
+        return buf.getvalue()
+    except Exception:
+        return data
+
 
 def _open_image_doc(doc) -> "fitz.Document":
     """Open an image document for rendering (Commit B-1 spec path; additive).
 
-    新增 helper，供 `_render_spec_page` 的 image 分支使用；**不修改** Legacy 的
-    `_render_image_page`（⑥ Frozen Baseline）。打开逻辑与其等价，但集中为一处。
+    Used by `_render_spec_page`'s image branch. Normalizes EXIF orientation and
+    coerces to RGB JPEG (shared with `_render_image_page` via normalize_image_bytes)
+    so both render paths apply identical preprocessing.
     """
-    filetype = doc.path.rsplit(".", 1)[-1].lower() if getattr(doc, "path", None) else "png"
-    _FITZ_IMAGE_TYPES = {"png", "jpg", "jpeg", "gif", "bmp", "tiff", "tif", "webp"}
-    if filetype not in _FITZ_IMAGE_TYPES:
-        filetype = "png"
     img_bytes = getattr(doc, "file_bytes", None)
     if not img_bytes:
         raise ValueError(f"Cannot open image document (no file_bytes): {getattr(doc, 'path', '?')}")
+    # Normalize EXIF orientation + RGB JPEG. On success returns a new JPEG
+    # byte object; on failure returns the original unchanged (identity check).
+    norm = normalize_image_bytes(img_bytes)
     try:
-        return fitz.open(stream=img_bytes, filetype=filetype)
+        if norm is img_bytes:
+            filetype = getattr(doc, "path", None)
+            filetype = filetype.rsplit(".", 1)[-1].lower() if filetype else "png"
+            _FITZ_IMAGE_TYPES = {"png", "jpg", "jpeg", "gif", "bmp", "tiff", "tif", "webp"}
+            if filetype not in _FITZ_IMAGE_TYPES:
+                filetype = "png"
+            return fitz.open(stream=norm, filetype=filetype)
+        return fitz.open(stream=norm)
     except Exception as e:
         raise ValueError(f"Cannot open image document: {getattr(doc, 'path', '?')}") from e
 

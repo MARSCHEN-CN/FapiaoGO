@@ -119,4 +119,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     chrome: process.versions.chrome,
     node: process.versions.node,
   }),
+
+  // 打包资源根目录（production: 主进程经 process.env.FAPAIAO_RESOURCE_PATH 注入 process.resourcesPath；
+  //   development: 空串 → 前端 renderers.js 回退到 Vite 的 /cmaps/ 等根相对静态资源）。
+  //   注意：app 模块在 preload/sandbox 上下文不可见，不能用 app.isPackaged 自行判断。
+  resourcePath: process.env.FAPAIAO_RESOURCE_PATH || '',
 })

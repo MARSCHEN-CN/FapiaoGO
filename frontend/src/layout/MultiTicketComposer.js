@@ -13,6 +13,7 @@
 
 import { computeTicketSlots } from './SlotLayout.js'
 import { buildRenderCommand } from './RenderLayoutFactory.js'
+import { documentStateToPlan } from '../compose/composePagePlan.js'  // 13-E.1 B-lite adapter
 
 /**
  * @typedef {Object} DocumentState
@@ -53,26 +54,60 @@ import { buildRenderCommand } from './RenderLayoutFactory.js'
  * @param {number} [params.ticketCount] - 页面 slot 总数（可选；缺省=documents.length）
  * @returns {ComposedTicket[]}
  */
-export function compose({ paperLayout, documents, ticketCount }) {
-  if (!paperLayout || !documents || !Array.isArray(documents) || documents.length === 0) {
+/**
+ * 13-E.1 B-lite：由 ComposePagePlan[] 合成每票 RenderCommand。
+ * 与 compose() 同契约，但输入是已携带来源身份的 plan（而非裸 DocumentState），
+ * 并在产出的 RenderCommand 上附加 meta:{docId,pageId}（additive，executor 忽略）。
+ *
+ * @param {Object} params
+ * @param {Object} params.paperLayout
+ * @param {Object[]} params.plans - ComposePagePlan[]（含 source + documentState）
+ * @param {number} [params.ticketCount]
+ * @returns {Array<{plan:Object, renderCommand:Object}>}
+ */
+export function composePlans({ paperLayout, plans, ticketCount }) {
+  if (!paperLayout || !plans || !Array.isArray(plans) || plans.length === 0) {
     return []
   }
 
-  const count = (ticketCount != null) ? ticketCount : documents.length
+  const count = (ticketCount != null) ? ticketCount : plans.length
   const slots = computeTicketSlots(paperLayout, count)
   if (slots.length === 0) return []
 
   const result = []
-  for (let i = 0; i < documents.length; i++) {
-    const doc = documents[i]
+  for (let i = 0; i < plans.length; i++) {
+    const plan = plans[i]
     const slot = slots[i]
     if (!slot) {
-      console.warn(`[MultiTicketComposer] documents[${i}] skipped: no slot (slot count=${slots.length}, doc count=${documents.length})`)
+      console.warn(`[composePlans] plans[${i}] skipped: no slot (slot count=${slots.length}, plan count=${plans.length})`)
       continue
     }
-    const renderCommand = buildRenderCommand(paperLayout, doc, slot)
-    result.push({ documentState: doc, renderCommand })
+    const renderCommand = buildRenderCommand(paperLayout, plan.documentState, slot)
+    // 13-E.1：附加来源身份（drawRenderCommand / validateRenderCommand 均忽略 meta，冻结契约不受损）
+    result.push({
+      plan,
+      renderCommand: { ...renderCommand, meta: plan.source ?? null },
+    })
   }
 
   return result
+}
+
+/**
+ * 兼容入口（13-E.1 前既有调用方：renderers / 测试）。
+ * 将 DocumentState[] 经 documentStateToPlan 包装为 plan，委托 composePlans。
+ * 返回形状保持 { documentState, renderCommand } 以兼容旧消费方。
+ *
+ * @param {Object} params
+ * @param {Object} params.paperLayout
+ * @param {DocumentState[]} params.documents
+ * @param {number} [params.ticketCount]
+ * @returns {Array<{documentState:Object, renderCommand:Object}>}
+ */
+export function compose({ paperLayout, documents, ticketCount }) {
+  const plans = (documents || []).map((d, i) => documentStateToPlan(d, i))
+  return composePlans({ paperLayout, plans, ticketCount }).map(({ plan, renderCommand }) => ({
+    documentState: plan.documentState,
+    renderCommand,
+  }))
 }

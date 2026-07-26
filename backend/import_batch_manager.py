@@ -62,6 +62,7 @@ class ImportBatch:
     error: str = ''
     job_ids: List[str] = field(default_factory=list)  # 关联的 ParseJob ID 列表
     file_inputs: List[Dict] = field(default_factory=list)  # IS-2：文件引用元数据(refId/clientKey)，不含字节内容
+    assembled_documents: List[Dict] = field(default_factory=list)  # 13-D.2：组装后的 InvoiceDocument 元信息（供前端 E-2.2 消费）
 
     def __post_init__(self):
         if not self.created_at:
@@ -383,8 +384,7 @@ class ImportBatchManager:
                 'parseMethod': result.get('parse_method', ''),
                 'failedFields': result.get('failed_fields', []),
                 'newName': result.get('new_name', ''),
-                'previewImage': result.get('preview_image'),
-            })
+            })  # 13-B.5 C2: 删除 previewImage 字段（import 表面停产，Render Contract 取代）
         
         return items
 
@@ -583,10 +583,16 @@ class ImportBatchManager:
 
         # 读取解析结果（从 ocr_cache）
         db_record = None
+        full_result = None
         if status == 'success':
             result = self._job_manager.get_job_result(job_id)
             if result and isinstance(result, dict):
                 db_record = result.get('db_record')
+                full_result = result  # C.6: 保存完整结果用于 assembly
+
+        # C.6: 读取分组元信息
+        metrics = job_info.get('metrics', {}) or {}
+        src_doc_id = metrics.get('source_doc_id', '')
 
         # 更新聚合计数 + 缓冲结果
         should_flush = False
@@ -608,11 +614,61 @@ class ImportBatchManager:
             batch.touch()
 
             # 加入结果缓冲
-            if db_record:
-                buf = self._result_buffers.get(batch_id)
-                if buf:
-                    buf.add(db_record)
-                    should_flush = buf.should_flush()
+            if db_record and full_result:
+                if src_doc_id:
+                    # C.6: 多页分组路径 → PageResultStore
+                    page_num_str = metrics.get('page_num', '')
+                    total_pages_str = metrics.get('total_pages', '')
+                    if page_num_str.isdigit() and total_pages_str.isdigit():
+                        from page_result_store import get_page_result_store
+                        from invoice_assembly_pipeline import (
+                            assemble as _assemble_invoice,
+                            invoice_document_to_db_record,
+                        )
+                        store = get_page_result_store()
+                        completed = store.put(
+                            src_doc_id,
+                            int(page_num_str),
+                            int(total_pages_str),
+                            full_result,
+                        )
+                        if completed:
+                            # 所有页收齐 → 组装 → 入库缓冲
+                            pages = store.get_pages(src_doc_id)
+                            if pages:
+                                invoice_docs = _assemble_invoice(pages)
+                                for inv_doc in invoice_docs:
+                                    inv_db = invoice_document_to_db_record(
+                                        inv_doc,
+                                        fallback_hash=db_record.get('hash_sha256', ''),
+                                        fallback_filename=db_record.get('file_name', ''),
+                                        fallback_raw_text=db_record.get('raw_text', ''),
+                                    )
+                                    buf = self._result_buffers.get(batch_id)
+                                    if buf:
+                                        buf.add(inv_db)
+                                        should_flush = buf.should_flush()
+                                    # E-2.2: 存储组装后的 InvoiceDocument 元信息
+                                    batch.assembled_documents.append({
+                                        'sourceDocId': src_doc_id,
+                                        'invoiceNumber': inv_doc.get('invoice_number', ''),
+                                        'invoiceType': inv_doc.get('invoice_type', ''),
+                                        'pageCount': len(pages) if isinstance(pages, list) else 0,
+                                    })
+                            store.remove(src_doc_id)
+                        # 未收齐 → 不写入缓冲，等全部页到达后再组装
+                    else:
+                        # 有 source_doc_id 但 page_num/total_pages 不合法 → fallback 直写
+                        buf = self._result_buffers.get(batch_id)
+                        if buf:
+                            buf.add(db_record)
+                            should_flush = buf.should_flush()
+                else:
+                    # 无分组信息 → 旧路径：直写
+                    buf = self._result_buffers.get(batch_id)
+                    if buf:
+                        buf.add(db_record)
+                        should_flush = buf.should_flush()
 
         # 在锁外执行 DB 写入（避免持锁时间过长）
         if should_flush:

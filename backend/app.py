@@ -1,4 +1,5 @@
 import hashlib
+import io
 import json
 import logging
 import os
@@ -27,6 +28,8 @@ import db as db_module
 DB_AVAILABLE = True
 
 from response_builder import build_response
+from page_result_store import get_page_result_store
+from invoice_assembly_pipeline import assemble as assemble_invoice, invoice_document_to_db_record
 from services.invoice_service import (
     parse_invoice_service, allowed_file, sanitize_filename, detect_file_format
 )
@@ -36,7 +39,6 @@ from services.decision_router import DecisionRouter
 from render_engine import registry, engine
 from render_engine.registry import _make_doc_id
 from render_engine.api import render_bp
-from temp_file_registry import get_temp_registry
 
 # 全局实例（惰性初始化）
 _decision_router = None
@@ -859,15 +861,7 @@ def split_pdf():
                 for (i, page_num, page_id) in page_items:
                     page_bytes = engine.extract_page_pdf(
                         doc.doc_id, page_num, pdf_doc=local_pdf)
-                    preview_data, _, _ = engine.render(
-                        doc_id=doc.doc_id,
-                        preset_name="preview",
-                        page=page_num,
-                        override_params={"dpi": 200, "fmt": "jpeg"},
-                        pdf_doc=local_pdf,
-                    )
-                    preview_b64 = base64.b64encode(preview_data).decode('ascii')
-                    chunk_out.append((i, page_num, page_id, page_bytes, preview_b64))
+                    chunk_out.append((i, page_num, page_id, page_bytes))
             return chunk_out
 
         def _register_and_collect(chunk_results):
@@ -875,7 +869,7 @@ def split_pdf():
             # chunk_results 为「list of per-chunk lists」，按 chunk 顺序展开即文档序
             # （ex.map 保 chunk 序；每个 chunk 内部按页序产出）。
             for chunk in chunk_results:
-                for (i, page_num, page_id, page_bytes, preview_b64) in chunk:
+                for (i, page_num, page_id, page_bytes) in chunk:
                     with _page_registry_lock:
                         _page_registry[page_id] = {"doc_id": doc.doc_id, "page": page_num}
                     with _page_cache_lock:
@@ -887,7 +881,6 @@ def split_pdf():
                     pages.append({
                         "page_index": page_num,
                         "page_id": page_id,
-                        "preview_image": preview_b64,
                         "page_bytes": base64.b64encode(page_bytes).decode('ascii'),
                     })
 
@@ -980,6 +973,7 @@ def download_page(page_id):
 #       释放 Flask 请求线程；
 #   (2) 并发上限降为 CPU 核数相关值（OCR_WORKERS，默认 2：2 × ONNX(cpu_count//2) ≈ cpu_count，避免超卖）；
 #   (3) DB 写入改在主进程完成（worker 内 skip_db_write=True），避免多进程写库与跨进程回传连接。
+from concurrent.futures import ThreadPoolExecutor, as_completed  # 仍供 parse_batch 使用
 from timer_utils import MAX_PARSE_TIME
 
 import os as _os
@@ -995,13 +989,6 @@ _parse_semaphore = threading.Semaphore(OCR_WORKERS)
 _ocr_executor = None
 _ocr_executor_kind = None  # None=未初始化 | 'process' | 'thread' | False=不可用
 _executor_lock = threading.Lock()
-
-# IS-3 P3-A：/parse_invoice 与 /import/batch 共用同一 TempFileRegistry 单例（get_temp_registry，
-# R1 blocker 修复）。此前两者各 new 一个实例，会导致 spool 登记的 ref 被另一端 release 时
-# 找不到记录 → temp 文件成孤儿，违反 INV-IS3-6。统一单例后 spool/release 闭环。
-# 跨 ProcessPool 仍只传 refId（INV-IS3-3）；worker 不持有 registry，只按 refId 跨进程
-# read_bytes_by_ref（INV-IS3-6）。
-_import_temp_registry = get_temp_registry()
 
 
 def _get_executor():
@@ -1056,25 +1043,31 @@ def _parse_sync(file_bytes, filename, auto_orient, enable_auto_ocr):
     )
 
 
-def _run_parse_ref_offthread(ref_id, filename, auto_orient, enable_auto_ocr):
-    """IS-3 P3-B：提交已 spool 的 ref 到执行器（调用方负责本 ref 的 spool + release）。
+def _run_parse_offthread(file_bytes, filename, auto_orient, enable_auto_ocr):
+    """将解析任务提交到执行器，释放 Flask 请求线程。
 
-    /parse_invoice 路由已将上传流 spool 为 opaque ref（不把全量 bytes 读进 RAM，INV-1），
-    本函数只承接 refId，跨 ProcessPool 仅传字符串 refId（不传 bytes，INV-IS3-3）。
-    同步回退路径仍按 refId 读回 bytes 后交 service（同进程内读取，不跨进程传 bytes）。
-    P4 退役 /parse_batch 后，本函数即唯一 off-thread 解析入口。
+    返回 parse_invoice_service 的结果字典（worker 内 skip_db_write=True）。
+    任何异常（进程池不可用 / 任务超时 / 子进程故障）均回退为同步执行，保证端点不中断。
     """
     executor = _get_executor()
     if executor is None:
-        from temp_file_registry import read_bytes_by_ref
-        file_bytes = read_bytes_by_ref(ref_id)
         return _parse_sync(file_bytes, filename, auto_orient, enable_auto_ocr)
-    # 超时略大于 MAX_PARSE_TIME，避免单任务无限挂起占用信号量
-    timeout = MAX_PARSE_TIME / 1000.0 + 30.0
-    future = executor.submit(ocr_pool_task.run_parse, ref_id, filename, auto_orient, enable_auto_ocr)
-    return future.result(timeout=timeout)
+    try:
+        # 超时略大于 MAX_PARSE_TIME，避免单任务无限挂起占用信号量
+        timeout = MAX_PARSE_TIME / 1000.0 + 30.0
+        future = executor.submit(ocr_pool_task.run_parse, file_bytes, filename, auto_orient, enable_auto_ocr)
+        return future.result(timeout=timeout)
+    except Exception as e:
+        logger.warning("OCR 执行器执行失败，回退同步解析: %s", e)
+        return _parse_sync(file_bytes, filename, auto_orient, enable_auto_ocr)
 
 
+# 供 parse_batch 使用的「提交层」并发限流（外层 ThreadPool 仅为调度层）。
+# 注意：OCR 实际并行度由 _get_executor() 的 ProcessPoolExecutor + OCR_WORKERS 决定，
+# 与 BATCH_WORKERS / parse_semaphore 解耦——调参时不要混淆两者。
+# 该 semaphore 仅限制「同时向进程池提交的任务数」，上限与 CPU 核数挂钩：
+# max(2, cpu_count())；cpu_count() 为 None 时回退到 2。
+parse_semaphore = threading.Semaphore(max(2, os.cpu_count() or 1))
 
 
 @app.route('/parse_invoice', methods=['POST'])
@@ -1084,31 +1077,31 @@ def parse_invoice():
         return jsonify({"success": False, "error": "没有上传文件"}), 400
 
     file = request.files['file']
+    # [DIAG] A/B 对比：打印文件名和文件大小
+    import logging as _diag_log
+    _diag_log = logging.getLogger(__name__)
+    _diag_log.info("[DIAG] parse_invoice filename=%s  size=%d  mode=%s",
+                   file.filename, len(file.read()), request.form.get('mode', 'single'))
+    file.seek(0)
     if not allowed_file(file.filename):
         return jsonify({"success": False, "error": "不支持的文件格式"}), 400
 
     if not _parse_semaphore.acquire(blocking=False):
         return jsonify({"success": False, "error": "当前解析任务较多，请稍后重试"}), 429
 
-    # IS-3 P3-B：上传流直接 spool 为 opaque ref（不把全量 bytes 读进 RAM，INV-1）；
-    # exec 边界只传 refId（INV-IS3-3）；本 ref 的生命周期（spool/release）归本路由拥有
-    # （INV-IS3-6：worker 只读、不持有 registry）。doc_id 由 spool 边界物化
-    # （content-only，与 _make_doc_id 同规则），无需再次读取/重算全量 bytes。
-    ref_id = None
     try:
         file.seek(0)
-        rec = _import_temp_registry.spool(file.stream, file.filename or "")
-        ref_id = rec.refId
-        doc_id = rec.doc_id  # content-only 身份，等价于 _make_doc_id(content)
-        logger.info("[DIAG] parse_invoice filename=%s size=%d refId=%s mode=%s",
-                    rec.filename, rec.size, ref_id, request.form.get('mode', 'single'))
+        file_bytes = file.read()  # 只读取一次，后续复用
+        # Identity Contract v1.1：文档永久身份 = sha256(file_bytes)[:24]（content-only，filename 不进哈希）。
+        # 与 /split_pdf、/preview/{doc_id} 共用同一 doc_id，使单文件 parse 也能闭合身份链（4.2.1-c）。
+        doc_id = _make_doc_id(file_bytes, file.filename or "")
 
         auto_orient = request.form.get('autoOrient', '1') == '1'
         enable_auto_ocr = request.form.get('enableAutoOcr', '0') == '1'
         _legacy_start = time.time()
         # 交由执行器（进程池/线程池）执行，释放 Flask 请求线程；
-        # 只传 refId，worker(run_parse) 按 refId 跨进程读回 bytes（INV-IS3-3）。
-        result = _run_parse_ref_offthread(ref_id, rec.filename, auto_orient, enable_auto_ocr)
+        # worker 内 skip_db_write=True，DB 写入改在主线程完成（见下方）。
+        result = _run_parse_offthread(file_bytes, file.filename, auto_orient, enable_auto_ocr)
         _legacy_ms = round((time.time() - _legacy_start) * 1000, 2)
         logger.info("[PERF] 旧管道 parse_invoice_service 耗时: %.2fms (executor=%s)",
                     _legacy_ms, _ocr_executor_kind or 'sync')
@@ -1116,20 +1109,62 @@ def parse_invoice():
         logger.exception("发票解析失败")
         return jsonify({"success": False, "error": "发票解析失败"}), 500
     finally:
-        # 生命周期所有权归本路由（INV-IS3-6）：worker 只读，此处释放 temp 文件
-        if ref_id is not None:
-            _import_temp_registry.release(ref_id)
         _parse_semaphore.release()
 
-    # ── 主进程完成 DB 写入（worker 中 skip_db_write=True，避免跨进程写库） ──
+    # ── 主进程完成 DB 写入 —— 多页组装路径 vs 旧直写路径 ──
+    # Phase C：接收前端传递的 source_doc_id/page_num/total_pages，
+    # 有分组信息时走 PageResultStore + InvoiceAssemblyPipeline，
+    # 无分组信息时走 legacy upsert_invoice（兼容旧客户端/非分页文件）。
     if result is not None:
         db_record = result.get('db_record')
         if db_record:
-            try:
-                result['db_result'] = db_module.upsert_invoice(db_record)
-            except Exception as e:
-                logger.warning("发票自动入库失败: %s", e)
-                result['db_result'] = None
+            source_doc_id = request.form.get('source_doc_id', '').strip()
+            page_num_str = request.form.get('page_num', '').strip()
+            total_pages_str = request.form.get('total_pages', '').strip()
+
+            if source_doc_id and page_num_str.isdigit() and total_pages_str.isdigit():
+                # ── 多页组装路径 ──
+                # 传给 store 的是完整 parse 结果（含 extra_fields），
+                # 不是 db_record（db_record 格式与 assembly 期望不同）。
+                # assembly 后从合并结果重建 db_record。
+                page_num = int(page_num_str)
+                total_pages = int(total_pages_str)
+
+                store = get_page_result_store()
+                completed = store.put(source_doc_id, page_num, total_pages, result)
+
+                if completed:
+                    # 所有页已收齐 → 组装 → 入库
+                    all_pages = store.get_pages(source_doc_id)
+                    if all_pages:
+                        invoice_docs = assemble_invoice(all_pages)
+                        for inv_doc in invoice_docs:
+                            # 使用契约化转换函数生成 db_record
+                            inv_db = invoice_document_to_db_record(
+                                inv_doc,
+                                fallback_hash=db_record.get('hash_sha256', ''),
+                                fallback_filename=db_record.get('file_name', ''),
+                                fallback_raw_text=db_record.get('raw_text', ''),
+                            )
+                            try:
+                                db_module.upsert_invoice(inv_db)
+                                logger.info(
+                                    f"[Assembly] 发票入库: number={inv_doc.get('invoice_number', '?')}, "
+                                    f"items={len(inv_db.get('line_items', []))}"
+                                )
+                            except Exception as e:
+                                logger.warning("合并发票入库失败: %s", e)
+                    # 从暂存中移除已处理的数据（无论组装是否成功）
+                    store.remove(source_doc_id)
+
+                result['db_result'] = None  # 单页不触发独立入库
+            else:
+                # ── 旧路径：直写（无分组信息/非 PDF 单文件） ──
+                try:
+                    result['db_result'] = db_module.upsert_invoice(db_record)
+                except Exception as e:
+                    logger.warning("发票自动入库失败: %s", e)
+                    result['db_result'] = None
 
     if result is None:
         return jsonify({"success": False, "error": "无法识别的文件格式"}), 400
@@ -1153,6 +1188,187 @@ def parse_invoice():
         from_cache=result.get('from_cache', False),
         filename=result.get('safe_filename', ''),
         doc_id=doc_id,
+    )
+
+
+@app.route('/parse_batch', methods=['POST'])
+def parse_batch():
+    """批量解析多个发票文件（并行解析 + SSE 流式进度 + 批量 DB 写入）
+
+    前端通过 multipart/form-data 提交多个文件（字段名 'files'），
+    后端用线程池并行解析，通过 SSE 流实时推送进度。
+    """
+    files = request.files.getlist('files')
+    if not files:
+        return jsonify({"success": False, "error": "没有上传文件"}), 400
+
+    auto_orient = request.form.get('autoOrient', '1') == '1'
+    enable_auto_ocr = request.form.get('enableAutoOcr', '0') == '1'
+
+    MAX_BATCH_SIZE = 100
+    if len(files) > MAX_BATCH_SIZE:
+        return jsonify({"success": False,
+                        "error": f"单次最多处理 {MAX_BATCH_SIZE} 个文件"}), 400
+
+    # 在主线程预读取所有文件字节（Flask request context 不可跨线程访问）
+    file_inputs = []
+    for f in files:
+        f.seek(0)
+        file_inputs.append({
+            'bytes': f.read(),
+            'filename': f.filename,
+        })
+
+    progress_queue = queue.Queue()
+    result_queue = queue.Queue()
+
+    def run_batch():
+        total = len(file_inputs)
+        BATCH_WORKERS = min(4, total)
+        results = [None] * total
+
+        def _parse_one(index, fi):
+            if not parse_semaphore.acquire(timeout=30):
+                return index, None, "服务器繁忙，请稍后重试"
+            try:
+                if not allowed_file(fi['filename']):
+                    return index, None, f"不支持的文件格式: {fi['filename']}"
+                # P1-3: 收敛到已有 OCR 进程池（ProcessPoolExecutor，绕过 GIL），与单文件
+                # /parse_invoice 共用同一执行器与 OCR_WORKERS 并行度。外层 ThreadPool +
+                # parse_semaphore 仅做调度/提交限流，不再在 batch 线程内直接跑 OCR。
+                # _run_parse_offthread 内部 skip_db_write=True，DB 写入仍由主进程批量完成。
+                svc_result = _run_parse_offthread(
+                    fi['bytes'], fi['filename'],
+                    auto_orient, enable_auto_ocr,
+                )
+                if svc_result is None:
+                    return index, None, f"无法识别的文件格式: {fi['filename']}"
+                return index, svc_result, None
+            except Exception as e:
+                logger.error("[parse_batch] 解析失败 [%d] %s: %s", index, fi['filename'], e)
+                return index, None, str(e)
+            finally:
+                parse_semaphore.release()
+
+        # P1-3-b: 一次 batch 仅记录一次执行器类型，便于生产确认 batch OCR 实际跑在哪个
+        # 执行器上（ProcessPoolExecutor / ThreadPoolExecutor / none=sync 回退）。目的仅为
+        # 可观测——若静默回退到 ThreadPool/sync，优化等于未生效，INFO 级才能在生产日志发现。
+        # 注意：OCR 并行度由 OCR_WORKERS 决定，与 BATCH_WORKERS / parse_semaphore 解耦。
+        # P1-3-D（observability correctness）: 先触发懒初始化，再读 kind。
+        # _get_executor() 内部才真正创建 ProcessPool/ThreadPool（首条 batch 前 _ocr_executor
+        # 仍是 None），若不先调用，日志会记到 "none" 而实际执行用的是 ProcessPoolExecutor ——
+        # 可观测性与真实执行模型不一致。日志应记录「本次 batch 真实将使用的执行模型」，
+        # 而非「调用瞬间尚未初始化的变量状态」。
+        _get_executor()
+        logger.info("parse_batch OCR executor=%s workers=%s",
+                    _get_executor_kind(), OCR_WORKERS)
+
+        with ThreadPoolExecutor(max_workers=BATCH_WORKERS,
+                                thread_name_prefix='batch-parse') as pool:
+            futures = {pool.submit(_parse_one, i, fi): i
+                       for i, fi in enumerate(file_inputs)}
+            completed = 0
+            for fut in as_completed(futures):
+                idx, svc_result, error = fut.result()
+                results[idx] = (idx, svc_result, error)
+                completed += 1
+                progress_queue.put({'current': completed, 'total': total})
+
+        # 批量入库
+        db_records = []
+        record_index_map = {}
+        for i, (idx, svc_result, error) in enumerate(results):
+            if svc_result and svc_result.get('db_record'):
+                record_index_map[len(db_records)] = idx
+                db_records.append(svc_result['db_record'])
+
+        # 预构建反向映射 {file_idx: db_record 位置}，把下方「逐个文件匹配 db 结果」从 O(N·M) 降为 O(N)。
+        # 依赖 batch_upsert_invoices 返回顺序与入参 rows 对应的契约（见 db.py 文档）。
+        file_db_map = {idx: pos for pos, idx in record_index_map.items()}
+
+        db_results = []
+        if db_records:
+            try:
+                db_results = db_module.batch_upsert_invoices(db_records)
+                logger.info("[parse_batch] 批量入库 %d 条记录", len(db_results))
+            except Exception as e:
+                logger.warning("[parse_batch] 批量入库失败: %s", e)
+
+        # 构建每个文件的响应项
+        response_items = []
+        for i, (idx, svc_result, error) in enumerate(results):
+            item = {
+                'index': idx,
+                'file_name': file_inputs[idx]['filename'],
+                'success': svc_result is not None,
+            }
+            if svc_result:
+                db_res = None
+                rec_idx = file_db_map.get(idx)
+                if rec_idx is not None and rec_idx < len(db_results):
+                    db_res = db_results[rec_idx]
+                item['db_result'] = db_res
+
+                extra = svc_result.get('extra_fields', {}) or {}
+                raw_failed = extra.get('failed_fields', [])
+                failed_ids = [f.get('field', '') for f in raw_failed
+                              if isinstance(f, dict) and f.get('field')] if raw_failed else []
+
+                item['data'] = {
+                    'db_record': svc_result.get('db_record'),
+                    'invoice_type': svc_result.get('invoice_type', ''),
+                    'invoice_number': svc_result.get('invoice_number', ''),
+                    'amount': svc_result.get('amount', ''),
+                    'invoice_date': svc_result.get('invoice_date', ''),
+                    'new_name': svc_result.get('safe_filename', ''),
+                    'parse_method': svc_result.get('parse_method', ''),
+                    'file_format': svc_result.get('file_format', ''),
+                    'failed_fields': failed_ids,
+                    'preview_image': '',  # 13-B.5 C2: import 表面停产 preview_image（Render Contract 取代）
+                    'invoice_fields': extra,
+                    'from_cache': svc_result.get('from_cache', False),
+                }
+            else:
+                item['error'] = error or '解析失败'
+            response_items.append(item)
+
+        success_count = sum(1 for it in response_items if it['success'])
+        logger.info("[parse_batch] 完成: %d/%d 成功", success_count, total)
+        result_queue.put({
+            'success': True,
+            'total': total,
+            'success_count': success_count,
+            'fail_count': total - success_count,
+            'items': response_items,
+        })
+
+    thread = threading.Thread(target=run_batch, daemon=True)
+    thread.start()
+
+    def generate():
+        yield ": keepalive\n\n"
+        # 阻塞等待事件：进度到达即唤醒（零额外延迟），而非 time.sleep 忙轮询
+        while True:
+            # 先消费已就绪的进度消息
+            while not progress_queue.empty():
+                msg = progress_queue.get_nowait()
+                yield f"data: {_json.dumps(msg, ensure_ascii=False)}\n\n"
+            # 结果已就绪则发送并结束（解析完成）
+            if not result_queue.empty():
+                msg = result_queue.get_nowait()
+                yield f"data: {_json.dumps(msg, ensure_ascii=False)}\n\n"
+                break
+            # 阻塞等待下一个进度事件（最多 0.1s），超时再探活 result_queue；无空转
+            try:
+                msg = progress_queue.get(timeout=0.1)
+                yield f"data: {_json.dumps(msg, ensure_ascii=False)}\n\n"
+            except queue.Empty:
+                continue
+
+    return Response(
+        stream_with_context(generate()),
+        mimetype='text/event-stream',
+        headers={'Cache-Control': 'no-cache', 'Connection': 'keep-alive', 'X-Accel-Buffering': 'no'},
     )
 
 
@@ -1483,45 +1699,6 @@ if __name__ == '__main__':
         level=logging.DEBUG,
         format='%(asctime)s %(levelname)s %(name)s - %(message)s',
     )
-    # ── 冷启动诊断：[Backend Runtime] 环境事实集中打印 ──
-    # 一处打印 Python 解释器 + OCR 依赖版本，用户反馈 OCR 问题时第一分钟即可定位：
-    #   Python 错？venv 错？包版本错？无需翻 traceback。
-    import sys
-    import platform
-
-    _rt = [
-        "Python:",
-        "  %s" % sys.executable,
-        "  (%s)" % platform.python_version(),
-    ]
-
-    # OCR 依赖：rapidocr + onnxruntime 的版本与可用性。
-    # RapidOCR 3.9.0 未将 onnxruntime 列入 install_requires，缺包时只在导入图片发票才暴露；
-    # 此处启动期集中探测并打印，缺失则 ERROR（非致命，不阻断启动）。
-    _ocr = []
-    try:
-        import rapidocr  # noqa: F401
-        _ocr.append("rapidocr=%s" % getattr(rapidocr, '__version__', '?'))
-    except Exception as _e:  # noqa: BLE001
-        _ocr.append("rapidocr=MISSING(%s)" % type(_e).__name__)
-    try:
-        import onnxruntime  # noqa: F401
-        _ocr.append("onnxruntime=%s" % getattr(onnxruntime, '__version__', '?'))
-    except ImportError:
-        _ocr.append("onnxruntime=MISSING")
-    _rt.append("OCR:")
-    _rt.append("  " + "  ".join(_ocr))
-
-    logger.info("[Backend Runtime]\n%s", "\n".join(_rt))
-
-    if any(b.startswith("rapidocr=MISSING") or b.startswith("onnxruntime=MISSING") for b in _ocr):
-        logger.error(
-            "[OCR] OCR 依赖缺失，图片类发票 OCR 将失败！当前解释器=%s。"
-            " 请改用 backend/venv/Scripts/python.exe 运行，并执行"
-            " backend/venv/Scripts/pip install -r backend/requirements.txt",
-            sys.executable,
-        )
-
     # ── 冷启动诊断：确认运行时实际使用的数据库路径 ──
     # 注意：db.py 模块级 logger.info（DB_DIR/INVOICES_PATH）在 import 时执行，
     # 早于本 basicConfig，会被 lastResort(WARNING) 静默丢弃；此处补足可见输出。
@@ -1552,4 +1729,10 @@ if __name__ == '__main__':
     @atexit.register
     def stop_page_cache_cleanup():
         _page_cache_stop_event.set()
-    app.run(port=5000, debug=True, threaded=True)
+
+    @app.route('/health')
+    def _health():
+        # 供 Electron 主进程探测后端就绪（生产环境启动握手），返回 200 即表示 Flask 已可服务
+        return 'ok', 200
+
+    app.run(host='127.0.0.1', port=5000, debug=False, threaded=True)

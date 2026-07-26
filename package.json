@@ -1,0 +1,22 @@
+{
+  "name": "FapiaoGO",
+  "version": "0.0.1",
+  "description": "发票打印工具",
+  "main": "electron/main.js",
+  "scripts": {
+    "test:print": "node --test frontend/tests/print/e2e/printPipeline.test.mjs",
+    "ci:print-contract": "node frontend/tests/print/PRINT_ARCHITECTURE_LOCK.js && node --test frontend/tests/print/e2e/printPipeline.test.mjs"
+  },
+  "dependencies": {
+    "archiver": "^8.0.0",
+    "electron-updater": "^6.8.9",
+    "warning": "^4.0.3"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-legacy": "^8.0.2",
+    "@vitejs/plugin-react": "^6.0.2",
+    "electron": "^43.1.0",
+    "electron-builder": "^26.15.6",
+    "typescript": "^6.0.3"
+  }
+}

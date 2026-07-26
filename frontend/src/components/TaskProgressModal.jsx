@@ -17,6 +17,7 @@ const TaskProgressModal = ({
   stage = '',
   status,        // 'starting' | 'pending' | 'running' | 'completed' | 'cancelled' | 'failed'
   errors = [],   // [{ file, error }]
+  outputPath = '',
   onCancel,
   onClose,
 }) => {
@@ -109,6 +110,14 @@ const TaskProgressModal = ({
               </div>
 
               {stage && <span className="tp-stage-value" style={{ textAlign: 'center' }}>{stage}</span>}
+
+              {/* 输出路径（除打印/重命名外的导出完成页统一显示） */}
+              {outputPath && !isCancelled && (
+                <div className="pk-result-path">
+                  <span className="pk-result-path-label">输出路径</span>
+                  <span className="pk-result-path-value" title={outputPath}>{outputPath}</span>
+                </div>
+              )}
 
               {/* ── 错误列表 ── */}
               {hasErrors && (

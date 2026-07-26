@@ -33,6 +33,12 @@ extraResources:
       - "!**/test_*.py"
   - from: pyscripts
     to: pyscripts
+  - from: frontend/public/cmaps
+    to: cmaps
+  - from: frontend/public/standard_fonts
+    to: standard_fonts
+  - from: frontend/public/wasm
+    to: wasm
 # Windows 打包配置
 win:
   target:
