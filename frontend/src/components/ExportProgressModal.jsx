@@ -3,7 +3,7 @@ import React, { useMemo } from 'react'
 const ExportProgressModal = ({
   visible,
   progress,       // { current, total, stage, currentFile }
-  result,         // null | { success, filePath } | { success: false, error }
+  result,         // null | { success, path, metadata: { successCount, failCount } } | { success: false, error }
   onCancel,
   onClose,
 }) => {
@@ -17,6 +17,8 @@ const ExportProgressModal = ({
   if (!visible) return null
 
   const isDone = result !== null
+  const successCount = isDone && result.success ? (result.metadata?.successCount ?? stats.total) : 0
+  const failCount = isDone && result.success ? (result.metadata?.failCount ?? 0) : 0
 
   return (
     <div className="modal-overlay ex-overlay">
@@ -63,7 +65,7 @@ const ExportProgressModal = ({
             </div>
           </div>
         ) : (
-          /* 完成状态 */
+          /* 完成状态（与打包/重命名完成页统一模板） */
           <div className="pk-result-section">
             {result.success ? (
               <>
@@ -72,10 +74,20 @@ const ExportProgressModal = ({
                     <polyline points="5,13 10,18 19,5" />
                   </svg>
                 </div>
-                {result.filePath && (
-                  <div className="pk-result-path" style={{ marginTop: 12 }}>
+                <div className="pk-result-stats">
+                  <div className="pk-result-stat">
+                    <span className="pk-result-val">{successCount}</span>
+                    <span className="pk-result-label">成功</span>
+                  </div>
+                  <div className="pk-result-stat">
+                    <span className={`pk-result-val ${failCount > 0 ? 'error' : ''}`}>{failCount}</span>
+                    <span className="pk-result-label">失败</span>
+                  </div>
+                </div>
+                {result.path && (
+                  <div className="pk-result-path">
                     <span className="pk-result-path-label">输出路径</span>
-                    <span className="pk-result-path-value" title={result.filePath}>{result.filePath}</span>
+                    <span className="pk-result-path-value" title={result.path}>{result.path}</span>
                   </div>
                 )}
               </>

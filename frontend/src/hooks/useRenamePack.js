@@ -31,6 +31,113 @@ export function useRenamePack({ files, settings, setFiles, parseFiles, parseProg
     }
   }, [parseProgress])
 
+  // 用 ref 保存最新 files/settings，供 refreshRenamePreview 读取（避免闭包过期）
+  const latestFilesRef = useRef(files)
+  const latestSettingsRef = useRef(settings)
+  useEffect(() => { latestFilesRef.current = files }, [files])
+  useEffect(() => { latestSettingsRef.current = settings }, [settings])
+
+  // 内部预览生成逻辑（不依赖闭包，从 ref 读最新值）
+  const generatePreviewInner = useCallback(async () => {
+    const ipc = electronAPIRef.current?.ipcRenderer
+    if (!ipc) return false
+    const curFiles = latestFilesRef.current
+    const curSettings = latestSettingsRef.current
+
+    const documentFiles = groupFilesByDocument(curFiles)
+    const filesToRename = documentFiles.filter(f => f.status === 'parsed')
+    if (filesToRename.length === 0) return false
+
+    const renameSettings = curSettings.renameSettings || {}
+    const fields = renameSettings.fields || []
+    if (fields.length === 0) return false
+
+    const filesForPreview = filesToRename.map(f => ({
+      key: f.key,
+      name: f.name,
+      originalPath: f.printPath || f.path || '',
+      invoiceFields: (f.invoiceFields && Object.keys(f.invoiceFields).length) ? f.invoiceFields : {
+        type: f.invoiceType || '',
+        fphm: f.invoiceNumber || '',
+        kprq: f.invoiceDate || '',
+        gmfmc: f.invoiceFields?.gmfmc || '',
+        gmfsh: f.invoiceFields?.gmfsh || '',
+        xsfmc: f.invoiceFields?.xsfmc || '',
+        xsfsh: f.invoiceFields?.xsfsh || '',
+        amountJe: f.invoiceFields?.amountJe || '',
+        amountSe: f.invoiceFields?.amountSe || '',
+        amountHj: f.invoiceFields?.amountHj || '',
+        amountHjDx: f.invoiceFields?.amountHjDx || '',
+        note: f.invoiceFields?.note || '',
+        skr: f.invoiceFields?.skr || '',
+        fhr: f.invoiceFields?.fhr || '',
+        kpr: f.invoiceFields?.kpr || '',
+      },
+    }))
+
+    let previews
+    try {
+      const result = await ipc.invoke('preview-rename-names', {
+        files: filesForPreview,
+        renameSettings,
+      })
+      previews = result.previews || []
+    } catch (e) {
+      console.error('[rename] Preview refresh failed:', e.message)
+      previews = filesToRename.map(f => ({
+        key: f.key,
+        originalName: f.name,
+        newName: f.name,
+      }))
+    }
+
+    const fileMap = new Map(filesToRename.map(f => [f.key, f]))
+    const previewFiles = previews.map(p => {
+      const f = fileMap.get(p.key)
+      return {
+        key: p.key,
+        originalName: p.originalName,
+        newName: p.newName,
+        conflict: false,
+        fileFormat: f?.fileFormat || 'pdf',
+        invoiceNumber: f?.invoiceNumber || '',
+        invoiceType: f?.invoiceType || '',
+        amount: f?.amount || '',
+        invoiceDate: f?.invoiceDate || '',
+        rawText: f?.rawText || '',
+        gmfmc: f?.invoiceFields?.gmfmc || '',
+        xsfmc: f?.invoiceFields?.xsfmc || '',
+        xmmc: f?.invoiceFields?.xmmc || '',
+        note: f?.invoiceFields?.note || '',
+      }
+    })
+
+    const nameCount = {}
+    previewFiles.forEach(file => {
+      nameCount[file.newName] = (nameCount[file.newName] || 0) + 1
+    })
+    previewFiles.forEach(file => {
+      if (nameCount[file.newName] > 1) file.conflict = true
+    })
+
+    setRenamePreviewFiles(previewFiles)
+    const nameMap = {}
+    for (const p of previewFiles) {
+      const base = p.newName.replace(/\.\w+$/, '')
+      nameMap[p.key] = base
+    }
+    computedNamesRef.current = nameMap
+    return true
+  }, [electronAPIRef])
+
+  // 对外暴露的刷新方法（用户在预览面板内修改规则后调用）
+  const refreshRenamePreview = useCallback(() => {
+    // 清空可能存在的错误结果
+    setRenameResult(null)
+    generatePreviewInner()
+  }, [generatePreviewInner])
+
+
   // ============================
   // 重命名
   // ============================
@@ -387,5 +494,6 @@ export function useRenamePack({ files, settings, setFiles, parseFiles, parseProg
     alertModal, closeAlert,
     renamedPreviewKey,
     handleRename, handleRenameConfirm, handlePack,
+    refreshRenamePreview,
   }
 }

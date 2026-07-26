@@ -35,6 +35,7 @@ function sessionToPdfTaskView(session) {
     successCount: session.details.successCount,
     failCount: session.details.failCount,
     errors: session.details.errors,
+    path: session.result?.path || '',
   }
 }
 
