@@ -209,7 +209,7 @@ class ImportBatchManager:
         self._job_manager.on_job_complete(self._on_job_done)
 
         # P10 Phase A: Preview Warmup Planner (lazy init — uses global render_engine singletons)
-        self._warm_planner = None
+        self._warm_planner: Optional["WarmPlanner"] = None
 
         logger.info("[ImportBatch] 初始化完成")
 
