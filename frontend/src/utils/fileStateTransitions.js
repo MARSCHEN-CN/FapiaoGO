@@ -45,9 +45,10 @@ export function applyFileUpdate(file, update) {
       `for ${file.key || file.name || '<unknown>'}; payload still merged`
     )
   }
-  return {
+  const result = {
     ...file,
     ...(transitionOk ? { status: newStatus } : {}),
     ...extra,
   }
+  return result
 }

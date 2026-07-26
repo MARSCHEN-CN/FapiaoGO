@@ -49,6 +49,9 @@ export function createPlaceholders(files) {
     key: generateFileKey(f.name),
     name: f.name,
     path: f.path,
+    // V16 File identity contract：placeholder 已是接收文件、等待解析的实体，
+    // printPath 与 path 同源（打印物理源），缺失会导致 parsed 后 printableCount 误排除。
+    printPath: f.path,
     // lazy file loading: browser drag 有 File，dialog/folder 路径为 null
     // 解析阶段等下游在需要时通过 printPath / path 读取
     file: f.file || null,

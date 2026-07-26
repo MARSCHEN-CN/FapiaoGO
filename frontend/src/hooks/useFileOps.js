@@ -171,12 +171,12 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
 
     // 5. 批量同步到 React UI
     if (updates.size > 0) {
-      setFiles((prev) =>
-        prev.map((f) => {
-          const update = updates.get(f.key)
-          return update ? { ...f, ...update } : f
-        })
-      )
+    setFiles((prev) =>
+      prev.map((f) => {
+        const update = updates.get(f.key)
+        return update ? { ...f, ...update } : f
+      })
+    )
     }
 
     // 6. 进度已由 SSE onProgress 实时更新，不再重复计算
