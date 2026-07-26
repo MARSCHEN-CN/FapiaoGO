@@ -162,6 +162,15 @@ export async function fetchDocumentMetadata(docId, options = {}) {
 export async function ensureDocumentMetadata(fileObj, options = {}) {
   const { signal, silent = false } = options
   if (!fileObj || !fileObj.docId) return null
+  // P8-lite capability guard: only formats that actually hold a Render Capability
+  // (currently OFD) may query render metadata. A PDF/Image carries a SOURCE identity
+  // docId (sha256 of bytes, assigned by the parse layer for grouping/dedup) that is NOT
+  // a render-registry docId → querying it yields `404 DOC_NOT_REGISTERED`.
+  // Guard lives here (the fileObj-aware gateway) rather than in fetchDocumentMetadata
+  // (which only receives docId) so we never let a Source Identity flow into the
+  // render-capability lookup. No field migration, no docId write-chain change.
+  // See MEMORY.md P8 / P8-lite (Frozen Architecture Constraint).
+  if (fileObj.fileFormat !== 'ofd') return null
   const meta = await fetchDocumentMetadata(fileObj.docId, { signal })
   if (!meta) return null
   return ensureDocumentFromMetadata({ ...meta, filename: fileObj.name }, { silent })
