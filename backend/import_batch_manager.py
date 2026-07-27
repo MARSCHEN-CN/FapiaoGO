@@ -480,6 +480,14 @@ class ImportBatchManager:
                     if client_key:
                         job.metrics['client_key'] = client_key
 
+                    # [Identity Bridge] 透传 source_doc_id / page_num / total_pages 到 job.metrics，
+                    # 供 _on_job_done(:609) 触发 assembly 归并同票多页。
+                    src_doc_id = fi.get('sourceDocId') or ''
+                    if src_doc_id:
+                        job.metrics['source_doc_id'] = src_doc_id
+                        job.metrics['page_num'] = str(fi.get('pageNum') or '')
+                        job.metrics['total_pages'] = str(fi.get('totalPages') or '')
+
                     # IS-2 Commit 5：把 refId 随 job 携带，_on_job_done 释放时据其定位 temp 文件
                     job.metrics['ref_id'] = ref_id
 

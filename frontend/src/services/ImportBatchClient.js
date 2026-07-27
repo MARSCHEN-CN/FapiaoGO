@@ -58,14 +58,23 @@ export async function createImportBatch(files, options = {}) {
   const { autoOrient = true, enableAutoOcr = false, signal } = options
 
   const formData = new FormData()
-  for (const { file, name, clientKey } of files) {
+  const pageMetas = []
+  for (const { file, name, clientKey, sourceDocId, pageNum, totalPages } of files) {
     // 使用原始文件名，后端通过 filename 识别
     formData.append('files', file, name)
     // 护栏A：clientKey 可选，后端按索引与 files 对齐
     formData.append('clientKeys', clientKey || '')
+    // [Identity Bridge] 与 files 同序，后端按索引对齐，避免并行数组错位
+    pageMetas.push({
+      sourceDocId: sourceDocId || '',
+      pageNum: pageNum ?? null,
+      totalPages: totalPages ?? null,
+    })
   }
   formData.append('autoOrient', autoOrient ? '1' : '0')
   formData.append('enableAutoOcr', enableAutoOcr ? '1' : '0')
+  // 单 JSON 数组随 files 同序传送，杜绝索引错位（取代 3 个并行数组方案）
+  formData.append('pageMetas', JSON.stringify(pageMetas))
 
   // P6-D: 网络级 timeout 与用户取消 signal 合并。AbortSignal.any 不可用时退回
   // signal（保留用户取消能力，旧浏览器牺牲 timeout——POST 语义下用户取消优先）。

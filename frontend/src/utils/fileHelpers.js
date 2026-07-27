@@ -98,6 +98,12 @@ export async function processPdfFile(file, getPathFn) {
           const pageFile = new File([blob], pageName, { type: 'application/pdf' })
 
           const fileObj = buildFileObj(pageFile, pageName, getPathFn(file), null, data.doc_id, page.page_index)
+          // [Identity Bridge] 透传父 PDF 物理身份，供批量导入路径携带 source_doc_id，
+          // 使后端 assembly 能将同票多页归入同一 doc（修复同票多页被拆成独立发票）。
+          if (data.doc_id) {
+            fileObj.sourceDocId = data.doc_id
+            fileObj.totalPages = totalPages
+          }
           toAdd.push(fileObj)
           toParse.push(fileObj)
         }

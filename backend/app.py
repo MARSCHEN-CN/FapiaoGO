@@ -1613,13 +1613,19 @@ def import_batch_create():
     # IS-2：在主线程把每个上传流 spool 到 temp 文件（不在 RAM 累积全量 bytes 峰值）。
     # identity（sha256 + doc_id）在此边界一次性物化，scheduler 不再重算哈希。
     file_inputs = []
+    page_metas = json.loads(request.form.get('pageMetas', '[]') or '[]')
     for i, f in enumerate(files):
         f.seek(0)
         record = registry.spool(f.stream, f.filename)
+        meta = page_metas[i] if i < len(page_metas) else {}
         file_inputs.append({
             'refId': record.refId,
             'filename': record.filename,
             'clientKey': client_keys[i] if i < len(client_keys) else '',
+            # [Identity Bridge] 透传父 PDF 物理身份，使 assembly 能归并同票多页
+            'sourceDocId': meta.get('sourceDocId') or '',
+            'pageNum': meta.get('pageNum'),
+            'totalPages': meta.get('totalPages'),
         })
 
     batch_id = mgr.create_batch(file_inputs, auto_orient=auto_orient,

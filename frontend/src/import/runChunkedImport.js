@@ -128,6 +128,10 @@ export async function runChunkedImport({ sessionId, taskId, files, chunkSize, au
         file: fileObj.file,
         name: fileObj.name,
         clientKey: fileObj.key,
+        // [Identity Bridge] 与 files 一一对应，经 ImportBatchClient 透传为 pageMetas
+        sourceDocId: fileObj.sourceDocId || fileObj.docId || '',
+        pageNum: fileObj.pageNum ?? null,
+        totalPages: fileObj.totalPages ?? null,
       }))
 
       // 提交本批（createImportBatch 抛错 = 致命，跳出循环交由 catch 处理剩余 chunk）
