@@ -21,7 +21,7 @@ import { runFallbackParseTask } from '../runners/fallbackParseRunner'
 import { runChunkedImport } from '../import/runChunkedImport'
 import { ensureRenderContract, ensureDocumentMetadata } from '../services/renderDocument'
 import { mapParseResultToFileUpdate } from '../mappers/parseResultMapper'
-import { createImportSession, addFilesToSession, replaceFileItems, updateProgress, addDocument } from '../stores/ImportSessionStore'
+import { createImportSession, getActiveSessionId, getSession, addFilesToSession, replaceFileItems, updateProgress, addDocument } from '../stores/ImportSessionStore'
 import { ensureDocumentFromFileObj, flushDocumentNotifications, getDocument, registerDocument } from '../stores/DocumentStore'
 import { createDocument, createPageMeta } from '../models/InvoiceDocument'
 import { processImportedFiles } from '../processors/invoicePostProcessor'
@@ -283,8 +283,13 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
     // ── Step 1: 为每个文件生成占位项，立即显示 ──────────────
     const placeholders = createPlaceholders(files)
 
-    // 创建导入会话（ImportSessionStore 成为文件状态的权威来源）
-    const session = createImportSession()
+    // 复用活跃会话（追加导入），无活跃会话时创建新会话
+    // 避免每次文件拖入都 createImportSession → activeSessionId 切换
+    // → FileContext 读取新 session 丢失旧 session.documents。
+    let session = getActiveSessionId() ? getSession(getActiveSessionId()) : null
+    if (!session) {
+      session = createImportSession()
+    }
     addFilesToSession(session.id, placeholders)
 
     // 所有占位一步添加到列表（从 Session 同步到 React state）
@@ -616,6 +621,13 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
                 console.log('[ASSEMBLY_ADD]', doc)
                 if (session?.id) {
                   addDocument(session.id, doc)
+                  // [PROBE-STATE] assembly 路径 addDocument 落地形态
+                  console.log('[ADD DOCUMENT][assembly]', {
+                    id: doc?.id || doc?.docId,
+                    pages: doc?.pages?.length,
+                    sourceDocId: doc?.sourceDocId,
+                    _pageKeys: doc?._pageKeys?.length,
+                  })
                 }
                 assembledDocIds.add(invDocId)
               }
@@ -643,6 +655,12 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
                   if (doc && doc !== prev) docsTouched = true
                   if (doc && session?.id) {
                     addDocument(session.id, doc)
+                    // [PROBE-STATE] fallback 路径 addDocument 落地形态（方向 A：确认是否被后续 chunk 触发灌入逐页文档）
+                    console.log('[ADD DOCUMENT][fallback]', {
+                      id: doc?.id || doc?.docId,
+                      pages: doc?.pages?.length,
+                      effectiveDocId,
+                    })
                   }
                 }
               }
