@@ -52,6 +52,13 @@ ENABLE_CACHE = os.environ.get('ENABLE_CACHE', '1') == '1'
 # 是否启用详细缓存日志  修改后（默认启用调试）
 CACHE_DEBUG = os.environ.get('CACHE_DEBUG', '1') == '1'
 
+# 是否启用「导入完成后自动预热预览」（Phase P-Render-Resource-Unification / P1）。
+# 默认关闭：导入期不再 fire-and-forget 触发 preview warmup，预览改为用户首次
+# 点击时的 on-demand 渲染（标准 Lazy Loading）。保留 WarmPlanner 能力本身，
+# 需要时设 ENABLE_IMPORT_WARMUP=1 即可重新开启（供 P1.5 性能打点 A/B 对比）。
+# 注意：此 flag 只控制「触发」，不触碰 registry.open / engine.render / cache / warmup.py。
+ENABLE_IMPORT_WARMUP = os.environ.get('ENABLE_IMPORT_WARMUP', '0') == '1'
+
 # 导入临时文件根目录（IS-3 P2-1）
 # 所有 temp 文件组件（parent registry + ProcessPool 子进程 worker）必须共用同一 root，
 # 否则子进程按 refId 解析会 FileNotFoundError（INV-IS3-5 跨进程解析前提）。

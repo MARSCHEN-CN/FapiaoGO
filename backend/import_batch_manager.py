@@ -25,6 +25,7 @@ from typing import Optional, Dict, Any, List, Callable
 
 from time_utils import now
 from temp_file_registry import TempFileRegistry, get_temp_registry
+from config import ENABLE_IMPORT_WARMUP
 
 logger = logging.getLogger(__name__)
 
@@ -297,14 +298,17 @@ class ImportBatchManager:
                 doc = re_registry.open(file_bytes, filename=filename)
                 result['doc_id'] = doc.doc_id
                 # P10 Phase A: fire-and-forget preview warmup (non-blocking, best-effort)
+                # P1: 受 ENABLE_IMPORT_WARMUP 控制（默认关）。warm 仅 cache warming，
+                # 关闭后预览走 on-demand render，功能不受影响。WarmPlanner 能力保留。
                 try:
-                    if self._warm_planner is None:
-                        from render_engine import engine, render_cache, render_queue
-                        from render_engine.warmup import WarmPlanner
-                        self._warm_planner = WarmPlanner(engine, render_queue, render_cache)
-                    self._warm_planner.warm_after_import([
-                        {"doc_id": doc.doc_id, "page_count": doc.page_count},
-                    ])
+                    if ENABLE_IMPORT_WARMUP:
+                        if self._warm_planner is None:
+                            from render_engine import engine, render_cache, render_queue
+                            from render_engine.warmup import WarmPlanner
+                            self._warm_planner = WarmPlanner(engine, render_queue, render_cache)
+                        self._warm_planner.warm_after_import([
+                            {"doc_id": doc.doc_id, "page_count": doc.page_count},
+                        ])
                 except Exception:
                     logger.debug("[ImportBatch] warmup skipped (non-fatal): %s", filename)
             except Exception:
