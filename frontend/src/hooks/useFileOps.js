@@ -27,6 +27,7 @@ import { createDocument, createPageMeta } from '../models/InvoiceDocument'
 import { processImportedFiles } from '../processors/invoicePostProcessor'
 import { consumeParseResult } from '../consumers/parseResultConsumer'
 import { createParseResult } from '../models/ParseResult'
+import { isMultiPageInvoiceDocument } from '../utils/multiPageInvoice'
 
 // ── 状态迁移规则 ─────────────────────────────────────────
 // 仅允许正向状态迁移，阻止回退（Import Pipeline Contract v1.2）
@@ -557,15 +558,25 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
             // buildDocumentViewModel 退化为 groupFilesByDocument（向后兼容）。
             const hasAssembledDocs = Array.isArray(documents) && documents.length > 0
             // [PROBE-1] assembly 输入截面：documents 是否到达 + items 是否携带 invoiceNumber
+            // + chunk 文件是否携带 pageNum/totalPages
             console.log('[ASSEMBLY_INPUT]', {
               itemsCount: items.length,
               itemsInvoiceNumbers: Array.from(new Set(items.map((i) => i.invoiceNumber))),
+              chunkFilesInfo: chunk.map((f) => ({
+                key: f.key,
+                pageNum: f.pageNum,
+                totalPages: f.totalPages,
+                invoiceNumber: f.invoiceNumber,
+                docId: f.docId,
+              })),
               documentsCount: documents.length,
               documents,
             })
             const assembledDocIds = new Set()
 
             if (hasAssembledDocs) {
+              // 闸门拒绝的页按 per-file 独立展示
+              const fallbackFiles = []
               for (const assembled of documents) {
                 // 找到属于该组装结果的 fileObj（按 invoiceNumber 匹配）
                 const matchingItems = items.filter(i =>
@@ -589,6 +600,18 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
                 })
                 if (matchingFiles.length === 0) {
                   console.warn('[hydrateChunk] assembled 文档匹配不到对应 file（invoiceNumber=%s），跳过该组装结果以免静默丢失', assembled.invoiceNumber)
+                  continue
+                }
+
+                // ── isMultiPageInvoiceDocument 闸门（2026-07-27 冻结） ──
+                // 只有真正多页发票（同票号 + 有效分页标识 pageNum/totalPages > 1）
+                // 才进入 InvoiceDocument。否则以独立页处理，可能触发重复组提示。
+                const pageKeys = Array.from(matchingKeys)
+                if (!isMultiPageInvoiceDocument(assembled, pageKeys, readyFiles)) {
+                  console.log('[hydrateChunk] 闸门拒绝：非多页发票（invoiceNumber=%s keys=%d），按独立页回退', assembled.invoiceNumber, pageKeys.length)
+                  for (const mf of matchingFiles) {
+                    fallbackFiles.push(mf)
+                  }
                   continue
                 }
 
@@ -631,6 +654,31 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
                 }
                 assembledDocIds.add(invDocId)
               }
+
+              // 处理被闸门拒绝的页：通过 per-file 路径独立 addDocument
+              // 这些页有相同 invoiceNumber 但缺少 pageNum/totalPages 分页标识，
+              // 不作为多页 InvoiceDocument，由文件列表独立展示（可能进入重复组）。
+              for (const fileObj of fallbackFiles) {
+                const item = resultMap.get(fileObj.key)
+                const effectiveDocId = (item && item.docId) || fileObj.docId
+                if (effectiveDocId) {
+                  const docFileObj = effectiveDocId !== fileObj.docId
+                    ? { ...fileObj, docId: effectiveDocId }
+                    : fileObj
+                  const prev = getDocument(effectiveDocId)
+                  const doc = ensureDocumentFromFileObj(docFileObj, readyFiles, { silent: true })
+                  if (doc && doc !== prev) docsTouched = true
+                  if (doc && session?.id) {
+                    addDocument(session.id, doc)
+                    console.log('[ADD DOCUMENT][gate-reject]', {
+                      id: doc?.id || doc?.docId,
+                      effectiveDocId,
+                      reason: '闸门拒绝：缺少分页标识',
+                    })
+                  }
+                }
+              }
+
               if (docsTouched) {
                 flushDocumentNotifications()
                 docsTouched = false
