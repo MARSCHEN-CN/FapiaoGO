@@ -577,6 +577,11 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
             if (hasAssembledDocs) {
               // 闸门拒绝的页按 per-file 独立展示
               const fallbackFiles = []
+              // [ASSEMBLY-LOOP] 循环入口：确认 documents 长度、session
+              console.log('[ASSEMBLY-LOOP]', {
+                documentsLength: documents.length,
+                sessionId: session?.id,
+              })
               for (const assembled of documents) {
                 // 找到属于该组装结果的 fileObj（按 invoiceNumber 匹配）
                 const matchingItems = items.filter(i =>
@@ -607,7 +612,13 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
                 // 只有真正多页发票（同票号 + 有效分页标识 pageNum/totalPages > 1）
                 // 才进入 InvoiceDocument。否则以独立页处理，可能触发重复组提示。
                 const pageKeys = Array.from(matchingKeys)
-                if (!isMultiPageInvoiceDocument(assembled, pageKeys, readyFiles)) {
+                const accepted = isMultiPageInvoiceDocument(assembled, pageKeys, readyFiles)
+                console.log('[MULTIPAGE-GATE]', {
+                  invoiceNumber: assembled.invoiceNumber,
+                  accepted,
+                  pageKeys,
+                })
+                if (!accepted) {
                   console.log('[hydrateChunk] 闸门拒绝：非多页发票（invoiceNumber=%s keys=%d），按独立页回退', assembled.invoiceNumber, pageKeys.length)
                   for (const mf of matchingFiles) {
                     fallbackFiles.push(mf)

@@ -109,6 +109,19 @@ export function getActiveSessionId() {
 }
 
 /**
+ * 清除当前活跃会话指针。
+ * 使下一次导入创建新 session，而非复用旧 session 的残留状态（documents/files/progress）。
+ * 旧 session 保留在 Map 中由 TTL 定时器自然回收（60s），不影响 UI。
+ *
+ * 与 removeSession 的区别：
+ *   - removeSession 从 Map 中硬删除，通知 UI（适用于主动清理已完成会话）。
+ *   - clearActiveSession 仅解除指针，不触发通知、不影响旧 session 的 result/error 可查询性。
+ */
+export function clearActiveSession() {
+  activeSessionId = null
+}
+
+/**
  * 获取会话。
  * @param {string} id
  * @returns {import('../models/ImportSession').ImportSessionData|undefined}

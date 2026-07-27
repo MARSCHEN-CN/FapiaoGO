@@ -44,6 +44,7 @@ import { DisplayAdapter, resolveDocId } from './components/DisplayAdapter'
 import { ZoomToolbar } from './components/ZoomToolbar'
 import { useDocument } from './hooks/useDocument'
 import { removeDocument, getRegisteredDocIds } from './stores/DocumentStore'
+import { clearActiveSession } from './stores/ImportSessionStore'
 import StatusIndicator from './components/StatusIndicator'
 import ActionBar from './components/ActionBar'
 import InvoiceDetail from './components/InvoiceDetail'
@@ -318,6 +319,8 @@ function AppContent() {
     clearPrintState()
     // ✅ 清空所有预览缓存
     clearAllPreviewCache()
+    // ✅ 清除活跃 ImportSession 指针，使下一次导入创建新 session
+    clearActiveSession()
   }, [cleanupPreviewUrl, clearPrintState, clearAllPreviewCache])
 
   // ── Step 10.6: Display Lifecycle Cleanup ─────────────────────
