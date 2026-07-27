@@ -39,18 +39,20 @@ function restoreOriginalName(pageName) {
 export function invoiceDocumentToRow(invoiceDoc, allFiles) {
   if (!invoiceDoc?.docId) return null
 
-  // 通过 sourceDocId 匹配该 InvoiceDocument 对应的页面 fileObj。
-  // E-2.2: InvoiceDocument.docId = 组装 identity（sourceDocId_inv_invoiceNumber），
-  // 而 session.files[].docId = 原始导入文件 identity（sourceDocId），
-  // 因此匹配字段使用 sourceDocId，回退到 docId（旧路径兼容）。
-  const matchDocId = invoiceDoc.sourceDocId || invoiceDoc.docId
-  const candidates = allFiles.filter(
-    (f) => f.docId === matchDocId && f.key
-  )
-  // E-2.2: 如果有精确页面 key 列表，按它过滤（避免同一 source 下多张发票互相包含页面）
-  const pageFiles = invoiceDoc._pageKeys
-    ? candidates.filter((f) => invoiceDoc._pageKeys.includes(f.key))
-    : candidates
+  // _pageKeys 是 assembly 阶段精确记录的页面 fileObj key 列表（强身份），
+  // 直接对 allFiles 命中，不依赖可能被 per-page render id 覆盖的 docId。
+  // 这避免了「session.files[].docId 被逐页身份改写 → candidates 为空 → 整票被过滤」的断链。
+  let pageFiles
+  if (Array.isArray(invoiceDoc._pageKeys) && invoiceDoc._pageKeys.length) {
+    pageFiles = allFiles.filter((f) => invoiceDoc._pageKeys.includes(f.key))
+  } else {
+    // 弱身份回退：旧路径兼容（无 _pageKeys 时按 sourceDocId/docId 匹配）
+    // E-2.2: InvoiceDocument.docId = 组装 identity（sourceDocId_inv_invoiceNumber），
+    // 而 session.files[].docId = 原始导入文件 identity（sourceDocId），
+    // 因此匹配字段使用 sourceDocId，回退到 docId。
+    const matchDocId = invoiceDoc.sourceDocId || invoiceDoc.docId
+    pageFiles = allFiles.filter((f) => f.docId === matchDocId && f.key)
+  }
 
   // 无匹配 fileObj → 异常状态，不产生条目
   if (pageFiles.length === 0) return null
