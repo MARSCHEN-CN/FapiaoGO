@@ -104,12 +104,15 @@ export default React.memo(function Sidebar({
   const hasPreviousYear = previousYearCount > 0
 
   // ── Step 10.5+：文件列表 document-level 聚合 ──
-  // 拆分页（docId + pageNum）聚合为一条 document 条目，
-  // FileList 显示"一张发票"而非"每页一条"。底层 files[] 不变。
-  const displayFiles = useMemo(
-    () => groupFilesByDocument(isSearching ? filteredFiles : files),
-    [isSearching, filteredFiles, files],
-  )
+  // 优先消费装配结果 documentView.rows（InvoiceDocument 聚合条目），
+  // 让 FileList 显示「一票一行」而非逐页拆分。
+  // 搜索态或无装配结果时回退 groupFilesByDocument，兼容单页 PDF / 老数据 / OCR 失败文件。
+  const displayFiles = useMemo(() => {
+    if (!isSearching && documentView?.rows?.length) {
+      return documentView.rows
+    }
+    return groupFilesByDocument(isSearching ? filteredFiles : files)
+  }, [isSearching, filteredFiles, files, documentView])
 
   // ── 统计区动画：仅值变化时触发 countPop ──
   // D1：统计单位 = Document（documentCount），重复组数来自视图模型
