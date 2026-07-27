@@ -104,12 +104,12 @@ export default React.memo(function Sidebar({
   const hasPreviousYear = previousYearCount > 0
 
   // ── Step 10.5+：文件列表 document-level 聚合 ──
-  // 优先消费装配结果 documentView.rows（InvoiceDocument 聚合条目），
+  // 优先消费装配结果 documentView.documents（InvoiceDocument 聚合条目），
   // 让 FileList 显示「一票一行」而非逐页拆分。
   // 搜索态或无装配结果时回退 groupFilesByDocument，兼容单页 PDF / 老数据 / OCR 失败文件。
   const displayFiles = useMemo(() => {
-    if (!isSearching && documentView?.rows?.length) {
-      return documentView.rows
+    if (!isSearching && documentView?.documents?.length) {
+      return documentView.documents
     }
     return groupFilesByDocument(isSearching ? filteredFiles : files)
   }, [isSearching, filteredFiles, files, documentView])
