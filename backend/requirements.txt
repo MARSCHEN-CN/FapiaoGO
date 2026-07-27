@@ -14,3 +14,6 @@ pikepdf
 img2pdf
 orjson
 readerwriterlock
+PyMuPDF          # import fitz — PDF 光栅化/渲染核心依赖（parsers/pdf_ocr.py、pdf_utils.py、render_engine 等）
+python-magic     # import magic — services/invoice_service.py 文件类型探测（Windows 需另装 python-magic-bin 提供 libmagic DLL）
+pyyaml           # import yaml — crosscutting/feature_flags.py 配置加载
