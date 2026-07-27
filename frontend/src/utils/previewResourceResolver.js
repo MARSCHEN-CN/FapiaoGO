@@ -27,7 +27,10 @@ import { BACKEND_URL } from '../config'
  * @returns {string} - 150dpi WebP 预览 URL
  */
 export function resolvePreviewUrl(page, docId) {
-  return `${BACKEND_URL}/preview/${docId}?page=${page.index + 1}`
+  // renderDocId 优先：PageMeta 携带的物理渲染身份（assembly 多页路径），
+  // 使预览 URL 命中后端 `/preview/{renderDocId}?page=N` 而非业务 invDocId。
+  const effectiveDocId = page?.renderDocId || docId
+  return `${BACKEND_URL}/preview/${effectiveDocId}?page=${page.index + 1}`
 }
 
 /**
@@ -42,7 +45,8 @@ export function resolvePreviewUrl(page, docId) {
  * @returns {string} - print preset WebP/PNG 打印栅格 URL
  */
 export function resolvePrintUrl(page, docId) {
-  return `${BACKEND_URL}/print/${docId}?page=${page.index + 1}`
+  const effectiveDocId = page?.renderDocId || docId
+  return `${BACKEND_URL}/print/${effectiveDocId}?page=${page.index + 1}`
 }
 
 /**
@@ -56,7 +60,8 @@ export function resolvePrintUrl(page, docId) {
  * @returns {string} - thumbnail preset WebP 缩略图 URL
  */
 export function resolveThumbnailUrl(page, docId) {
-  return `${BACKEND_URL}/thumbnail/${docId}?page=${page.index + 1}`
+  const effectiveDocId = page?.renderDocId || docId
+  return `${BACKEND_URL}/thumbnail/${effectiveDocId}?page=${page.index + 1}`
 }
 
 /**

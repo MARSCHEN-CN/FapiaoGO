@@ -47,13 +47,17 @@
  * @param {number} [opts.sourceRotation=0] - 文件真实方向
  * @returns {PageMeta}
  */
-export function createPageMeta({ docId, index, width = 0, height = 0, sourceRotation = 0 }) {
+export function createPageMeta({ docId, index, width = 0, height = 0, sourceRotation = 0, renderDocId }) {
   return {
     index,
     pageId: `${docId}:p${index}`,
     width,
     height,
     sourceRotation,
+    // render 身份桥：物理文件/预览/OCR 使用的 docId。
+    // 当 docId 为业务身份（invDocId）时，renderDocId ���向物理渲染资源。
+    // 未指定时回退到 docId（兼容单页 Document / 旧路径）。
+    renderDocId: renderDocId || docId,
   }
 }
 

@@ -638,6 +638,8 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
                     width: 0,
                     height: 0,
                     sourceRotation: 0,
+                    // render 身份桥：每页的物理渲染 docId（与业务 invDocId 不同）
+                    renderDocId: f.docId,
                   })
                 )
                 const doc = createDocument({
