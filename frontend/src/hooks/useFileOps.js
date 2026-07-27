@@ -563,7 +563,10 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
                   matchingItems.map(i => i.clientKey).filter(Boolean)
                 )
                 const matchingFiles = chunk.filter(f => matchingKeys.has(f.key))
-                if (matchingFiles.length === 0) continue
+                if (matchingFiles.length === 0) {
+                  console.warn('[hydrateChunk] assembled 文档匹配不到对应 file（invoiceNumber=%s），跳过该组装结果以免静默丢失', assembled.invoiceNumber)
+                  continue
+                }
 
                 const invDocId = `${assembled.sourceDocId || ''}_inv_${assembled.invoiceNumber || ''}`
                 const repFile = matchingFiles[0]
@@ -599,6 +602,33 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
                 flushDocumentNotifications()
                 docsTouched = false
               }
+            }
+
+            // P0 修复：恢复 left-thumbnail golden path 的 fallback。
+            // master 相对 left-thumbnail 的回归点：删除了本块。
+            // 当后端未返回 assembled documents 时，必须把 per-file Document 经 addDocument 写进 session.documents，
+            // 否则 buildDocumentViewModel 退回 groupFilesByDocument(files)，导致同票多页拆成多行 + 统计按行计数异常。
+            // 注意：此处仅补 session.documents；上方 per-file 循环对全局 DocumentStore 的 ensure* 写入保留（供 P10 DocumentViewer）。
+            if (!hasAssembledDocs) {
+              for (const fileObj of chunk) {
+                const item = resultMap.get(fileObj.key)
+                const effectiveDocId = (item && item.docId) || fileObj.docId
+                if (effectiveDocId) {
+                  const docFileObj = effectiveDocId !== fileObj.docId
+                    ? { ...fileObj, docId: effectiveDocId }
+                    : fileObj
+                  const prev = getDocument(effectiveDocId)
+                  const doc = ensureDocumentFromFileObj(docFileObj, readyFiles, { silent: true })
+                  if (doc && doc !== prev) docsTouched = true
+                  if (doc && session?.id) {
+                    addDocument(session.id, doc)
+                  }
+                }
+              }
+            }
+            if (docsTouched) {
+              flushDocumentNotifications()
+              docsTouched = false
             }
           },
         },
