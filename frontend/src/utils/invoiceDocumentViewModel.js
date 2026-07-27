@@ -66,6 +66,8 @@ export function invoiceDocumentToRow(invoiceDoc, allFiles) {
     return {
       ...rep,
       name: restoreOriginalName(rep.name),
+      // identity bridge：让 DisplayAdapter 通过业务 documentId 找到 InvoiceDocument
+      documentId: invoiceDoc.docId,
       _pages: sorted,
       _pageCount: sorted.length,
       _isDocumentGroup: true,

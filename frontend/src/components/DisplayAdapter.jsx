@@ -89,7 +89,11 @@ export const DisplayAdapter = React.memo(function DisplayAdapter({
   previewRotation,
   previewLoading,
 }) {
-  const docId = resolveDocId(file)
+  // documentId 优先：当 file 来自 InvoiceDocument row（_isDocumentGroup）时，
+  // 使用业务 documentId（invDocId）查找 DocumentStore 中的 InvoiceDocument，
+  // 使 Viewer 获得完整 pages[]（多页）；否则降级为物理页 identity。
+  // 两层模型分离：FileList 已升级为 Document 层，Preview 链路同步。
+  const docId = file?.documentId || resolveDocId(file)
   const document = useDocument(docId)
 
   // 拆分页定位：fileObj.pageNum 为 1-based（后端 page_index），
