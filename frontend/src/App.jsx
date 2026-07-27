@@ -22,6 +22,7 @@ import {
   getPreviousYearInfo,
 } from './utils'
 import { buildDocumentViewModel, documentPages } from './utils/documentViewModel'
+import { groupFilesByDocument } from './utils/groupDocuments'
 import { buildFileObj } from './utils/fileHelpers'
 import { getForcedLandscape } from './utils/mergeMode'
 
@@ -105,7 +106,17 @@ function AppContent() {
   // ============================
   // 共享状态
   // ============================
-  const { files, setFiles, setMergeMode, printableCount } = useFileContext()
+  const { files, setFiles, setMergeMode, printableCount, documentView, filteredFiles, isSearching } = useFileContext()
+
+  // ── Step 10.5+: displayFiles（与 Sidebar 逻辑一致） ──
+  // 优先使用装配结果 documentView.documents（InvoiceDocument 聚合条目），
+  // 让预览/翻页/GC 都在 document 级别工作，而非 page 级别。
+  const displayFiles = useMemo(() => {
+    if (!isSearching && documentView?.documents?.length) {
+      return documentView.documents
+    }
+    return groupFilesByDocument(isSearching ? filteredFiles : files)
+  }, [isSearching, filteredFiles, files, documentView])
 
   // ============================
   // Hooks
@@ -122,7 +133,7 @@ function AppContent() {
     sortBy, sortOrder, toggleSort, sortByRef, sortOrderRef,
   } = useSort(setFiles, files)
 
-  const preview = usePreview({ files, settings, electronAPIRef })
+  const preview = usePreview({ files: displayFiles, settings, electronAPIRef })
   // ✅ 从正确的分组中解构属性
   const {
     previewFile, mergePair, numPages, previewPage, previewCanvas,
@@ -335,23 +346,31 @@ function AppContent() {
   // 是 useState，卸载即丢弃，无需手动 reset）。
   useEffect(() => {
     if (!previewFile) return
-    if (files.some((f) => f.key === previewFile.key)) return
+    if (displayFiles.some((f) => f.key === previewFile.key)) return
     cleanupPreviewUrl()
     setPreviewFile(null)
-  }, [files, previewFile, cleanupPreviewUrl, setPreviewFile])
+  }, [displayFiles, previewFile, cleanupPreviewUrl, setPreviewFile])
 
-  // DocumentStore 生命周期 GC：files 中无任何文件引用的 docId → 回收 Document。
+  // DocumentStore 生命周期 GC：displayFiles 中无任何条目引用的 docId → 回收 Document。
   // 覆盖单删/分组删/清空/删失败文件等全部路径，防止 Store 残留。
+  // FIX: 遍历 displayFiles（document 级别），同时收集物理 docId（resolveDocId）
+  // 和业务 documentId（InvoiceDocument 聚合条目上的 documentId）。
+  // 之前只遍历原始 page-level files + resolveDocId，导致多页 InvoiceDocument 的业务
+  // docId（格式为 `${sourceDocId}_inv_${invoiceNumber}`）被误判为无引用而立即删除，
+  // 使得 DisplayAdapter 通过 documentId 查找时永远得到 null，缩略图栏无法显示。
   useEffect(() => {
     const referenced = new Set()
-    for (const f of files) {
-      const docId = resolveDocId(f)
-      if (docId) referenced.add(docId)
+    for (const f of displayFiles) {
+      const physicalDocId = resolveDocId(f)
+      if (physicalDocId) referenced.add(physicalDocId)
+      // 业务 docId：group 条目上的 documentId 指向多页 InvoiceDocument
+      const bizDocId = f.documentId
+      if (bizDocId) referenced.add(bizDocId)
     }
     for (const docId of getRegisteredDocIds()) {
       if (!referenced.has(docId)) removeDocument(docId)
     }
-  }, [files])
+  }, [displayFiles])
 
   const removeFailedFiles = useCallback((removeSource = false) => {
     // ✅ 先读取最新列表计算要删除的文件（不在 updater 内做副作用）
@@ -476,7 +495,8 @@ function AppContent() {
   // ============================
   // 文件位置索引（O(n) 构建一次，O(1) 查询）
   // 通过结构键守卫避免 status-only 更新触发重建（Phase 0.5）
-  const fileIndexMap = useFileIndexMap(files)
+  // 使用 displayFiles（document 级别），与 usePreview 翻页一致
+  const fileIndexMap = useFileIndexMap(displayFiles)
 
   // ✅ 合并 isFirst/isLast 为单次 useMemo：用 fileIndexMap 做 O(1) 查找 + getMergeGroupStart 直接算组边界，
   // 避免原实现两次调用 getMergePair（每次 O(n) 遍历 files）。
@@ -702,15 +722,17 @@ function AppContent() {
   // ============================
   // 自动预览：只在文件从空变非空时触发（导入场景）
   // 删除文件由 removeFile 自行处理预览逻辑
+  // FIX: 优先使用 displayFiles（document 级别）的第一个条目，
+  // 这样同票多页导入时会选中 group 条目（带 documentId），
+  // DisplayAdapter 能正确获取多页 InvoiceDocument 并显示缩略图栏。
   // ============================
   const prevFilesLengthRef = useRef(0)
   useEffect(() => {
-    // 文件数量增加（导入），且当前没有预览文件
-    if (files.length > prevFilesLengthRef.current && !previewFile) {
-      handlePreview(files[0])
+    if (displayFiles.length > prevFilesLengthRef.current && !previewFile) {
+      handlePreview(displayFiles[0])
     }
-    prevFilesLengthRef.current = files.length
-  }, [files.length, previewFile])
+    prevFilesLengthRef.current = displayFiles.length
+  }, [displayFiles.length, previewFile, displayFiles, handlePreview])
 
   if (isCalculatorWindow) {
     return (
@@ -778,7 +800,7 @@ function AppContent() {
           <div className="control-bar">
             <div className="canvas-zoom-control">
               <button className="tb-btn" onClick={() => {
-                const current = files.find(f => f.key === previewFile.key)
+                const current = displayFiles.find(f => f.key === previewFile.key)
                 setDetailFile(current || previewFile)
               }} title="查看/编辑发票字段">
                 <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
@@ -925,7 +947,7 @@ function AppContent() {
           </div>
 
           {/* 翻页箭头（浮于 canvas 内两侧） */}
-          {previewFile && files.length > 1 && (
+          {previewFile && displayFiles.length > 1 && (
             <>
               {showLeftArrow && (
                 <button

@@ -29,8 +29,10 @@ import { BACKEND_URL } from '../config'
 export function resolvePreviewUrl(page, docId) {
   // renderDocId 优先：PageMeta 携带的物理渲染身份（assembly 多页路径），
   // 使预览 URL 命中后端 `/preview/{renderDocId}?page=N` 而非业务 invDocId。
+  // renderPage 优先：物理文件内的真实页码（单页文件为 1，原始多页 PDF 为 index+1）。
   const effectiveDocId = page?.renderDocId || docId
-  return `${BACKEND_URL}/preview/${effectiveDocId}?page=${page.index + 1}`
+  const pageNum = page?.renderPage || (page?.index + 1)
+  return `${BACKEND_URL}/preview/${effectiveDocId}?page=${pageNum}`
 }
 
 /**
@@ -46,7 +48,8 @@ export function resolvePreviewUrl(page, docId) {
  */
 export function resolvePrintUrl(page, docId) {
   const effectiveDocId = page?.renderDocId || docId
-  return `${BACKEND_URL}/print/${effectiveDocId}?page=${page.index + 1}`
+  const pageNum = page?.renderPage || (page?.index + 1)
+  return `${BACKEND_URL}/print/${effectiveDocId}?page=${pageNum}`
 }
 
 /**
@@ -61,7 +64,8 @@ export function resolvePrintUrl(page, docId) {
  */
 export function resolveThumbnailUrl(page, docId) {
   const effectiveDocId = page?.renderDocId || docId
-  return `${BACKEND_URL}/thumbnail/${effectiveDocId}?page=${page.index + 1}`
+  const pageNum = page?.renderPage || (page?.index + 1)
+  return `${BACKEND_URL}/thumbnail/${effectiveDocId}?page=${pageNum}`
 }
 
 /**

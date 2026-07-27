@@ -489,8 +489,11 @@ class ImportBatchManager:
                     src_doc_id = fi.get('sourceDocId') or ''
                     if src_doc_id:
                         job.metrics['source_doc_id'] = src_doc_id
-                        job.metrics['page_num'] = str(fi.get('pageNum') or '')
-                        job.metrics['total_pages'] = str(fi.get('totalPages') or '')
+                        # FIX: 使用显式 None 检查而非 or，避免 pageNum=0（0-based）被误转为空字符串
+                        pn = fi.get('pageNum')
+                        tp = fi.get('totalPages')
+                        job.metrics['page_num'] = str(pn) if pn is not None else ''
+                        job.metrics['total_pages'] = str(tp) if tp is not None else ''
 
                     # IS-2 Commit 5：把 refId 随 job 携带，_on_job_done 释放时据其定位 temp 文件
                     job.metrics['ref_id'] = ref_id

@@ -20,11 +20,13 @@
 
 /**
  * @typedef {Object} PageMeta
- * @property {number} index - 页索引（0-based）
+ * @property {number} index - 页索引（0-based，在业务Document中的序号）
  * @property {string} pageId - 稳定身份标识: `${docId}:p${index}`
  * @property {number} width - 页面自然宽度（px，后端 raster 尺寸）
  * @property {number} height - 页面自然高度（px）
  * @property {number} sourceRotation - 文件真实方向（PDF Rotate 值: 0/90/180/270）
+ * @property {string} [renderDocId] - 物理渲染 docId（业务 invDocId 与物理 docId 不同时使用）
+ * @property {number} [renderPage] - 物理文件内的页码（1-based），单页文件默认为 1
  */
 
 /**
@@ -47,7 +49,7 @@
  * @param {number} [opts.sourceRotation=0] - 文件真实方向
  * @returns {PageMeta}
  */
-export function createPageMeta({ docId, index, width = 0, height = 0, sourceRotation = 0, renderDocId }) {
+export function createPageMeta({ docId, index, width = 0, height = 0, sourceRotation = 0, renderDocId, renderPage = 1 }) {
   return {
     index,
     pageId: `${docId}:p${index}`,
@@ -55,9 +57,13 @@ export function createPageMeta({ docId, index, width = 0, height = 0, sourceRota
     height,
     sourceRotation,
     // render 身份桥：物理文件/预览/OCR 使用的 docId。
-    // 当 docId 为业务身份（invDocId）时，renderDocId ���向物理渲染资源。
+    // 当 docId 为业务身份（invDocId）时，renderDocId 指向物理渲染资源。
     // 未指定时回退到 docId（兼容单页 Document / 旧路径）。
     renderDocId: renderDocId || docId,
+    // renderPage：物理文件内的页码（1-based）。
+    // 同票多页组装场景下，每个物理文件都是单页，renderPage 始终为 1，
+    // 而非业务 Document 中的 index+1（那是多文档拼接后的虚拟页码）。
+    renderPage: renderPage || 1,
   }
 }
 
@@ -103,6 +109,8 @@ export function documentFromCoordinator(coordinatorResult, fileKey = '', sourceH
       width: p.width || 0,
       height: p.height || 0,
       sourceRotation: p.sourceRotation || 0,
+      // Coordinator 返回的是物理文档页码，renderPage = index+1
+      renderPage: p.index + 1,
     })
   )
   return createDocument({ docId, fileKey, sourceHash, pages })
@@ -125,14 +133,16 @@ export function documentFromFileObj(fileObj) {
   if (!fileObj || !fileObj.docId) return null
 
   const docId = fileObj.docId
-  const pageIndex = (fileObj.pageNum || 1) - 1
-
+  // 拆分后的单页文件：每个有独立物理 docId，物理文件只有 1 页，
+  // pageNum 是父 PDF 中的页码（用于排序），不是物理文件内的页码。
+  // renderPage 始终为 1，index 始终为 0。
   const page = createPageMeta({
     docId,
-    index: pageIndex,
+    index: 0,
     width: 0,
     height: 0,
     sourceRotation: 0,
+    renderPage: 1,
   })
 
   return createDocument({

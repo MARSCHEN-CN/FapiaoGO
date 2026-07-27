@@ -45,7 +45,7 @@ test('Case 1: OFD → metadata 驱动注册 2 页（rotation 映射 sourceRotati
     { index: 0, width: 2480, height: 3508, rotation: 0 },
     { index: 1, width: 2480, height: 3508, rotation: 90 },
   ])
-  const doc = await ensureDocumentMetadata({ docId: 'ofd1', name: 'inv.ofd' })
+  const doc = await ensureDocumentMetadata({ docId: 'ofd1', name: 'inv.ofd', fileFormat: 'ofd' })
   assert.ok(doc, '应注册成功')
   assert.equal(doc.pageCount, 2, 'OFD 应为 2 页（纠正 siblings 压成的 1 页）')
   assert.equal(doc.pages[0].sourceRotation, 0, 'API rotation=0 → sourceRotation=0')
@@ -54,27 +54,33 @@ test('Case 1: OFD → metadata 驱动注册 2 页（rotation 映射 sourceRotati
   assert.equal(getDocument('ofd1').pageCount, 2)
 })
 
-test('Case 2: PNG → 单页', async () => {
+test('Case 2: PNG → 单页（直接调用 ensureDocumentFromMetadata，PNG 不走 ensureDocumentMetadata 守卫）', async () => {
   clearAllDocuments()
-  metadataResponses.set('png1', [{ index: 0, width: 1582, height: 1024, rotation: 0 }])
-  const doc = await ensureDocumentMetadata({ docId: 'png1', name: 'scan.png' })
+  const doc = ensureDocumentFromMetadata({
+    docId: 'png1',
+    pages: [{ index: 0, width: 1582, height: 1024, rotation: 0 }],
+    filename: 'scan.png',
+  })
   assert.ok(doc)
   assert.equal(doc.pageCount, 1, 'PNG 应为 1 页')
   assert.equal(doc.pages[0].width, 1582)
 })
 
-test('Case 3: PDF siblings 注册不被 metadata 破坏（仍 3 页 + 真实尺寸补全）', async () => {
+test('Case 3: PDF siblings 注册不被 metadata 破坏（仍 3 页 + 真实尺寸补全，直接调用 ensureDocumentFromMetadata）', async () => {
   clearAllDocuments()
   const siblings = makeSiblings('pdf1', 3)
   const fromSiblings = ensureDocumentFromFileObj(siblings[0], siblings)
   assert.equal(fromSiblings.pageCount, 3, 'siblings 聚合应为 3 页')
 
-  metadataResponses.set('pdf1', [
-    { index: 0, width: 595, height: 842, rotation: 0 },
-    { index: 1, width: 595, height: 842, rotation: 0 },
-    { index: 2, width: 595, height: 842, rotation: 0 },
-  ])
-  const doc = await ensureDocumentMetadata({ docId: 'pdf1', name: 'doc.pdf' })
+  const doc = ensureDocumentFromMetadata({
+    docId: 'pdf1',
+    pages: [
+      { index: 0, width: 595, height: 842, rotation: 0 },
+      { index: 1, width: 595, height: 842, rotation: 0 },
+      { index: 2, width: 595, height: 842, rotation: 0 },
+    ],
+    filename: 'doc.pdf',
+  })
   assert.equal(doc.pageCount, 3, 'metadata 不应破坏 PDF 3 页')
   assert.equal(doc.pages[0].width, 595, 'metadata 真实尺寸应补全（siblings 注册时为 0）')
   assert.equal(doc.pages[2].index, 2, '页索引应保持')

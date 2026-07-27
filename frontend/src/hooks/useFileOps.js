@@ -21,6 +21,7 @@ import { runFallbackParseTask } from '../runners/fallbackParseRunner'
 import { runChunkedImport } from '../import/runChunkedImport'
 import { ensureRenderContract, ensureDocumentMetadata } from '../services/renderDocument'
 import { mapParseResultToFileUpdate } from '../mappers/parseResultMapper'
+import { updateDocumentIdentity } from '../utils/identity'
 import { createImportSession, getActiveSessionId, getSession, addFilesToSession, replaceFileItems, updateProgress, addDocument } from '../stores/ImportSessionStore'
 import { ensureDocumentFromFileObj, flushDocumentNotifications, getDocument, registerDocument } from '../stores/DocumentStore'
 import { createDocument, createPageMeta } from '../models/InvoiceDocument'
@@ -163,7 +164,10 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
         // 13-A.3.5c：metadata 驱动纠正（OFD 多页 / 真实尺寸）。
         // 置 consume 之后为最终权威：后端 page contract 覆盖 siblings 对单文件多页的欠维注册。
         // 无 OFD 特判——以 docId 是否存在为准（PDF/PNG 未走 render registry 时 /metadata 404 静默降级）。
-        if (update?.docId) fileObj.docId = update.docId
+        if (update?.docId) {
+          fileObj.docId = update.docId
+          if (update.identity) fileObj.identity = update.identity
+        }
         await ensureDocumentMetadata(fileObj)
       } else {
         updates.set(fileObj.key, { status: 'error', errorMsg: item.error || '解析失败' })
@@ -233,7 +237,11 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
           const update = consumeParseResult(outcome.result, fileObj, null, filesToParse)
 
           // 13-A.3.5c：metadata 驱动纠正（OFD 多页 / 真实尺寸），置 consume 之后为最终权威
-          if (update?.docId) fileObj.docId = update.docId
+          // 同步更新 docId + identity，确保 resolveDocId() 取到正确值
+          if (update?.docId) {
+            fileObj.docId = update.docId
+            if (update.identity) fileObj.identity = update.identity
+          }
           await ensureDocumentMetadata(fileObj)
 
           setFiles((prev) =>
@@ -374,7 +382,11 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
           queueUpdate(fileObj.key, result.status, update)
 
           // 13-A.3.5c：metadata 驱动纠正（OFD 多页 / 真实尺寸），置 consume 之后为最终权威
-          if (update?.docId) fileObj.docId = update.docId
+          // 同步更新 docId + identity，确保 resolveDocId() 取到正确值
+          if (update?.docId) {
+            fileObj.docId = update.docId
+            if (update.identity) fileObj.identity = update.identity
+          }
           await ensureDocumentMetadata(fileObj)
         } catch (err) {
           console.error(`[App] 解析失败: ${fileObj.name}`, err)
@@ -491,8 +503,14 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
             const items = Array.isArray(_batchResults) ? _batchResults : (_batchResults?.items || [])
             const documents = (!Array.isArray(_batchResults) && Array.isArray(_batchResults?.documents)) ? _batchResults.documents : []
             const resultMap = new Map()
+            // 建立 key → 物理 docId 的直接映射，避免 queueUpdate 异步批量更新导致
+            // assembly 阶段 f.docId 仍为旧值（父 PDF 的 sourceDocId），使所有页 renderDocId 相同
+            const physicalDocIdByKey = new Map()
             for (const item of items) {
-              if (item.clientKey) resultMap.set(item.clientKey, item)
+              if (item.clientKey) {
+                resultMap.set(item.clientKey, item)
+                if (item.docId) physicalDocIdByKey.set(item.clientKey, item.docId)
+              }
             }
             let docsTouched = false
             for (let j = 0; j < chunk.length; j += HYDRATION_CHUNK) {
@@ -531,6 +549,14 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
                 }
                 const effectiveDocId = (item && item.docId) || fileObj.docId
                 if (effectiveDocId) {
+                  // 同步更新 fileObj.docId + fileObj.identity（与非批量导入路径 consumeParseResult 行为一致），
+                  // 确保后续 assembly 阶段从 readyFiles 中取到的 f.docId / f.identity.docId 都是真实物理 docId，
+                  // 避免 resolveDocId() 优先取 identity.docId 得到旧父 PDF sourceDocId，导致预览URL错误一直加载。
+                  if (item?.docId && fileObj.docId !== item.docId) {
+                    const enriched = updateDocumentIdentity(fileObj, item.docId)
+                    fileObj.docId = enriched.docId
+                    fileObj.identity = enriched.identity
+                  }
                   const docFileObj = effectiveDocId !== fileObj.docId
                     ? { ...fileObj, docId: effectiveDocId }
                     : fileObj
@@ -590,7 +616,9 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
                 const matchingKeys = new Set(
                   matchingItems.map(i => i.clientKey).filter(Boolean)
                 )
-                const matchingFiles = chunk.filter(f => matchingKeys.has(f.key))
+                // FIX: 从 readyFiles（全局文件池）查找所有匹配文件，而非仅当前 chunk
+                // 原因：同票多页可能跨 chunk（chunkSize=100），仅查 chunk 会丢失页面
+                const matchingFiles = readyFiles.filter(f => matchingKeys.has(f.key))
                 // [PROBE-2] match 截面：items 是否按 invoiceNumber 命中 + 落到本 chunk 的 files
                 console.log('[ASSEMBLY_MATCH]', {
                   invoiceNumber: assembled.invoiceNumber,
@@ -601,25 +629,31 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
                     name: f.name,
                     invoiceNumber: f.invoiceNumber,
                     docId: f.docId,
+                    pageNum: f.pageNum,
+                    totalPages: f.totalPages,
                   })),
+                  assembledPageCount: assembled.pageCount,
                 })
                 if (matchingFiles.length === 0) {
                   console.warn('[hydrateChunk] assembled 文档匹配不到对应 file（invoiceNumber=%s），跳过该组装结果以免静默丢失', assembled.invoiceNumber)
                   continue
                 }
 
-                // ── isMultiPageInvoiceDocument 闸门（2026-07-27 冻结） ──
-                // 只有真正多页发票（同票号 + 有效分页标识 pageNum/totalPages > 1）
-                // 才进入 InvoiceDocument。否则以独立页处理，可能触发重复组提示。
-                const pageKeys = Array.from(matchingKeys)
-                const accepted = isMultiPageInvoiceDocument(assembled, pageKeys, readyFiles)
+                // ── 多页判定：直接信任后端组装结果 ──
+                // 后端 PageResultStore 收齐所有页并成功 assemble 后才会出现在 assembled_documents 中，
+                // pageCount 是组装时的实际页数（>=2 即为有效多页发票）。
+                // 不再使用 isMultiPageInvoiceDocument 前端重复校验，避免因 pageNum/totalPages
+                // 元数据不一致导致闸门误拒。
+                const isMultiPage = (assembled.pageCount >= 2) || (matchingFiles.length >= 2)
                 console.log('[MULTIPAGE-GATE]', {
                   invoiceNumber: assembled.invoiceNumber,
-                  accepted,
-                  pageKeys,
+                  accepted: isMultiPage,
+                  pageKeys: Array.from(matchingKeys),
+                  assembledPageCount: assembled.pageCount,
+                  matchingFilesCount: matchingFiles.length,
                 })
-                if (!accepted) {
-                  console.log('[hydrateChunk] 闸门拒绝：非多页发票（invoiceNumber=%s keys=%d），按独立页回退', assembled.invoiceNumber, pageKeys.length)
+                if (!isMultiPage) {
+                  console.log('[hydrateChunk] 闸门拒绝：非多页发票（invoiceNumber=%s keys=%d pageCount=%d），按独立页回退', assembled.invoiceNumber, matchingKeys.size, assembled.pageCount)
                   for (const mf of matchingFiles) {
                     fallbackFiles.push(mf)
                   }
@@ -627,11 +661,15 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
                 }
 
                 const invDocId = `${assembled.sourceDocId || ''}_inv_${assembled.invoiceNumber || ''}`
-                const repFile = matchingFiles[0]
+                // FIX: 按 pageNum 升序排列，确保首页作为 representative、页面顺序正确
+                const sortedFiles = [...matchingFiles].sort(
+                  (a, b) => (a.pageNum || 1) - (b.pageNum || 1)
+                )
+                const repFile = sortedFiles[0]
                 const prev = getDocument(invDocId)
                 // 绕过 ensureDocumentFromFileObj（它按 docId 过滤文件，但 assembly 的 docId ≠ 文件 docId），
-                // 直接由 matchingFiles 构造 InvoiceDocument
-                const pages = matchingFiles.map((f, i) =>
+                // 直接由 sortedFiles 构造 InvoiceDocument
+                const pages = sortedFiles.map((f, i) =>
                   createPageMeta({
                     docId: invDocId,
                     index: i,
@@ -639,7 +677,11 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
                     height: 0,
                     sourceRotation: 0,
                     // render 身份桥：每页的物理渲染 docId（与业务 invDocId 不同）
-                    renderDocId: f.docId,
+                    // 优先从 physicalDocIdByKey 获取（当前 chunk 中后端返回的权威值），
+                    // 跨 chunk 页回退到 f.docId（已被前序 chunk 同步更新）
+                    renderDocId: physicalDocIdByKey.get(f.key) || f.docId,
+                    // 每个物理文件都是单页，物理页码始终为 1（不是业务 index+1）
+                    renderPage: 1,
                   })
                 )
                 const doc = createDocument({
@@ -650,9 +692,9 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
                 })
                 registerDocument(doc)
                 if (doc !== prev) docsTouched = true
-                // E-2.2: 记录 sourceDocId + 该发票的精确页面 fileKey 列表
+                // E-2.2: 记录 sourceDocId + 该发票的精确页面 fileKey 列表（按页码排序）
                 doc.sourceDocId = repFile.docId || assembled.sourceDocId || ''
-                doc._pageKeys = Array.from(matchingKeys)
+                doc._pageKeys = sortedFiles.map(f => f.key)
                 // [PROBE-3] addDocument 前：构造出的 InvoiceDocument 形态
                 console.log('[ASSEMBLY_ADD]', doc)
                 if (session?.id) {
@@ -682,6 +724,9 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
                   const doc = ensureDocumentFromFileObj(docFileObj, readyFiles, { silent: true })
                   if (doc && doc !== prev) docsTouched = true
                   if (doc && session?.id) {
+                    // 为单页文档设置 _pageKeys（强身份匹配），与 assembly 多页文档一致，
+                    // 避免 invoiceDocumentToRow 弱身份回退匹配失败导致文档不显示
+                    if (!doc._pageKeys) doc._pageKeys = [fileObj.key]
                     addDocument(session.id, doc)
                     console.log('[ADD DOCUMENT][gate-reject]', {
                       id: doc?.id || doc?.docId,
@@ -715,6 +760,8 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
                   const doc = ensureDocumentFromFileObj(docFileObj, readyFiles, { silent: true })
                   if (doc && doc !== prev) docsTouched = true
                   if (doc && session?.id) {
+                    // 为单页文档设置 _pageKeys（强身份匹配）
+                    if (!doc._pageKeys) doc._pageKeys = [fileObj.key]
                     addDocument(session.id, doc)
                     // [PROBE-STATE] fallback 路径 addDocument 落地形态（方向 A：确认是否被后续 chunk 触发灌入逐页文档）
                     console.log('[ADD DOCUMENT][fallback]', {

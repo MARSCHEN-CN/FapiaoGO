@@ -133,8 +133,16 @@ export function ensureDocumentFromFileObj(fileObj, siblings = null, options = {}
     }
   }
 
-  const pages = pageNums.map((pageNum) => {
-    const index = pageNum - 1
+  // siblings 聚合场景：
+  // - pageNums.length > 1（原始多页 PDF，未拆分）：同一 docId 对应物理多页，
+  //   index = pageNum - 1，renderPage = pageNum（物理页码）
+  // - pageNums.length === 1（拆分后的单页文件/单页图片/OFD）：每个 docId 对应物理单页，
+  //   不管 fileObj.pageNum 是多少（它是父 PDF 中的页码，用于排序），物理文件内只有 1 页，
+  //   index = 0，renderPage = 1。
+  const isSinglePagePhysicalDoc = pageNums.length === 1
+  const pages = pageNums.map((pageNum, arrayIdx) => {
+    const index = isSinglePagePhysicalDoc ? 0 : (pageNum - 1)
+    const renderPage = isSinglePagePhysicalDoc ? 1 : pageNum
     const prev = prevByIndex.get(index)
     return createPageMeta({
       docId,
@@ -142,6 +150,7 @@ export function ensureDocumentFromFileObj(fileObj, siblings = null, options = {}
       width: prev?.width || 0,
       height: prev?.height || 0,
       sourceRotation: prev?.sourceRotation || 0,
+      renderPage,
     })
   })
 
@@ -206,6 +215,8 @@ export function ensureDocumentFromMetadata(meta, options = {}) {
   }
 
   // API 层字段为 rotation；PageMeta 用 sourceRotation。metadata 缺维时保留既有真实尺寸。
+  // renderPage：物理文件内页码 = index+1（metadata pages[].index 为 0-based），
+  // 与 assembly 场景下每个物理文件都是单页(renderPage=1)不同，原始多页 PDF 需使用真实物理页码。
   const pages = rawPages.map((p) => {
     const index = p.index ?? 0
     const prev = prevByIndex.get(index)
@@ -215,6 +226,7 @@ export function ensureDocumentFromMetadata(meta, options = {}) {
       width: p.width || prev?.width || 0,
       height: p.height || prev?.height || 0,
       sourceRotation: p.rotation || p.sourceRotation || prev?.sourceRotation || 0,
+      renderPage: index + 1,
     })
   })
 
@@ -254,15 +266,20 @@ export function updatePageMeta(docId, pages) {
   const doc = documents.get(docId)
   if (!doc) return
 
-  const updatedPages = pages.map((p) =>
-    createPageMeta({
+  // metadata 回填只更新 width/height/sourceRotation，必须保留 renderDocId/renderPage 等渲染身份字段
+  const oldByIndex = new Map(doc.pages.map((p) => [p.index, p]))
+  const updatedPages = pages.map((p) => {
+    const old = oldByIndex.get(p.index)
+    return createPageMeta({
       docId,
       index: p.index,
-      width: p.width || 0,
-      height: p.height || 0,
-      sourceRotation: p.sourceRotation || 0,
+      width: p.width || old?.width || 0,
+      height: p.height || old?.height || 0,
+      sourceRotation: p.sourceRotation ?? old?.sourceRotation ?? 0,
+      renderDocId: old?.renderDocId,
+      renderPage: old?.renderPage,
     })
-  )
+  })
   documents.set(docId, { ...doc, pages: updatedPages, pageCount: updatedPages.length })
   notify()
 }
@@ -290,6 +307,8 @@ export function patchPageMeta(docId, pageIndex, patch) {
           width: patch.width ?? p.width,
           height: patch.height ?? p.height,
           sourceRotation: patch.sourceRotation ?? p.sourceRotation,
+          renderDocId: p.renderDocId,
+          renderPage: p.renderPage,
         })
       : p
   )
