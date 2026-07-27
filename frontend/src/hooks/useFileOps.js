@@ -551,6 +551,13 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
             // 仅当 backend assembly 返回 documents 时启用；否则 session.documents 保持空，
             // buildDocumentViewModel 退化为 groupFilesByDocument（向后兼容）。
             const hasAssembledDocs = Array.isArray(documents) && documents.length > 0
+            // [PROBE-1] assembly 输入截面：documents 是否到达 + items 是否携带 invoiceNumber
+            console.log('[ASSEMBLY_INPUT]', {
+              itemsCount: items.length,
+              itemsInvoiceNumbers: Array.from(new Set(items.map((i) => i.invoiceNumber))),
+              documentsCount: documents.length,
+              documents,
+            })
             const assembledDocIds = new Set()
 
             if (hasAssembledDocs) {
@@ -563,6 +570,18 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
                   matchingItems.map(i => i.clientKey).filter(Boolean)
                 )
                 const matchingFiles = chunk.filter(f => matchingKeys.has(f.key))
+                // [PROBE-2] match 截面：items 是否按 invoiceNumber 命中 + 落到本 chunk 的 files
+                console.log('[ASSEMBLY_MATCH]', {
+                  invoiceNumber: assembled.invoiceNumber,
+                  matchingItemsCount: matchingItems.length,
+                  matchingKeys: Array.from(matchingKeys),
+                  matchingFiles: matchingFiles.map((f) => ({
+                    key: f.key,
+                    name: f.name,
+                    invoiceNumber: f.invoiceNumber,
+                    docId: f.docId,
+                  })),
+                })
                 if (matchingFiles.length === 0) {
                   console.warn('[hydrateChunk] assembled 文档匹配不到对应 file（invoiceNumber=%s），跳过该组装结果以免静默丢失', assembled.invoiceNumber)
                   continue
@@ -593,6 +612,8 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
                 // E-2.2: 记录 sourceDocId + 该发票的精确页面 fileKey 列表
                 doc.sourceDocId = repFile.docId || assembled.sourceDocId || ''
                 doc._pageKeys = Array.from(matchingKeys)
+                // [PROBE-3] addDocument 前：构造出的 InvoiceDocument 形态
+                console.log('[ASSEMBLY_ADD]', doc)
                 if (session?.id) {
                   addDocument(session.id, doc)
                 }
