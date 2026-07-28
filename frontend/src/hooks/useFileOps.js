@@ -629,13 +629,30 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
                     name: f.name,
                     invoiceNumber: f.invoiceNumber,
                     docId: f.docId,
+                    sourceDocId: f.sourceDocId,
                     pageNum: f.pageNum,
                     totalPages: f.totalPages,
                   })),
                   assembledPageCount: assembled.pageCount,
                 })
-                if (matchingFiles.length === 0) {
-                  console.warn('[hydrateChunk] assembled 文档匹配不到对应 file（invoiceNumber=%s），跳过该组装结果以免静默丢失', assembled.invoiceNumber)
+
+                // ── 模型边界约束（冻结）──
+                // 一个 InvoiceDocument 的所有 pages 必须来自同一个 sourceDocId。
+                // 仅按 invoiceNumber 全局匹配会把「两张不同发票同号」(A.pdf + B.pdf，都 123)
+                // 错误收敛进同一个 Document（列表只显示 1 个、另 1 页被压进 pages[]）。
+                // 这里把异源文件拆出、回退为独立文件，使重复检测层建立 DuplicateGroup，而非错误合并。
+                const targetSourceDocId = assembled.sourceDocId
+                const sameSourceFiles = targetSourceDocId
+                  ? matchingFiles.filter((f) => (f.sourceDocId || f.docId) === targetSourceDocId)
+                  : matchingFiles
+                const crossSourceFiles = targetSourceDocId
+                  ? matchingFiles.filter((f) => (f.sourceDocId || f.docId) !== targetSourceDocId)
+                  : []
+                // 异源文件不进入合并，按独立页回退（将进入重复组而非被吞进 pages[]）
+                for (const mf of crossSourceFiles) fallbackFiles.push(mf)
+
+                if (sameSourceFiles.length === 0) {
+                  console.warn('[hydrateChunk] assembled 文档匹配不到同源 file（invoiceNumber=%s），跳过该组装结果以免静默丢失', assembled.invoiceNumber)
                   continue
                 }
 
@@ -644,17 +661,17 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
                 // pageCount 是组装时的实际页数（>=2 即为有效多页发票）。
                 // 不再使用 isMultiPageInvoiceDocument 前端重复校验，避免因 pageNum/totalPages
                 // 元数据不一致导致闸门误拒。
-                const isMultiPage = (assembled.pageCount >= 2) || (matchingFiles.length >= 2)
+                const isMultiPage = (assembled.pageCount >= 2) || (sameSourceFiles.length >= 2)
                 console.log('[MULTIPAGE-GATE]', {
                   invoiceNumber: assembled.invoiceNumber,
                   accepted: isMultiPage,
                   pageKeys: Array.from(matchingKeys),
                   assembledPageCount: assembled.pageCount,
-                  matchingFilesCount: matchingFiles.length,
+                  matchingFilesCount: sameSourceFiles.length,
                 })
                 if (!isMultiPage) {
                   console.log('[hydrateChunk] 闸门拒绝：非多页发票（invoiceNumber=%s keys=%d pageCount=%d），按独立页回退', assembled.invoiceNumber, matchingKeys.size, assembled.pageCount)
-                  for (const mf of matchingFiles) {
+                  for (const mf of sameSourceFiles) {
                     fallbackFiles.push(mf)
                   }
                   continue
@@ -662,7 +679,7 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
 
                 const invDocId = `${assembled.sourceDocId || ''}_inv_${assembled.invoiceNumber || ''}`
                 // FIX: 按 pageNum 升序排列，确保首页作为 representative、页面顺序正确
-                const sortedFiles = [...matchingFiles].sort(
+                const sortedFiles = [...sameSourceFiles].sort(
                   (a, b) => (a.pageNum || 1) - (b.pageNum || 1)
                 )
                 const repFile = sortedFiles[0]

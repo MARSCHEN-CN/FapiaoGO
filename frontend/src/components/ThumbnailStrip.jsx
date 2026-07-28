@@ -32,9 +32,6 @@ export function ThumbnailStrip({ document, currentPage, onPageSelect }) {
   const stripRef = useRef(null)
   const itemRefs = useRef(new Map())
 
-  // 文档无效或单页时不渲染缩略图栏
-  if (!document || document.pageCount <= 1) return null
-
   // 计算每页的缩略图 URL（通过 PreviewResourceResolver）
   const thumbnailUrls = useMemo(() => {
     if (!document?.pages) return []
@@ -75,6 +72,11 @@ export function ThumbnailStrip({ document, currentPage, onPageSelect }) {
       itemRefs.current.delete(index)
     }
   }, [])
+
+  // 文档无效或单页时不渲染缩略图栏。
+  // ⚠️ 必须在所有 hooks 之后执行：多页↔单页切换时若提前 return，
+  // 本次 render 的 hooks 数量会少于上次，React 报 "Rendered fewer hooks than expected"。
+  if (!document || document.pageCount <= 1) return null
 
   return (
     <div className="viewer-thumbnail-sidebar" role="navigation" aria-label="页面缩略图">
