@@ -191,12 +191,16 @@ export function addDocument(sessionId, doc) {
   if (!docId) return
   session.documents = session.documents || []
   const pages = doc?.pages?.length ?? '?'
+  // [E1] 验证探针增强：InvoiceDocument 不持有 sourceDocId/invoiceNumber 字段，
+  // 二者编码在 docId 中（格式 `${sourceDocId}_inv_${invoiceNumber}`，sourceDocId 为 hex 哈希不含 '_inv_'）。
+  // 仅做只读解析，不调 store getter、不引入新 import（符合探针纪律）。
+  const [e1SourceDocId, e1InvoiceNo] = (docId || '').split('_inv_')
   if (!session.documents.some(d => (d.id || d.docId) === docId)) {
     session.documents.push(doc)
     documentVersion++
-    console.log(`[E1] addDocument: docId=${docId}, pages=${pages}, docsCount=${session.documents.length}`)
+    console.log(`[E1] addDocument: docId=${docId}, sourceDocId=${e1SourceDocId || '-'}, invoiceNumber=${e1InvoiceNo || '-'}, pages=${pages}, docsCount=${session.documents.length}`)
   } else {
-    console.log(`[E1] addDocument: dedup skipped docId=${docId}, already exists (pages=${pages})`)
+    console.log(`[E1] addDocument: dedup skipped docId=${docId}, sourceDocId=${e1SourceDocId || '-'}, invoiceNumber=${e1InvoiceNo || '-'}, already exists (pages=${pages})`)
   }
   notify(sessionId)
 }

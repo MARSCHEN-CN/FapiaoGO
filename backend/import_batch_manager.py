@@ -622,6 +622,8 @@ class ImportBatchManager:
         # C.6: 读取分组元信息
         metrics = job_info.get('metrics', {}) or {}
         src_doc_id = metrics.get('source_doc_id', '')
+        logger.info('[PROBE] _on_job_done: src_doc_id=%r, len=%d, status=%s',
+                    src_doc_id, len(src_doc_id), status)
 
         # 更新聚合计数 + 缓冲结果
         should_flush = False
@@ -645,53 +647,54 @@ class ImportBatchManager:
             # 加入结果缓冲
             if db_record and full_result:
                 if src_doc_id:
-                    # C.6: 多页分组路径 → PageResultStore
+                    # C.6: 所有带 sourceDocId 的页面都进入 PageResultStore
+                    # v3 原则：page_num/total_pages 是页元数据（决定合并置信度/连续性），
+                    # 不应作为组装许可条件。缺失时默认当前页为独立单页。
+                    should_flush = False
                     page_num_str = metrics.get('page_num', '')
                     total_pages_str = metrics.get('total_pages', '')
-                    if page_num_str.isdigit() and total_pages_str.isdigit():
-                        from page_result_store import get_page_result_store
-                        from invoice_assembly_pipeline import (
-                            assemble as _assemble_invoice,
-                            invoice_document_to_db_record,
-                        )
-                        store = get_page_result_store()
-                        completed = store.put(
-                            src_doc_id,
-                            int(page_num_str),
-                            int(total_pages_str),
-                            full_result,
-                        )
-                        if completed:
-                            # 所有页收齐 → 组装 → 入库缓冲
-                            pages = store.get_pages(src_doc_id)
-                            if pages:
-                                invoice_docs = _assemble_invoice(pages)
-                                for inv_doc in invoice_docs:
-                                    inv_db = invoice_document_to_db_record(
-                                        inv_doc,
-                                        fallback_hash=db_record.get('hash_sha256', ''),
-                                        fallback_filename=db_record.get('file_name', ''),
-                                        fallback_raw_text=db_record.get('raw_text', ''),
-                                    )
-                                    buf = self._result_buffers.get(batch_id)
-                                    if buf:
-                                        buf.add(inv_db)
-                                        should_flush = buf.should_flush()
-                                    # E-2.2: 存储组装后的 InvoiceDocument 元信息
-                                    batch.assembled_documents.append({
-                                        'sourceDocId': src_doc_id,
-                                        'invoiceNumber': inv_doc.get('invoice_number', ''),
-                                        'invoiceType': inv_doc.get('invoice_type', ''),
-                                        'pageCount': len(pages) if isinstance(pages, list) else 0,
-                                    })
-                            store.remove(src_doc_id)
-                        # 未收齐 → 不写入缓冲，等全部页到达后再组装
-                    else:
-                        # 有 source_doc_id 但 page_num/total_pages 不合法 → fallback 直写
-                        buf = self._result_buffers.get(batch_id)
-                        if buf:
-                            buf.add(db_record)
-                            should_flush = buf.should_flush()
+                    page_num = int(page_num_str) if page_num_str.isdigit() else 0
+                    total_pages = int(total_pages_str) if total_pages_str.isdigit() else 1
+                    # 防御：防止不一致的 page_num/total_pages 导致静默丢失
+                    if page_num >= total_pages:
+                        total_pages = page_num + 1
+                    from page_result_store import get_page_result_store
+                    from invoice_assembly_pipeline import (
+                        assemble as _assemble_invoice,
+                        invoice_document_to_db_record,
+                    )
+                    store = get_page_result_store()
+                    completed = store.put(
+                        src_doc_id,
+                        page_num,
+                        total_pages,
+                        full_result,
+                    )
+                    if completed:
+                        # 所有页收齐 → 组装 → 入库缓冲
+                        pages = store.get_pages(src_doc_id)
+                        if pages:
+                            invoice_docs = _assemble_invoice(pages)
+                            for inv_doc in invoice_docs:
+                                inv_db = invoice_document_to_db_record(
+                                    inv_doc,
+                                    fallback_hash=db_record.get('hash_sha256', ''),
+                                    fallback_filename=db_record.get('file_name', ''),
+                                    fallback_raw_text=db_record.get('raw_text', ''),
+                                )
+                                buf = self._result_buffers.get(batch_id)
+                                if buf:
+                                    buf.add(inv_db)
+                                    should_flush = buf.should_flush()
+                                # E-2.2: 存储组装后的 InvoiceDocument 元信息
+                                batch.assembled_documents.append({
+                                    'sourceDocId': src_doc_id,
+                                    'invoiceNumber': inv_doc.get('invoice_number', ''),
+                                    'invoiceType': inv_doc.get('invoice_type', ''),
+                                    'pageCount': len(pages) if isinstance(pages, list) else 0,
+                                })
+                        store.remove(src_doc_id)
+                    # 未收齐 → 不写入缓冲，等全部页到达后再组装
                 else:
                     # 无分组信息 → 旧路径：直写
                     buf = self._result_buffers.get(batch_id)
