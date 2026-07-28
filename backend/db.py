@@ -1212,6 +1212,104 @@ def rename_invoices_by_filename(renames: List[Dict[str, str]]) -> Dict:
     return {"updated": updated_count, "notFound": not_found}
 
 
+def _resolve_invoice_index_with_fallback(filename: str) -> Optional[int]:
+    """按文件名查找发票的索引（调用方需持有 _rw_lock 写锁或读锁）。
+
+    回退链与 _resolve_invoice_with_fallback 一致，返回 _invoices 数组的索引 int 或 None。
+    返回的是索引（不是 copy），方便直接修改原对象。
+    """
+    target = invoice_index_key(filename)
+    idx = _invoice_index_by_filename.get(target)
+    if idx is not None and not _invoices[idx].get('deleted_at'):
+        return idx
+
+    basename = filename.split('/')[-1].split('\\')[-1]
+    pure_name = invoice_index_key(basename)
+    if pure_name != target:
+        idx = _invoice_index_by_filename.get(pure_name)
+        if idx is not None and not _invoices[idx].get('deleted_at'):
+            return idx
+
+    for key, candidate_idx in _invoice_index_by_filename.items():
+        if '_p' not in key:
+            continue
+        stripped_key = invoice_index_key(_strip_page_suffix(key))
+        if stripped_key == target or stripped_key == pure_name:
+            if not _invoices[candidate_idx].get('deleted_at'):
+                return candidate_idx
+    return None
+
+
+def apply_invoice_correction(filename: str, corrected_fields: Dict = None,
+                            corrected_line_items: List[Dict] = None) -> Dict:
+    """按文件名查找发票记录并应用手动修正。
+
+    修正数据存放在 inv['manual_corrections'] 字段中，结构为：
+        {
+          "fields": { "invoiceNumber": "xxx", ... },
+          "line_items": [ {xmmc,ggxh,dw,sl,dj,je,slv,se}, ... ],
+          "updated_at": "ISO时间戳"
+        }
+    导出时 _db_record_to_export 会优先使用 corrections 中的字段覆盖原始解析结果。
+    """
+    _ensure_loaded()
+    now_str = now().isoformat()
+
+    with _rw_lock.gen_wlock():
+        idx = _resolve_invoice_index_with_fallback(filename)
+        if idx is None:
+            return {"success": False, "notFound": True, "fieldCount": 0, "lineItemCount": 0}
+
+        inv = _invoices[idx]
+        if inv.get('deleted_at'):
+            return {"success": False, "notFound": True, "fieldCount": 0, "lineItemCount": 0}
+
+        corrections = inv.get('manual_corrections') or {}
+        field_count = 0
+        item_count = 0
+
+        if corrected_fields:
+            fields = corrections.get('fields') or {}
+            for k, v in corrected_fields.items():
+                if v is not None and str(v).strip() != '':
+                    fields[k] = v
+                    field_count += 1
+                elif k in fields:
+                    del fields[k]
+            corrections['fields'] = fields
+
+        if corrected_line_items is not None:
+            normalized_items = []
+            for it in corrected_line_items:
+                if not it:
+                    continue
+                row = {
+                    'xmmc': str(it.get('xmmc', '') or '').strip(),
+                    'ggxh': str(it.get('ggxh', '') or '').strip(),
+                    'dw': str(it.get('dw', '') or '').strip(),
+                    'sl': str(it.get('sl', '') or '').strip(),
+                    'dj': str(it.get('dj', '') or '').strip(),
+                    'je': str(it.get('je', '') or '').strip(),
+                    'slv': str(it.get('slv', '') or '').strip(),
+                    'se': str(it.get('se', '') or '').strip(),
+                }
+                if any(row.values()):
+                    normalized_items.append(row)
+            corrections['line_items'] = normalized_items
+            item_count = len(normalized_items)
+
+        corrections['updated_at'] = now_str
+        inv['manual_corrections'] = corrections
+        inv['updated_at'] = now_str
+        _refresh_search_text(inv)
+        _append_oplog("manual_correct", inv.get('id', ''), {
+            "fieldCount": field_count, "lineItemCount": item_count
+        })
+        _maybe_compact()
+
+    return {"success": True, "notFound": False, "fieldCount": field_count, "lineItemCount": item_count}
+
+
 # ═══════════════════════════════════════════════════════════
 #  查询 & 搜索
 # ═══════════════════════════════════════════════════════════

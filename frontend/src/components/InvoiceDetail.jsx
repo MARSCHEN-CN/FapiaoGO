@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { BACKEND_URL } from '../config'
 import { useFileContext } from '../contexts/FileContext'
 
@@ -28,29 +28,31 @@ const LINE_ITEM_FIELDS = [
   { key: 'se', label: '税额', width: '7%' },
 ]
 
-// 后端返回的 export-data 字段名 → 编辑面板显示字段名
-const EXPORT_TO_EDIT_MAP = {
-  invoiceType: 'invoiceType',
-  invoiceNumber: 'invoiceNumber',
-  invoiceDate: 'invoiceDate',
-  buyerName: 'buyerName',
-  buyerTaxNo: 'buyerTaxNo',
-  sellerName: 'sellerName',
-  sellerTaxNo: 'sellerTaxNo',
-  amountWithoutTax: 'amountWithoutTax',
-  taxAmount: 'taxAmount',
-  totalAmount: 'totalAmount',
-  note: 'note',
-  issuer: 'issuer',
+const ROW_TO_EDIT_KEY = {
+  unit: 'dw', quantity: 'sl', unitPrice: 'dj', lineAmount: 'je',
+  taxRate: 'slv', lineTax: 'se', xmmc: 'xmmc', ggxh: 'ggxh',
+}
+
+const EMPTY_LINE_ITEM = { xmmc: '', ggxh: '', dw: '', sl: '', dj: '', je: '', slv: '', se: '' }
+
+function rowToEditItem(r) {
+  const item = { ...EMPTY_LINE_ITEM }
+  for (const [rowKey, editKey] of Object.entries(ROW_TO_EDIT_KEY)) {
+    const v = r[rowKey]
+    if (v !== undefined && v !== null) item[editKey] = String(v)
+  }
+  return item
+}
+
+function emptyItem(item) {
+  return Object.values(item || {}).every(v => !v || String(v).trim() === '')
 }
 
 export default function InvoiceDetail({ fileObj, onClose }) {
   const { files, setFiles } = useFileContext()
-  // 从后端获取导出数据（与 Excel 导出同一来源）
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(null)
   const [backendInvoice, setBackendInvoice] = useState(null)
-  const [backendRows, setBackendRows] = useState([])
 
   const [editMode, setEditMode] = useState(false)
   const [fields, setFields] = useState({})
@@ -59,7 +61,9 @@ export default function InvoiceDetail({ fileObj, onClose }) {
   const [saveResult, setSaveResult] = useState(null)
   const [dirty, setDirty] = useState(false)
 
-  // 组件挂载时从后端拉取导出数据
+  const abortRef = useRef(null)
+  const loadedNameRef = useRef('')
+
   useEffect(() => {
     const fileName = fileObj.name || fileObj.fileName || fileObj.originalFilename || ''
     if (!fileName) {
@@ -67,105 +71,150 @@ export default function InvoiceDetail({ fileObj, onClose }) {
       setLoading(false)
       return
     }
-    fetch(`${BACKEND_URL}/api/invoice/export-data?file_name=${encodeURIComponent(fileName)}`)
+    if (abortRef.current) abortRef.current.abort()
+    const ctrl = new AbortController()
+    abortRef.current = ctrl
+    setLoading(true)
+    setLoadError(null)
+    setEditMode(false)
+    setSaveResult(null)
+    setDirty(false)
+
+    fetch(`${BACKEND_URL}/api/invoice/export-data?file_name=${encodeURIComponent(fileName)}`, { signal: ctrl.signal })
       .then(r => r.json())
       .then(data => {
+        if (ctrl.signal.aborted) return
         if (data.success) {
           const inv = data.data.invoice || {}
           setBackendInvoice(inv)
-          setBackendRows(data.data.rows || [])
-          // 初始化编辑字段（取第一行的数据，这就是导出时的最终值）
-          setFields(inv)
-          const items = (data.data.rows || []).map(r => ({
-            xmmc: r.xmmc || '',
-            ggxh: r.ggxh || '',
-            dw: r.unit || '',
-            sl: r.quantity || String(r.quantity ?? ''),
-            dj: r.unitPrice || '',
-            je: r.lineAmount || '',
-            slv: r.taxRate || '',
-            se: r.lineTax || '',
-          }))
-          setLineItems(items.length > 0 ? items : [])
+          setFields({ ...inv })
+          const rows = data.data.rows || []
+          const items = rows.length > 0 ? rows.map(rowToEditItem) : []
+          setLineItems(items)
+          loadedNameRef.current = fileName
         } else {
           setLoadError(data.error || '获取数据失败')
         }
         setLoading(false)
       })
       .catch(err => {
+        if (ctrl.signal.aborted) return
         setLoadError(`网络错误: ${err.message}`)
         setLoading(false)
       })
+
+    return () => { ctrl.abort() }
   }, [fileObj.name, fileObj.fileName, fileObj.originalFilename])
 
-  // 后续状态保持不变
-  const [origFields, setOrigFields] = useState(null)
-
-  useEffect(() => {
-    if (backendInvoice && !origFields) {
-      setOrigFields({ ...backendInvoice })
-    }
-  }, [backendInvoice, origFields])
-
-  const handleFieldChange = (key, value) => {
+  const handleFieldChange = useCallback((key, value) => {
     setFields(prev => ({ ...prev, [key]: value }))
     setDirty(true)
-  }
+  }, [])
 
-  const handleLineItemChange = (idx, key, value) => {
+  const handleLineItemChange = useCallback((idx, key, value) => {
     setLineItems(prev => {
       const next = [...prev]
       next[idx] = { ...next[idx], [key]: value }
       return next
     })
     setDirty(true)
-  }
+  }, [])
 
-  const addLineItem = () => {
-    setLineItems(prev => [...prev, { xmmc: '', ggxh: '', dw: '', sl: '', dj: '', je: '', slv: '', se: '' }])
+  const addLineItem = useCallback(() => {
+    setLineItems(prev => [...prev, { ...EMPTY_LINE_ITEM }])
     setDirty(true)
-  }
+  }, [])
 
-  const removeLineItem = (idx) => {
+  const removeLineItem = useCallback((idx) => {
     setLineItems(prev => prev.filter((_, i) => i !== idx))
     setDirty(true)
-  }
+  }, [])
 
-  const handleSave = async () => {
+  const handleCancel = useCallback(() => {
+    if (backendInvoice) {
+      setFields({ ...backendInvoice })
+    }
+    const fileName = fileObj.name || fileObj.fileName || fileObj.originalFilename || ''
+    fetch(`${BACKEND_URL}/api/invoice/export-data?file_name=${encodeURIComponent(fileName)}`)
+      .then(r => r.json())
+      .then(data => {
+        if (data.success) {
+          const inv = data.data.invoice || {}
+          setBackendInvoice(inv)
+          setFields({ ...inv })
+          setLineItems((data.data.rows || []).map(rowToEditItem))
+        }
+      })
+      .catch(() => {})
+    setEditMode(false)
+    setDirty(false)
+    setSaveResult(null)
+  }, [backendInvoice, fileObj.name, fileObj.fileName, fileObj.originalFilename])
+
+  const handleSave = useCallback(async () => {
     setSaving(true)
     setSaveResult(null)
+    const fileName = fileObj.name || fileObj.fileName || fileObj.originalFilename || ''
 
-    // 构建修正字段（只传有变化的）
     const corrected = {}
-    const orig = origFields || {}
+    const orig = backendInvoice || {}
     for (const key of Object.keys(FIELD_LABELS)) {
-      if (String(fields[key] || '') !== String(orig[key] || '')) {
-        corrected[key] = fields[key]
+      const newV = fields[key]
+      const origV = orig[key]
+      if (String(newV ?? '') !== String(origV ?? '')) {
+        corrected[key] = newV ?? ''
       }
     }
 
-    const body = { corrected_fields: corrected }
-    const origItemStr = JSON.stringify(origFields ? (backendRows || []).map(r => ({
-      xmmc: r.xmmc || '', ggxh: r.ggxh || '', dw: r.unit || '',
-      sl: r.quantity || '', dj: r.unitPrice || '', je: r.lineAmount || '',
-      slv: r.taxRate || '', se: r.lineTax || '',
-    })) : [])
-    const newItemStr = JSON.stringify(lineItems)
-    if (origItemStr !== newItemStr) {
-      body.line_items = lineItems
-    }
+    const cleanItems = lineItems.filter(it => !emptyItem(it))
+
+    const body = { file_name: fileName }
+    if (Object.keys(corrected).length > 0) body.corrected_fields = corrected
+    body.line_items = cleanItems
 
     try {
-      const resp = await fetch(`${BACKEND_URL}/api/review-queue/resolve_manual`, {
+      const resp = await fetch(`${BACKEND_URL}/api/invoice/correct`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          file_name: fileObj.name || fileObj.fileName || fileObj.originalFilename || '',
-          ...body,
-        }),
+        body: JSON.stringify(body),
       })
       const data = await resp.json()
       if (data.success) {
+        const updatedInvoice = { ...backendInvoice, ...corrected }
+        setBackendInvoice(updatedInvoice)
+        setFields({ ...updatedInvoice })
+        setLineItems(cleanItems.length > 0 ? cleanItems.map(it => ({ ...it })) : [])
+
+        setFiles(prev => prev.map(f => {
+          const fName = f.name || f.fileName || f.originalFilename || ''
+          if (fName !== fileName && f.name !== fileName) return f
+          const invFields = { ...(f.invoiceFields || {}) }
+          const directMap = {
+            invoiceNumber: ['invoiceNumber', 'fphm'],
+            invoiceDate: ['invoiceDate', 'kprq'],
+            invoiceType: ['invoiceType', 'type'],
+            buyerName: ['gmfmc'],
+            buyerTaxNo: ['gmfsh'],
+            sellerName: ['xsfmc'],
+            sellerTaxNo: ['xsfsh'],
+            totalAmount: ['amountHj', 'amount'],
+            amountWithoutTax: ['amountJe'],
+            taxAmount: ['amountSe'],
+            note: ['note'],
+            issuer: ['kpr'],
+          }
+          for (const [corrKey, targetKeys] of Object.entries(directMap)) {
+            if (corrected[corrKey] !== undefined) {
+              for (const tk of targetKeys) invFields[tk] = corrected[corrKey]
+            }
+          }
+          if (corrected.invoiceNumber !== undefined) f.invoiceNumber = corrected.invoiceNumber
+          if (corrected.invoiceDate !== undefined) f.invoiceDate = corrected.invoiceDate
+          if (corrected.invoiceType !== undefined) f.invoiceType = corrected.invoiceType
+          if (corrected.totalAmount !== undefined) f.amount = corrected.totalAmount
+          return { ...f, invoiceFields: invFields }
+        }))
+
         setSaveResult({ type: 'success', message: data.message || '保存成功' })
         setDirty(false)
         setEditMode(false)
@@ -177,9 +226,8 @@ export default function InvoiceDetail({ fileObj, onClose }) {
     } finally {
       setSaving(false)
     }
-  }
+  }, [fields, lineItems, backendInvoice, fileObj, setFiles])
 
-  // 加载中
   if (loading) {
     return (
       <div className="invoice-detail-overlay" onClick={(e) => { if (e.target === e.currentTarget) onClose() }}>
@@ -190,7 +238,6 @@ export default function InvoiceDetail({ fileObj, onClose }) {
     )
   }
 
-  // 加载失败
   if (loadError) {
     return (
       <div className="invoice-detail-overlay" onClick={(e) => { if (e.target === e.currentTarget) onClose() }}>
@@ -207,14 +254,6 @@ export default function InvoiceDetail({ fileObj, onClose }) {
     )
   }
 
-  const hasChanges = () => {
-    if (!origFields) return false
-    for (const key of Object.keys(FIELD_LABELS)) {
-      if (String(fields[key] || '') !== String(origFields[key] || '')) return true
-    }
-    return false
-  }
-
   return (
     <div className="invoice-detail-overlay" onClick={(e) => { if (e.target === e.currentTarget) onClose() }}>
       <div className="invoice-detail-panel">
@@ -228,10 +267,10 @@ export default function InvoiceDetail({ fileObj, onClose }) {
               </button>
             ) : (
               <>
-                <button className="id-btn id-btn-success" onClick={handleSave} disabled={saving || !dirty}>
+                <button className="id-btn id-btn-success" onClick={handleSave} disabled={saving}>
                   {saving ? '保存中...' : '保存修正'}
                 </button>
-                <button className="id-btn id-btn-ghost" onClick={() => { setEditMode(false); setFields(buildFieldMap(fileObj)); setDirty(false) }}>
+                <button className="id-btn id-btn-ghost" onClick={handleCancel} disabled={saving}>
                   取消
                 </button>
               </>
@@ -244,25 +283,23 @@ export default function InvoiceDetail({ fileObj, onClose }) {
 
         {saveResult && (
           <div className={`id-alert id-alert-${saveResult.type}`}>
-            {saveResult.icon}{saveResult.message}
+            {saveResult.message}
           </div>
         )}
 
         <div className="invoice-detail-body">
-          {/* 文件名 */}
           <div className="id-field-row">
             <span className="id-field-label">文件名</span>
             <span className="id-field-value">{fileObj.name || fileObj.fileName || ''}</span>
           </div>
 
-          {/* 发票级字段 */}
           {Object.entries(FIELD_LABELS).map(([key, label]) => (
             <div className="id-field-row" key={key}>
               <span className="id-field-label">{label}</span>
               {editMode ? (
                 <input
                   className="id-field-input"
-                  value={fields[key] || ''}
+                  value={fields[key] ?? ''}
                   onChange={e => handleFieldChange(key, e.target.value)}
                 />
               ) : (
@@ -271,7 +308,6 @@ export default function InvoiceDetail({ fileObj, onClose }) {
             </div>
           ))}
 
-          {/* 明细行 */}
           <div className="id-section-title">
             <span>明细行（{lineItems.length} 条）</span>
             {editMode && (
@@ -315,6 +351,10 @@ export default function InvoiceDetail({ fileObj, onClose }) {
               ))}
             </div>
           )}
+
+          <div style={{ padding: '12px 0', fontSize: '11px', color: 'var(--text-4)', lineHeight: '1.6' }}>
+            提示：保存的修正会立即作用于后续 Excel/PDF 导出。
+          </div>
         </div>
       </div>
     </div>

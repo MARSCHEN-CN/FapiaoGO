@@ -60,6 +60,33 @@ def _extract_class_code_fast(row):
     m = _CLASS_CODE_RE.match(raw)
     row['classificationCode'] = m.group().strip('*') if m else ''
 
+def _apply_header_corrections(row, corrections_fields):
+    """将 manual_corrections.fields 覆盖到导出行的发票级字段。
+
+    corrections_fields 用驼峰 key（与 _build_export_header 输出一致），直接覆盖即可。
+    amountWithoutTax / taxAmount / totalAmount 三字段联动：如果任一被修正，重算联动值。
+    """
+    if not corrections_fields:
+        return row
+    for k, v in corrections_fields.items():
+        if k in row and v is not None and str(v).strip() != '':
+            row[k] = v
+    if 'totalAmount' in corrections_fields or 'taxAmount' in corrections_fields:
+        try:
+            total = float(row.get('totalAmount', 0) or 0)
+            tax = float(row.get('taxAmount', 0) or 0)
+            row['amountWithoutTax'] = round(total - tax, 2)
+        except (ValueError, TypeError):
+            pass
+    return row
+
+
+_CORRECTED_ITEM_MAP = {
+    "xmmc": "xmmc", "ggxh": "ggxh", "dw": "unit", "sl": "quantity",
+    "dj": "unitPrice", "je": "lineAmount", "slv": "taxRate", "se": "lineTax",
+}
+
+
 def _build_export_header(rec):
     """构建导出表头（发票级公共字段）。"""
     try:
@@ -70,7 +97,7 @@ def _build_export_header(rec):
         tax_amount = float(rec.get('tax_amount', 0) or 0)
     except (ValueError, TypeError):
         tax_amount = 0
-    return {
+    row = {
         "recordId": str(rec.get('id', '')),
         "serialNo": "",
         "invoiceType": rec.get('type', ''),
@@ -91,14 +118,31 @@ def _build_export_header(rec):
         "parse_success": True,
         "originalFilename": rec.get('file_name', ''),
     }
+    corrections = rec.get('manual_corrections') or {}
+    return _apply_header_corrections(row, corrections.get('fields'))
+
 
 def _db_record_to_export(rec: dict) -> list:
     """将数据库记录转换为 Excel 导出所需的扁平字段格式列表
 
     每行明细对应一个导出行，多行明细返回多个 dict。
-    优先使用 line_items_excel_rows（字符级通路的精确结果），
-    回退到传统 line_items。
+    优先级：manual_corrections.line_items > line_items_excel_rows > 传统 line_items。
     """
+    corrections = rec.get('manual_corrections') or {}
+    corrected_items = corrections.get('line_items')
+
+    if corrected_items:
+        results = []
+        for item in corrected_items:
+            row = _build_export_header(rec)
+            for db_key, export_key in _CORRECTED_ITEM_MAP.items():
+                val = item.get(db_key, '')
+                if val is not None:
+                    row[export_key] = val
+            _extract_class_code_fast(row)
+            results.append(row)
+        return results
+
     excel_rows = rec.get('line_items_excel_rows') or []
     if excel_rows:
         results = []
@@ -708,18 +752,22 @@ def resolve_review(record_id):
 
 @app.route('/api/review-queue/resolve_manual', methods=['POST'])
 def resolve_review_manual():
-    """前端发票详情页手动修正入口：按文件名查找记录并提交修正"""
+    """前端发票详情页手动修正入口：按文件名查找记录并提交修正。
+
+    修正会同时写入：
+      1. review 队列（如有匹配记录则标记解决）
+      2. 发票主数据库 manual_corrections 字段（保证 Excel/PDF 导出使用修正后数据）
+    """
     try:
         data = request.get_json(silent=True) or {}
         file_name = data.get('file_name', '')
-        corrected_fields = data.get('corrected_fields', {})
+        corrected_fields = data.get('corrected_fields', {}) or {}
         line_items = data.get('line_items')
 
         if not file_name:
             return jsonify({"success": False, "error": "缺少 file_name"}), 400
 
         router = get_decision_router()
-        # 使用索引查找（O(1) 复杂度）
         review_record = router.get_review_by_file_name(file_name)
         record_id = review_record.get("id") if review_record else None
 
@@ -727,19 +775,60 @@ def resolve_review_manual():
         if line_items is not None:
             all_fields['line_items'] = line_items
 
-        # 如有匹配的审核记录则标记解决
         if record_id:
             router.resolve_review(record_id, all_fields or None)
+
+        db_result = db_module.apply_invoice_correction(
+            file_name, corrected_fields or None, line_items
+        )
 
         msg = "修正已记录"
         if corrected_fields:
             msg += f"，{len(corrected_fields)} 个字段"
         if line_items:
             msg += f"，{len(line_items)} 条明细行"
+        if db_result.get("notFound"):
+            msg += "（注意：数据库中未找到对应发票，修正可能无法作用于导出）"
 
-        return jsonify({"success": True, "message": msg})
+        return jsonify({"success": True, "message": msg, "dbResult": db_result})
     except Exception as e:
         logger.exception("手动修正失败")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route('/api/invoice/correct', methods=['POST'])
+def api_invoice_correct():
+    """发票详情页保存修正专用端点（推荐使用）。
+
+    前端编辑字段后调用此接口将修正数据持久化到数据库。
+    导出 Excel/PDF 时会自动使用修正后的数据。
+    """
+    try:
+        data = request.get_json(silent=True) or {}
+        file_name = data.get('file_name', '')
+        corrected_fields = data.get('corrected_fields', {}) or {}
+        line_items = data.get('line_items')
+
+        if not file_name:
+            return jsonify({"success": False, "error": "缺少 file_name"}), 400
+
+        result = db_module.apply_invoice_correction(
+            file_name, corrected_fields or None, line_items
+        )
+        if result.get("notFound"):
+            return jsonify({"success": False, "error": "数据库中没有找到该文件"}), 404
+
+        msg = "修正已保存"
+        fc = result.get("fieldCount", 0)
+        ic = result.get("lineItemCount", 0)
+        if fc:
+            msg += f"，{fc} 个字段"
+        if ic:
+            msg += f"，{ic} 条明细行"
+
+        return jsonify({"success": True, "message": msg, "data": result})
+    except Exception as e:
+        logger.exception("保存修正失败")
         return jsonify({"success": False, "error": str(e)}), 500
 
 
