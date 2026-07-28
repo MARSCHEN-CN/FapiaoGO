@@ -35,6 +35,9 @@ from multi_page_merge import merge_page_results
 
 logger = logging.getLogger(__name__)
 
+# Step 1 启动标记：确认新三因子引擎已加载
+logger.info("[ASSEMBLY_ENGINE] Step 1 — 三因子分组引擎 v3 loaded")
+
 
 # ═══════════════════════════════════════════
 # 数据契约
