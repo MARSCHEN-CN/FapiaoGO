@@ -645,38 +645,16 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
                 const sameSourceFiles = targetSourceDocId
                   ? matchingFiles.filter((f) => (f.sourceDocId || f.docId) === targetSourceDocId)
                   : matchingFiles
-                const crossSourceFiles = targetSourceDocId
-                  ? matchingFiles.filter((f) => (f.sourceDocId || f.docId) !== targetSourceDocId)
-                  : []
-                // 异源文件不进入合并，按独立页回退（将进入重复组而非被吞进 pages[]）
-                for (const mf of crossSourceFiles) fallbackFiles.push(mf)
 
                 if (sameSourceFiles.length === 0) {
                   console.warn('[hydrateChunk] assembled 文档匹配不到同源 file（invoiceNumber=%s），跳过该组装结果以免静默丢失', assembled.invoiceNumber)
                   continue
                 }
 
-                // ── 多页判定：直接信任后端组装结果 ──
-                // 后端 PageResultStore 收齐所有页并成功 assemble 后才会出现在 assembled_documents 中，
-                // pageCount 是组装时的实际页数（>=2 即为有效多页发票）。
-                // 不再使用 isMultiPageInvoiceDocument 前端重复校验，避免因 pageNum/totalPages
-                // 元数据不一致导致闸门误拒。
-                const isMultiPage = (assembled.pageCount >= 2) || (sameSourceFiles.length >= 2)
-                console.log('[MULTIPAGE-GATE]', {
-                  invoiceNumber: assembled.invoiceNumber,
-                  accepted: isMultiPage,
-                  pageKeys: Array.from(matchingKeys),
-                  assembledPageCount: assembled.pageCount,
-                  matchingFilesCount: sameSourceFiles.length,
-                })
-                if (!isMultiPage) {
-                  console.log('[hydrateChunk] 闸门拒绝：非多页发票（invoiceNumber=%s keys=%d pageCount=%d），按独立页回退', assembled.invoiceNumber, matchingKeys.size, assembled.pageCount)
-                  for (const mf of sameSourceFiles) {
-                    fallbackFiles.push(mf)
-                  }
-                  continue
-                }
-
+                // ── 消费 assembled 文档 ──
+                // 后端 PageResultStore 收齐所有页并成功 assemble 后才出现在 assembled_documents 中，
+                // 不要求 pageCount >= 2：单页 assembled 文档仍携带发票号等解析元数据，
+                // 应生成 _inv_ docId 供后续处理，而非退回 fallback 失去业务身份。
                 const invDocId = `${assembled.sourceDocId || ''}_inv_${assembled.invoiceNumber || ''}`
                 // FIX: 按 pageNum 升序排列，确保首页作为 representative、页面顺序正确
                 const sortedFiles = [...sameSourceFiles].sort(
