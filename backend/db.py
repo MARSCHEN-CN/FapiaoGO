@@ -1157,6 +1157,61 @@ def update_invoice_fields(invoice_id: str, fields: Dict) -> Optional[Dict]:
     return None
 
 
+def rename_invoices_by_filename(renames: List[Dict[str, str]]) -> Dict:
+    """批量按旧文件名更新数据库中的 file_name。
+
+    Args:
+        renames: [{"oldName": "xxx.pdf", "newName": "yyy.pdf", "newPath": "C:/.../yyy.pdf"}, ...]
+
+    Returns:
+        {"updated": int, "notFound": [oldName, ...]}
+    """
+    _ensure_loaded()
+    now_str = now().isoformat()
+    not_found = []
+    updated_count = 0
+
+    with _rw_lock.gen_wlock():
+        for item in renames:
+            old_name = item.get('oldName', '')
+            new_name = item.get('newName', '')
+            if not old_name or not new_name:
+                continue
+
+            found_idx = None
+            old_key = invoice_index_key(old_name)
+            if old_key in _invoice_index_by_filename:
+                found_idx = _invoice_index_by_filename[old_key]
+            else:
+                old_basename = old_name.split('/')[-1].split('\\')[-1]
+                old_basename_key = invoice_index_key(old_basename)
+                if old_basename_key in _invoice_index_by_filename:
+                    found_idx = _invoice_index_by_filename[old_basename_key]
+
+            if found_idx is None:
+                not_found.append(old_name)
+                continue
+
+            inv = _invoices[found_idx]
+            if inv.get('deleted_at'):
+                not_found.append(old_name)
+                continue
+
+            inv['file_name'] = normalize_filename(new_name)
+            inv['updated_at'] = now_str
+            if 'file_path' in inv and item.get('newPath'):
+                inv['file_path'] = item['newPath']
+            _refresh_search_text(inv)
+            _append_oplog("rename", inv.get('id', ''), {"oldName": old_name, "newName": new_name})
+            updated_count += 1
+
+        if updated_count > 0:
+            _rebuild_indexes()
+            _maybe_compact()
+
+    return {"updated": updated_count, "notFound": not_found}
+
+
 # ═══════════════════════════════════════════════════════════
 #  查询 & 搜索
 # ═══════════════════════════════════════════════════════════

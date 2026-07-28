@@ -13,30 +13,9 @@ const {
   createRarWithWinRAR,
 } = require('./archive-utils')
 
-/**
- * 注册打包相关的 IPC handlers
- * @param {Object} ctx
- * @param {Function} ctx.getMainWindow - 获取主窗口引用的函数
- */
-/**
- * 异步判断路径是否存在（Node 无 fs.promises.exists，用 access 容错）
- */
-async function pathExists(p) {
-  try {
-    await fs.promises.access(p)
-    return true
-  } catch {
-    return false
-  }
-}
-
 function registerPackHandlers(ctx) {
 
-  // ==========================================
-  // ✅ 一键打包（支持 ZIP/RAR/7Z 压缩包 + 命名规则 + 重命名）
-  // ==========================================
   ipcMain.handle('pack-invoices', async (event, payload) => {
-    // 兼容旧版纯数组调用和新版对象调用
     const isLegacyFormat = Array.isArray(payload)
     const files = isLegacyFormat ? payload : (payload.files || [])
     const packSettings = isLegacyFormat ? {} : (payload.packSettings || {})
@@ -58,8 +37,8 @@ function registerPackHandlers(ctx) {
         outputDir = result.filePaths[0]
       }
 
-      // 目录存在则 mkdir(recursive) 为 no-op，行为与「existsSync 守卫 + mkdirSync」等价
-      await fs.promises.mkdir(outputDir, { recursive: true })
+      // 同步 mkdir（recursive 幂等，比 await mkdir 快，省掉 microtask 调度）
+      fs.mkdirSync(outputDir, { recursive: true })
 
       // 2. 解析打包设置
       const archiveFormat = (packSettings.packArchiveFormat || 'ZIP').toUpperCase()
@@ -68,17 +47,15 @@ function registerPackHandlers(ctx) {
       const archiveNamePrefix = packSettings.packArchiveNamePrefix ?? ''
       const archiveNameDateFormat = packSettings.packArchiveNameDateFormat || 'YYYY年MM月DD日'
       const fieldOrder = packSettings.packNameFieldOrder || ['prefix', 'date']
+      const nameSeparator = packSettings.packArchiveNameSeparator ?? '_'
 
-      // 3. 生成压缩包文件名：根据 fieldOrder 决定顺序
-      const archiveName = generateArchiveName(archiveNamePrefix, archiveNameDateFormat, archiveFormat, fieldOrder)
-      const archivePath = path.join(outputDir, archiveName)
-
-      // 处理文件名冲突
-      let finalArchivePath = archivePath
-      let counter = 1
+      // 3. 生成压缩包文件名（含用户自定义分隔符）
+      const archiveName = generateArchiveName(archiveNamePrefix, archiveNameDateFormat, archiveFormat, fieldOrder, nameSeparator)
+      let finalArchivePath = path.join(outputDir, archiveName)
       const archiveExt = path.extname(archiveName)
       const archiveBase = path.basename(archiveName, archiveExt)
-      while (await pathExists(finalArchivePath)) {
+      let counter = 1
+      while (fs.existsSync(finalArchivePath)) {
         finalArchivePath = path.join(outputDir, `${archiveBase}_${counter}${archiveExt}`)
         counter++
       }
@@ -93,40 +70,31 @@ function registerPackHandlers(ctx) {
       const showPrefix = renameSettings.showPrefix ?? false
       const useLegacyNaming = renameFields.length === 0
 
-      /**
-       * 生成压缩包内的文件名
-       */
       function generateNewName(invoiceFields, originalName) {
-        if (!renameBeforeArchive) {
-          // 未勾选"打包前重命名"：使用原名
-          return originalName
-        }
+        if (!renameBeforeArchive) return originalName
         if (useLegacyNaming) {
-          // 勾选了重命名但未配置字段：使用发票号码命名作为降级
           const ext = path.extname(originalName)
           return invoiceFields?.fphm ? `${invoiceFields.fphm}${ext}` : originalName
         }
-
         const result = buildNameParts(invoiceFields, renameFields, { separator, showIndex, showPrefix })
         const ext = path.extname(originalName)
         return result ? `${result}${ext}` : originalName
       }
 
-      // 5. 遍历文件，准备列表
-      const preparedFiles = []
+      // 5. 同步遍历文件准备列表（避免 await 在循环中串行开销）
+      //    同步 statSync/existsSync 比 Promise.all + await access 快得多
+      event.sender.send('pack-progress', { current: 0, total: total + 1, stage: '准备文件' })
 
-      // ✅ 进度 IPC 节流：大批量文件时逐条 send 会 flooding 渲染进程、触发过多 React 重渲染。
-      //    按时间窗口限频（首条必发；末条 100% 由下方 L210 无条件发送保证，绝不丢失）。
+      const preparedFiles = []
       const PROGRESS_THROTTLE_MS = 100
       let lastProgressSentAt = 0
 
       for (let i = 0; i < files.length; i++) {
         const file = files[i]
-        // 节流发送：首条（lastProgressSentAt=0 → 差值必 >= 窗口）始终发送，之后每 >=100ms 一次
         const nowTs = Date.now()
         if (nowTs - lastProgressSentAt >= PROGRESS_THROTTLE_MS) {
           lastProgressSentAt = nowTs
-          event.sender.send('pack-progress', { current: i + 1, total: total + 1 })  // +1 是压缩步骤
+          event.sender.send('pack-progress', { current: i + 1, total: total + 1, stage: '扫描文件' })
         }
 
         try {
@@ -136,18 +104,21 @@ function registerPackHandlers(ctx) {
             packResult.errors.push({ file: file.name, error: '无文件路径' })
             continue
           }
-
           if (!path.isAbsolute(originalPath)) {
             originalPath = path.resolve(originalPath)
           }
-
-          if (!(await pathExists(originalPath))) {
+          if (!fs.existsSync(originalPath)) {
             packResult.failed++
             packResult.errors.push({ file: file.name, error: '源文件不存在' })
             continue
           }
+          const st = fs.statSync(originalPath)
+          if (!st.isFile()) {
+            packResult.failed++
+            packResult.errors.push({ file: file.name, error: '不是有效文件' })
+            continue
+          }
 
-          // 决定在压缩包内的文件名
           const targetName = renameBeforeArchive
             ? generateNewName(file.invoiceFields, file.name)
             : file.name
@@ -168,16 +139,15 @@ function registerPackHandlers(ctx) {
       }
 
       // 6. 创建压缩包
+      event.sender.send('pack-progress', { current: total, total: total + 1, stage: '创建压缩包' })
       try {
         if (archiveFormat === 'ZIP') {
           await createZipArchive(preparedFiles, finalArchivePath)
         } else if (archiveFormat === 'RAR') {
-          // RAR 是专有格式，需要 WinRAR
           const rarPath = findWinRarPath()
           if (rarPath) {
             await createRarWithWinRAR(preparedFiles, finalArchivePath, rarPath)
           } else {
-            // 降级为 ZIP
             console.warn('[pack] 未找到 WinRAR，RAR 格式降级为 ZIP')
             const zipPath = finalArchivePath.replace(/\.rar$/i, '.zip')
             await createZipArchive(preparedFiles, zipPath)
@@ -185,12 +155,10 @@ function registerPackHandlers(ctx) {
             packResult.fallbackToZip = true
           }
         } else {
-          // 7Z 格式
           const sevenZipPath = find7zPath()
           if (sevenZipPath) {
             await createArchiveWith7z(preparedFiles, finalArchivePath, sevenZipPath)
           } else {
-            // 降级为 ZIP
             console.warn('[pack] 未找到 7z 命令行工具，7Z 格式降级为 ZIP')
             const zipPath = finalArchivePath.replace(/\.7z$/i, '.zip')
             await createZipArchive(preparedFiles, zipPath)
@@ -203,11 +171,13 @@ function registerPackHandlers(ctx) {
         return { success: false, error: `创建压缩包失败: ${archiveError.message}` }
       }
 
-      // 7. 处理原件（不保留原件则删除；各文件独立，并行删除避免逐个 await 累积延迟）
+      // 7. 处理原件（不保留原件则并行删除；同步 unlink 在大量小文件时反而比 Promise.all 更快且无调度开销，
+      //    但并行 unlink 可发挥 IO 队列深度，这里用 Promise.all）
       if (!keepOriginal) {
+        event.sender.send('pack-progress', { current: total + 1, total: total + 1, stage: '清理原件' })
         await Promise.all(preparedFiles.map(async (pf) => {
           try {
-            if (await pathExists(pf.originalPath)) {
+            if (fs.existsSync(pf.originalPath)) {
               await fs.promises.unlink(pf.originalPath)
             }
           } catch (unlinkErr) {
@@ -217,11 +187,11 @@ function registerPackHandlers(ctx) {
       }
 
       packResult.packed = preparedFiles.length
-      event.sender.send('pack-progress', { current: total + 1, total: total + 1 })
+      event.sender.send('pack-progress', { current: total + 1, total: total + 1, stage: '完成' })
 
       let resultMsg = `打包完成！成功 ${packResult.packed} 个，失败 ${packResult.failed} 个`
       if (packResult.fallbackToZip) {
-        resultMsg += `\n\n⚠️ 未检测到 7-Zip，${archiveFormat} 格式已降级为 ZIP 格式`
+        resultMsg += `\n\n⚠️ 未检测到 7-Zip/WinRAR，${archiveFormat} 格式已降级为 ZIP 格式`
       }
 
       return { ...packResult, message: resultMsg }

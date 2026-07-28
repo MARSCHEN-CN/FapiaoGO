@@ -1,7 +1,33 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
-import { getFileFormat } from '../utils'
-import { generateFileKey } from '../utils/fileHelpers'
 import { groupFilesByDocument } from '../utils/groupDocuments'
+
+function buildInvoiceFields(f) {
+  if (f.invoiceFields && Object.keys(f.invoiceFields).length > 0) {
+    return f.invoiceFields
+  }
+  return {
+    type: f.invoiceType || '',
+    fphm: f.invoiceNumber || '',
+    kprq: f.invoiceDate || '',
+    gmfmc: f.invoiceFields?.gmfmc || '',
+    gmfsh: f.invoiceFields?.gmfsh || '',
+    xsfmc: f.invoiceFields?.xsfmc || '',
+    xsfsh: f.invoiceFields?.xsfsh || '',
+    amountJe: f.invoiceFields?.amountJe || '',
+    amountSe: f.invoiceFields?.amountSe || '',
+    amountHj: f.invoiceFields?.amountHj || f.amount || '',
+    amountHjDx: f.invoiceFields?.amountHjDx || '',
+    note: f.invoiceFields?.note || '',
+    skr: f.invoiceFields?.skr || '',
+    fhr: f.invoiceFields?.fhr || '',
+    kpr: f.invoiceFields?.kpr || '',
+  }
+}
+
+function collectDocumentLevelFiles(files) {
+  const documentFiles = groupFilesByDocument(files)
+  return documentFiles.filter(f => f.status === 'parsed')
+}
 
 export function useRenamePack({ files, settings, setFiles, parseFiles, parseProgress, electronAPIRef }) {
   const [packing, setPacking] = useState(false)
@@ -13,14 +39,10 @@ export function useRenamePack({ files, settings, setFiles, parseFiles, parseProg
   const [alertModal, setAlertModal] = useState(null)
   const [reimporting, setReimporting] = useState(false)
   const [reimportProgress, setReimportProgress] = useState(null)
-  // 重命名完成后，供 App 重新导入（预览）该发票：记录首个重命名文件的 key，
-  // App 用它在最新 files 状态里找到带 docId 的解析后对象，避免拿到无 docId 的本地占位对象
-  // （无 docId 会让 Render Engine 预览 URL 缺失，回退 Canvas 路径，重演 Canvas/RE 视觉不一致）。
   const [renamedPreviewKey, setRenamedPreviewKey] = useState(null)
-  // 缓存预览阶段算好的文件名，重命名时直接复用，避免后端重复计算
-  const computedNamesRef = useRef({})  // { [key]: newBaseName }
+  const computedNamesRef = useRef({})
+  const previewDocumentMapRef = useRef(new Map())
 
-  // 重导入期间同步 parseProgress → reimportProgress
   const reimportingRef = useRef(false)
   useEffect(() => {
     if (!reimportingRef.current) return
@@ -31,48 +53,75 @@ export function useRenamePack({ files, settings, setFiles, parseFiles, parseProg
     }
   }, [parseProgress])
 
-  // 用 ref 保存最新 files/settings，供 refreshRenamePreview 读取（避免闭包过期）
   const latestFilesRef = useRef(files)
   const latestSettingsRef = useRef(settings)
   useEffect(() => { latestFilesRef.current = files }, [files])
   useEffect(() => { latestSettingsRef.current = settings }, [settings])
 
-  // 内部预览生成逻辑（不依赖闭包，从 ref 读最新值）
+  const buildPreviewFilesFromDocuments = useCallback((documentFiles, previews) => {
+    const fileMap = new Map(documentFiles.map(f => [f.key, f]))
+    const previewFiles = previews.map(p => {
+      const f = fileMap.get(p.key)
+      return {
+        key: p.key,
+        originalName: p.originalName,
+        newName: p.newName,
+        conflict: false,
+        fileFormat: f?.fileFormat || 'pdf',
+        invoiceNumber: f?.invoiceNumber || '',
+        invoiceType: f?.invoiceType || '',
+        amount: f?.amount || '',
+        invoiceDate: f?.invoiceDate || '',
+        rawText: f?.rawText || '',
+        gmfmc: f?.invoiceFields?.gmfmc || '',
+        xsfmc: f?.invoiceFields?.xsfmc || '',
+        xmmc: f?.invoiceFields?.xmmc || '',
+        note: f?.invoiceFields?.note || '',
+        _pageCount: f?._pageCount || 1,
+      }
+    })
+
+    const nameCount = new Map()
+    for (const file of previewFiles) {
+      nameCount.set(file.newName, (nameCount.get(file.newName) || 0) + 1)
+    }
+    for (const file of previewFiles) {
+      if (nameCount.get(file.newName) > 1) file.conflict = true
+    }
+
+    const nameMap = {}
+    const docMap = new Map()
+    for (let i = 0; i < previewFiles.length; i++) {
+      const p = previewFiles[i]
+      const doc = documentFiles[i]
+      const base = p.newName.replace(/\.\w+$/, '')
+      nameMap[p.key] = base
+      docMap.set(p.key, doc)
+    }
+    computedNamesRef.current = nameMap
+    previewDocumentMapRef.current = docMap
+
+    return previewFiles
+  }, [])
+
   const generatePreviewInner = useCallback(async () => {
     const ipc = electronAPIRef.current?.ipcRenderer
     if (!ipc) return false
     const curFiles = latestFilesRef.current
     const curSettings = latestSettingsRef.current
 
-    const documentFiles = groupFilesByDocument(curFiles)
-    const filesToRename = documentFiles.filter(f => f.status === 'parsed')
-    if (filesToRename.length === 0) return false
+    const documentFiles = collectDocumentLevelFiles(curFiles)
+    if (documentFiles.length === 0) return false
 
     const renameSettings = curSettings.renameSettings || {}
     const fields = renameSettings.fields || []
     if (fields.length === 0) return false
 
-    const filesForPreview = filesToRename.map(f => ({
+    const filesForPreview = documentFiles.map(f => ({
       key: f.key,
       name: f.name,
       originalPath: f.printPath || f.path || '',
-      invoiceFields: (f.invoiceFields && Object.keys(f.invoiceFields).length) ? f.invoiceFields : {
-        type: f.invoiceType || '',
-        fphm: f.invoiceNumber || '',
-        kprq: f.invoiceDate || '',
-        gmfmc: f.invoiceFields?.gmfmc || '',
-        gmfsh: f.invoiceFields?.gmfsh || '',
-        xsfmc: f.invoiceFields?.xsfmc || '',
-        xsfsh: f.invoiceFields?.xsfsh || '',
-        amountJe: f.invoiceFields?.amountJe || '',
-        amountSe: f.invoiceFields?.amountSe || '',
-        amountHj: f.invoiceFields?.amountHj || '',
-        amountHjDx: f.invoiceFields?.amountHjDx || '',
-        note: f.invoiceFields?.note || '',
-        skr: f.invoiceFields?.skr || '',
-        fhr: f.invoiceFields?.fhr || '',
-        kpr: f.invoiceFields?.kpr || '',
-      },
+      invoiceFields: buildInvoiceFields(f),
     }))
 
     let previews
@@ -84,73 +133,35 @@ export function useRenamePack({ files, settings, setFiles, parseFiles, parseProg
       previews = result.previews || []
     } catch (e) {
       console.error('[rename] Preview refresh failed:', e.message)
-      previews = filesToRename.map(f => ({
+      previews = documentFiles.map(f => ({
         key: f.key,
         originalName: f.name,
         newName: f.name,
       }))
     }
 
-    const fileMap = new Map(filesToRename.map(f => [f.key, f]))
-    const previewFiles = previews.map(p => {
-      const f = fileMap.get(p.key)
-      return {
-        key: p.key,
-        originalName: p.originalName,
-        newName: p.newName,
-        conflict: false,
-        fileFormat: f?.fileFormat || 'pdf',
-        invoiceNumber: f?.invoiceNumber || '',
-        invoiceType: f?.invoiceType || '',
-        amount: f?.amount || '',
-        invoiceDate: f?.invoiceDate || '',
-        rawText: f?.rawText || '',
-        gmfmc: f?.invoiceFields?.gmfmc || '',
-        xsfmc: f?.invoiceFields?.xsfmc || '',
-        xmmc: f?.invoiceFields?.xmmc || '',
-        note: f?.invoiceFields?.note || '',
-      }
-    })
-
-    const nameCount = {}
-    previewFiles.forEach(file => {
-      nameCount[file.newName] = (nameCount[file.newName] || 0) + 1
-    })
-    previewFiles.forEach(file => {
-      if (nameCount[file.newName] > 1) file.conflict = true
-    })
-
+    const previewFiles = buildPreviewFilesFromDocuments(documentFiles, previews)
     setRenamePreviewFiles(previewFiles)
-    const nameMap = {}
-    for (const p of previewFiles) {
-      const base = p.newName.replace(/\.\w+$/, '')
-      nameMap[p.key] = base
-    }
-    computedNamesRef.current = nameMap
     return true
-  }, [electronAPIRef])
+  }, [electronAPIRef, buildPreviewFilesFromDocuments])
 
-  // 对外暴露的刷新方法（用户在预览面板内修改规则后调用）
   const refreshRenamePreview = useCallback(() => {
-    // 清空可能存在的错误结果
     setRenameResult(null)
+    computedNamesRef.current = {}
+    previewDocumentMapRef.current = new Map()
     generatePreviewInner()
   }, [generatePreviewInner])
 
 
-  // ============================
-  // 重命名
-  // ============================
   const handleRename = useCallback(async () => {
     const ipc = electronAPIRef.current?.ipcRenderer
     if (!ipc) return
 
-    // R2：document-level 聚合——多页 PDF 在 rename 预览中显示为 1 条（而非每页 1 条）。
-    // representative（pageNum 最小页）携带解析字段（invoiceNumber/amount 等）。
-    // 多页发票视作 1 个文件：所有页共享同一物理路径，confirm 只操作 representative。
-    const documentFiles = groupFilesByDocument(files)
-    const filesToRename = documentFiles.filter(f => f.status === 'parsed')
-    if (filesToRename.length === 0) {
+    const curFiles = latestFilesRef.current
+    const curSettings = latestSettingsRef.current
+    const documentFiles = collectDocumentLevelFiles(curFiles)
+
+    if (documentFiles.length === 0) {
       setAlertModal({
         visible: true,
         title: '提示',
@@ -160,106 +171,56 @@ export function useRenamePack({ files, settings, setFiles, parseFiles, parseProg
       return
     }
 
-    // 生成新文件名
-    const renameSettings = settings.renameSettings || {}
+    const renameSettings = curSettings.renameSettings || {}
     const fields = renameSettings.fields || []
-    const separator = renameSettings.separator || '_'
-    const showIndex = renameSettings.showIndex ?? false
-    const showPrefix = renameSettings.showPrefix ?? false
-
     if (fields.length === 0) {
       setRenameResult({ success: false, error: '重命名规则未设置，请到设置中设置重命名规则' })
       setRenamePreviewVisible(true)
       return
     }
 
-    // 调用后端生成预览文件名（与真实重命名共用 buildNameParts，保证一致）
-    const filesForPreview = filesToRename.map(f => ({
-      key: f.key,
-      name: f.name,
-      originalPath: f.printPath || f.path || '',
-      invoiceFields: (f.invoiceFields && Object.keys(f.invoiceFields).length) ? f.invoiceFields : {
-        type: f.invoiceType || '',
-        fphm: f.invoiceNumber || '',
-        kprq: f.invoiceDate || '',
-        gmfmc: f.invoiceFields?.gmfmc || '',
-        gmfsh: f.invoiceFields?.gmfsh || '',
-        xsfmc: f.invoiceFields?.xsfmc || '',
-        xsfsh: f.invoiceFields?.xsfsh || '',
-        amountJe: f.invoiceFields?.amountJe || '',
-        amountSe: f.invoiceFields?.amountSe || '',
-        amountHj: f.invoiceFields?.amountHj || f.amount || '',
-        amountHjDx: f.invoiceFields?.amountHjDx || '',
-        note: f.invoiceFields?.note || '',
-        skr: f.invoiceFields?.skr || '',
-        fhr: f.invoiceFields?.fhr || '',
-        kpr: f.invoiceFields?.kpr || '',
-      },
-    }))
+    const cachedNames = computedNamesRef.current
+    const hasValidCache = cachedNames && Object.keys(cachedNames).length > 0 &&
+      documentFiles.every(f => cachedNames[f.key] !== undefined)
 
     let previews
-    try {
-      const result = await ipc.invoke('preview-rename-names', {
-        files: filesForPreview,
-        renameSettings,
+    if (hasValidCache) {
+      previews = documentFiles.map(f => {
+        const ext = (f.name || '').match(/\.\w+$/)?.[0] || '.pdf'
+        return {
+          key: f.key,
+          originalName: f.name,
+          newName: cachedNames[f.key] + ext,
+        }
       })
-      previews = result.previews || []
-    } catch (e) {
-      console.error('[rename] Preview failed, falling back to frontend:', e.message)
-      // 预览失败时回退到最简单的显示
-      previews = filesToRename.map(f => ({
+    } else {
+      const filesForPreview = documentFiles.map(f => ({
         key: f.key,
-        originalName: f.name,
-        newName: f.name,
+        name: f.name,
+        originalPath: f.printPath || f.path || '',
+        invoiceFields: buildInvoiceFields(f),
       }))
+
+      try {
+        const result = await ipc.invoke('preview-rename-names', {
+          files: filesForPreview,
+          renameSettings,
+        })
+        previews = result.previews || []
+      } catch (e) {
+        console.error('[rename] Preview failed, falling back:', e.message)
+        previews = documentFiles.map(f => ({
+          key: f.key,
+          originalName: f.name,
+          newName: f.name,
+        }))
+      }
     }
 
-    // 构建索引，避免 N 个文件 × M 次 find 的 O(N²) 遍历
-    const fileMap = new Map(filesToRename.map(f => [f.key, f]))
-    const previewFiles = previews.map(p => {
-      const f = fileMap.get(p.key)
-      return {
-        key: p.key,
-        originalName: p.originalName,
-        newName: p.newName,
-        conflict: false,
-        fileFormat: f?.fileFormat || 'pdf',
-        invoiceNumber: f?.invoiceNumber || '',
-        invoiceType: f?.invoiceType || '',
-        amount: f?.amount || '',
-        invoiceDate: f?.invoiceDate || '',
-        rawText: f?.rawText || '',
-        gmfmc: f?.invoiceFields?.gmfmc || '',
-        xsfmc: f?.invoiceFields?.xsfmc || '',
-        xmmc: f?.invoiceFields?.xmmc || '',
-        note: f?.invoiceFields?.note || '',
-      }
-    })
-
-
-    // 检测文件名冲突
-    const nameCount = {}
-    previewFiles.forEach(file => {
-      nameCount[file.newName] = (nameCount[file.newName] || 0) + 1
-    })
-    
-    // 标记冲突文件
-    previewFiles.forEach(file => {
-      if (nameCount[file.newName] > 1) {
-        file.conflict = true
-      }
-    })
-
+    const previewFiles = buildPreviewFilesFromDocuments(documentFiles, previews)
     setRenamePreviewFiles(previewFiles)
-    // 缓存预览结果中的文件名，重命名时直接复用
-    const nameMap = {}
-    for (const p of previewFiles) {
-      const base = p.newName.replace(/\.\w+$/, '')
-      nameMap[p.key] = base
-    }
-    computedNamesRef.current = nameMap
     setRenamePreviewVisible(true)
-  }, [files, settings, electronAPIRef])
+  }, [electronAPIRef, buildPreviewFilesFromDocuments])
 
   const handleRenameConfirm = useCallback(async (selectedKeys) => {
     const ipc = electronAPIRef.current?.ipcRenderer
@@ -272,59 +233,65 @@ export function useRenamePack({ files, settings, setFiles, parseFiles, parseProg
     ipc.on('rename-progress', onProgress)
 
     try {
-      // R2：多页发票视作 1 个文件（所有页共享同一物理路径），只 rename representative。
-      // selectedKeys 来自 document-level 预览（groupFilesByDocument），已是 document 粒度。
-      const filesToRename = files.filter(f => selectedKeys.includes(f.key) && f.status === 'parsed')
-      const filesWithValidPath = filesToRename.filter(f => {
-        const p = f.printPath || f.path || ''
-        return p.match(/^[a-zA-Z]:\\|^\\\\/)
-      })
-      const invalidPathFiles = filesToRename.filter(f => {
-        const p = f.printPath || f.path || ''
-        return !p.match(/^[a-zA-Z]:\\|^\\\\/)
-      })
+      const curFiles = latestFilesRef.current
+      const curSettings = latestSettingsRef.current
+      const renameSettings = curSettings.renameSettings || {}
 
-      if (invalidPathFiles.length > 0) {
+      const cachedNames = computedNamesRef.current
+      const docMap = previewDocumentMapRef.current
+
+      const allFilesToRename = []
+      const fileKeyToOriginalPath = new Map()
+
+      for (const key of selectedKeys) {
+        const doc = docMap.get(key)
+        if (!doc) continue
+
+        const newBaseName = cachedNames[key]
+        if (!newBaseName) continue
+
+        if (doc._isDocumentGroup && Array.isArray(doc._pages) && doc._pages.length > 1) {
+          const pages = [...doc._pages].sort((a, b) => (a.pageNum || 1) - (b.pageNum || 1))
+          for (let i = 0; i < pages.length; i++) {
+            const page = pages[i]
+            const originalPath = page.printPath || page.path || ''
+            if (!originalPath.match(/^[a-zA-Z]:\\|^\\\\/)) continue
+            const isFirstPage = i === 0
+            const pageSuffix = isFirstPage ? '' : `_p${page.pageNum || (i + 1)}`
+            const pageBaseName = newBaseName + pageSuffix
+            allFilesToRename.push({
+              key: page.key,
+              originalPath,
+              newBaseName: pageBaseName,
+            })
+            fileKeyToOriginalPath.set(originalPath.toLowerCase().replace(/\\/g, '/'), page.key)
+          }
+        } else {
+          const originalPath = doc.printPath || doc.path || ''
+          if (!originalPath.match(/^[a-zA-Z]:\\|^\\\\/)) continue
+          allFilesToRename.push({
+            key: doc.key,
+            originalPath,
+            newBaseName,
+          })
+          fileKeyToOriginalPath.set(originalPath.toLowerCase().replace(/\\/g, '/'), doc.key)
+        }
+      }
+
+      if (allFilesToRename.length === 0) {
         setAlertModal({
           visible: true,
           title: '路径错误',
-          message: `有 ${invalidPathFiles.length} 个文件无法获取真实路径：\n${invalidPathFiles.map(f => f.name).join('\n')}`,
+          message: '没有可重命名的有效文件',
           type: 'warning',
         })
+        setPacking(false)
+        ipc.removeListener('rename-progress', onProgress)
+        return
       }
-      if (filesWithValidPath.length === 0) { setPacking(false); return }
 
-      const filesToRenameWithPath = filesWithValidPath.map(f => {
-        const cachedName = computedNamesRef.current[f.key]
-        return {
-          key: f.key,
-          originalPath: f.printPath || f.path,
-          // 传入预览阶段已算好的文件名，后端直接复用不再跑 buildNameParts
-          // 未缓存时（用户跳过预览直接重命名）不传此字段，后端自动回退到 generateNewName
-          ...(cachedName ? { newBaseName: cachedName } : {}),
-          invoiceFields: f.invoiceFields || {
-          type: f.invoiceType || '',
-          fphm: f.invoiceNumber || '',
-          kprq: f.invoiceDate || '',
-          gmfmc: '',
-          gmfsh: '',
-          xsfmc: '',
-          xsfsh: '',
-          amountJe: '',
-          amountSe: '',
-          amountHj: f.amount || '',
-          amountHjDx: '',
-          note: '',
-          skr: '',
-          fhr: '',
-          kpr: '',
-        },
-      }
-    })
-
-      const renameSettings = settings.renameSettings || {}
       const result = await ipc.invoke('rename-invoices', {
-        files: filesToRenameWithPath,
+        files: allFilesToRename,
         renameSettings,
       })
       ipc.removeListener('rename-progress', onProgress)
@@ -332,67 +299,31 @@ export function useRenamePack({ files, settings, setFiles, parseFiles, parseProg
 
       if (result.success) {
         if (result.renamedFiles && result.renamedFiles.length > 0) {
-          // 用 originalPath 建立索引，替代顺序索引，避免跳过文件导致索引偏移
-          const pathToFileMap = new Map(filesToRenameWithPath.map(f => [f.originalPath, f]))
-
-          const newFiles = result.renamedFiles.map((file, i) => {
-            const original = pathToFileMap.get(file.originalPath)
-            return {
-              key: generateFileKey(`${file.newName}_${i}`),
-              name: file.newName, path: file.newPath, printPath: file.newPath,
-              status: 'parsing', invoiceType: '', invoiceNumber: '', amount: '',
-              invoiceDate: '', newName: '', parseMethod: '',
-              fileFormat: getFileFormat(file.newName), previewImage: null,
-              invoiceFields: null,
-              originalPath: original?.originalPath || file.originalPath,
+          const renamedByKey = new Map()
+          for (const rf of result.renamedFiles) {
+            if (rf.partialSuccess) continue
+            const normalizedOrig = rf.originalPath.toLowerCase().replace(/\\/g, '/')
+            const fkey = fileKeyToOriginalPath.get(normalizedOrig)
+            if (fkey) {
+              renamedByKey.set(fkey, rf)
             }
-          })
-
-          // 记录首个重命名文件 key，供 App 在重命名完成后重新导入其预览
-          setRenamedPreviewKey(newFiles[0]?.key || null)
-
-          // 构建本地事务追踪：记录本次操作创建的文件 key 和已搬移的旧路径
-          // 使用局部变量而非 React state 标记，避免并发调用时标记串扰
-          const transactionKeys = new Set(newFiles.map(f => f.key))
-          // 直接用 result.renamedFiles 中的 originalPath，不再依赖顺序索引
-          const succeededOldPaths = new Set(
-            result.renamedFiles
-              .filter(f => !f.partialSuccess)
-              .map(f => f.originalPath)
-          )
-
-          // 先添加新文件，等待解析完成后再删除旧文件
-          setFiles(prev => [...prev, ...newFiles])
-
-          // 等待解析完成
-          try {
-            reimportingRef.current = true
-            setReimporting(true)
-            setReimportProgress(0)
-            await parseFiles(newFiles)
-            setReimporting(false)
-            setReimportProgress(null)
-            reimportingRef.current = false
-
-            // 解析成功后，原子性删除本次重命名的旧文件引用
-            // 预处理 succeededOldPaths：统一小写并正斜杠化，放入 Set 实现 O(1) 查找
-            const normalizedOldPaths = new Set(
-              [...succeededOldPaths].map(p => p.replace(/\\/g, '/').toLowerCase())
-            )
-            setFiles(prev => prev.filter(f => {
-              const fp = (f.path || '').replace(/\\/g, '/').toLowerCase()
-              const fpp = (f.printPath || '').replace(/\\/g, '/').toLowerCase()
-              return !normalizedOldPaths.has(fp) && !normalizedOldPaths.has(fpp)
-            }))
-          } catch (parseError) {
-            console.error('重命名后解析失败:', parseError)
-            setReimporting(false)
-            setReimportProgress(null)
-            reimportingRef.current = false
-            // 精准回滚：仅移除本次事务创建的新文件，保留所有旧文件
-            // 使用 transactionKeys（局部变量）精确定位，替代之前依赖 originalPath 字段的方式
-            setFiles(prev => prev.filter(f => !transactionKeys.has(f.key)))
           }
+
+          setFiles(prev => prev.map(f => {
+            const renamed = renamedByKey.get(f.key)
+            if (!renamed) return f
+            return {
+              ...f,
+              name: renamed.newName,
+              path: renamed.newPath,
+              printPath: renamed.newPath,
+              newName: renamed.newName,
+              searchText: f.searchText,
+            }
+          }))
+
+          const firstRenamedKey = allFilesToRename[0]?.key || null
+          setRenamedPreviewKey(firstRenamedKey)
         }
         const partialFiles = (result.renamedFiles || []).filter(f => f.partialSuccess)
         setRenameResult({
@@ -409,11 +340,8 @@ export function useRenamePack({ files, settings, setFiles, parseFiles, parseProg
       setPacking(false)
       setRenameResult({ success: false, error: error.message })
     }
-  }, [files, parseFiles, settings, setFiles, electronAPIRef])
+  }, [electronAPIRef, setFiles])
 
-  // ============================
-  // 打包
-  // ============================
   const handlePack = useCallback(async () => {
     const ipc = electronAPIRef.current?.ipcRenderer
     if (!ipc) return
@@ -441,14 +369,7 @@ export function useRenamePack({ files, settings, setFiles, parseFiles, parseProg
     try {
       const filesToPack = parsedFiles.map(f => ({
         name: f.name, path: f.path, printPath: f.printPath, newName: f.newName,
-        invoiceFields: f.invoiceFields || {
-          type: f.invoiceType || '',
-          fphm: f.invoiceNumber || '', kprq: f.invoiceDate || '',
-          gmfmc: '', gmfsh: '', xsfmc: '', xsfsh: '',
-          amountJe: '', amountSe: '',
-          amountHj: f.amount || '', amountHjDx: '',
-          note: '', skr: '', fhr: '', kpr: '',
-        },
+        invoiceFields: buildInvoiceFields(f),
       }))
 
       const packSettings = settings.packSettings || {}
@@ -467,7 +388,6 @@ export function useRenamePack({ files, settings, setFiles, parseFiles, parseProg
         setPackResult(newResult)
         setPacking(false)
 
-        // 打包成功且不保留原件时，清除当前列表
         if (result.success && !keepOriginal) {
           setFiles([])
         }
@@ -478,7 +398,7 @@ export function useRenamePack({ files, settings, setFiles, parseFiles, parseProg
       ipc.removeListener('pack-progress', onProgress)
       setPackResult({ success: false, error: error.message })
     }
-  }, [files, settings, electronAPIRef])
+  }, [files, settings, electronAPIRef, setFiles])
 
   const closeAlert = useCallback(() => setAlertModal(null), [])
 

@@ -1,6 +1,5 @@
-"""图片输入处理器：Image→PDF（通过 fitz 嵌入单页 PDF 的 Pixmap 实现）。"""
+"""图片输入处理器：Image→PDF（通过 fitz 嵌入单页 PDF 实现）。"""
 
-import hashlib
 import logging
 import os
 from typing import Any, Dict, Optional
@@ -16,76 +15,68 @@ except ImportError:
 
 
 class ImageExportHandler(PdfExportHandler):
-    """处理图片输入：通过 fitz 打开图片 → 嵌入单页 PDF page。"""
 
     def can_handle(self, file_format: str, details: Optional[Dict] = None) -> bool:
         return file_format == 'image'
 
-    def export_to_pdf(self, source: bytes, output_path: str, **kwargs) -> Dict[str, Any]:
+    def export_to_pdf(self, source: bytes, output_path: str,
+                      source_path: str = '', **kwargs) -> Dict[str, Any]:
         if fitz is None:
             raise RuntimeError("PyMuPDF (fitz) is not available")
 
-        # 打开图片获取原始像素尺寸
-        img = fitz.open(stream=source)
+        img = fitz.open(stream=source) if source else fitz.open(source_path)
         try:
             page = img[0]
-            pix = page.get_pixmap()
-            img_w, img_h = pix.width, pix.height
+            img_w, img_h = page.rect.width, page.rect.height
         finally:
             img.close()
 
-        # 创建 PDF 文档，按图片原始像素尺寸建页
         pdf_doc = fitz.open()
         try:
             pdf_doc.new_page(width=img_w, height=img_h)
             pdf_page = pdf_doc[0]
             pdf_page.insert_image(fitz.Rect(0, 0, img_w, img_h), stream=source)
+            os.makedirs(os.path.dirname(output_path) or '.', exist_ok=True)
             pdf_doc.save(output_path, incremental=False, deflate=True)
         finally:
             pdf_doc.close()
 
-        # 验证 & 哈希
-        with open(output_path, 'rb') as f:
-            content = f.read()
-        sha256 = hashlib.sha256(content).hexdigest()
-
         return {
             'pages': 1,
-            'sha256': sha256,
             'size': os.path.getsize(output_path),
             'warnings': [],
         }
 
     def export_merge(self, source: bytes, filename: str,
                      target_doc: 'fitz.Document') -> int:
-        """图片→临时 PDF 页面→insert_pdf。
-
-        流程：图片 → 临时单页 PDF bytes → 用 fitz.open 打开 → insert_pdf。
-        不能直接用 FzDocument（图片）insert，必须先包装为 PDF。
-        """
         if fitz is None:
             raise RuntimeError("PyMuPDF (fitz) is not available")
 
-        # 先导出为临时 PDF bytes
-        import tempfile
-        tmp_fd, tmp_path = tempfile.mkstemp(suffix='.pdf')
-        os.close(tmp_fd)
+        import io
+        tmp_pdf_bytes = io.BytesIO()
+        img = fitz.open(stream=source)
         try:
-            self.export_to_pdf(source, tmp_path)
-            with open(tmp_path, 'rb') as f:
-                tmp_bytes = f.read()
-
-            tmp_pdf = fitz.open(stream=tmp_bytes, filetype="pdf")
-            try:
-                page_count = len(tmp_pdf)
-                if page_count == 0:
-                    return 0
-                target_doc.insert_pdf(tmp_pdf)
-                return page_count
-            finally:
-                tmp_pdf.close()
+            page = img[0]
+            img_w, img_h = page.rect.width, page.rect.height
         finally:
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
+            img.close()
+
+        tmp_pdf = fitz.open()
+        try:
+            tmp_pdf.new_page(width=img_w, height=img_h)
+            tmp_page = tmp_pdf[0]
+            tmp_page.insert_image(fitz.Rect(0, 0, img_w, img_h), stream=source)
+            tmp_pdf.save(tmp_pdf_bytes, deflate=True)
+        finally:
+            tmp_pdf.close()
+
+        tmp_pdf_bytes.seek(0)
+        tmp_doc = fitz.open(stream=tmp_pdf_bytes.read(), filetype="pdf")
+        try:
+            page_count = len(tmp_doc)
+            if page_count == 0:
+                return 0
+            target_doc.insert_pdf(tmp_doc)
+            return page_count
+        finally:
+            tmp_doc.close()

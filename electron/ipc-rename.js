@@ -3,20 +3,48 @@
 const { ipcMain } = require('electron')
 const path = require('path')
 const fs = require('fs')
+const http = require('http')
 const { buildNameParts } = require('./rename-utils')
 
-/**
- * 注册重命名相关的 IPC handlers
- * @param {Object} ctx
- * @param {Function} ctx.getMainWindow - 获取主窗口引用的函数
- */
+function notifyBackendRename(renames) {
+  return new Promise((resolve) => {
+    if (!renames.length) {
+      resolve({ updated: 0, notFound: [] })
+      return
+    }
+    const postData = JSON.stringify({ renames })
+    const req = http.request({
+      host: '127.0.0.1',
+      port: 5000,
+      path: '/api/invoices/rename',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(postData),
+      },
+      timeout: 5000,
+    }, (res) => {
+      let body = ''
+      res.on('data', (chunk) => { body += chunk })
+      res.on('end', () => {
+        try {
+          const json = JSON.parse(body)
+          resolve(json.data || { updated: 0, notFound: [] })
+        } catch {
+          resolve({ updated: 0, notFound: [] })
+        }
+      })
+    })
+    req.on('error', () => resolve({ updated: 0, notFound: [] }))
+    req.on('timeout', () => { req.destroy(); resolve({ updated: 0, notFound: [] }) })
+    req.write(postData)
+    req.end()
+  })
+}
+
 function registerRenameHandlers(ctx) {
 
-  // ==========================================
-  // ✅ 一键重命名（支持自定义命名规则）
-  // ==========================================
   ipcMain.handle('rename-invoices', async (event, payload) => {
-    // 兼容旧版纯数组调用和新版对象调用
     const isLegacyFormat = Array.isArray(payload)
     const files = isLegacyFormat ? payload : (payload.files || [])
     const renameSettings = isLegacyFormat ? {} : (payload.renameSettings || {})
@@ -24,20 +52,15 @@ function registerRenameHandlers(ctx) {
     const result = { success: true, renamed: 0, failed: 0, errors: [], renamedFiles: [] }
     const total = files.length
 
-    // 解析 renameSettings
-    const fields = renameSettings.fields || []  // [{ key, dateFormat?, customText? }]
+    const fields = renameSettings.fields || []
     const separator = renameSettings.separator || '_'
     const showIndex = renameSettings.showIndex ?? false
     const showPrefix = renameSettings.showPrefix ?? false
     const targetFolder = renameSettings.targetFolder || ''
     const keepOriginal = renameSettings.keepOriginal ?? false
 
-    // 如果没有配置任何字段，使用旧版默认逻辑（发票号码命名）
     const useLegacyNaming = fields.length === 0
 
-    /**
-     * 根据发票字段和命名规则生成新文件名（不含扩展名）
-     */
     function generateNewName(invoiceFields) {
       if (useLegacyNaming) {
         return invoiceFields?.fphm || '未知'
@@ -45,20 +68,16 @@ function registerRenameHandlers(ctx) {
       return buildNameParts(invoiceFields, fields, { separator, showIndex, showPrefix }) || '未命名'
     }
 
-    // 带重试的 unlink（解决 EBUSY: resource busy or locked）
-    // 使用 async + setTimeout 让出事件循环，避免 CPU 自旋锁冻结主线程
     async function unlinkWithRetry(filePath, maxRetries = 3) {
       let lastErr = null
       for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
-          await fs.promises.unlink(filePath)
+          fs.unlinkSync(filePath)
           return true
         } catch (e) {
           lastErr = e
           if (attempt < maxRetries) {
-            // 递增延迟: 200ms, 500ms，使用 setTimeout 让出事件循环而非忙等
-            const delay = attempt === 1 ? 200 : 500
-            console.log(`[rename] unlink 重试 ${attempt}/${maxRetries}，等待 ${delay}ms: ${e.message}`)
+            const delay = attempt === 1 ? 100 : 300
             await new Promise(resolve => setTimeout(resolve, delay))
           }
         }
@@ -66,35 +85,15 @@ function registerRenameHandlers(ctx) {
       throw lastErr
     }
 
-    // 异步判断路径是否存在（替代已移除的 fs.promises.exists / 同步 fs.existsSync）
-    async function pathExists(p) {
-      try {
-        await fs.promises.access(p)
-        return true
-      } catch {
-        return false
-      }
-    }
-
     for (let i = 0; i < files.length; i++) {
       const file = files[i]
 
-      if (i > 0 && i % 5 === 0) {
-        await new Promise(setImmediate)
-      }
-
-      if (i % 3 === 0 || i === files.length - 1) {
+      if (i % 5 === 0 || i === files.length - 1) {
         event.sender.send('rename-progress', { current: i + 1, total })
       }
 
-      console.log(`[rename] file #${i + 1}:`, JSON.stringify({
-        originalPath: file.originalPath,
-        invoiceFields: file.invoiceFields,
-      }))
-
       try {
         if (!file.originalPath) {
-          console.log('Missing path:', file)
           result.failed++
           result.errors.push({ file: 'unknown', error: '缺少文件路径' })
           continue
@@ -106,96 +105,84 @@ function registerRenameHandlers(ctx) {
         }
 
         const ext = path.extname(originalPath)
-        // 优先使用前端传入的预计算名称（预览结果已算好，直接复用）
         const newBaseName = file.newBaseName || generateNewName(file.invoiceFields)
         const newName = `${newBaseName}${ext}`
-        console.log(`[rename] generated name: "${newBaseName}" from fields:`, JSON.stringify(file.invoiceFields))
 
-        // 确定目标目录
         const outputDir = targetFolder || path.dirname(originalPath)
 
-        // 确保目标目录存在
         if (targetFolder) {
-          // recursive:true 在目录已存在时为 no-op，等价于原 existsSync 守卫
-          await fs.promises.mkdir(targetFolder, { recursive: true })
+          fs.mkdirSync(targetFolder, { recursive: true })
         }
 
         let newPath = path.join(outputDir, newName)
 
-        // 处理文件名冲突
         let counter = 1
-        while ((await pathExists(newPath)) && newPath !== originalPath) {
-          const conflictName = `${newBaseName}_${counter}${ext}`
-          newPath = path.join(outputDir, conflictName)
+        while (fs.existsSync(newPath) && newPath !== originalPath) {
+          newPath = path.join(outputDir, `${newBaseName}_${counter}${ext}`)
           counter++
         }
 
-        // 执行重命名/复制（支持跨磁盘操作）
-        // 如果新路径与原路径相同，跳过（文件本身就是目标名，无需操作）
         if (newPath === originalPath) {
           result.renamed++
-          console.log('[rename] Skipped (same name):', originalPath)
+          result.renamedFiles.push({
+            originalPath,
+            newPath,
+            newName: path.basename(newPath),
+            oldName: path.basename(originalPath),
+            partialSuccess: false,
+          })
           continue
         }
 
         const sameDisk = path.parse(originalPath).root.toLowerCase() === path.parse(newPath).root.toLowerCase()
 
-        let unlinkSucceeded = true
-        let partialSuccess = false  // 复制成功但原文件未删除
+        let partialSuccess = false
 
         if (targetFolder && keepOriginal) {
-          // 复制到目标文件夹，保留原件
-          await fs.promises.copyFile(originalPath, newPath)
+          fs.copyFileSync(originalPath, newPath)
         } else if (targetFolder && !keepOriginal) {
-          // 剪切到目标文件夹（跨磁盘用 copy+delete）
           if (sameDisk) {
-            await fs.promises.rename(originalPath, newPath)
+            fs.renameSync(originalPath, newPath)
           } else {
-            await fs.promises.copyFile(originalPath, newPath)
+            fs.copyFileSync(originalPath, newPath)
             try {
-              await unlinkWithRetry(originalPath)
+              fs.unlinkSync(originalPath)
             } catch (unlinkErr) {
-              // unlink 失败不算完全失败 — 文件已复制成功
-              console.warn(`[rename] ⚠️ 原文件删除失败（文件被占用），但新文件已复制成功: ${unlinkErr.message}`)
-              unlinkSucceeded = false
-              partialSuccess = true
+              try {
+                await unlinkWithRetry(originalPath)
+              } catch (retryErr) {
+                console.warn(`[rename] ⚠️ 原文件删除失败（文件被占用），但新文件已复制成功: ${retryErr.message}`)
+                partialSuccess = true
+              }
             }
           }
         } else {
-          // 没有目标文件夹，就地重命名（同盘不会出问题）
-          if (newPath !== originalPath) {
-            await fs.promises.rename(originalPath, newPath)
-          } else {
-            // 文件名与原名相同，无需操作
-            console.log('[rename] Skipped (same name):', originalPath)
-          }
+          fs.renameSync(originalPath, newPath)
         }
 
         result.renamed++
         result.renamedFiles.push({
-          originalPath: originalPath,
-          newPath: newPath,
+          originalPath,
+          newPath,
           newName: path.basename(newPath),
-          partialSuccess: partialSuccess,  // 标记部分成功
+          oldName: path.basename(originalPath),
+          partialSuccess,
         })
-        if (partialSuccess) {
-          console.log('Renamed (partial):', originalPath, '->', newPath, '(原文件仍保留)')
-        } else {
-          console.log('Renamed:', originalPath, '->', newPath)
-        }
       } catch (error) {
         console.error('Rename failed:', file.invoiceFields?.fphm, error.message)
         result.failed++
-        result.errors.push({ file: file.invoiceFields?.fphm || 'unknown', error: error.message })
+        result.errors.push({ file: file.invoiceFields?.fphm || file.key || 'unknown', error: error.message })
       }
     }
+
+    const renames = result.renamedFiles
+      .filter(r => r.oldName && r.newName && r.oldName !== r.newName)
+      .map(r => ({ oldName: r.oldName, newName: r.newName, newPath: r.newPath }))
+    notifyBackendRename(renames).catch(() => {})
 
     return result
   })
 
-  // ==========================================
-  // ✅ 重命名预览（复用后端的 buildNameParts，保证结果与真实重命名一致）
-  // ==========================================
   ipcMain.handle('preview-rename-names', async (_event, payload) => {
     const files = payload.files || []
     const renameSettings = payload.renameSettings || {}
@@ -204,8 +191,8 @@ function registerRenameHandlers(ctx) {
     const showIndex = renameSettings.showIndex ?? false
     const showPrefix = renameSettings.showPrefix ?? false
 
-    const previews = files.map((file, index) => {
-      const newBaseName = buildNameParts(file.invoiceFields, fields, { separator, showIndex, showPrefix }) || '未命名'
+    const previews = files.map((file) => {
+      const newBaseName = file.newBaseName || buildNameParts(file.invoiceFields, fields, { separator, showIndex, showPrefix }) || '未命名'
       const ext = path.extname(file.originalPath || file.name || '.pdf')
       const newName = `${newBaseName}${ext}`
       return {

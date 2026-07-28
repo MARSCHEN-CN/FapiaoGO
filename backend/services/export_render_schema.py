@@ -127,20 +127,23 @@ def _validate_command(cmd: Any, idx: int) -> Optional[str]:
     return None
 
 
-def validate_export_render_request(data: Any) -> Tuple[List[Dict], Optional[str]]:
+def validate_export_render_request(data: Any) -> Tuple[List[Dict], Optional[str], str]:
     """校验 POST /api/export-render 请求体。
 
     Returns:
-        (commands, None)       校验通过，commands 为原始命令列表（前端形状，未改写）。
-        ([], error_message)    校验失败，error 描述首个错误（中文，面向 caller）。
+        (commands, None, outputPath)  校验通过，commands 为原始命令列表，outputPath 为输出路径（可能为空）。
+        ([], error_message, '')       校验失败，error 描述首个错误（中文，面向 caller）。
     """
     if not isinstance(data, dict):
-        return [], "请求体必须是 JSON 对象"
+        return [], "请求体必须是 JSON 对象", ''
     commands = data.get('commands')
     if not isinstance(commands, list) or len(commands) == 0:
-        return [], "commands 必须是非空数组"
+        return [], "commands 必须是非空数组", ''
     for i, cmd in enumerate(commands):
         err = _validate_command(cmd, i)
         if err:
-            return [], err
-    return commands, None
+            return [], err, ''
+    output_path = data.get('outputPath', '') or ''
+    if not isinstance(output_path, str):
+        output_path = ''
+    return commands, None, output_path

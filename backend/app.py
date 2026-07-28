@@ -40,12 +40,100 @@ from render_engine import registry, engine
 from render_engine.registry import _make_doc_id
 from render_engine.api import render_bp
 
+# ═══════════════════════════════════════════════════════════
+#  Excel 导出预编译常量（模块加载时初始化一次，避免每条记录重复创建）
+# ═══════════════════════════════════════════════════════════
+_CLASS_CODE_RE = re.compile(r'^\*[^*]+\*')
+_EXCEL_KEY_MAP = {
+    '项目名称': 'xmmc', '规格型号': 'ggxh', '单位': 'unit',
+    '数量': 'quantity', '单价': 'unitPrice', '金额': 'lineAmount',
+    '税率/征收率': 'taxRate', '税额': 'lineTax',
+}
+_ITEM_MAP = {
+    "xmmc": "xmmc", "ggxh": "ggxh", "dw": "unit", "sl": "quantity",
+    "dj": "unitPrice", "je": "lineAmount", "slv": "taxRate", "se": "lineTax",
+}
+
+def _extract_class_code_fast(row):
+    """从 xmmc 中提取 *xxx* 分类编码（使用预编译正则）。"""
+    raw = row.get('xmmc', '') or ''
+    m = _CLASS_CODE_RE.match(raw)
+    row['classificationCode'] = m.group().strip('*') if m else ''
+
+def _build_export_header(rec):
+    """构建导出表头（发票级公共字段）。"""
+    try:
+        total_amount = float(rec.get('amount', 0) or 0)
+    except (ValueError, TypeError):
+        total_amount = 0
+    try:
+        tax_amount = float(rec.get('tax_amount', 0) or 0)
+    except (ValueError, TypeError):
+        tax_amount = 0
+    return {
+        "recordId": str(rec.get('id', '')),
+        "serialNo": "",
+        "invoiceType": rec.get('type', ''),
+        "invoiceNumber": rec.get('number', ''),
+        "invoiceDate": rec.get('date', ''),
+        "buyerName": rec.get('buyer', ''),
+        "buyerTaxNo": rec.get('buyer_tax', ''),
+        "sellerName": rec.get('seller', ''),
+        "sellerTaxNo": rec.get('seller_tax', ''),
+        "amountWithoutTax": round(total_amount - tax_amount, 2),
+        "taxAmount": tax_amount,
+        "totalAmount": total_amount,
+        "amountDx": rec.get('amount_dx', ''),
+        "note": rec.get('note', ''),
+        "issuer": rec.get('issuer', ''),
+        "failed_fields": [],
+        "warning_fields": [],
+        "parse_success": True,
+        "originalFilename": rec.get('file_name', ''),
+    }
+
+def _db_record_to_export(rec: dict) -> list:
+    """将数据库记录转换为 Excel 导出所需的扁平字段格式列表
+
+    每行明细对应一个导出行，多行明细返回多个 dict。
+    优先使用 line_items_excel_rows（字符级通路的精确结果），
+    回退到传统 line_items。
+    """
+    excel_rows = rec.get('line_items_excel_rows') or []
+    if excel_rows:
+        results = []
+        for item in excel_rows:
+            row = _build_export_header(rec)
+            for cn_key, export_key in _EXCEL_KEY_MAP.items():
+                val = item.get(cn_key, '')
+                if val:
+                    row[export_key] = val
+            _extract_class_code_fast(row)
+            results.append(row)
+        return results
+
+    line_items = rec.get('line_items') or []
+    if not line_items:
+        row = _build_export_header(rec)
+        row["xmmc"] = rec.get('xmmc', '')
+        _extract_class_code_fast(row)
+        return [row]
+
+    results = []
+    for item in line_items:
+        row = _build_export_header(rec)
+        for db_key, export_key in _ITEM_MAP.items():
+            row[export_key] = item.get(db_key, '')
+        _extract_class_code_fast(row)
+        results.append(row)
+    return results
+
 # 全局实例（惰性初始化）
 _decision_router = None
 _init_lock = threading.Lock()
 
 # 单页 PDF 缓存（用于拆分后的下载）
-_page_cache: dict = {}  # {page_id: {"bytes": bytes, "created_at": ts, "last_used": ts}}
+_page_cache: dict = {}  # {"page_id": {"bytes": bytes, "created_at": ts, "last_used": ts}}
 _page_cache_lock = threading.Lock()
 _page_cache_ttl = 3600  # 缓存有效期（秒），默认 1 小时
 _page_cache_max = 500   # LRU 硬上限：超限时按 last_used 驱逐，杜绝无限增长
@@ -184,114 +272,6 @@ def _normalize_invoice_for_export(inv: dict) -> dict:
     return normalized
 
 
-def _db_record_to_export(rec: dict) -> list:
-    """将数据库记录转换为 Excel 导出所需的扁平字段格式列表
-    
-    每行明细对应一个导出行，多行明细返回多个 dict。
-    优先使用 line_items_excel_rows（字符级通路的精确结果），
-    回退到传统 line_items。
-    """
-    CLASS_CODE_RE = re.compile(r'^\*[^*]+\*')
-
-    def _extract_class_code(row):
-        """从 xmmc 中提取 *xxx* 分类编码，不修改 xmmc 原始值"""
-        raw = row.get('xmmc', '')
-        m = CLASS_CODE_RE.match(raw)
-        if m:
-            row['classificationCode'] = m.group().strip('*')
-        else:
-            row['classificationCode'] = ''
-
-    def _build_header(serial_no=""):
-        try:
-            total_amount = float(rec.get('amount', 0) or 0)
-        except (ValueError, TypeError):
-            total_amount = 0
-        try:
-            tax_amount = float(rec.get('tax_amount', 0) or 0)
-        except (ValueError, TypeError):
-            tax_amount = 0
-        amount_wo_tax = round(total_amount - tax_amount, 2)
-        return {
-            "recordId": str(rec.get('id', '')),
-            "serialNo": serial_no,
-            "invoiceType": rec.get('type', ''),
-            "invoiceNumber": rec.get('number', ''),
-            "invoiceDate": rec.get('date', ''),
-            "buyerName": rec.get('buyer', ''),
-            "buyerTaxNo": rec.get('buyer_tax', ''),
-            "sellerName": rec.get('seller', ''),
-            "sellerTaxNo": rec.get('seller_tax', ''),
-            "amountWithoutTax": amount_wo_tax,
-            "taxAmount": tax_amount,
-            "totalAmount": total_amount,
-            "amountDx": rec.get('amount_dx', ''),
-            "note": rec.get('note', ''),
-            "issuer": rec.get('issuer', ''),
-            "failed_fields": [],
-            "warning_fields": [],
-            "parse_success": True,
-            "originalFilename": rec.get('file_name', ''),
-        }
-
-    # ── 优先使用字符级通路的精确结果 ──
-    excel_rows = rec.get('line_items_excel_rows') or []
-    if excel_rows:
-        # 中文键名 → 导出字段键名映射
-        _EXCEL_KEY_MAP = {
-            '项目名称': 'xmmc',
-            '规格型号': 'ggxh',
-            '单位': 'unit',
-            '数量': 'quantity',
-            '单价': 'unitPrice',
-            '金额': 'lineAmount',
-            '税率/征收率': 'taxRate',
-            '税额': 'lineTax',
-        }
-        results = []
-        for idx, item in enumerate(excel_rows):
-            row = _build_header("")
-            # 将中文键的值填入对应的导出键
-            for cn_key, export_key in _EXCEL_KEY_MAP.items():
-                val = item.get(cn_key, '')
-                if val:
-                    row[export_key] = val
-            _extract_class_code(row)
-            results.append(row)
-        return results
-
-    # ── 传统 path：使用 line_items ──
-    line_items = rec.get('line_items') or []
-
-    # DB 明细字段名 → 导出字段名映射
-    _ITEM_MAP = {
-        "xmmc": "xmmc",
-        "ggxh": "ggxh",
-        "dw": "unit",
-        "sl": "quantity",
-        "dj": "unitPrice",
-        "je": "lineAmount",
-        "slv": "taxRate",
-        "se": "lineTax",
-    }
-
-    if not line_items:
-        # 无明细行：返回单行，xmmc 从顶层字段取
-        row = _build_header("")
-        row["xmmc"] = rec.get('xmmc', '')
-        _extract_class_code(row)
-        return [row]
-
-    results = []
-    for idx, item in enumerate(line_items):
-        row = _build_header("")
-        for db_key, export_key in _ITEM_MAP.items():
-            row[export_key] = item.get(db_key, '')
-        _extract_class_code(row)
-        results.append(row)
-    return results
-
-
 app = Flask(__name__)
 
 # CORS
@@ -307,6 +287,17 @@ _json = json
 # ═══════════════════════════════════════════════════════════
 
 import excel_exporter
+
+
+@app.route('/api/invoices/rename', methods=['POST'])
+def api_rename_invoices():
+    """批量更新数据库中的文件名（文件重命名后调用，保持数据库与文件系统同步）"""
+    data = request.get_json(silent=True) or {}
+    renames = data.get('renames', [])
+    if not renames:
+        return jsonify({"success": False, "error": "缺少renames参数"}), 400
+    result = db_module.rename_invoices_by_filename(renames)
+    return jsonify({"success": True, "data": result})
 
 
 @app.route('/api/export-excel-sse', methods=['POST'])
@@ -1386,30 +1377,36 @@ _export_pdf_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix='pdf
 
 
 def _build_export_items(files, mode, merge_output):
-    """将请求中的 files 列表转为 ExportItem 列表，同时做参数校验。"""
+    """将请求中的 files 列表转为 ExportItem 列表。
+
+    优化：不一次性读取所有文件到内存，传递 source_path 让 handler 按需读取
+    或直接做文件系统级拷贝，极大降低峰值内存和IO开销。
+    """
     items = []
     for f in files:
         filename = f.get('name', '')
 
-        # 合并模式：不要求每文件 outputPath
         output_path = f.get('outputPath', '')
         if mode != 'merge' and not output_path:
             return None, f"缺少 outputPath: {filename}"
 
-        # 优先读取本地文件路径
         file_path = f.get('path', '')
-        if file_path and os.path.isfile(file_path):
-            with open(file_path, 'rb') as fh:
-                source = fh.read()
-        elif f.get('data'):
+        file_format = f.get('fileFormat', '') or ''
+
+        source = b''
+        if f.get('data'):
             source = base64.b64decode(f['data'])
+        elif file_path and os.path.isfile(file_path):
+            pass
         else:
             return None, f"缺少 source: {filename}"
 
         items.append(ExportItem(
             source=source,
+            source_path=file_path,
             output_path=output_path or merge_output,
             filename=filename,
+            file_format=file_format,
         ))
     return items, None
 
@@ -1424,6 +1421,7 @@ def _run_export_task(task_id, items, mode, merge_output):
     try:
         if mode == 'merge':
             _export_pdf_service.merge_files(items, merge_output, task=task)
+            task.result_path = merge_output
         else:
             _export_pdf_service.export_files(items, task=task)
     except Exception:
@@ -1516,7 +1514,7 @@ def _export_render_output_path(task_id):
     return os.path.join(tempfile.gettempdir(), f'export-render-{task_id}.pdf')
 
 
-def _run_export_render_task(task_id, commands):
+def _run_export_render_task(task_id, commands, output_path=''):
     """D3-3b-3 real executor — command -> fitz page -> merged PDF on disk.
 
     Orchestration is delegated to services.export_render_service.execute_export_render
@@ -1526,9 +1524,9 @@ def _run_export_render_task(task_id, commands):
     RenderCommand. Grep ban: _apply_margins / calculateFit / fit_scale.
 
     Args:
-        task_id:  任务 ID。
-        commands: 已通过 validate_export_render_request 的归一化命令列表
-                  （sourceRef + paper 已在 POST 边界校验完成）。
+        task_id:     任务 ID。
+        commands:    已通过 validate_export_render_request 的归一化命令列表。
+        output_path: 前端指定的输出路径；为空则写入临时路径。
     """
     task = task_registry.get(task_id)
     if task is None:
@@ -1538,9 +1536,19 @@ def _run_export_render_task(task_id, commands):
     try:
         task.start()
         pdf_bytes = execute_export_render(commands, progress=lambda lbl: task.advance(lbl))
-        out_path = _export_render_output_path(task_id)
+
+        if output_path:
+            out_dir = os.path.dirname(output_path)
+            if out_dir:
+                os.makedirs(out_dir, exist_ok=True)
+            out_path = output_path
+        else:
+            out_path = _export_render_output_path(task_id)
+
         with open(out_path, 'wb') as fh:
             fh.write(pdf_bytes)
+
+        task.result_path = out_path
         task.complete()
     except Exception as e:
         logger.exception("[Export Render] task %s 生成异常", task_id[:8])
@@ -1554,14 +1562,16 @@ def api_export_render():
     Additive：不碰 /api/export-pdf / insert_pdf / pdf_handlers / render_engine._apply_margins。
     语义与 /api/export-pdf 不同：本端点消费**布局级 RenderCommand**（几何已由前端算好），
     而非文件级透传。
+
+    可选参数 outputPath：前端指定的输出路径；不传则写入临时路径（path 通过 SSE 终态消息返回）。
     """
     data = request.get_json(silent=True) or {}
-    commands, err = validate_export_render_request(data)
+    commands, err, output_path = validate_export_render_request(data)
     if err:
         return jsonify({"success": False, "error": err}), 400
 
     task = task_registry.create(total=len(commands))
-    _export_render_executor.submit(_run_export_render_task, task.id, commands)
+    _export_render_executor.submit(_run_export_render_task, task.id, commands, output_path)
     return jsonify({"success": True, "taskId": task.id})
 
 

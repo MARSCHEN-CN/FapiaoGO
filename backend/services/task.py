@@ -63,10 +63,11 @@ class ExportTask:
     status: TaskStatus = TaskStatus.PENDING
     total: int = 0
     current: int = 0
-    current_file: str = ''    # 当前正在处理的文件名
+    current_file: str = ''
     errors: List[TaskError] = field(default_factory=list)
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
+    result_path: str = ''
 
     # ── 可选回调：Service 层设置，用于通知外部（SSE/progress modal） ──
     progress_callback: Optional[Callable[['ExportTask'], None]] = None
@@ -165,6 +166,8 @@ class ExportTask:
             'failCount': len(self.errors),
             'errors': [{'file': e.file, 'error': e.error} for e in self.errors],
         }
+        if self.result_path:
+            d['path'] = self.result_path
         if not include_progress_callback:
             pass  # callback 不可序列化，不返回
         return d

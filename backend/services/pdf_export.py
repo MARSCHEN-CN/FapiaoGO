@@ -18,7 +18,8 @@
 """
 
 import logging
-from dataclasses import dataclass
+import os
+from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional
 
 from .pdf_handlers.resolver import PdfExportResolver
@@ -27,36 +28,33 @@ from .task import ExportTask, TaskRegistry, task_registry as _global_task_regist
 logger = logging.getLogger(__name__)
 
 
-# ═══════════════════════════════════════════════════════════
-# 数据类型
-# ═══════════════════════════════════════════════════════════
-
-
 @dataclass
 class ExportItem:
     """单个导出文件项。
 
-    source:      源文件字节。
+    source:      源文件字节（可为空，此时 source_path 必须有值）。
+    source_path: 源文件路径（优先用于零拷贝文件操作）。
     output_path: 目标 .pdf 文件绝对路径（Service 不校验目录存在性）。
     filename:    源文件名（仅用于日志 / progress 展示，不影响处理逻辑）。
+    file_format: 文件格式提示（'pdf'/'image'/'ofd' 等），不传则由 resolver 探测。
     """
-    source: bytes
     output_path: str
     filename: str = ''
+    source: bytes = b''
+    source_path: str = ''
+    file_format: str = ''
 
-
-# ═══════════════════════════════════════════════════════════
-# Service
-# ═══════════════════════════════════════════════════════════
+    def ensure_source(self) -> bytes:
+        if self.source:
+            return self.source
+        if self.source_path and os.path.isfile(self.source_path):
+            with open(self.source_path, 'rb') as f:
+                self.source = f.read()
+            return self.source
+        return b''
 
 
 class PdfExportService:
-    """PDF 导出编排服务。
-
-    Args:
-        resolver: PdfExportResolver 实例（格式检测 + Handler 分发）。
-        task_registry: TaskRegistry 实例（任务生命周期管理），默认全局单例。
-    """
 
     def __init__(
         self,
@@ -66,58 +64,65 @@ class PdfExportService:
         self.resolver = resolver or PdfExportResolver()
         self._task_registry = task_registry or _global_task_registry
 
-    # ── 单文件导出 ──
+    def _resolve_format(self, item: ExportItem) -> str:
+        if item.file_format:
+            return item.file_format
+        if item.filename:
+            ext = os.path.splitext(item.filename)[1].lower().lstrip('.')
+            if ext in ('pdf', 'png', 'jpg', 'jpeg', 'bmp', 'gif', 'tiff', 'webp', 'ofd'):
+                return 'pdf' if ext == 'pdf' else ('ofd' if ext == 'ofd' else 'image')
+        head = b''
+        if item.source:
+            head = item.source[:8]
+        elif item.source_path and os.path.isfile(item.source_path):
+            with open(item.source_path, 'rb') as f:
+                head = f.read(8)
+        if head.startswith(b'%PDF'):
+            return 'pdf'
+        if head.startswith(b'%OFD'):
+            return 'ofd'
+        return 'image'
 
-    def export_file(self, source: bytes, output_path: str,
-                    filename: str = '', task: Optional[ExportTask] = None) -> bool:
-        """导出一个文件到 PDF。
-
-        Args:
-            source:      源文件字节。
-            output_path: 目标 .pdf 路径。
-            filename:    源文件名（日志用）。
-            task:        可选，关联到已有任务（更新进度）。为 None 时不记录。
-
-        Returns:
-            bool: 导出是否成功。
-        """
-        handler = self.resolver.resolve(source, filename or 'unknown')
+    def export_file(self, item: ExportItem,
+                    task: Optional[ExportTask] = None) -> bool:
+        filename = item.filename or 'unknown'
+        file_format = self._resolve_format(item)
+        handler = self.resolver.resolve_by_format(file_format) if file_format else None
+        if handler is None:
+            source = item.ensure_source()
+            handler = self.resolver.resolve(source, filename)
         if handler is None:
             msg = f"不支持的格式: {filename}"
             logger.warning("[PdfExport] %s", msg)
             if task is not None:
-                task.add_error(filename or 'unknown', msg)
-                task.advance(filename)  # 计入已处理（失败也算）
+                task.add_error(filename, msg)
+                task.advance(filename)
             return False
 
         try:
-            result = handler.export_to_pdf(source, output_path)
+            kwargs = {}
+            if hasattr(handler, 'export_to_pdf'):
+                import inspect
+                sig = inspect.signature(handler.export_to_pdf)
+                if 'source_path' in sig.parameters:
+                    kwargs['source_path'] = item.source_path
+
+            source = item.ensure_source()
+            result = handler.export_to_pdf(source, item.output_path, **kwargs)
             logger.info("[PdfExport] 成功: %s → %s (%d pages, %.1f KB)",
-                        filename, output_path, result['pages'], result['size'] / 1024)
+                        filename, item.output_path, result.get('pages', 1), result.get('size', 0) / 1024)
             if task is not None:
                 task.advance(filename)
             return True
         except Exception as e:
-            logger.error("[PdfExport] 失败: %s → %s: %s", filename, output_path, e)
+            logger.error("[PdfExport] 失败: %s → %s: %s", filename, item.output_path, e)
             if task is not None:
-                task.add_error(filename or output_path, str(e))
-                task.advance(filename)  # 计入已处理（失败也算）
+                task.add_error(filename or item.output_path, str(e))
+                task.advance(filename)
             return False
-
-    # ── 批量导出 ──
 
     def export_files(self, items: List[ExportItem],
                      task: Optional[ExportTask] = None) -> ExportTask:
-        """批量导出文件（单个失败不中断整个批次）。
-
-        Args:
-            items: 导出文件列表。
-            task:  可选，已有任务对象。为 None 时自动创建。
-
-        Returns:
-            含有最终状态、进度、错误列表的 ExportTask。
-        """
-        # 初始化 task
         if task is None:
             task = self._task_registry.create(total=len(items))
         else:
@@ -128,21 +133,12 @@ class PdfExportService:
 
         try:
             for item in items:
-                # ── 取消检查 ──
                 if task.cancelled:
                     logger.info("[PdfExport] 任务 %s 已取消，跳过剩余 %d 个文件",
                                 task.id[:8], len(items) - task.current)
                     break
-
-                self.export_file(
-                    source=item.source,
-                    output_path=item.output_path,
-                    filename=item.filename,
-                    task=task,
-                )
+                self.export_file(item, task=task)
         except Exception as e:
-            # 编排层不可恢复错误（resolver 抛错等）：标记失败，保证生命周期闭合
-            # （否则 SSE 消费者永远看不到终态）。同步调用方可继续捕获原异常。
             logger.exception("[PdfExport] 任务 %s 编排失败: %s", task.id[:8], e)
             task.fail(str(e))
             raise
@@ -150,23 +146,8 @@ class PdfExportService:
         task.complete()
         return task
 
-    # ── 合并导出 ──
-
     def merge_files(self, items: List[ExportItem], output_path: str,
                     task: Optional[ExportTask] = None) -> ExportTask:
-        """将多个文件合并为一个 PDF（按 items 顺序）。
-
-        每个源文件通过对应 Handler 的 export_merge 插入页面到同一 fitz.Document，
-        最后保存到 output_path。单个失败不中断整个合并。
-
-        Args:
-            items:      源文件列表。
-            output_path: 合并后 PDF 输出路径。
-            task:        可选，已有任务对象。
-
-        Returns:
-            含有最终状态、进度、错误列表的 ExportTask。
-        """
         if task is None:
             task = self._task_registry.create(total=1)
         else:
@@ -188,11 +169,14 @@ class PdfExportService:
                                 task.id[:8], len(items) - task.current)
                     break
 
-                # 更新 currentFile 用于进度展示，但不推进计数
                 task.current_file = item.filename
                 task._notify()
 
-                handler = self.resolver.resolve(item.source, item.filename or 'unknown')
+                file_format = self._resolve_format(item)
+                handler = self.resolver.resolve_by_format(file_format) if file_format else None
+                if handler is None:
+                    source = item.ensure_source()
+                    handler = self.resolver.resolve(source, item.filename or 'unknown')
                 if handler is None:
                     msg = f"不支持的格式，跳过合并: {item.filename}"
                     logger.warning("[PdfExport] %s", msg)
@@ -201,12 +185,12 @@ class PdfExportService:
                     continue
 
                 try:
-                    # 调用 Handler 的 export_merge
                     export_merge = getattr(handler, 'export_merge', None)
                     if export_merge is None:
                         raise NotImplementedError(
                             f"{type(handler).__name__} 不支持合并")
-                    insert_count = export_merge(item.source, item.filename, target_doc)
+                    source = item.ensure_source()
+                    insert_count = export_merge(source, item.filename, target_doc)
                     logger.info("[PdfExport] merge: %s → %d pages",
                                 item.filename, insert_count)
                 except Exception as e:
@@ -214,8 +198,6 @@ class PdfExportService:
                     if task is not None:
                         task.add_error(item.filename, str(e))
             else:
-                # 循环未被 break，保存合并结果
-                # merge 视为 1 次操作（输出 1 个文件）
                 if len(target_doc) > 0:
                     target_doc.save(output_path, incremental=False, deflate=True)
                     total_pages = len(target_doc)
@@ -229,7 +211,6 @@ class PdfExportService:
 
                 task.advance('merged.pdf')
         except Exception as e:
-            # 编排层不可恢复错误：标记失败，保证生命周期闭合
             logger.exception("[PdfExport] merge 任务 %s 编排失败: %s", task.id[:8], e)
             task.fail(str(e))
             raise

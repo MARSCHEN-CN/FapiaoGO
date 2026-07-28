@@ -122,7 +122,9 @@ export function useExport({ files, electronAPIRef, previewState, settings }) {
         const btid = msg.taskId ?? null
         const meta = { backendTaskId: btid, total: msg.total, successCount: msg.successCount, failCount: msg.failCount, fileErrors: msg.errors }
         if (msg.status === 'completed') {
-          completeExport(session.id, createSuccessfulExport({ taskId: task.id, metadata: meta }))
+          const okResult = createSuccessfulExport({ taskId: task.id, metadata: meta })
+          if (msg.path) okResult.path = msg.path
+          completeExport(session.id, okResult)
         } else if (msg.status === 'cancelled') {
           cancelExport(session.id, createCancelledExport({ taskId: task.id, metadata: meta }))
         } else {
@@ -157,7 +159,23 @@ export function useExport({ files, electronAPIRef, previewState, settings }) {
           previewPage: previewState.previewPage,
           settings,
         })
-        const res = await startRenderExport(commands, handlers)
+
+        let renderOutputPath = ''
+        if (config.mode === 'merge') {
+          const firstFile = exportFiles[0]
+          let outputDir = ''
+          if (config.outputType === 'source' && firstFile?.path) {
+            outputDir = firstFile.path.split(/[\\/]/).slice(0, -1).join('/')
+          } else if (config.outputType === 'folder' && config.folderPath) {
+            outputDir = config.folderPath
+          }
+          if (outputDir) {
+            const fname = config.fileName || 'invoice_export.pdf'
+            renderOutputPath = `${outputDir}/${fname}`
+          }
+        }
+
+        const res = await startRenderExport(commands, { outputPath: renderOutputPath }, handlers)
         backendTaskId = res.taskId
         close = res.close
       } else {
