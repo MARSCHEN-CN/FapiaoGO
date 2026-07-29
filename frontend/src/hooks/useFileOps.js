@@ -655,12 +655,16 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
                 // 后端 PageResultStore 收齐所有页并成功 assemble 后才出现在 assembled_documents 中，
                 // 不要求 pageCount >= 2：单页 assembled 文档仍携带发票号等解析元数据，
                 // 应生成 _inv_ docId 供后续处理，而非退回 fallback 失去业务身份。
-                const invDocId = `${assembled.sourceDocId || ''}_inv_${assembled.invoiceNumber || ''}`
                 // FIX: 按 pageNum 升序排列，确保首页作为 representative、页面顺序正确
                 const sortedFiles = [...sameSourceFiles].sort(
                   (a, b) => (a.pageNum || 1) - (b.pageNum || 1)
                 )
                 const repFile = sortedFiles[0]
+                // Step E1.1: Document identity 绑定文件实例（key），而非内容哈希（sourceDocId）。
+                // 同内容但不同文件实例（同发票复制、两次导入）产生不同 docId，不被 ImportSessionStore
+                // 的 docId 去重吃掉。instanceKey = repFile.key（前端文件实例唯一键，跨 session 不重复）。
+                const instanceKey = repFile?.key || assembled.sourceDocId || ''
+                const invDocId = `${instanceKey}_inv_${assembled.invoiceNumber || ''}`
                 const prev = getDocument(invDocId)
                 // 绕过 ensureDocumentFromFileObj（它按 docId 过滤文件，但 assembly 的 docId ≠ 文件 docId），
                 // 直接由 sortedFiles 构造 InvoiceDocument
