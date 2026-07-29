@@ -655,9 +655,20 @@ class ImportBatchManager:
                     total_pages_str = metrics.get('total_pages', '')
                     page_num = int(page_num_str) if page_num_str.isdigit() else 0
                     total_pages = int(total_pages_str) if total_pages_str.isdigit() else 1
-                    # 防御：防止不一致的 page_num/total_pages 导致静默丢失
-                    if page_num >= total_pages:
-                        total_pages = page_num + 1
+                    # Step 0.6: 不再用 page_num 推断/污染 total_pages。
+                    # /split_pdf 返回 1-based page_index，末页 page_num==total_pages 属正常；
+                    # 旧的 `total_pages = page_num + 1` 会把它抬成 N+1，导致闸门永远收不齐。
+                    # 此处仅对真实越界告警，绝不改写业务状态。
+                    if page_num > total_pages:
+                        logger.warning(
+                            "[IMPORT] page_num 超出 total_pages（疑似契约异常）: "
+                            "page_num=%s total_pages=%s source=%s",
+                            page_num, total_pages, src_doc_id,
+                        )
+                    # Step 0.6: 归一化 page_num 为 0-based 再入 Store。
+                    # 拆页入口 page_index=1-based → page_num>0 时 -1 对齐；
+                    # 单页入口 pageNum=null→0 已是 0-based，避免 0-1=-1。
+                    normalized_page_num = page_num - 1 if page_num > 0 else 0
                     from page_result_store import get_page_result_store
                     from invoice_assembly_pipeline import (
                         assemble as _assemble_invoice,
@@ -666,7 +677,7 @@ class ImportBatchManager:
                     store = get_page_result_store()
                     completed = store.put(
                         src_doc_id,
-                        page_num,
+                        normalized_page_num,
                         total_pages,
                         full_result,
                     )
