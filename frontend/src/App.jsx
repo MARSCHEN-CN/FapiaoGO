@@ -533,6 +533,12 @@ function AppContent() {
   // 导出（useExport hook）
   // 内聚 ~90 行 SSE 流式导出 + 状态管理
   // ============================
+  // Excel 导出使用 document 级别的 displayFiles 顺序（与主界面文件列表一致）
+  const excelExportFiles = useMemo(
+    () => displayFiles.filter((f) => f.status === 'parsed'),
+    [displayFiles],
+  )
+
   const {
     exporting, exportProgress, exportResult, exportAlert,
     closeExportAlert,
@@ -541,17 +547,16 @@ function AppContent() {
     pdfExportTask,
     cancelPdfExport,
     closePdfExportTask,
-  } = useExport({ files, electronAPIRef, previewState: preview.state, settings })
+  } = useExport({ files, excelFiles: excelExportFiles, electronAPIRef, previewState: preview.state, settings })
 
   // 打开 Excel 字段确认弹窗：无已解析发票时复用 handleExportExcel 的无数据告警
   const openExcelFields = useCallback(() => {
-    const parsed = files.filter((f) => f.status === 'parsed')
-    if (parsed.length === 0) {
+    if (excelExportFiles.length === 0) {
       handleExportExcel()
       return
     }
     setShowExcelFields(true)
-  }, [files, handleExportExcel])
+  }, [excelExportFiles, handleExportExcel])
 
   // 打开压缩包导出确认弹窗：无已解析文件时复用 handlePack 的无数据告警
   const openPackConfirm = useCallback(() => {
@@ -1086,7 +1091,7 @@ function AppContent() {
         />
         <ExcelExportFieldsModal
           visible={showExcelFields}
-          files={files.filter(f => f.status === 'parsed')}
+          files={excelExportFiles}
           initialColumns={excelExportSettings.columns}
           onPersist={excelExportSettings.persist}
           onConfirm={(cols) => {

@@ -39,7 +39,7 @@ function sessionToPdfTaskView(session) {
   }
 }
 
-export function useExport({ files, electronAPIRef, previewState, settings }) {
+export function useExport({ files, excelFiles, electronAPIRef, previewState, settings }) {
   const [exportAlert, setExportAlert] = useState(null)
   const closeExportAlert = useCallback(() => setExportAlert(null), [])
   const pdfCloseRef = useRef(null)
@@ -60,11 +60,14 @@ export function useExport({ files, electronAPIRef, previewState, settings }) {
   // ── Excel 导出 ──
   // columns: 可选，来自字段确认弹窗的 {key,label,width,virtual}[]；
   //          不传（旧路径 / 无数据告警复用）则后端走默认全列。
+  // 优先使用 excelFiles（document 级别，与主界面列表顺序一致），
+  // 回落至 page-level files（向后兼容）。
   const handleExportExcel = useCallback(async (columns) => {
     const ipc = electronAPIRef.current?.ipcRenderer
     if (!ipc) return
 
-    const parsedFiles = files.filter(f => f.status === 'parsed')
+    const sourceFiles = excelFiles || files
+    const parsedFiles = sourceFiles.filter(f => f.status === 'parsed')
     if (parsedFiles.length === 0) {
       setExportAlert({ visible: true, title: '提示', message: '没有可导出的发票数据', type: 'warning' })
       return
@@ -94,7 +97,7 @@ export function useExport({ files, electronAPIRef, previewState, settings }) {
       console.error('Excel 导出异常:', err)
       failExport(session.id, createFailedExport({ taskId: task.id, error: err.message || '导出异常' }))
     }
-  }, [files, electronAPIRef])
+  }, [files, excelFiles, electronAPIRef])
 
   // ── PDF 导出 ──
   /** @param {object} config - { mode, outputType, folderPath, fileName, files } */

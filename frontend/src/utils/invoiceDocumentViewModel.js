@@ -81,6 +81,9 @@ export function invoiceDocumentToRow(invoiceDoc, allFiles) {
 /**
  * 将 InvoiceDocument[] 批量转换为 FileCardRow 展示条目数组。
  *
+ * 顺序保证：documents 按其首个 page 在排序后 allFiles 中的位置排序，
+ * 确保与用户选择的文件列表排序（文件名/日期/金额/类型）一致。
+ *
  * @param {import('../models/InvoiceDocument').InvoiceDocument[]} invoiceDocs
  * @param {import('../models/ImportSession').SessionFile[]} allFiles
  * @returns {Object[]} FileCardRow 条目数组
@@ -89,7 +92,34 @@ export function invoiceDocumentsToRows(invoiceDocs, allFiles) {
   if (!Array.isArray(invoiceDocs) || invoiceDocs.length === 0) return []
   if (!Array.isArray(allFiles)) return []
 
-  return invoiceDocs
-    .map((doc) => invoiceDocumentToRow(doc, allFiles))
-    .filter(Boolean)
+  // 构建 page key → 在排序后 files 中的索引位置（O(n)，一次性）
+  const pageIndex = new Map()
+  for (let i = 0; i < allFiles.length; i++) {
+    const f = allFiles[i]
+    if (f?.key && !pageIndex.has(f.key)) {
+      pageIndex.set(f.key, i)
+    }
+  }
+
+  // 先转换所有 docs，附带排序键（首个 page 的位置）
+  const withOrder = []
+  for (const doc of invoiceDocs) {
+    const row = invoiceDocumentToRow(doc, allFiles)
+    if (!row) continue
+
+    // 找到该 document 所有 pages 在排序后列表中的最小索引
+    let orderIdx = Number.MAX_SAFE_INTEGER
+    const pages = (row._isDocumentGroup && row._pages) ? row._pages : [row]
+    for (const p of pages) {
+      const idx = pageIndex.get(p.key)
+      if (idx !== undefined && idx < orderIdx) {
+        orderIdx = idx
+      }
+    }
+    withOrder.push({ orderIdx: orderIdx === Number.MAX_SAFE_INTEGER ? 0 : orderIdx, row })
+  }
+
+  // 按首个 page 出现位置稳定排序
+  withOrder.sort((a, b) => a.orderIdx - b.orderIdx)
+  return withOrder.map((item) => item.row)
 }
