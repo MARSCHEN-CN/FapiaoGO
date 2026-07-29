@@ -205,7 +205,9 @@ export async function runChunkedImport({ sessionId, taskId, files, chunkSize, au
               updateFileError(sessionId, fileObj.key, err?.message || 'SSE 连接失败')
             }
             currentResolve = null
-            resolve(progress)
+            // onError 作用域内无 progress 变量（它是 onComplete 的参数）；
+            // 此前 resolve(progress) 抛 ReferenceError，Promise 永不 settle、导入卡死。
+            resolve(null)
           },
         })
         eventSources.push(eventSource)

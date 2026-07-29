@@ -15,9 +15,9 @@
 //   status，非法则保留旧 status 并告警，绝不连累 payload。
 
 export const VALID_TRANSITION = {
-  uploading: ['splitting', 'ready', 'parsing'],
+  uploading: ['splitting', 'ready', 'parsing', 'cancelled'],
   splitting: ['ready', 'parsing', 'error', 'cancelled'],
-  ready: ['parsing', 'error'],
+  ready: ['parsing', 'error', 'cancelled'],
   parsing: ['parsed', 'error', 'cancelled'],
   parsed: [],
   error: ['parsing'],

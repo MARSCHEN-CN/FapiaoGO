@@ -461,6 +461,9 @@ class ImportBatchManager:
 
                 # 窗口提交
                 window_end = min(submitted + SUBMIT_WINDOW, total)
+                # stop_at：本轮实际推进到的位置。正常完成 = window_end（行为不变）；
+                # 若中途 submit_job 失败，置为 i+1（该 job 已就地记账），[i+1,window_end) 下轮重试。
+                stop_at = window_end
                 for i in range(submitted, window_end):
                     if self._cancel_flags.get(batch_id, False):
                         # 释放本窗口尚未提交的 pending 引用（inputs[i:]），已提交的 inflight
@@ -514,11 +517,24 @@ class ImportBatchManager:
                         skip_db_write=True,
                     )
                     if not ok:
-                        # 队列满，等一轮再试
-                        logger.warning(f"[ImportBatch] 队列满，暂停提交: {batch_id}")
+                        # 队列满：submit_job 已把该 job 标记为终态 failed（parse_job_manager:449），
+                        # 但它从未入队 → 执行器完成回调永不触发 → _on_job_done 不会为它计数/释放 ref。
+                        # 若不在此手动补账，batch.finished 永远到不了 total，_wait_for_completion 死循环、
+                        # 批次卡死 running、temp 文件泄漏。此处镜像 _on_job_done 的 failed 分支补账。
+                        logger.warning(
+                            f"[ImportBatch] 队列满，job 提交失败，手动记账: {batch_id} job={job.id}"
+                        )
+                        self._temp_registry.release(ref_id)  # 幂等(INV-3)
+                        with self._batch_lock:
+                            b = self._batches.get(batch_id)
+                            if b and b.status != 'cancelled':
+                                b.failed += 1
+                                b.touch()
+                        # 该 job 已记账，从 i+1 续传；[i+1, window_end) 留待下轮重试，不跳过。
+                        stop_at = i + 1
                         break
 
-                submitted = window_end
+                submitted = stop_at
 
                 # 释放已提交的文件引用（只留未提交的 refId 元数据，字节从不在 manager 常驻）
                 with self._batch_lock:
