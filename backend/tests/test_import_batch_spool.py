@@ -382,24 +382,37 @@ def test_cleanup_batch_releases_terminal_pending_only(tmp_path):
     mgr._release_inputs(mgr._batches[batch_b].file_inputs)
 
 
-def test_create_batch_orphan_refs_released_on_normalization_failure(tmp_path):
-    """Commit 5：归一化失败（如第 N 个非法输入）时，已 spool 的孤立 ref 必须回收。"""
+def test_create_batch_rejects_non_refid_input_and_keeps_caller_refs(tmp_path):
+    """IS-3（INV-IS3-1）：create_batch 只接受 refId 形态，不再在边界 spool bytes，
+    也不接管调用方持有的 ref 生命周期。
+
+    旧契约（IS-3 之前）曾期望：归一化失败时 create_batch 回滚已 spool 的 ref。
+    IS-3 后 spool 所有权归调用方（/import/batch 先行 spool 再传 refId），
+    create_batch 失败时**不得**释放不属于自己的 ref——释放责任在调用方。
+
+    本测试固化现行契约：
+    - 缺 refId 的输入 → ValueError（在归一化循环 import_batch_manager.py:246 抛出，
+      早于 batch 注册，故无 scheduler 线程被启动）
+    - 调用方已 spool 的 ref 仍活跃（manager 未释放），由调用方自行回收
+    """
     mgr, registry = _make_manager(tmp_path)
     ok = registry.spool(io.BytesIO(b"ok"), "ok.pdf")
     bad = registry.spool(io.BytesIO(b"bad"), "bad.pdf")
     file_inputs = [
         {"refId": ok.refId, "filename": ok.filename},
         {"refId": bad.refId, "filename": bad.filename},
-        {"bytes": b"third"},  # 会先 spool 再因下一行非法而整体回滚
-        {"neither": "x"},     # 非法：既无 refId 也无 bytes
+        {"bytes": b"third"},  # IS-3：无 refId → create_batch 在此抛 ValueError
     ]
     try:
         mgr.create_batch(file_inputs, auto_orient=False)
-        assert False, "create_batch 应因非法输入抛 ValueError"
+        assert False, "create_batch 应因缺 refId 的输入抛 ValueError"
     except ValueError:
         pass
-    # 前三个已 spool 的 ref 必须被回收（无孤立 temp 文件）
-    assert ok.refId not in registry.active_refs()
-    assert bad.refId not in registry.active_refs()
-    assert not os.path.exists(ok.path)
-    assert not os.path.exists(bad.path)
+    # IS-3 契约：manager 未接管这些 ref，失败后不得释放（所有权仍归调用方）
+    assert ok.refId in registry.active_refs(), "IS-3：create_batch 失败不得释放调用方持有的 ref"
+    assert bad.refId in registry.active_refs(), "IS-3：create_batch 失败不得释放调用方持有的 ref"
+    assert os.path.exists(ok.path)
+    assert os.path.exists(bad.path)
+    # 收尾：调用方责任——自行释放，避免测试泄漏
+    registry.release(ok.refId)
+    registry.release(bad.refId)

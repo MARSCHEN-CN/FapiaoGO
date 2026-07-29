@@ -207,7 +207,9 @@ export async function runChunkedImport({ sessionId, taskId, files, chunkSize, au
             currentResolve = null
             // onError 作用域内无 progress 变量（它是 onComplete 的参数）；
             // 此前 resolve(progress) 抛 ReferenceError，Promise 永不 settle、导入卡死。
-            resolve(null)
+            // 用结构化错误对象 settle（而非 null），使上层 `result?.status === 'error'`
+            // 可显式分支，错误不被静默吞掉。
+            resolve({ status: 'error', error: err })
           },
         })
         eventSources.push(eventSource)
