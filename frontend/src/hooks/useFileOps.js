@@ -40,6 +40,31 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
   const [parsing, setParsing] = useState(false)
   const [parseProgress, setParseProgress] = useState({ current: 0, total: 0 })
 
+  // ── 增强版导入进度（分阶段 + 日志） ──────────────────
+  // stage: 'idle' | 'splitting' | 'parsing' | 'building' | 'completed'
+  const [importStage, setImportStage] = useState('idle')
+  const [importStats, setImportStats] = useState({
+    originalCount: 0,    // 原始导入文件数
+    totalFiles: 0,       // 最终用户可见文件总数（=原始文件数，用于显示 X/Y）
+    currentFile: 0,      // 当前处理到第几个原始文件（1-based，显示用）
+    splitDone: 0,        // 已拆分文件数
+    splitTotal: 0,       // 拆分阶段总数（=原始文件数）
+    parseDone: 0,        // 已解析物理文件数
+    parseTotal: 0,       // 解析阶段总数（拆分后的物理文件数）
+    buildDone: 0,        // 已组装文档数
+    buildTotal: 0,       // 组装阶段总数
+  })
+  const [importLogs, setImportLogs] = useState([])  // 最新在前，最多保留50条
+  const progressMonotonicRef = useRef(0)  // 单调递增百分比，防止回退
+
+  // 添加导入日志
+  const addImportLog = useCallback((message) => {
+    setImportLogs((prev) => {
+      const next = [{ time: Date.now(), message }, ...prev]
+      return next.slice(0, 50)  // 最多保留50条
+    })
+  }, [])
+
   // ✅ 修复闭包陷阱：使用 ref 保存最新 settings
   const settingsRef = useRef(settings)
   useEffect(() => {
@@ -284,8 +309,24 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
   const processFilesForAddition = useCallback(async (files) => {
     if (files.length === 0) return
 
-    // ✅ 立即显示导入弹窗
+    // ✅ 立即显示导入弹窗 + 初始化进度状态
     setImporting(true)
+    progressMonotonicRef.current = 0
+    setImportStage('splitting')
+    setImportStats({
+      originalCount: files.length,
+      totalFiles: files.length,
+      currentFile: 0,
+      splitDone: 0,
+      splitTotal: files.length,
+      parseDone: 0,
+      parseTotal: 0,
+      buildDone: 0,
+      buildTotal: 0,
+    })
+    setImportLogs([])
+    addImportLog(`开始导入 ${files.length} 个文件...`)
+
     const ipc = electronAPIRef.current?.ipcRenderer
     const autoOrient = settingsRef.current.autoOrient ?? false
 
@@ -410,6 +451,12 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
         const { p, file: f } = job
         queueUpdate(p.key, 'splitting')
 
+        // 更新当前文件计数和日志
+        const fileIdx = placeholders.findIndex((ph) => ph.key === p.key)
+        const displayIdx = fileIdx >= 0 ? fileIdx + 1 : splitDone + 1
+        setImportStats((prev) => ({ ...prev, currentFile: displayIdx }))
+        addImportLog(`正在拆分 ${displayIdx}/${files.length}: ${f.name}`)
+
         try {
           const result = await runSplitTask(job)
 
@@ -428,6 +475,7 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
               }))
               replaceWithItems(p.key, pageItems)
               progressTotal += pageItems.length
+              addImportLog(`  → 拆分为 ${pageItems.length} 页`)
               for (const pageObj of pageItems) {
                 collectOrEnqueue(pageObj)
               }
@@ -446,8 +494,12 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
         } catch (err) {
           console.error(`[App] 文件处理失败: ${f.name}`, err)
           queueUpdate(p.key, 'error')
+          addImportLog(`  → 拆分失败: ${err.message || '未知错误'}`)
         } finally {
           splitDone += 1
+          // 更新拆分阶段进度
+          setImportStats((prev) => ({ ...prev, splitDone, currentFile: splitDone }))
+          // 兼容旧 parseProgress（拆分阶段显示拆分进度）
           setParseProgress({ current: splitDone, total: placeholders.length })
         }
       }
@@ -464,11 +516,25 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
     await Promise.all(splitWorkers)
     parsePipelineDone = true
 
+    // ── 拆分完成，切换到解析阶段 ──
+    const parseFileCount = readyFiles.length
+    addImportLog(`文件拆分完成，共 ${parseFileCount} 个待解析文件`)
+    setImportStage('parsing')
+    setImportStats((prev) => ({
+      ...prev,
+      splitDone: placeholders.length,
+      parseTotal: parseFileCount,
+      parseDone: 0,
+      currentFile: 0,
+    }))
+    progressMonotonicRef.current = Math.max(progressMonotonicRef.current, 30)  // 拆分至少占30%
+
     // ── Import Scale v1: 批量解析路径 ────────────────────
     // split 完成后，根据 feature flag 选择执行路径
     if (IMPORT_SCALE_V1 && readyFiles.length > 0) {
       // 批量路径：POST /import/batch + GET SSE
       console.log(`[ImportScale] 批量解析 ${readyFiles.length} 个文件`)
+      addImportLog(`开始批量解析 ${readyFiles.length} 个文件...`)
 
       // 标记所有就绪文件为 parsing（一次性）
       // 状态机已允许 splitting→parsing（Map 去重可能吞掉 ready 中间态）
@@ -482,6 +548,29 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
       setTaskAbortController(task.id, abortController)
       updateTaskStatus(task.id, 'running')
 
+      // 包装onAggregateProgress，更新增强版进度
+      let lastLoggedParse = -1
+      const onAggregateProgress = (prog) => {
+        setParseProgress(prog)  // 兼容旧API
+        setImportStats((prev) => ({
+          ...prev,
+          parseDone: prog.current,
+          parseTotal: prog.total,
+          currentFile: prog.current,
+        }))
+        // 每10个文件或每个文件输出一次日志（避免日志过多）
+        if (prog.current > lastLoggedParse && prog.current > 0) {
+          if (prog.current === 1 || prog.current % 5 === 0 || prog.current === prog.total) {
+            addImportLog(`正在解析 ${prog.current}/${prog.total}...`)
+            lastLoggedParse = prog.current
+          }
+        }
+        if (prog.current > 0 && prog.total > 0) {
+          const parsePct = (prog.current / prog.total) * 55  // 解析占55%（拆分30% + 组装15%）
+          progressMonotonicRef.current = Math.max(progressMonotonicRef.current, 30 + parsePct)
+        }
+      }
+
       // ── 编排委托给纯模块（与 React 解耦，可 Node 验收，Commit 5）──
       // session 终态（completed/cancelled）由 runChunkedImport 统一归属（合同 §7）
       await runChunkedImport({
@@ -493,7 +582,7 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
         deps: {
           client: { createImportBatch, subscribeBatchProgress, getBatchResults, cancelImportBatch },
           onFileUpdate: queueUpdate,
-          onAggregateProgress: setParseProgress,
+          onAggregateProgress,
           onTaskStatus: updateTaskStatus,
           onTaskStream: setTaskStream,
           hydrateChunk: async ({ batchId, chunk, signal, client, terminalFileKeys }) => {
@@ -518,6 +607,8 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
               for (const fileObj of chunkFiles) {
                 const item = resultMap.get(fileObj.key)
                 if (item) {
+                  // 兼容两种命名：invoiceFields（驼峰，批量导入）和 invoice_fields（下划线，单文件解析）
+                  const invFields = item.invoiceFields || item.invoice_fields || null
                   const hydrationResult = {
                     status: 'parsed',
                     doc_id: item.docId || '',
@@ -531,11 +622,11 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
                       fileFormat: fileObj.fileFormat || '',
                       previewImage: item.previewImage || null,
                       failedFields: item.failedFields || [],
-                      invoiceFields: item.invoiceFields || null,
-                      issuer: (item.invoiceFields || {}).kpr || '',
-                      amountWithoutTax: (item.invoiceFields || {}).amountJe || '',
-                      taxAmount: (item.invoiceFields || {}).amountSe || '',
-                      lineItems: (item.invoiceFields || {}).line_items || [],
+                      invoiceFields: invFields,
+                      issuer: (invFields || {}).kpr || '',
+                      amountWithoutTax: (invFields || {}).amountJe || '',
+                      taxAmount: (invFields || {}).amountSe || '',
+                      lineItems: (invFields || {}).line_items || [],
                       rawText: '',
                     },
                     raw: {},
@@ -793,13 +884,22 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
       await Promise.all(parseWorkers)
     }
 
-    // 解析完成后：强制刷新所有待处理更新（hydration 结果），再后处理
+    // 解析完成后：进入组装阶段
+    setImportStage('building')
+    progressMonotonicRef.current = Math.max(progressMonotonicRef.current, 85)
+    addImportLog('正在组装文档...')
+
+    // 强制刷新所有待处理更新（hydration 结果），再后处理
     flushUpdates()
 
     // 探针2+3：flush 后状态分布 + processImportedFiles 前完整状态
+    let successCount = 0
+    let errorCount = 0
     setFiles((prev) => {
       const dist = prev.reduce((a, f) => { a[f.status] = (a[f.status] || 0) + 1; return a }, {})
       console.log('[ImportScale flush] 状态分布:', dist)
+      successCount = dist.parsed || 0
+      errorCount = dist.error || 0
       const notDone = prev.filter(
         (f) => f.status !== 'parsed' && f.status !== 'error' && f.status !== 'cancelled'
       )
@@ -810,10 +910,21 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
       const { files: sortedFiles } = processImportedFiles(prev, sortByRef.current, sortOrderRef.current)
       return sortedFiles
     })
+
+    // 导入完成
+    addImportLog(`导入完成：成功 ${successCount} 个，失败 ${errorCount} 个`)
+    setImportStage('completed')
+    progressMonotonicRef.current = 100
+    setImportStats((prev) => ({
+      ...prev,
+      parseDone: prev.parseTotal,
+      buildDone: prev.buildTotal || successCount,
+      currentFile: prev.totalFiles,
+    }))
     setParsing(false)
     setParseProgress({ current: 0, total: 0 })
     setImporting(false)
-  }, [setFiles, electronAPIRef, settingsRef, queueUpdate])
+  }, [setFiles, electronAPIRef, settingsRef, queueUpdate, addImportLog])
 
   // ============================
   // Native Drop（支持文件和文件夹）
@@ -948,6 +1059,8 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
   return {
     importing,
     parseFiles, parsing, parseProgress,
+    // 增强版进度信息（分阶段 + 日志）
+    importStage, importStats, importLogs,
     isNativeDragActive,
     handleNativeDrop, handleNativeDragOver, handleNativeDragLeave,
     getRootProps, getInputProps, isDragActive,

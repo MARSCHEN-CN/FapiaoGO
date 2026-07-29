@@ -190,6 +190,7 @@ function AppContent() {
 
   const {
     importing, parseFiles, parsing, parseProgress, cancelImport,
+    importStage, importStats, importLogs,
     isNativeDragActive,
     handleNativeDrop, handleNativeDragOver, handleNativeDragLeave,
     getRootProps, getInputProps, isDragActive,
@@ -755,6 +756,9 @@ function AppContent() {
       <Sidebar
         parsing={parsing}
         parseProgress={parseProgress}
+        importStage={importStage}
+        importStats={importStats}
+        importLogs={importLogs}
         previewFile={previewFile}
         paperSize={settings.mergeMode || 'none'}
         fileRotations={fileRotations}
@@ -1015,6 +1019,9 @@ function AppContent() {
           importing={importing}
           parsing={parsing}
           parseProgress={parseProgress}
+          importStage={importStage}
+          importStats={importStats}
+          importLogs={importLogs}
           visible={Boolean(importing || parsing) && !reimporting}
           onCancel={cancelImport}
         />

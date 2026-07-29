@@ -2,20 +2,29 @@ import React, { useMemo } from 'react'
 import { PUBLIC_BASE } from '../config'
 
 /**
- * 导入进度弹窗（方案2：横幅+wait.svg+进度条）
+ * 导入进度弹窗
  *
- * 支持两种 props 方式：
- *  1. 新方式：visible, title, progress(0~100), text, onCancel
- *  2. 兼容旧方式：importing, parsing, parseProgress({current,total})
+ * 功能：
+ * - 分阶段显示进度（拆分中 / 解析中 / 组装中）
+ * - 文件计数显示（如 30/40 表示导入40个文件，解析到第30个）
+ * - 进度条单调递增，避免回退误导用户
+ *
+ * Props:
+ * - visible: 是否显示
+ * - title: 标题
+ * - onCancel: 取消回调
+ * - importStage: 'idle' | 'splitting' | 'parsing' | 'building' | 'completed'
+ * - importStats: { originalCount, totalFiles, currentFile, splitDone, splitTotal, parseDone, parseTotal, buildDone, buildTotal }
+ * - 兼容旧API: importing, parsing, parseProgress
  */
 const ImportProgressModal = (props) => {
   const {
     // 新 API
     visible: visibleProp,
     title = '正在导入文件',
-    progress,
-    text = '',
     onCancel,
+    importStage,
+    importStats,
     // 旧 API（兼容）
     importing,
     parsing,
@@ -25,23 +34,57 @@ const ImportProgressModal = (props) => {
   // 计算 visible
   const visible = visibleProp !== undefined ? visibleProp : Boolean(importing || parsing)
 
-  // 计算百分比
-  const pct = useMemo(() => {
-    if (progress !== undefined) return Math.max(0, Math.min(100, Math.round(progress)))
-    if (parseProgress && parseProgress.total > 0) {
-      return Math.round((parseProgress.current / parseProgress.total) * 100)
-    }
-    return 0
-  }, [progress, parseProgress])
+  // 计算阶段文本和计数
+  const { stageText, countText, pct } = useMemo(() => {
+    if (importStage && importStats) {
+      const {
+        splitDone, splitTotal,
+        parseDone, parseTotal,
+        buildDone, buildTotal,
+        totalFiles, currentFile,
+      } = importStats
+      let pctValue = 0
+      let stage = '准备中'
+      let count = ''
 
-  // 统一文本：不暴露内部阶段
-  const displayText = useMemo(() => {
-    if (text) return text
-    if (parseProgress && parseProgress.total > 0) {
-      return `正在处理发票 ${parseProgress.current}/${parseProgress.total}`
+      if (importStage === 'splitting') {
+        stage = '正在拆分文件'
+        const displayCurrent = currentFile > 0 ? currentFile : splitDone
+        const displayTotal = totalFiles > 0 ? totalFiles : splitTotal
+        count = `${displayCurrent}/${displayTotal}`
+        pctValue = displayTotal > 0 ? Math.round((splitDone / splitTotal) * 30) : 0
+      } else if (importStage === 'parsing') {
+        stage = '正在解析发票'
+        const displayCurrent = currentFile > 0 ? currentFile : parseDone
+        const displayTotal = totalFiles > 0 ? totalFiles : parseTotal
+        count = `${displayCurrent}/${displayTotal}`
+        const parsePct = parseTotal > 0 ? (parseDone / parseTotal) * 55 : 0
+        pctValue = Math.round(30 + parsePct)
+      } else if (importStage === 'building') {
+        stage = '正在组装文档'
+        const displayCurrent = totalFiles > 0 ? totalFiles : buildDone
+        const displayTotal = totalFiles > 0 ? totalFiles : buildTotal
+        count = `${displayCurrent}/${displayTotal}`
+        pctValue = 95
+      } else if (importStage === 'completed') {
+        stage = '导入完成'
+        count = ''
+        pctValue = 100
+      }
+
+      return { stageText: stage, countText: count, pct: Math.min(99, Math.max(0, pctValue)) }
     }
-    return ''
-  }, [text, parseProgress])
+
+    // 兼容旧 API
+    if (parseProgress && parseProgress.total > 0) {
+      return {
+        stageText: '正在处理',
+        countText: `${parseProgress.current}/${parseProgress.total}`,
+        pct: Math.round((parseProgress.current / parseProgress.total) * 100),
+      }
+    }
+    return { stageText: '准备中', countText: '', pct: 0 }
+  }, [importStage, importStats, parseProgress])
 
   if (!visible) return null
 
@@ -75,7 +118,10 @@ const ImportProgressModal = (props) => {
               <span className="ipm-bar-dot" />
             </div>
           </div>
-          {displayText && <div className="ipm-bar-filename">{displayText}</div>}
+          <div className="ipm-stage-row">
+            <span className="ipm-stage-text">{stageText}</span>
+            {countText && <span className="ipm-count-text">{countText}</span>}
+          </div>
         </div>
 
         {/* 底部操作 */}

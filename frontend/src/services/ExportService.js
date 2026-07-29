@@ -59,20 +59,20 @@ function _dateSuffix() {
 function _resolveOutputPath(file, config) {
   let outputDir = ''
   if (config.outputType === 'source' && file.path) {
-    outputDir = file.path.split(/[\\/]/).slice(0, -1).join('/')
+    outputDir = file.path.split(/[\\/]/).slice(0, -1).join('\\')
   } else if (config.outputType === 'folder' && config.folderPath) {
-    outputDir = config.folderPath
+    outputDir = config.folderPath.replace(/\//g, '\\')
   }
   if (!outputDir) outputDir = '.'
 
   if (config.mode === 'merge') {
     const fname = config.fileName || 'invoice_export.pdf'
-    return `${outputDir}/${fname}`
+    return `${outputDir}\\${fname}`
   }
 
   const name = file.name || file.path?.split(/[\\/]/).pop() || 'export'
   const baseName = name.replace(/\.[^.]+$/, '')
-  return `${outputDir}/${baseName}_export_${_dateSuffix()}.pdf`
+  return `${outputDir}\\${baseName}_export_${_dateSuffix()}.pdf`
 }
 
 /**

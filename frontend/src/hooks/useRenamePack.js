@@ -2,25 +2,25 @@ import { useState, useCallback, useRef, useEffect } from 'react'
 import { groupFilesByDocument } from '../utils/groupDocuments'
 
 function buildInvoiceFields(f) {
-  if (f.invoiceFields && Object.keys(f.invoiceFields).length > 0) {
-    return f.invoiceFields
-  }
+  // 兼容两种命名：invoiceFields（驼峰）和 invoice_fields（下划线）
+  // 顶层字段（invoiceType/invoiceNumber/invoiceDate）也作为回退
+  const inv = f.invoiceFields || f.invoice_fields || {}
   return {
-    type: f.invoiceType || '',
-    fphm: f.invoiceNumber || '',
-    kprq: f.invoiceDate || '',
-    gmfmc: f.invoiceFields?.gmfmc || '',
-    gmfsh: f.invoiceFields?.gmfsh || '',
-    xsfmc: f.invoiceFields?.xsfmc || '',
-    xsfsh: f.invoiceFields?.xsfsh || '',
-    amountJe: f.invoiceFields?.amountJe || '',
-    amountSe: f.invoiceFields?.amountSe || '',
-    amountHj: f.invoiceFields?.amountHj || f.amount || '',
-    amountHjDx: f.invoiceFields?.amountHjDx || '',
-    note: f.invoiceFields?.note || '',
-    skr: f.invoiceFields?.skr || '',
-    fhr: f.invoiceFields?.fhr || '',
-    kpr: f.invoiceFields?.kpr || '',
+    type: f.invoiceType || inv.type || '',
+    fphm: f.invoiceNumber || inv.fphm || '',
+    kprq: f.invoiceDate || inv.kprq || '',
+    gmfmc: inv.gmfmc || f.buyerName || '',
+    gmfsh: inv.gmfsh || f.buyerTaxNo || '',
+    xsfmc: inv.xsfmc || f.sellerName || '',
+    xsfsh: inv.xsfsh || f.sellerTaxNo || '',
+    amountJe: inv.amountJe || f.amountWithoutTax || '',
+    amountSe: inv.amountSe || f.taxAmount || '',
+    amountHj: inv.amountHj || f.amount || f.totalAmount || '',
+    amountHjDx: inv.amountHjDx || '',
+    note: inv.note || '',
+    skr: inv.skr || '',
+    fhr: inv.fhr || '',
+    kpr: inv.kpr || f.issuer || '',
   }
 }
 
@@ -62,6 +62,7 @@ export function useRenamePack({ files, settings, setFiles, parseFiles, parseProg
     const fileMap = new Map(documentFiles.map(f => [f.key, f]))
     const previewFiles = previews.map(p => {
       const f = fileMap.get(p.key)
+      const inv = f?.invoiceFields || f?.invoice_fields || {}
       return {
         key: p.key,
         originalName: p.originalName,
@@ -73,10 +74,10 @@ export function useRenamePack({ files, settings, setFiles, parseFiles, parseProg
         amount: f?.amount || '',
         invoiceDate: f?.invoiceDate || '',
         rawText: f?.rawText || '',
-        gmfmc: f?.invoiceFields?.gmfmc || '',
-        xsfmc: f?.invoiceFields?.xsfmc || '',
-        xmmc: f?.invoiceFields?.xmmc || '',
-        note: f?.invoiceFields?.note || '',
+        gmfmc: inv.gmfmc || f?.buyerName || '',
+        xsfmc: inv.xsfmc || f?.sellerName || '',
+        xmmc: inv.xmmc || '',
+        note: inv.note || '',
         _pageCount: f?._pageCount || 1,
       }
     })

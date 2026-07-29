@@ -2557,6 +2557,86 @@ button.pc-btn.outline,
   font-size: 13px;
 }
 
+/* ── 阶段行（阶段文本 + 计数） ── */
+.ipm-stage-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 0 6px;
+}
+
+.ipm-stage-text {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-2);
+}
+
+.ipm-count-text {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--primary, #4f7cff);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── 日志区域 ── */
+.ipm-logs-wrap {
+  margin: 8px 24px 0;
+  border: 1px solid var(--border-light);
+  border-radius: var(--r-md);
+  overflow: hidden;
+}
+
+.ipm-logs-header {
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-3);
+  background: var(--bg-soft, #f8f9fa);
+  border-bottom: 1px solid var(--border-light);
+}
+
+.ipm-logs {
+  max-height: 140px;
+  overflow-y: auto;
+  padding: 6px 0;
+  font-family: 'SF Mono', 'Consolas', 'Monaco', monospace;
+  font-size: 11.5px;
+  line-height: 1.6;
+}
+
+.ipm-log-item {
+  display: flex;
+  gap: 6px;
+  padding: 2px 12px;
+  color: var(--text-3);
+}
+
+.ipm-log-time {
+  color: var(--text-4);
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.ipm-log-msg {
+  color: var(--text-2);
+  word-break: break-all;
+}
+
+/* 日志滚动条美化 */
+.ipm-logs::-webkit-scrollbar {
+  width: 5px;
+}
+.ipm-logs::-webkit-scrollbar-track {
+  background: transparent;
+}
+.ipm-logs::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
+.ipm-logs::-webkit-scrollbar-thumb:hover {
+  background: var(--text-4);
+}
+
 /* ══════════════════════════════════════
    暗色模式适配
    ══════════════════════════════════════ */

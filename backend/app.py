@@ -1513,6 +1513,11 @@ def _run_export_task(task_id, items, mode, merge_output):
             task.result_path = merge_output
         else:
             _export_pdf_service.export_files(items, task=task)
+            # single 模式：取第一个成功导出的文件路径作为 result_path
+            for item in items:
+                if item.output_path and os.path.isfile(item.output_path):
+                    task.result_path = item.output_path
+                    break
     except Exception:
         logger.exception("[PDF Export] 后台导出异常 task=%s", task_id[:8])
 

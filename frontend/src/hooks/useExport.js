@@ -151,9 +151,14 @@ export function useExport({ files, excelFiles, electronAPIRef, previewState, set
         ? config.files.map(cf => byPath.get(cf.path) || { key: cf.path, path: cf.path, name: cf.name, status: 'parsed', fileFormat: cf.fileFormat || 'pdf' })
         : files.filter(f => f.status === 'parsed')
 
-      if (isRenderExportEligible({ enabled: EXPORT_RENDER_ENABLED, previewState, settings, files: exportFiles })) {
+      // single 模式强制走 legacy 路径：render 管线 execute_export_render 只能输出单个合并 PDF，
+      // 不支持多文件分别输出到不同路径。merge 模式才允许走 render 路径。
+      const useRenderPath = config.mode === 'merge'
+        && isRenderExportEligible({ enabled: EXPORT_RENDER_ENABLED, previewState, settings, files: exportFiles })
+
+      if (useRenderPath) {
         // 新管线（D2-2-c1）：几何由 Preview 状态经薄桥组装，ExportService 保持几何无关。
-        // 仅当 flag 开启、Preview 几何状态可用、且所有文件格式受 render 管线支持时启用；
+        // 仅当 merge 模式、flag 开启、Preview 几何状态可用、且所有文件格式受 render 管线支持时启用；
         // 否则（含 OFD 等不被支持的类型）回落 legacy /api/export-pdf。
         const commands = buildExportSnapshot({
           files: exportFiles,
@@ -163,25 +168,25 @@ export function useExport({ files, excelFiles, electronAPIRef, previewState, set
           settings,
         })
 
+        // 计算 merge 模式输出路径
         let renderOutputPath = ''
-        if (config.mode === 'merge') {
-          const firstFile = exportFiles[0]
-          let outputDir = ''
-          if (config.outputType === 'source' && firstFile?.path) {
-            outputDir = firstFile.path.split(/[\\/]/).slice(0, -1).join('/')
-          } else if (config.outputType === 'folder' && config.folderPath) {
-            outputDir = config.folderPath
-          }
-          if (outputDir) {
-            const fname = config.fileName || 'invoice_export.pdf'
-            renderOutputPath = `${outputDir}/${fname}`
-          }
+        const firstFile = exportFiles[0]
+        let outputDir = ''
+        if (config.outputType === 'source' && firstFile?.path) {
+          outputDir = firstFile.path.split(/[\\/]/).slice(0, -1).join('\\')
+        } else if (config.outputType === 'folder' && config.folderPath) {
+          outputDir = config.folderPath.replace(/\//g, '\\')
+        }
+        if (outputDir) {
+          const fname = config.fileName || 'invoice_export.pdf'
+          renderOutputPath = `${outputDir}\\${fname}`
         }
 
         const res = await startRenderExport(commands, { outputPath: renderOutputPath }, handlers)
         backendTaskId = res.taskId
         close = res.close
       } else {
+        // legacy 路径：single 模式（每文件单独导出）或含不支持格式时使用
         const res = await startPdfExport(config, handlers)
         backendTaskId = res.taskId
         close = res.close
