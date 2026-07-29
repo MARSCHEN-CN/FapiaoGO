@@ -131,9 +131,9 @@ def group_pages_into_documents(pages: List[Dict]) -> List[Dict]:
 
     输入：单 sourceDocId 的 PageResult 列表。
     算法：
-        - 排序后扫描，marker 序列连续性优先
-        - 两端无 marker 时回退物理 page_num 连续（但号码冲突不合并）
-        - 每组用 MATCH/MISSING/CONFLICT 校验
+        - 排序后扫描，marker 序列连续性优先，发票号冲突则拆分
+        - 两端无 marker 时回退物理 page_num 连续（号码冲突不合并）
+        - 每组用 MATCH/MISSING 校验（CONFLICT 已在分组时拆分）
     返回：[{pages, invoiceNumber, status, warnings}]
     """
     if not pages:
@@ -154,17 +154,26 @@ def group_pages_into_documents(pages: List[Dict]) -> List[Dict]:
         last_marker = _resolve_marker(last)
         page_marker = _resolve_marker(page)
 
-        # A: 标记连续性（最高优先级）
-        seq_ok = _marker_continuous(last_marker, page_marker)
+        # A: 标记连续性（最高优先级）→ 发票号冲突则拆分
+        if _marker_continuous(last_marker, page_marker):
+            last_inv = _resolve_invoice_number(last)
+            cur_inv = _resolve_invoice_number(page)
+            if _invoice_state(last_inv, cur_inv) == 'CONFLICT':
+                # Step 1.1: 标记连续但发票号冲突 → 身份边界，不进入同 Document
+                groups.append(current)
+                current = [page]
+            else:
+                current.append(page)
+            continue
 
-        if not seq_ok:
-            # B: 两端均无标记 → 物理连续降级（号码冲突不合并）
-            if last_marker is None and page_marker is None:
-                if _physically_consecutive(last, page):
-                    last_inv = _resolve_invoice_number(last)
-                    cur_inv = _resolve_invoice_number(page)
-                    if _invoice_state(last_inv, cur_inv) != 'CONFLICT':
-                        seq_ok = True
+        # B: 两端均无标记 → 物理连续降级（号码冲突不合并）
+        seq_ok = False
+        if last_marker is None and page_marker is None:
+            if _physically_consecutive(last, page):
+                last_inv = _resolve_invoice_number(last)
+                cur_inv = _resolve_invoice_number(page)
+                if _invoice_state(last_inv, cur_inv) != 'CONFLICT':
+                    seq_ok = True
 
         if seq_ok:
             current.append(page)

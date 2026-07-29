@@ -107,9 +107,9 @@ def test_three_pages_three_invoices():
 def test_mixed_pages():
     print("[Case D] 混合（2页同票 + 1页单票）→ 2 InvoiceDocuments")
     pages = [
-        _make_page('001', 0, 2, ['A']),
-        _make_page('001', 1, 2, ['B'], 50.0),
-        _make_page('002', 0, 1, ['C'], 30.0),
+        _make_page('001', 0, 3, ['A']),       # total=3 使全部分享统一总页数
+        _make_page('001', 1, 3, ['B'], 50.0),
+        _make_page('002', 2, 3, ['C'], 30.0), # page_num 连续但不同号 → 拆分
     ]
     results = assemble(pages)
     assert len(results) == 2, f"期望 2 个发票文档，实际 {len(results)}"
