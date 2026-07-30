@@ -1,38 +1,60 @@
-import React, { useMemo } from 'react'
+import React, { useState, useEffect, useMemo, useRef } from 'react'
 import { PUBLIC_BASE } from '../config'
 
 /**
  * 导入进度弹窗
  *
  * 功能：
- * - 分阶段显示进度（拆分中 / 解析中 / 组装中）
- * - 文件计数显示（如 30/40 表示导入40个文件，解析到第30个）
+ * - 分阶段显示进度（拆分中 / 解析中 / 组装中 / 完成）
+ * - 文件计数显示（如 30/40）
  * - 进度条单调递增，避免回退误导用户
+ * - 自带淡入/淡出动画，关闭时平滑过渡避免闪烁
  *
  * Props:
  * - visible: 是否显示
  * - title: 标题
- * - onCancel: 取消回调
  * - importStage: 'idle' | 'splitting' | 'parsing' | 'building' | 'completed'
  * - importStats: { originalCount, totalFiles, currentFile, splitDone, splitTotal, parseDone, parseTotal, buildDone, buildTotal }
  * - 兼容旧API: importing, parsing, parseProgress
  */
 const ImportProgressModal = (props) => {
   const {
-    // 新 API
     visible: visibleProp,
     title = '正在导入文件',
-    onCancel,
     importStage,
     importStats,
-    // 旧 API（兼容）
     importing,
     parsing,
     parseProgress,
   } = props
 
-  // 计算 visible
-  const visible = visibleProp !== undefined ? visibleProp : Boolean(importing || parsing)
+  const shouldShow = visibleProp !== undefined ? visibleProp : Boolean(importing || parsing)
+
+  // mounted: 是否在DOM中；isClosing: 是否正在播放淡出动画
+  const [mounted, setMounted] = useState(shouldShow)
+  const [isClosing, setIsClosing] = useState(false)
+  const prevShowRef = useRef(shouldShow)
+
+  useEffect(() => {
+    if (shouldShow && !prevShowRef.current) {
+      // 从隐藏变为显示：挂载，不播放关闭动画
+      setMounted(true)
+      setIsClosing(false)
+    } else if (!shouldShow && prevShowRef.current) {
+      // 从显示变为隐藏：开始淡出动画
+      setIsClosing(true)
+    }
+    prevShowRef.current = shouldShow
+  }, [shouldShow])
+
+  // 淡出动画结束后真正卸载
+  const handleOverlayAnimEnd = (e) => {
+    // 只响应overlay的淡出动画结束，忽略子元素的动画
+    if (isClosing && e.target === e.currentTarget) {
+      setMounted(false)
+      setIsClosing(false)
+    }
+  }
 
   // 计算阶段文本和计数
   const { stageText, countText, pct } = useMemo(() => {
@@ -72,10 +94,10 @@ const ImportProgressModal = (props) => {
         pctValue = 100
       }
 
-      return { stageText: stage, countText: count, pct: Math.min(99, Math.max(0, pctValue)) }
+      const displayPct = importStage === 'completed' ? 100 : Math.min(99, Math.max(0, pctValue))
+      return { stageText: stage, countText: count, pct: displayPct }
     }
 
-    // 兼容旧 API
     if (parseProgress && parseProgress.total > 0) {
       return {
         stageText: '正在处理',
@@ -86,11 +108,14 @@ const ImportProgressModal = (props) => {
     return { stageText: '准备中', countText: '', pct: 0 }
   }, [importStage, importStats, parseProgress])
 
-  if (!visible) return null
+  if (!mounted) return null
+
+  const overlayClass = `modal-overlay ipm-overlay${isClosing ? ' ipm-closing' : ''}`
+  const panelClass = `ipm-panel${isClosing ? ' ipm-panel-closing' : ''}`
 
   return (
-    <div className="modal-overlay ipm-overlay">
-      <div className="ipm-panel">
+    <div className={overlayClass} onAnimationEnd={handleOverlayAnimEnd}>
+      <div className={panelClass}>
         {/* 顶部横幅区 */}
         <div className="ipm-banner">
           <img src={`${PUBLIC_BASE}icon/wait.svg`} alt="" className="ipm-banner-svg" />
@@ -104,7 +129,7 @@ const ImportProgressModal = (props) => {
               </span>
               <span className="ipm-title-text">
                 {title}
-                <span className="ipm-dots" />
+                {!isClosing && importStage !== 'completed' && <span className="ipm-dots" />}
               </span>
             </div>
             <span className="ipm-pct">{pct}%</span>
@@ -123,15 +148,6 @@ const ImportProgressModal = (props) => {
             {countText && <span className="ipm-count-text">{countText}</span>}
           </div>
         </div>
-
-        {/* 底部操作 */}
-        {onCancel && (
-          <div className="ipm-footer">
-            <button className="pc-btn outline ipm-cancel-btn" onClick={onCancel}>
-              取消导入
-            </button>
-          </div>
-        )}
       </div>
     </div>
   )

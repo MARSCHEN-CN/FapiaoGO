@@ -12,7 +12,7 @@ import { createPlaceholders } from '../utils/placeholderGenerator'
 import { resolveFile } from '../services/FileResolver'
 import { prepareBatchRequest } from '../services/ParseBatchClient'
 import { consumeBatchStream } from '../services/StreamConsumer'
-import { createTask, setTaskAbortController, updateTaskStatus, getTask, setTaskStream, cancelTask } from '../services/TaskRegistry'
+import { createTask, setTaskAbortController, updateTaskStatus, getTask, setTaskStream, cancelTask, getActiveTasks } from '../services/TaskRegistry'
 import { createQueues, enqueueSplit, enqueueParse, dequeueSplit, dequeueParse, getSplitQueueLength, getParseQueueLength } from '../services/TaskScheduler'
 import { createImportBatch, subscribeBatchProgress, cancelImportBatch, getBatchResults } from '../services/ImportBatchClient'
 import { runParseTask } from '../runners/parseRunner'
@@ -55,6 +55,8 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
   })
   const [importLogs, setImportLogs] = useState([])  // 最新在前，最多保留50条
   const progressMonotonicRef = useRef(0)  // 单调递增百分比，防止回退
+  const completeDismissTimerRef = useRef(null)  // 导入完成后延迟关闭弹窗的定时器
+  const currentAbortRef = useRef(null)  // 当前导入的AbortController（用于取消）
 
   // 添加导入日志
   const addImportLog = useCallback((message) => {
@@ -69,6 +71,16 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
   useEffect(() => {
     settingsRef.current = settings
   }, [settings])
+
+  // 组件卸载时清理定时器
+  useEffect(() => {
+    return () => {
+      if (completeDismissTimerRef.current) {
+        clearTimeout(completeDismissTimerRef.current)
+        completeDismissTimerRef.current = null
+      }
+    }
+  }, [])
 
   // ── Batch UI Sync ─────────────────────────────────────────
   // 批量状态更新队列，替代逐次 setFiles（Import Pipeline Contract v1.1）
@@ -307,6 +319,12 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
    */
   const processFilesForAddition = useCallback(async (files) => {
     if (files.length === 0) return
+
+    // 清除上次导入完成的延迟关闭定时器（追加导入时）
+    if (completeDismissTimerRef.current) {
+      clearTimeout(completeDismissTimerRef.current)
+      completeDismissTimerRef.current = null
+    }
 
     // ✅ 立即显示导入弹窗
     setImporting(true)
@@ -589,6 +607,7 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
       // 创建 TaskRegistry 任务（用于取消管理）
       const task = createTask(readyFiles.map((f) => f.key))
       const abortController = new AbortController()
+      currentAbortRef.current = abortController  // 保存引用用于取消
       setTaskAbortController(task.id, abortController)
       updateTaskStatus(task.id, 'running')
 
@@ -920,7 +939,8 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
       return sortedFiles
     })
 
-    // 导入完成
+    // 导入完成：先显示100%完成状态，延迟300ms再关闭弹窗
+    // 避免弹窗瞬间消失与主界面渲染同时发生导致闪烁
     addImportLog(`导入完成：成功 ${successCount} 个，失败 ${errorCount} 个`)
     setImportStage('completed')
     progressMonotonicRef.current = 100
@@ -930,9 +950,21 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
       buildDone: prev.buildTotal || successCount,
       currentFile: prev.totalFiles,
     }))
-    setParsing(false)
-    setParseProgress({ current: 0, total: 0 })
-    setImporting(false)
+
+    // 清除之前的定时器（防止多次导入时定时器叠加）
+    if (completeDismissTimerRef.current) {
+      clearTimeout(completeDismissTimerRef.current)
+    }
+    // 延迟关闭：显示100%完成状态100ms后，弹窗开始播放淡出动画。
+    // 面板先淡出(200ms)，遮罩在面板消失后再快速淡出(300ms，前70%时间遮罩保持不透明)，
+    // 同时主界面播放淡入动画(300ms)，三重保护确保无闪烁。
+    completeDismissTimerRef.current = setTimeout(() => {
+      completeDismissTimerRef.current = null
+      currentAbortRef.current = null
+      setParsing(false)
+      setParseProgress({ current: 0, total: 0 })
+      setImporting(false)
+    }, 100)
   }, [setFiles, electronAPIRef, settingsRef, queueUpdate, addImportLog])
 
   // ============================
@@ -1064,9 +1096,34 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
     await processFilesForAddition(filesToAdd)
   }, [electronAPIRef, processFilesForAddition])
 
+  // 取消导入
+  const cancelImport = useCallback(() => {
+    // 中止进行中的请求
+    if (currentAbortRef.current) {
+      currentAbortRef.current.abort()
+      currentAbortRef.current = null
+    }
+    // 清除延迟关闭定时器
+    if (completeDismissTimerRef.current) {
+      clearTimeout(completeDismissTimerRef.current)
+      completeDismissTimerRef.current = null
+    }
+    // 取消所有活跃任务（兜底）
+    try {
+      getActiveTasks().forEach((t) => cancelTask(t.id))
+    } catch (e) { /* 忽略 */ }
+    // 重置导入状态
+    setImportStage('idle')
+    setParsing(false)
+    setParseProgress({ current: 0, total: 0 })
+    setImporting(false)
+    addImportLog('导入已取消')
+  }, [addImportLog])
+
   return {
     importing,
     parseFiles, parsing, parseProgress,
+    cancelImport,
     // 增强版进度信息（分阶段 + 日志）
     importStage, importStats, importLogs,
     isNativeDragActive,
