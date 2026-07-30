@@ -162,6 +162,29 @@ export function addFilesToSession(sessionId, fileInputs) {
 }
 
 /**
+ * 从会话中移除文件（与 addFilesToSession 对称）。
+ *
+ * Import Admission Gate (IS-4.2.1) 的 existingPaths 由 session.files 派生，
+ * 因此删除文件时必须同步从 session.files 移除，否则 gate 会变成「永久黑名单」：
+ * 用户已在 UI 删除该文件、重新导入却被拦截 —— 破坏生命周期隔离（O）。
+ *
+ * @param {string} sessionId
+ * @param {Array<string>} fileKeys - 要移除的文件 key 列表
+ */
+export function removeFilesFromSession(sessionId, fileKeys) {
+  const session = sessions.get(sessionId)
+  if (!session || !fileKeys || fileKeys.length === 0) return
+  const removeSet = new Set(fileKeys)
+  const before = session.files.length
+  session.files = session.files.filter((f) => !removeSet.has(f.key))
+  session.progress.total = session.files.length
+  if (session.files.length !== before) {
+    console.log(`[IMPORT_ADMISSION] session files pruned: removed=${before - session.files.length}, remaining=${session.files.length}`)
+    notify(sessionId)
+  }
+}
+
+/**
  * 更新会话中某个文件的状态。
  * @param {string} sessionId
  * @param {string} fileKey

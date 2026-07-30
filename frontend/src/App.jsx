@@ -45,7 +45,7 @@ import { DisplayAdapter, resolveDocId } from './components/DisplayAdapter'
 import { ZoomToolbar } from './components/ZoomToolbar'
 import { useDocument } from './hooks/useDocument'
 import { removeDocument, getRegisteredDocIds } from './stores/DocumentStore'
-import { clearActiveSession } from './stores/ImportSessionStore'
+import { clearActiveSession, getActiveSessionId, removeFilesFromSession } from './stores/ImportSessionStore'
 import StatusIndicator from './components/StatusIndicator'
 import ActionBar from './components/ActionBar'
 import InvoiceDetail from './components/InvoiceDetail'
@@ -315,6 +315,9 @@ function AppContent() {
     }
 
     setFiles((prev) => prev.filter((f) => f.key !== key))
+    // O 修复：同步从 session.files 移除，使 admission gate 不再永久拦截该路径（生命周期隔离）
+    const sid = getActiveSessionId()
+    if (sid) removeFilesFromSession(sid, [key])
 
     if (nextPreviewFile) {
       // ✅ 直接在 React 18 批处理中调用 handlePreview，移除 setTimeout hack
@@ -405,6 +408,9 @@ function AppContent() {
       !fileObj.parseMethod?.includes('数据缺失') &&
       !fileObj.parseMethod?.includes('缺失')
     ))
+    // O 修复：同步从 session.files 移除被删除的失败文件
+    const failSid = getActiveSessionId()
+    if (failSid && toRemove.length > 0) removeFilesFromSession(failSid, toRemove.map((f) => f.key))
   }, [cleanupPreviewUrl])
 
   const removeDuplicateFiles = useCallback((removeSource = false) => {
@@ -443,6 +449,9 @@ function AppContent() {
       cleanupPreviewUrl()
     }
     setFiles(prev => prev.filter(fileObj => !duplicateKeys.has(fileObj.key)))
+    // O 修复：同步从 session.files 移除被删除的重复文件
+    const dupSid = getActiveSessionId()
+    if (dupSid && duplicateKeys.size > 0) removeFilesFromSession(dupSid, [...duplicateKeys])
   }, [cleanupPreviewUrl])
 
   const removePreviousYearFiles = useCallback((removeSource = false) => {
@@ -482,6 +491,9 @@ function AppContent() {
       const info = prevYearInfo.get(fileObj.key)
       return !(info && info.isPreviousYear)
     }))
+    // O 修复：同步从 session.files 移除被删除的往年文件
+    const pySid = getActiveSessionId()
+    if (pySid && prevYearKeys.size > 0) removeFilesFromSession(pySid, [...prevYearKeys])
   }, [cleanupPreviewUrl])
 
   // ============================
