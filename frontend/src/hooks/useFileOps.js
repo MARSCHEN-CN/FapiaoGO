@@ -325,6 +325,9 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
     if (!session) {
       session = createImportSession()
     }
+    // 清除上次导入残留的 batch IDs，防止 gate 早返回后 onAbort
+    // 用旧 batchId 调 cancelImportBatch 产生 404（IS-4.2.1）
+    session.childBatchIds = []
 
     // ── Step 0: Import Admission Gate (IS-4.2.1) ────
     // 在创建占位符和进入 pipeline 之前按 absolutePath 阻断重复导入。
