@@ -498,6 +498,19 @@ class ImportBatchManager:
                         job.metrics['page_num'] = str(pn) if pn is not None else ''
                         job.metrics['total_pages'] = str(tp) if tp is not None else ''
 
+                    # IS-4.2 Step2：透传文档实例身份到 job.metrics，供 _on_job_done 后续按实例
+                    # 归组（Step3 才消费）。与 source_doc_id（内容哈希）语义独立，故不嵌套在其 if 内。
+                    # 纪律：不 fallback 到 source_doc_id、不后端生成 uuid——缺失记 warning，
+                    # 不写入该 key（下游 .get('instance_id') 默认 '' 即 None 语义）。迁移期不兼容旧 identity。
+                    instance_id = fi.get('instanceId') or ''
+                    if instance_id:
+                        job.metrics['instance_id'] = instance_id
+                    else:
+                        logger.warning(
+                            "[ImportBatch] instanceId 缺失（迁移期告警，不 fallback）: "
+                            "batch=%s file=%s", batch_id, rec.filename,
+                        )
+
                     # IS-2 Commit 5：把 refId 随 job 携带，_on_job_done 释放时据其定位 temp 文件
                     job.metrics['ref_id'] = ref_id
 
@@ -638,8 +651,8 @@ class ImportBatchManager:
         # C.6: 读取分组元信息
         metrics = job_info.get('metrics', {}) or {}
         src_doc_id = metrics.get('source_doc_id', '')
-        logger.info('[PROBE] _on_job_done: src_doc_id=%r, len=%d, status=%s',
-                    src_doc_id, len(src_doc_id), status)
+        # IS-4.2 Step3：文档实例身份（Step2 已透传），用作 PageResultStore 分桶键。
+        instance_id = metrics.get('instance_id', '')
 
         # 更新聚合计数 + 缓冲结果
         should_flush = False
@@ -662,8 +675,20 @@ class ImportBatchManager:
 
             # 加入结果缓冲
             if db_record and full_result:
-                if src_doc_id:
-                    # C.6: 所有带 sourceDocId 的页面都进入 PageResultStore
+                # IS-4.2 Step3：分桶键 = 文档实例身份 instance_id（同内容 A/B 不同桶，
+                # 不再互相覆盖）。缺失时 legacy 兜底用 source_doc_id（旧任务兼容）但记 warning，
+                # 绝不静默。source_doc_id（内容哈希）降级为桶内溯源元数据，不参与分桶。
+                bucket_key = instance_id
+                if not bucket_key:
+                    if src_doc_id:
+                        logger.warning(
+                            "[ImportBatch] instance_id 缺失，legacy 兜底用 source_doc_id 分桶 "
+                            "(同内容多实例可能合并): batch=%s source=%s",
+                            batch_id, src_doc_id,
+                        )
+                        bucket_key = src_doc_id
+                if bucket_key:
+                    # C.6: 所有带分组身份的页面都进入 PageResultStore（按实例分桶）
                     # v3 原则：page_num/total_pages 是页元数据（决定合并置信度/连续性），
                     # 不应作为组装许可条件。缺失时默认当前页为独立单页。
                     should_flush = False
@@ -678,8 +703,8 @@ class ImportBatchManager:
                     if page_num > total_pages:
                         logger.warning(
                             "[IMPORT] page_num 超出 total_pages（疑似契约异常）: "
-                            "page_num=%s total_pages=%s source=%s",
-                            page_num, total_pages, src_doc_id,
+                            "page_num=%s total_pages=%s bucket=%s",
+                            page_num, total_pages, bucket_key,
                         )
                     # Step 0.6: 归一化 page_num 为 0-based 再入 Store。
                     # 拆页入口 page_index=1-based → page_num>0 时 -1 对齐；
@@ -692,14 +717,15 @@ class ImportBatchManager:
                     )
                     store = get_page_result_store()
                     completed = store.put(
-                        src_doc_id,
+                        bucket_key,
                         normalized_page_num,
                         total_pages,
                         full_result,
+                        source_doc_id=src_doc_id,  # 内容溯源（不参与分桶）
                     )
                     if completed:
                         # 所有页收齐 → 组装 → 入库缓冲
-                        pages = store.get_pages(src_doc_id)
+                        pages = store.get_pages(bucket_key)
                         if pages:
                             invoice_docs = _assemble_invoice(pages)
                             for inv_doc in invoice_docs:
@@ -714,13 +740,16 @@ class ImportBatchManager:
                                     buf.add(inv_db)
                                     should_flush = buf.should_flush()
                                 # E-2.2: 存储组装后的 InvoiceDocument 元信息
+                                # IS-4.2 Step3：三身份并存——instanceId(实例) / sourceDocId(内容) /
+                                # invoiceNumber(业务)。instanceId=bucket_key（legacy 兜底时=source_doc_id）。
                                 batch.assembled_documents.append({
+                                    'instanceId': bucket_key,
                                     'sourceDocId': src_doc_id,
                                     'invoiceNumber': inv_doc.get('invoice_number', ''),
                                     'invoiceType': inv_doc.get('invoice_type', ''),
                                     'pageCount': len(pages) if isinstance(pages, list) else 0,
                                 })
-                        store.remove(src_doc_id)
+                        store.remove(bucket_key)
                     # 未收齐 → 不写入缓冲，等全部页到达后再组装
                 else:
                     # 无分组信息 → 旧路径：直写

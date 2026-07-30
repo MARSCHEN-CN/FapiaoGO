@@ -28,7 +28,6 @@ import { createDocument, createPageMeta } from '../models/InvoiceDocument'
 import { processImportedFiles } from '../processors/invoicePostProcessor'
 import { consumeParseResult } from '../consumers/parseResultConsumer'
 import { createParseResult } from '../models/ParseResult'
-import { isMultiPageInvoiceDocument } from '../utils/multiPageInvoice'
 
 // ── 状态迁移规则 ─────────────────────────────────────────
 // 仅允许正向状态迁移，阻止回退（Import Pipeline Contract v1.2）
@@ -722,31 +721,11 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
             // 仅当 backend assembly 返回 documents 时启用；否则 session.documents 保持空，
             // buildDocumentViewModel 退化为 groupFilesByDocument（向后兼容）。
             const hasAssembledDocs = Array.isArray(documents) && documents.length > 0
-            // [PROBE-1] assembly 输入截面：documents 是否到达 + items 是否携带 invoiceNumber
-            // + chunk 文件是否携带 pageNum/totalPages
-            console.log('[ASSEMBLY_INPUT]', {
-              itemsCount: items.length,
-              itemsInvoiceNumbers: Array.from(new Set(items.map((i) => i.invoiceNumber))),
-              chunkFilesInfo: chunk.map((f) => ({
-                key: f.key,
-                pageNum: f.pageNum,
-                totalPages: f.totalPages,
-                invoiceNumber: f.invoiceNumber,
-                docId: f.docId,
-              })),
-              documentsCount: documents.length,
-              documents,
-            })
             const assembledDocIds = new Set()
 
             if (hasAssembledDocs) {
               // 闸门拒绝的页按 per-file 独立展示
               const fallbackFiles = []
-              // [ASSEMBLY-LOOP] 循环入口：确认 documents 长度、session
-              console.log('[ASSEMBLY-LOOP]', {
-                documentsLength: documents.length,
-                sessionId: session?.id,
-              })
               for (const assembled of documents) {
                 // 找到属于该组装结果的 fileObj（按 invoiceNumber 匹配）
                 const matchingItems = items.filter(i =>
@@ -758,22 +737,6 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
                 // FIX: 从 readyFiles（全局文件池）查找所有匹配文件，而非仅当前 chunk
                 // 原因：同票多页可能跨 chunk（chunkSize=100），仅查 chunk 会丢失页面
                 const matchingFiles = readyFiles.filter(f => matchingKeys.has(f.key))
-                // [PROBE-2] match 截面：items 是否按 invoiceNumber 命中 + 落到本 chunk 的 files
-                console.log('[ASSEMBLY_MATCH]', {
-                  invoiceNumber: assembled.invoiceNumber,
-                  matchingItemsCount: matchingItems.length,
-                  matchingKeys: Array.from(matchingKeys),
-                  matchingFiles: matchingFiles.map((f) => ({
-                    key: f.key,
-                    name: f.name,
-                    invoiceNumber: f.invoiceNumber,
-                    docId: f.docId,
-                    sourceDocId: f.sourceDocId,
-                    pageNum: f.pageNum,
-                    totalPages: f.totalPages,
-                  })),
-                  assembledPageCount: assembled.pageCount,
-                })
 
                 // ── 模型边界约束（冻结）──
                 // 一个 InvoiceDocument 的所有 pages 必须来自同一个 sourceDocId。
@@ -833,11 +796,8 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
                 // E-2.2: 记录 sourceDocId + 该发票的精确页面 fileKey 列表（按页码排序）
                 doc.sourceDocId = repFile.docId || assembled.sourceDocId || ''
                 doc._pageKeys = sortedFiles.map(f => f.key)
-                // [PROBE-3] addDocument 前：构造出的 InvoiceDocument 形态
-                console.log('[ASSEMBLY_ADD]', doc)
                 if (session?.id) {
                   addDocument(session.id, doc)
-                  // [PROBE-STATE] assembly 路径 addDocument 落地形态
                   console.log('[ADD DOCUMENT][assembly]', {
                     id: doc?.id || doc?.docId,
                     pages: doc?.pages?.length,
@@ -901,7 +861,6 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
                     // 为单页文档设置 _pageKeys（强身份匹配）
                     if (!doc._pageKeys) doc._pageKeys = [fileObj.key]
                     addDocument(session.id, doc)
-                    // [PROBE-STATE] fallback 路径 addDocument 落地形态（方向 A：确认是否被后续 chunk 触发灌入逐页文档）
                     console.log('[ADD DOCUMENT][fallback]', {
                       id: doc?.id || doc?.docId,
                       pages: doc?.pages?.length,
