@@ -1728,6 +1728,9 @@ def import_batch_create():
             'clientKey': client_keys[i] if i < len(client_keys) else '',
             # [Identity Bridge] 透传父 PDF 物理身份，使 assembly 能归并同票多页
             'sourceDocId': meta.get('sourceDocId') or '',
+            # IS-4.2 Step2：文档实例身份（前端 producer 生成），transport-only 只接收。
+            # 不 fallback 到 sourceDocId、不后端生成——缺失即空串，scheduler 记 warning。
+            'instanceId': meta.get('instanceId') or '',
             'pageNum': meta.get('pageNum'),
             'totalPages': meta.get('totalPages'),
         })

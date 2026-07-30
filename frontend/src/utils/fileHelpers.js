@@ -14,7 +14,13 @@ export function generateFileKey(name) {
 }
 
 // 构建文件对象
-export function buildFileObj(file, name, path, previewImage = null, docId = null, pageNum = null, contentHash = null) {
+// instanceId（IS-4.2 Phase 2 Step 1，producer-only）：文档实例身份。
+//   - 单文件（图片/OFD/单页 PDF）：默认取 key（导入实例唯一）。
+//   - 多页 PDF：由 processPdfFile 传入拆分时生成的共享 UUID，使同一次导入的
+//     所有拆分页归属同一业务文档实例。
+//   与 key（页面/UI 实例身份）、docId（内容哈希 = Render Identity）三者分离：
+//   同内容 A/B 导入 → docId 相同、instanceId 不同 → 不再被误并为一个 Document。
+export function buildFileObj(file, name, path, previewImage = null, docId = null, pageNum = null, contentHash = null, instanceId = null) {
   const key = generateFileKey(name)
   // Stage 4.1.3：注入统一身份出口（Identity Contract v1.1）。
   // 纯透传 docId/contentHash/pageNum；哈希计算权属 backend registry，前端不计算。
@@ -36,6 +42,9 @@ export function buildFileObj(file, name, path, previewImage = null, docId = null
     previewImage: previewImage ? `data:image/jpeg;base64,${previewImage}` : null,
     printPath: path,
     docId: docId || null,
+    // IS-4.2：文档实例身份。单文件默认 = key；多页 PDF 由 processPdfFile 传入共享 UUID。
+    // Step 1 仅生产、暂不消费；消费端迁移（DocumentStore/addDocument/PRS）在后续步骤接入。
+    instanceId: instanceId || key,
     // 多页 PDF 拆页后，每个分页项携带其在原文档中的真实页码。
     // 预览 URL 必须用它而非硬编码 1，否则所有分页都显示第 1 页（串线）。
     pageNum: pageNum || null,
@@ -83,6 +92,11 @@ export async function processPdfFile(file, getPathFn) {
         return { toAdd, toParse, isMultiPage: false }
       }
 
+      // IS-4.2：本次导入的共享文档实例身份。多页 PDF 的所有拆分页共享同一 instanceId，
+      // 使后端 assembly / 前端 DocumentStore 按实例（而非内容哈希）归组——
+      // 同内容 A.pdf/B.pdf 得到不同 instanceId，不再被误并为一个 Document。
+      const instanceId = crypto.randomUUID()
+
       for (let i = 0; i < totalPages; i += PDF_PAGES_BATCH_SIZE) {
         const batch = pages.slice(i, i + PDF_PAGES_BATCH_SIZE)
         console.log(`[App] 处理 PDF 批次: ${i + 1}-${Math.min(i + batch.length, totalPages)} / ${totalPages}`)
@@ -97,7 +111,7 @@ export async function processPdfFile(file, getPathFn) {
           const pageName = file.name.replace('.pdf', `_p${page.page_index}.pdf`)
           const pageFile = new File([blob], pageName, { type: 'application/pdf' })
 
-          const fileObj = buildFileObj(pageFile, pageName, getPathFn(file), null, data.doc_id, page.page_index)
+          const fileObj = buildFileObj(pageFile, pageName, getPathFn(file), null, data.doc_id, page.page_index, null, instanceId)
           // [Identity Bridge] 透传父 PDF 物理身份，供批量导入路径携带 source_doc_id，
           // 使后端 assembly 能将同票多页归入同一 doc（修复同票多页被拆成独立发票）。
           if (data.doc_id) {

@@ -130,6 +130,9 @@ export async function runChunkedImport({ sessionId, taskId, files, chunkSize, au
         clientKey: fileObj.key,
         // [Identity Bridge] 与 files 一一对应，经 ImportBatchClient 透传为 pageMetas
         sourceDocId: fileObj.sourceDocId || fileObj.docId || '',
+        // IS-4.2 Step2：文档实例身份透传（producer 见 fileHelpers.buildFileObj）。
+        // 与 sourceDocId（内容哈希）语义独立：同内容 A/B → sourceDocId 同、instanceId 异。
+        instanceId: fileObj.instanceId || '',
         pageNum: fileObj.pageNum ?? null,
         totalPages: fileObj.totalPages ?? null,
       }))

@@ -59,7 +59,7 @@ export async function createImportBatch(files, options = {}) {
 
   const formData = new FormData()
   const pageMetas = []
-  for (const { file, name, clientKey, sourceDocId, pageNum, totalPages } of files) {
+  for (const { file, name, clientKey, sourceDocId, instanceId, pageNum, totalPages } of files) {
     // 使用原始文件名，后端通过 filename 识别
     formData.append('files', file, name)
     // 护栏A：clientKey 可选，后端按索引与 files 对齐
@@ -67,6 +67,8 @@ export async function createImportBatch(files, options = {}) {
     // [Identity Bridge] 与 files 同序，后端按索引对齐，避免并行数组错位
     pageMetas.push({
       sourceDocId: sourceDocId || '',
+      // IS-4.2 Step2：文档实例身份（与 sourceDocId 内容哈希语义独立），后端按索引接收
+      instanceId: instanceId || '',
       pageNum: pageNum ?? null,
       totalPages: totalPages ?? null,
     })

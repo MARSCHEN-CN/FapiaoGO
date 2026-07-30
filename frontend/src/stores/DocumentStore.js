@@ -25,6 +25,26 @@ import { createDocument, createPageMeta } from '../models/InvoiceDocument.js'
 const documents = new Map()
 
 /**
+ * 统一文档身份出口（IS-4.2 Step 4.1）。
+ *
+ * 返回 DocumentStore 的存储键 = instanceId || docId || id。
+ *   - instanceId：文档实例身份（前端 producer 生成、后端 assembly 透传）。同内容
+ *     A/B 导入得到不同 instanceId → 落入不同键，不再互相覆盖。
+ *   - docId：内容哈希（Render Identity）。无 instanceId 的旧数据回退到此，行为不变。
+ *
+ * 接受 doc 对象（注册/更新）或字符串（查找/移除），保证写入与读取用同一身份解析，
+ * 避免「写 instanceId 键、读 docId 键」的错位。调用方应一致使用本函数。
+ *
+ * @param {Object|string|null|undefined} docOrId
+ * @returns {string|null} 存储键，无法解析时返回 null
+ */
+export function resolveDocumentIdentity(docOrId) {
+  if (!docOrId) return null
+  if (typeof docOrId === 'string') return docOrId || null
+  return docOrId.instanceId || docOrId.docId || docOrId.id || null
+}
+
+/**
  * ─── 响应式订阅（供 useSyncExternalStore 使用） ───
  *
  * DocumentStore 是模块级 Map，本身不触发 React 重渲染。
@@ -63,25 +83,32 @@ export function flushDocumentNotifications() {
 /**
  * 注册或更新一个 InvoiceDocument。
  *
+ * 存储键由 resolveDocumentIdentity 解析（instanceId 优先，回退 docId）。
+ *
  * @param {import('../models/InvoiceDocument').InvoiceDocument} doc
  * @returns {import('../models/InvoiceDocument').InvoiceDocument}
  */
 export function registerDocument(doc) {
-  if (!doc || !doc.docId) return doc
-  documents.set(doc.docId, doc)
+  const key = resolveDocumentIdentity(doc)
+  if (!key) return doc
+  documents.set(key, doc)
   notify()
   return doc
 }
 
 /**
- * 通过 docId 获取 InvoiceDocument。
+ * 通过文档身份获取 InvoiceDocument。
  *
- * @param {string} docId
+ * 查找键经 resolveDocumentIdentity 解析：传字符串时原样使用（向后兼容旧 docId 查找），
+ * 传 doc 对象时取 instanceId || docId。
+ *
+ * @param {string|Object} docId - 文档身份（instanceId / docId 字符串，或 doc 对象）
  * @returns {import('../models/InvoiceDocument').InvoiceDocument|null}
  */
 export function getDocument(docId) {
-  if (!docId) return null
-  return documents.get(docId) || null
+  const key = resolveDocumentIdentity(docId)
+  if (!key) return null
+  return documents.get(key) || null
 }
 
 /**
@@ -101,13 +128,17 @@ export function getDocument(docId) {
  * @param {{silent?: boolean}} [options] - silent=true 时注册后不立即 notify，
  *   由调用方在循环结束后调用 flushDocumentNotifications() 统一通知。
  *   用于 hydration 等大批量路径，避免每文件一次通知。
+ * @param {string} [instanceId=''] - IS-4.2：文档实例身份。提供时存储键优先用它
+ *   （instanceId || docId），使同内容 A/B 落入不同键；缺省回退 docId，行为不变。
  * @returns {import('../models/InvoiceDocument').InvoiceDocument|null}
  */
-export function ensureDocumentFromFileObj(fileObj, siblings = null, options = {}) {
+export function ensureDocumentFromFileObj(fileObj, siblings = null, options = {}, instanceId = '') {
   const { silent = false } = options
   if (!fileObj?.docId) return null
 
   const docId = fileObj.docId
+  // IS-4.2 Step 4.1：存储键 = instanceId || docId（无 instanceId 回退 docId，行为不变）
+  const storeKey = resolveDocumentIdentity({ instanceId, docId })
   const pool = Array.isArray(siblings) && siblings.length > 0 ? siblings : [fileObj]
 
   // 过滤同 docId 的分页，提取 pageNum（去重 + 升序）
@@ -123,7 +154,7 @@ export function ensureDocumentFromFileObj(fileObj, siblings = null, options = {}
   }
   pageNums.sort((a, b) => a - b)
 
-  const existing = documents.get(docId)
+  const existing = documents.get(storeKey)
 
   // 保留已回填的页面尺寸（按 index 对应）
   const prevByIndex = new Map()
@@ -175,7 +206,8 @@ export function ensureDocumentFromFileObj(fileObj, siblings = null, options = {}
     sourceHash: fileObj.identity?.sourceHash || '',
     pages,
   })
-  documents.set(docId, doc)
+  if (instanceId) doc.instanceId = instanceId
+  documents.set(storeKey, doc)
   if (!silent) notify()
   return doc
 }
@@ -199,14 +231,18 @@ export function ensureDocumentFromFileObj(fileObj, siblings = null, options = {}
  *
  * @param {Object} meta - { docId, pages: [{index, width, height, rotation}], filename? }
  * @param {{silent?: boolean}} [options] - silent=true 时注册后不立即 notify（批处理统一 flush）
+ * @param {string} [instanceId=''] - IS-4.2：文档实例身份。提供时存储键优先用它
+ *   （instanceId || docId），使同内容 A/B 落入不同键；缺省回退 docId，行为不变。
  * @returns {import('../models/InvoiceDocument').InvoiceDocument|null}
  */
-export function ensureDocumentFromMetadata(meta, options = {}) {
+export function ensureDocumentFromMetadata(meta, options = {}, instanceId = '') {
   const { silent = false } = options
   if (!meta || !meta.docId) return null
   const { docId, pages: rawPages = [], filename } = meta
 
-  const existing = documents.get(docId)
+  // IS-4.2 Step 4.1：存储键 = instanceId || docId（无 instanceId 回退 docId，行为不变）
+  const storeKey = resolveDocumentIdentity({ instanceId, docId })
+  const existing = documents.get(storeKey)
   const prevByIndex = new Map()
   if (existing) {
     for (const p of existing.pages) {
@@ -251,7 +287,8 @@ export function ensureDocumentFromMetadata(meta, options = {}) {
     sourceHash: existing?.sourceHash || '',
     pages,
   })
-  documents.set(docId, doc)
+  if (instanceId) doc.instanceId = instanceId
+  documents.set(storeKey, doc)
   if (!silent) notify()
   return doc
 }
@@ -263,7 +300,8 @@ export function ensureDocumentFromMetadata(meta, options = {}) {
  * @param {Array<{index: number, width?: number, height?: number, sourceRotation?: number}>} pages
  */
 export function updatePageMeta(docId, pages) {
-  const doc = documents.get(docId)
+  const key = resolveDocumentIdentity(docId)
+  const doc = key ? documents.get(key) : null
   if (!doc) return
 
   // metadata 回填只更新 width/height/sourceRotation，必须保留 renderDocId/renderPage 等渲染身份字段
@@ -280,7 +318,7 @@ export function updatePageMeta(docId, pages) {
       renderPage: old?.renderPage,
     })
   })
-  documents.set(docId, { ...doc, pages: updatedPages, pageCount: updatedPages.length })
+  documents.set(key, { ...doc, pages: updatedPages, pageCount: updatedPages.length })
   notify()
 }
 
@@ -296,7 +334,8 @@ export function updatePageMeta(docId, pages) {
  * @param {{width?: number, height?: number, sourceRotation?: number}} patch - 要合并的字段
  */
 export function patchPageMeta(docId, pageIndex, patch) {
-  const doc = documents.get(docId)
+  const key = resolveDocumentIdentity(docId)
+  const doc = key ? documents.get(key) : null
   if (!doc) return
 
   const pages = doc.pages.map((p) =>
@@ -312,18 +351,19 @@ export function patchPageMeta(docId, pageIndex, patch) {
         })
       : p
   )
-  documents.set(docId, { ...doc, pages })
+  documents.set(key, { ...doc, pages })
   notify()
 }
 
 /**
  * 移除一个 Document（文件删除时）。
  *
- * @param {string} docId
+ * @param {string} docId - 文档身份（instanceId 或 docId 字符串，经 resolveDocumentIdentity 解析）
  */
 export function removeDocument(docId) {
-  if (docId) {
-    documents.delete(docId)
+  const key = resolveDocumentIdentity(docId)
+  if (key) {
+    documents.delete(key)
     notify()
   }
 }
