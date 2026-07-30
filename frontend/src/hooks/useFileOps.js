@@ -841,7 +841,7 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
             if (!hasAssembledDocs) {
               for (const fileObj of chunk) {
                 const item = resultMap.get(fileObj.key)
-                const effectiveDocId = (item && item.docId) || fileObj.docId
+                const effectiveDocId = fileObj.key // Step E1.1: fallback 路径也使用文件实例键避免同内容 dedup
                 if (effectiveDocId) {
                   const docFileObj = effectiveDocId !== fileObj.docId
                     ? { ...fileObj, docId: effectiveDocId }
