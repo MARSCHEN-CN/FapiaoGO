@@ -337,7 +337,16 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
       return p.trim().toLowerCase().replace(/\\/g, '/').replace(/\/+$/, '')
     }
     const existingPaths = new Set(
-      (session.files || []).map((f) => normalizeImportPath(f.path)).filter(Boolean)
+      (session.files || []).flatMap((f) => {
+        // session.files 中的 path 可能在解析替换后变 null，
+        // printPath 始终保留原始路径（buildFileObj 存储规范）
+        const p = normalizeImportPath(f.path)
+        const pp = normalizeImportPath(f.printPath)
+        const results = []
+        if (p) results.push(p)
+        if (pp && pp !== p) results.push(pp)
+        return results
+      })
     )
     const seenInBatch = new Set()
     const acceptedFiles = files.filter((f) => {
