@@ -309,29 +309,14 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
   const processFilesForAddition = useCallback(async (files) => {
     if (files.length === 0) return
 
-    // ✅ 立即显示导入弹窗 + 初始化进度状态
+    // ✅ 立即显示导入弹窗
     setImporting(true)
     progressMonotonicRef.current = 0
     setImportStage('splitting')
-    setImportStats({
-      originalCount: files.length,
-      totalFiles: files.length,
-      currentFile: 0,
-      splitDone: 0,
-      splitTotal: files.length,
-      parseDone: 0,
-      parseTotal: 0,
-      buildDone: 0,
-      buildTotal: 0,
-    })
     setImportLogs([])
-    addImportLog(`开始导入 ${files.length} 个文件...`)
 
     const ipc = electronAPIRef.current?.ipcRenderer
     const autoOrient = settingsRef.current.autoOrient ?? false
-
-    // ── Step 1: 为每个文件生成占位项，立即显示 ──────────────
-    const placeholders = createPlaceholders(files)
 
     // 复用活跃会话（追加导入），无活跃会话时创建新会话
     // 避免每次文件拖入都 createImportSession → activeSessionId 切换
@@ -340,6 +325,53 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
     if (!session) {
       session = createImportSession()
     }
+
+    // ── Step 0: Import Admission Gate (IS-4.2.1) ────
+    // 在创建占位符和进入 pipeline 之前按 absolutePath 阻断重复导入。
+    // 不走 contentHash（用作 N 重复检测）或 fileName （不同路径同文件名应允许）。
+    const normalizeImportPath = (p) => {
+      if (!p) return ''
+      return p.trim().toLowerCase().replace(/\\/g, '/').replace(/\/+$/, '')
+    }
+    const existingPaths = new Set(
+      (session.files || []).map((f) => normalizeImportPath(f.path)).filter(Boolean)
+    )
+    const seenInBatch = new Set()
+    const acceptedFiles = files.filter((f) => {
+      const np = normalizeImportPath(f.path)
+      if (!np) return true // 浏览器 drag/drop 无 path → 不过滤
+      if (existingPaths.has(np) || seenInBatch.has(np)) {
+        addImportLog(`[IMPORT_ADMISSION] skip duplicate path: ${np}`)
+        return false
+      }
+      seenInBatch.add(np)
+      return true
+    })
+    if (acceptedFiles.length === 0) {
+      setImporting(false)
+      addImportLog('[IMPORT_ADMISSION] 所有文件均为重复，导入已跳过')
+      return
+    }
+    if (acceptedFiles.length < files.length) {
+      addImportLog(`[IMPORT_ADMISSION] 跳过 ${files.length - acceptedFiles.length} 个重复文件（路径）`)
+    }
+
+    // ── 初始化导入进度（基于 gate 过滤后的数量） ──
+    setImportStats({
+      originalCount: acceptedFiles.length,
+      totalFiles: acceptedFiles.length,
+      currentFile: 0,
+      splitDone: 0,
+      splitTotal: acceptedFiles.length,
+      parseDone: 0,
+      parseTotal: 0,
+      buildDone: 0,
+      buildTotal: 0,
+    })
+    addImportLog(`开始导入 ${acceptedFiles.length} 个文件...`)
+
+    // ── Step 1: 为每个文件生成占位项，立即显示 ──────────────
+    const placeholders = createPlaceholders(acceptedFiles)
     addFilesToSession(session.id, placeholders)
 
     // 所有占位一步添加到列表（从 Session 同步到 React state）
@@ -373,7 +405,7 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
 
     // 队列所有权已迁移至 TaskScheduler（Phase 1b-3-2/3）
     createQueues()
-    const splitJobs = placeholders.map((p, i) => ({ p, file: files[i] }))
+    const splitJobs = placeholders.map((p, i) => ({ p, file: acceptedFiles[i] }))
     enqueueSplit(splitJobs)
     let parsePipelineDone = false
 
@@ -455,7 +487,7 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
         const fileIdx = placeholders.findIndex((ph) => ph.key === p.key)
         const displayIdx = fileIdx >= 0 ? fileIdx + 1 : splitDone + 1
         setImportStats((prev) => ({ ...prev, currentFile: displayIdx }))
-        addImportLog(`正在拆分 ${displayIdx}/${files.length}: ${f.name}`)
+        addImportLog(`正在拆分 ${displayIdx}/${acceptedFiles.length}: ${f.name}`)
 
         try {
           const result = await runSplitTask(job)
