@@ -388,6 +388,28 @@ class ImportBatchManager:
             if not result:
                 continue
             
+            # 从 extra_fields 构建 invoiceFields（与 response_builder.py 保持一致）
+            extra_fields = result.get('extra_fields') or {}
+            invoice_fields = {
+                "type": extra_fields.get("type", result.get('invoice_type', '')),
+                "fphm": extra_fields.get("fphm", "") or (result.get('invoice_number', '') or ''),
+                "kprq": extra_fields.get("kprq", "") or (result.get('invoice_date', '') or ''),
+                "gmfmc": extra_fields.get("gmfmc", ""),
+                "gmfsh": extra_fields.get("gmfsh", ""),
+                "xsfmc": extra_fields.get("xsfmc", ""),
+                "xsfsh": extra_fields.get("xsfsh", ""),
+                "amountJe": extra_fields.get("amountJe", ""),
+                "amountSe": extra_fields.get("amountSe", ""),
+                "amountHj": extra_fields.get("amountHj", "") or (result.get('amount') or ''),
+                "amountHjDx": extra_fields.get("amountHjDx", ""),
+                "note": extra_fields.get("note", ""),
+                "skr": extra_fields.get("skr", ""),
+                "fhr": extra_fields.get("fhr", ""),
+                "kpr": extra_fields.get("kpr", ""),
+                "xmmc": extra_fields.get("xmmc", ""),
+                "line_items": extra_fields.get("line_items", []),
+            }
+            
             items.append({
                 'clientKey': job_info.get('metrics', {}).get('client_key', ''),
                 'jobId': job_id,
@@ -398,7 +420,7 @@ class ImportBatchManager:
                 'invoiceNumber': result.get('invoice_number', ''),
                 'amount': result.get('amount'),
                 'invoiceDate': result.get('invoice_date', ''),
-                'invoiceFields': result.get('invoice_fields', {}),
+                'invoiceFields': invoice_fields,
                 'parseMethod': result.get('parse_method', ''),
                 'failedFields': result.get('failed_fields', []),
                 'newName': result.get('new_name', ''),

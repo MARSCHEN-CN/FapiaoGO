@@ -25,6 +25,7 @@ import { updateDocumentIdentity } from '../utils/identity'
 export function mapParseResultToFileUpdate(result, fileObj) {
   const { fields, raw } = result
 
+  const invFields = fields.invoiceFields || {}
   const fileUpdate = {
     status: result.status,
     invoiceType: fields.invoiceType || raw.invoice_type || '',
@@ -37,10 +38,15 @@ export function mapParseResultToFileUpdate(result, fileObj) {
     previewImage: fields.previewImage || null,
     failedFields: fields.failedFields || [],
     invoiceFields: fields.invoiceFields || null,
-    issuer: fields.issuer || fields.invoiceFields?.kpr || '',
-    amountWithoutTax: fields.amountWithoutTax || '',
-    taxAmount: fields.taxAmount || '',
-    lineItems: fields.lineItems || [],
+    issuer: fields.issuer || invFields.kpr || '',
+    buyerName: fields.buyerName || invFields.gmfmc || '',
+    buyerTaxNo: fields.buyerTaxNo || invFields.gmfsh || '',
+    sellerName: fields.sellerName || invFields.xsfmc || '',
+    sellerTaxNo: fields.sellerTaxNo || invFields.xsfsh || '',
+    amountWithoutTax: fields.amountWithoutTax || invFields.amountJe || '',
+    taxAmount: fields.taxAmount || invFields.amountSe || '',
+    totalAmount: fields.totalAmount || invFields.amountHj || fields.amount || '',
+    lineItems: fields.lineItems || invFields.line_items || [],
     rawText: fields.rawText || '',
     searchText: buildSearchText({
       name: fileObj.name,

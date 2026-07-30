@@ -70,12 +70,18 @@ export function createParseResult(data, name) {
       failedFields: data.failed_fields || data.failedFields || [],
       invoiceFields: fields,
       issuer: fields?.kpr || '',
+      buyerName: fields?.gmfmc || '',
+      buyerTaxNo: fields?.gmfsh || '',
+      sellerName: fields?.xsfmc || '',
+      sellerTaxNo: fields?.xsfsh || '',
       amountWithoutTax: fields?.amountJe != null ? String(fields.amountJe) : '',
       taxAmount: fields?.amountSe != null ? String(fields.amountSe) : '',
+      totalAmount: fields?.amountHj != null ? String(fields.amountHj) : (data.amount != null ? String(data.amount) : ''),
       lineItems: fields?.line_items || [],
       rawText: data.raw_text || '',
       searchText: '',
     },
+    doc_id: data.doc_id || data.docId || '',
     raw: data,
   }
 }

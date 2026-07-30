@@ -95,6 +95,9 @@ const RenamePreviewModal = ({
   const rsStateRef = useRef({ fields: rsFields, separator: rsSeparator, targetFolder: rsTargetFolder, showIndex: rsShowIndex, showPrefix: rsShowPrefix, keepOriginal: rsKeepOriginal })
   rsStateRef.current = { fields: rsFields, separator: rsSeparator, targetFolder: rsTargetFolder, showIndex: rsShowIndex, showPrefix: rsShowPrefix, keepOriginal: rsKeepOriginal }
 
+  // 标记：是否为从props初始化阶段，避免初始化时触发多余保存
+  const isInitialSyncRef = useRef(true)
+
   const doSaveRs = useCallback((updates = {}) => {
     if (!onSaveRenameSettings) return
     const merged = { ...rsStateRef.current, ...updates }
@@ -108,7 +111,18 @@ const RenamePreviewModal = ({
     })
   }, [onSaveRenameSettings])
 
+  // 使用useEffect监听设置变化，自动保存（避免在渲染期/setState updater中调用父组件setState）
   useEffect(() => {
+    // 跳过初始化同步（props -> local state），只在用户操作后保存
+    if (isInitialSyncRef.current) {
+      isInitialSyncRef.current = false
+      return
+    }
+    doSaveRs()
+  }, [rsFields, rsSeparator, rsTargetFolder, rsShowIndex, rsShowPrefix, rsKeepOriginal, doSaveRs])
+
+  useEffect(() => {
+    isInitialSyncRef.current = true
     setRsFields(normalizeFields(renameSettings?.fields || []))
     setRsSeparator(renameSettings?.separator || '_')
     setRsTargetFolder(renameSettings?.targetFolder || '')
@@ -184,68 +198,54 @@ const RenamePreviewModal = ({
         if (key === 'cus') newField.customText = ''
         next = [...prev, newField]
       }
-      doSaveRs({ fields: next })
       return next
     })
-  }, [doSaveRs])
+  }, [])
 
   const handleDateFmtChange = useCallback((fmt) => {
-    setRsFields((prev) => {
-      const next = prev.map(f => f.key === 'kprq' ? { ...f, dateFormat: fmt } : f)
-      doSaveRs({ fields: next })
-      return next
-    })
-  }, [doSaveRs])
+    setRsFields((prev) => prev.map(f => f.key === 'kprq' ? { ...f, dateFormat: fmt } : f))
+  }, [])
 
   const handleCustomInput = useCallback((text) => {
-    setRsFields((prev) => {
-      const next = prev.map(f => f.key === 'cus' ? { ...f, customText: text } : f)
-      doSaveRs({ fields: next })
-      return next
-    })
-  }, [doSaveRs])
+    setRsFields((prev) => prev.map(f => f.key === 'cus' ? { ...f, customText: text } : f))
+  }, [])
 
   const handleSeparatorChange = useCallback((value) => {
     setRsSeparator(value)
-    doSaveRs({ separator: value })
-  }, [doSaveRs])
+  }, [])
 
   const handleShowIndexChange = useCallback((checked) => {
     setRsShowIndex(checked)
-    doSaveRs({ showIndex: checked })
-  }, [doSaveRs])
+  }, [])
 
   const handleShowPrefixChange = useCallback((checked) => {
     setRsShowPrefix(checked)
-    doSaveRs({ showPrefix: checked })
-  }, [doSaveRs])
+  }, [])
 
   const handleKeepOriginalChange = useCallback((checked) => {
     setRsKeepOriginal(checked)
-    doSaveRs({ keepOriginal: checked })
-  }, [doSaveRs])
+  }, [])
 
   const handleDragStartItem = useCallback((e, idx) => {
     setDragIndex(idx)
     e.dataTransfer.effectAllowed = 'move'
     e.dataTransfer.setData('text/plain', '')
-    if (e.currentTarget) {
-      requestAnimationFrame(() => { e.currentTarget.style.opacity = '0.4' })
+    // 保存元素引用，避免requestAnimationFrame中e.currentTarget已为null
+    const el = e.currentTarget
+    if (el) {
+      requestAnimationFrame(() => { el.style.opacity = '0.4' })
     }
   }, [])
 
   const handleDragEndItem = useCallback((e) => {
-    if (e.currentTarget) e.currentTarget.style.opacity = '1'
+    const el = e.currentTarget
+    if (el) el.style.opacity = '1'
     if (dragIndex !== null && dropIndex !== null && dragIndex !== dropIndex) {
-      setRsFields((prev) => {
-        const next = arrayMove(prev, dragIndex, dropIndex)
-        doSaveRs({ fields: next })
-        return next
-      })
+      setRsFields((prev) => arrayMove(prev, dragIndex, dropIndex))
     }
     setDragIndex(null)
     setDropIndex(null)
-  }, [dragIndex, dropIndex, doSaveRs])
+  }, [dragIndex, dropIndex])
 
   const handleDragOverItem = useCallback((e, idx) => {
     e.preventDefault()
@@ -263,7 +263,6 @@ const RenamePreviewModal = ({
         const result = await ipcRenderer.invoke('select-folder')
         if (result?.success && result.folder) {
           setRsTargetFolder(result.folder)
-          doSaveRs({ targetFolder: result.folder })
         }
       } catch (e) {
         console.error('无法调用文件夹选择:', e)
@@ -273,14 +272,12 @@ const RenamePreviewModal = ({
     const result = await ipc.invoke('select-folder')
     if (result?.success && result.folder) {
       setRsTargetFolder(result.folder)
-      doSaveRs({ targetFolder: result.folder })
     }
-  }, [electronAPI, doSaveRs])
+  }, [electronAPI])
 
   const clearFolder = useCallback(() => {
     setRsTargetFolder('')
-    doSaveRs({ targetFolder: '' })
-  }, [doSaveRs])
+  }, [])
 
   const previewFileName = useMemo(() => {
     if (rsFields.length === 0) return '请勾选左侧项目'
@@ -319,15 +316,7 @@ const RenamePreviewModal = ({
     setRsShowIndex(false)
     setRsShowPrefix(false)
     setRsKeepOriginal(false)
-    doSaveRs({
-      fields: defaultFields,
-      separator: '_',
-      targetFolder: '',
-      showIndex: false,
-      showPrefix: false,
-      keepOriginal: false,
-    })
-  }, [doSaveRs])
+  }, [])
 
   const handleSaveAndBack = useCallback(() => {
     setShowRules(false)
