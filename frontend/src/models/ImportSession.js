@@ -115,6 +115,7 @@ export function createSessionFile(input) {
     name: input.name,
     size: input.size != null ? input.size : null,
     path: input.path || null,
+    printPath: input.printPath || input.path || null, // IS-4.2.1: 保留原始路径供 admission gate 查重
     format: input.format,
     status: 'uploading',
     batchId: null,

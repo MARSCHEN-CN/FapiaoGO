@@ -1076,7 +1076,6 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
         return { file: fileObj, name: file.name, path: file.path }
       })
     )
-
     await processFilesForAddition(filesToAdd)
   }, [electronAPIRef, processFilesForAddition])
 
