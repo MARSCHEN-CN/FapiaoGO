@@ -353,7 +353,6 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
       const np = normalizeImportPath(f.path)
       if (!np) return true // 浏览器 drag/drop 无 path → 不过滤
       if (existingPaths.has(np) || seenInBatch.has(np)) {
-        addImportLog(`[IMPORT_ADMISSION] skip duplicate path: ${np}`)
         console.log(`[IMPORT_ADMISSION] skip duplicate path: ${np}`)
         return false
       }
@@ -362,12 +361,10 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
     })
     if (acceptedFiles.length === 0) {
       setImporting(false)
-      addImportLog('[IMPORT_ADMISSION] 所有文件均为重复，导入已跳过')
       console.log('[IMPORT_ADMISSION] 所有文件均为重复，导入已跳过')
       return
     }
     if (acceptedFiles.length < files.length) {
-      addImportLog(`[IMPORT_ADMISSION] 跳过 ${files.length - acceptedFiles.length} 个重复文件（路径）`)
       console.log(`[IMPORT_ADMISSION] 跳过 ${files.length - acceptedFiles.length} 个重复文件（路径）`)
     }
 
