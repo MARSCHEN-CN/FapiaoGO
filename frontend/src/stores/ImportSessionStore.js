@@ -202,23 +202,46 @@ export function updateFileStatus(sessionId, fileKey, updates) {
 }
 
 /**
+ * 文档实例去重键（IS-4.2 Step 4.2）。
+ *
+ * 规则：instanceId || id || docId。
+ *   - instanceId：文档实例身份。同内容 A/B（同 docId）实例身份不同 → 各自保留，
+ *     不再被误判为重复而丢弃。
+ *   - id || docId：无 instanceId 的旧数据回退口径，与 addDocument 旧去重基准
+ *     （`d.id || d.docId`）完全一致，行为不变。
+ *
+ * 注意：与 DocumentStore.resolveDocumentIdentity（instanceId || docId || id）回退顺序
+ * 不同——本 store 的历史口径是 id 优先于 docId，此处沿用，避免引入回归。
+ *
+ * @param {Object|null|undefined} doc
+ * @returns {string|null} 去重键，无法解析时返回 null
+ */
+export function resolveDocumentInstanceKey(doc) {
+  if (!doc) return null
+  return doc.instanceId || doc.id || doc.docId || null
+}
+
+/**
  * 向会话中添加一个 InvoiceDocument（双写模式，E-1）。
- * 通过 docId 去重：同 docId 的文档不会被重复添加。
+ * 通过实例身份去重（IS-4.2 Step 4.2）：去重键 = instanceId || id || docId。
+ * 同 instanceId 的文档不会被重复添加；同内容 A/B（不同 instanceId）各自保留。
  * @param {string} sessionId
  * @param {Object} doc - InvoiceDocument（来自 DocumentStore）
  */
 export function addDocument(sessionId, doc) {
   const session = sessions.get(sessionId)
   if (!session) return
-  const docId = doc?.id || doc?.docId
-  if (!docId) return
+  // IS-4.2 Step 4.2：去重键 = instanceId || id || docId（无 instanceId 回退 id||docId，行为不变）
+  const instanceKey = resolveDocumentInstanceKey(doc)
+  if (!instanceKey) return
   session.documents = session.documents || []
+  const docId = doc?.id || doc?.docId // E1 探针：仅用于 _inv_ 只读解析与日志，不参与去重
   const pages = doc?.pages?.length ?? '?'
   // [E1] 验证探针增强：InvoiceDocument 不持有 sourceDocId/invoiceNumber 字段，
   // 二者编码在 docId 中（格式 `${sourceDocId}_inv_${invoiceNumber}`，sourceDocId 为 hex 哈希不含 '_inv_'）。
   // 仅做只读解析，不调 store getter、不引入新 import（符合探针纪律）。
   const [e1SourceDocId, e1InvoiceNo] = (docId || '').split('_inv_')
-  if (!session.documents.some(d => (d.id || d.docId) === docId)) {
+  if (!session.documents.some(d => resolveDocumentInstanceKey(d) === instanceKey)) {
     session.documents.push(doc)
     documentVersion++
     console.log(`[E1] addDocument: docId=${docId}, sourceDocId=${e1SourceDocId || '-'}, invoiceNumber=${e1InvoiceNo || '-'}, pages=${pages}, docsCount=${session.documents.length}`)
