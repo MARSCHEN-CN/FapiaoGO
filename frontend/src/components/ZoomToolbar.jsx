@@ -66,7 +66,10 @@ export function ZoomToolbar({ state, actions }) {
     if (closeTimeoutRef.current) clearTimeout(closeTimeoutRef.current)
   }, [])
 
-  const label = mode === 'fit' ? '自适应' : `${zoomPercent}%`
+  const label = mode === 'fit' ? '自适应'
+    : mode === 'fitWidth' ? '适应宽度'
+    : mode === 'actual' ? '实际大小'
+    : `${zoomPercent}%`
 
   return (
     <>
@@ -91,6 +94,36 @@ export function ZoomToolbar({ state, actions }) {
               </svg>
               自适应
               {mode === 'fit' && (
+                <svg viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginLeft: 'auto', width: '14px', height: '14px' }}>
+                  <polyline points="20 6 9 17 4 12"/>
+                </svg>
+              )}
+            </button>
+            <button
+              className={`sort-dropdown-item ${mode === 'fitWidth' ? 'active' : ''}`}
+              onClick={() => { actions.setFitWidth(); handleClose() }}
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ width: '16px', height: '16px' }}>
+                <rect x="2" y="2" width="20" height="20" rx="2"/>
+                <path d="M2 12h20"/>
+              </svg>
+              适应宽度
+              {mode === 'fitWidth' && (
+                <svg viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginLeft: 'auto', width: '14px', height: '14px' }}>
+                  <polyline points="20 6 9 17 4 12"/>
+                </svg>
+              )}
+            </button>
+            <button
+              className={`sort-dropdown-item ${mode === 'actual' ? 'active' : ''}`}
+              onClick={() => { actions.setActual(); handleClose() }}
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ width: '16px', height: '16px' }}>
+                <rect x="2" y="2" width="20" height="20" rx="2"/>
+                <circle cx="12" cy="12" r="3"/>
+              </svg>
+              实际大小
+              {mode === 'actual' && (
                 <svg viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginLeft: 'auto', width: '14px', height: '14px' }}>
                   <polyline points="20 6 9 17 4 12"/>
                 </svg>

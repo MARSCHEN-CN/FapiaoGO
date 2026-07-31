@@ -143,8 +143,14 @@ function ViewerViewportInner({
   //    （窗口 resize 只重算 fitScale，manual 的 manualScale 不变 → 用户查看的局部细节不漂移）。
   //  - 旧模型（mode 未传入，DevDemo 回退）：scale = fitScale × zoom%（兼容原行为）。
   const useNewModel = mode !== undefined
+  // 6B-1：fitWidthScale（适应宽度 = 横向铺满，高度超出靠 pan/拖拽查看）；
+  // actual 模式 = 原始像素（renderScale=1，PageMeta 为 img 自然像素）。
+  const fitWidthScale = dims.width > 0 && measuredSize.width > 0 ? measuredSize.width / dims.width : 1
   const renderScale = useNewModel
-    ? (mode === 'manual' && manualScale != null ? manualScale : fitScale)
+    ? (mode === 'manual' && manualScale != null ? manualScale
+      : mode === 'fitWidth' ? fitWidthScale
+      : mode === 'actual' ? 1
+      : fitScale)
     : computeDisplaySize(dims.width, dims.height, fitScale, zoom).scale
 
   // ─── Image Load：捕获自然尺寸并上报回填 ───

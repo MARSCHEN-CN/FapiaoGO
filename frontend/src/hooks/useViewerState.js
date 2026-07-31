@@ -140,6 +140,26 @@ export function useViewerState({ document, containerSize, initialPage = 0 }) {
     setPanY(0)
   }, [])
 
+  // ─── 6B-1：Fit Width / Actual Size 模式 ───
+  // Fit Width（适应宽度）：横向铺满视口（scale = viewportW / pageW），
+  // 高度超出部分靠 pan/拖拽查看（ViewerViewport 实时派生 fitWidthScale）。
+  const setFitWidth = useCallback(() => {
+    setMode('fitWidth')
+    setScale(null)
+    setPanX(0)
+    setPanY(0)
+  }, [])
+
+  // Actual Size（实际大小）：100% = 原始像素（renderScale = 1）。
+  // PageMeta.width/height 为 img 自然像素（handleNaturalSize 回填），
+  // scale=1 时 wrapper = 自然像素 → 1 CSS px = 1 render px（150dpi WebP）。
+  const setActual = useCallback(() => {
+    setMode('actual')
+    setScale(null)
+    setPanX(0)
+    setPanY(0)
+  }, [])
+
   // ─── D2-4：离散档位缩放（toolbar +/−/下拉）───
 
   // 当前 fit 相对档位（供 ZoomToolbar 显示 + 档位高亮 + nextZoomStep 起点）：
@@ -149,11 +169,12 @@ export function useViewerState({ document, containerSize, initialPage = 0 }) {
     ? Math.round((scale / fitScale) * 100)
     : 100
 
-  // 应用离散档位：100 ≡ fit 模式（自适应）；其余 → manual 绝对 scale = fitScale × step/100。
+  // 应用离散档位：100 ≡ Actual Size（6B-1 语义：100% = 原始像素，非 fit）；
+  // 其余 → manual 绝对 scale = fitScale × step/100。fit 仅由 setFitMode（自适应按钮/双击）。
   // 离散缩放重置 pan（沿用 legacy UX，与 wheel 保留 pan 区分）；fitScale 缺失时无法换算，忽略。
   const applyZoomStep = useCallback((step) => {
     if (step === 100) {
-      setFitMode()
+      setActual()
       return
     }
     if (fitScale <= 0) return
@@ -163,7 +184,7 @@ export function useViewerState({ document, containerSize, initialPage = 0 }) {
     setScale(clamped)
     setPanX(0)
     setPanY(0)
-  }, [fitScale, setFitMode])
+  }, [fitScale, setActual])
 
   const zoomIn = useCallback(() => {
     applyZoomStep(nextZoomStep(zoomPercent, 'in', ZOOM_STEPS))
@@ -211,10 +232,9 @@ export function useViewerState({ document, containerSize, initialPage = 0 }) {
     if (!document) return
     const clamped = Math.min(document.pageCount - 1, Math.max(0, index))
     setCurrentPage(clamped)
-    // 页切换：回 fit 模式（D2-3）+ reset pan，保留 viewRotation
-    setMode('fit')
-    setScale(null)
-    setZoom(100)
+    // 6B-1：切页保留 zoom/mode/rotation（Viewer 状态独立于 Page）。
+    // fit/fitWidth/actual 由 ViewerViewport 对新页实时重算（fitScale 依赖当前页尺寸）；
+    // manual 保留冻结 scale。pan 归零（旧页 pan 坐标对新页无意义）。
     setPanX(0)
     setPanY(0)
   }, [document])
@@ -252,8 +272,11 @@ export function useViewerState({ document, containerSize, initialPage = 0 }) {
       return
     }
     const fitScale = computeFitScale(dims.width, dims.height, container.width, container.height)
-    // D2-3：manual 用冻结的绝对 scale，fit 用 fitScale，clamp 与实际渲染一致。
-    const renderScale = (mode === 'manual' && scale != null) ? scale : fitScale
+    // 6B-1：fitWidth/actual 也纳入 clamp（渲染 scale 与 clamp 一致，避免 pan 范围算错）。
+    const renderScale = (mode === 'manual' && scale != null) ? scale
+      : (mode === 'fitWidth') ? (container.width / dims.width)
+      : (mode === 'actual') ? 1
+      : fitScale
     const displayW = dims.width * renderScale
     const displayH = dims.height * renderScale
     const clamped = clampPan(newPanX, newPanY, displayW, displayH, container.width, container.height)
@@ -294,6 +317,8 @@ export function useViewerState({ document, containerSize, initialPage = 0 }) {
       enterManual,
       setManualScale,
       setFitMode,
+      setFitWidth,
+      setActual,
       wheelZoom,
       rotateLeft,
       rotateRight,
