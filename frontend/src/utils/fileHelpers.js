@@ -64,48 +64,12 @@ export { stripIdentity }
 // 每批处理的页数上限，防止大 PDF 导致内存溢出
 const PDF_PAGES_BATCH_SIZE = 10
 
-// ── Step 5F-1：pdfjs 预检 PDF 页数（单页跳过 /split_pdf）──
-// 懒加载 pdfjs-dist（与 usePreview 同策略，避免首屏加载 1.4MB）。
-// 只取 numPages，不 getPage 不 render（页数判断的最小成本）。
-// workerSrc 由 renderers.js 模块顶层全局设置（pdf.worker.min.mjs）；兜底 Vite new URL。
-let _pdfjsPromise = null
-async function getPdfPageCount(file) {
-  const pdfjsLib = await (_pdfjsPromise ||= import('pdfjs-dist'))
-  if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
-    pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
-      'pdfjs-dist/build/pdf.worker.min.mjs',
-      import.meta.url,
-    ).toString()
-  }
-  const data = file instanceof Blob ? await file.arrayBuffer() : file
-  const pdf = await pdfjsLib.getDocument({ data }).promise
-  const count = pdf.numPages
-  try { pdf.destroy() } catch (_) { /* 释放失败不阻塞 */ }
-  return count
-}
-
 // 处理多页 PDF 拆分
 export async function processPdfFile(file, getPathFn) {
   const toAdd = []
   const toParse = []
 
   try {
-    // ── Step 5F-1：单页 PDF 跳过 /split_pdf（消除 131× 往返结构性浪费 ≈9s）──
-    // 预检失败（损坏/异常 PDF）时回退 /split_pdf（后端 fitz 兜底，行为不变）。
-    let pageCount = null
-    try {
-      pageCount = await getPdfPageCount(file.file || file)
-    } catch (err) {
-      console.warn(`[App] pdfjs 页数预检失败（回退 /split_pdf）: ${file.name}`, err)
-    }
-    if (pageCount !== null && pageCount <= 1) {
-      console.log(`[App] PDF ${file.name} 单页（${pageCount}），跳过 split 直接处理`)
-      const fileObj = buildFileObj(file.file || file, file.name, getPathFn(file))
-      toAdd.push(fileObj)
-      toParse.push(fileObj)
-      return { toAdd, toParse, isMultiPage: false }
-    }
-    // 多页或预检失败 → 走 /split_pdf（现有逻辑；TEMP(V17) guard 保留作防御）
     const formData = new FormData()
     formData.append('file', file.file || file)
     const resp = await fetch(`${BACKEND_URL}/split_pdf`, { method: 'POST', body: formData })
