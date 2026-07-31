@@ -31,6 +31,8 @@ import './DocumentViewer.css'
  * @param {(controller: {mode: 'fit'|'manual', zoomPercent: number, actions: import('../hooks/useViewerState').ViewerActions}|null) => void} [props.onViewerController] -
  *   D2-4.1：viewer 缩放控制上抬回调。把 useViewerState 的 zoom 显示态 + actions 上报给 App，
  *   供 control-bar 的 ZoomToolbar 渲染（状态归属 Viewer，UI 位置在 control-bar）。卸载时上报 null。
+ * @param {() => void} [props.onViewerReady] - Viewer 完全就绪回调。
+ *   当 fitScale 首次变为有效值（>0）时触发，确保 DisplayAdapter 在 Viewer 完全就绪后再显示。
  */
 export const DocumentViewer = React.memo(function DocumentViewer({
   document,
@@ -40,6 +42,7 @@ export const DocumentViewer = React.memo(function DocumentViewer({
   loading = false,
   overlaySlot,
   onViewerController,
+  onViewerReady,
 }) {
   const { state, actions } = useViewerState({ document, containerSize, initialPage })
 
@@ -49,13 +52,32 @@ export const DocumentViewer = React.memo(function DocumentViewer({
   // 拖拽平移（panX/panY 每帧变化）会让 App 每帧重渲染。故只在 mode/zoomPercent/fitScale 变化时
   // 通知 App（这三者决定工具栏显示与 +/− 档位目标），actions 经 ref 取最新、不进 deps。
   // fitScale 必须在 deps：applyZoomStep 依赖它，resize 后不通知会让「+」用陈旧 fitScale 算错绝对 scale。
+  // ⚠️ 只有当 fitScale > 0 时才通知，避免父组件在图片加载完成前获取到无效状态
   const controllerRef = useRef(null)
   controllerRef.current = { mode: state.mode, zoomPercent: state.zoomPercent, actions }
   useEffect(() => {
-    onViewerController?.(controllerRef.current)
+    // 只有当 fitScale 有效时才通知父组件，确保缩放功能正常
+    if (state.fitScale > 0) {
+      onViewerController?.(controllerRef.current)
+    }
   }, [state.mode, state.zoomPercent, state.fitScale, onViewerController])
   // 卸载时清空（切到 legacy 路径后 App 回退旧 toolbar，避免残留死 actions）
   useEffect(() => () => onViewerController?.(null), [onViewerController])
+
+  // Viewer 就绪检测：当 fitScale 首次变为有效值（>0）时，通知 DisplayAdapter
+  // 确保 Viewer 完全就绪后再显示，避免缩放和自适应功能异常
+  const viewerReadyNotifiedRef = useRef(false)
+  useEffect(() => {
+    if (state.fitScale > 0 && !viewerReadyNotifiedRef.current) {
+      viewerReadyNotifiedRef.current = true
+      onViewerReady?.()
+    }
+  }, [state.fitScale, onViewerReady])
+
+  // 切换文档时重置就绪标记
+  useEffect(() => {
+    viewerReadyNotifiedRef.current = false
+  }, [document?.docId])
 
   // 当前页 PageMeta
   const currentPage = getPage(document, state.currentPage)

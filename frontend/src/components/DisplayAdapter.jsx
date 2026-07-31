@@ -21,7 +21,7 @@
  * @module components/DisplayAdapter
  */
 
-import React from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { DocumentViewer } from './DocumentViewer'
 import PreviewCanvas from './PreviewCanvas'
 import { useDocument } from '../hooks/useDocument'
@@ -98,7 +98,10 @@ export const DisplayAdapter = React.memo(function DisplayAdapter({
 
   // 拆分页定位：fileObj.pageNum 为 1-based（后端 page_index），
   // 转为 Viewer 的 0-based 页 index。非拆分文件 pageNum 为 null → 第 1 页。
-  const initialPage = (file?.pageNum || 1) - 1
+  // 解析后的拆分页（docId !== sourceDocId）已独立注册为单页文档，
+  // pageNum 仅保留原始排序意义，preview 时应定位到 index 0。
+  const isParsedSplitPage = !!(file?.sourceDocId && file?.docId !== file?.sourceDocId)
+  const initialPage = isParsedSplitPage ? 0 : (file?.pageNum ?? 0)
 
   // 合并模式守卫：DocumentViewer 只展示单页，无多票合成能力。
   // merge 模式下必须走 PreviewCanvas（renderMultipleItemsToCanvas 合成画布）。
@@ -120,36 +123,71 @@ export const DisplayAdapter = React.memo(function DisplayAdapter({
     )
   }
 
-  // 新路径：已注册有效 Document（至少 1 页）→ DocumentViewer（<img> 路径）。
-  // PDF / Image / OFD 后端均可服务 /preview/{docId}：
-  //   - Image 光栅化 13A-1 起已通；
-  //   - OFD 经 13A-3 后端 adapter（registry→metadata→preview）接入，与 PDF/Image 同级。
-  // 格式不再特判——前端不知道 fileFormat==='ofd'，统一由 docId+pageCount 驱动。
-  if (document && document.pageCount > 0) {
-    return (
-      <DocumentViewer
-        document={document}
-        containerSize={containerSize}
-        initialPage={initialPage}
-        grayscale={grayscale}
-        onViewerController={onViewerController}
-      />
-    )
-  }
+  // Viewer 是否就绪（文档已注册且有页面）
+  const viewerReady = !!(document && document.pageCount > 0)
 
-  // 旧路径：fallback 到 PreviewCanvas（保留一个版本周期）
+  // Viewer 完全就绪状态（fitScale > 0）：确保缩放和自适应功能正常后再显示
+  const [viewerFullyReady, setViewerFullyReady] = useState(false)
+
+  // 切换文件时重置就绪状态
+  useEffect(() => {
+    setViewerFullyReady(false)
+  }, [file?.key, docId])
+
+  // Viewer 就绪回调：当 fitScale 首次变为有效值时触发
+  const handleViewerReady = useCallback(() => {
+    setViewerFullyReady(true)
+  }, [])
+
   return (
-    <PreviewCanvas
-      previewFile={file}
-      previewCanvas={previewCanvas}
-      previewUrl={previewUrl}
-      grayscale={grayscale}
-      previewRenderVersion={previewRenderVersion}
-      paperLayout={paperLayout}
-      contentLayout={contentLayout}
-      previewRotation={previewRotation}
-      previewLoading={previewLoading}
-      containerSize={containerSize}
-    />
+    <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+      {/* PreviewCanvas 作为底层持续存在，直到 DocumentViewer 完全就绪 */}
+      <div
+        style={{
+          position: 'absolute',
+          inset: 0,
+          opacity: viewerFullyReady ? 0 : 1,
+          transition: 'opacity 0.15s ease-out',
+          zIndex: viewerFullyReady ? 1 : 2,
+          pointerEvents: viewerFullyReady ? 'none' : 'auto',
+        }}
+      >
+        <PreviewCanvas
+          previewFile={file}
+          previewCanvas={previewCanvas}
+          previewUrl={previewUrl}
+          grayscale={grayscale}
+          previewRenderVersion={previewRenderVersion}
+          paperLayout={paperLayout}
+          contentLayout={contentLayout}
+          previewRotation={previewRotation}
+          previewLoading={previewLoading}
+          containerSize={containerSize}
+        />
+      </div>
+
+      {/* DocumentViewer 在上层，viewerReady 时渲染，viewerFullyReady 时淡入显示 */}
+      {viewerReady && (
+        <div
+          style={{
+            position: 'absolute',
+            inset: 0,
+            zIndex: 3,
+            opacity: viewerFullyReady ? 1 : 0,
+            transition: 'opacity 0.15s ease-in',
+            pointerEvents: viewerFullyReady ? 'auto' : 'none',
+          }}
+        >
+          <DocumentViewer
+            document={document}
+            containerSize={containerSize}
+            initialPage={initialPage}
+            grayscale={grayscale}
+            onViewerController={onViewerController}
+            onViewerReady={handleViewerReady}
+          />
+        </div>
+      )}
+    </div>
   )
 })
