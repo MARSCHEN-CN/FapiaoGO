@@ -17,16 +17,6 @@
   animation: fadeInUp 0.4s var(--ease) 0.1s both;
 }
 
-/* 导入完成后主界面淡入：掩盖弹窗关闭时内容从空状态切换到有内容的闪烁 */
-.main-import-fadein {
-  animation: mainImportFadeIn 0.3s ease-out both;
-}
-
-@keyframes mainImportFadeIn {
-  from { opacity: 0; }
-  to   { opacity: 1; }
-}
-
 /* ======================== 1. Header（顶部按钮区） ======================== */
 .topbar {
   display: flex;

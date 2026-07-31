@@ -116,6 +116,8 @@ function createWindow() {
     minHeight: 600,
     resizable: true,
     frame: false,
+    show: false,
+    backgroundColor: '#f2f4f8',
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -126,6 +128,21 @@ function createWindow() {
 
   setMainWindowForBridge(mainWindow)
   mainWindow.setMenuBarVisibility(false)
+
+  // 页面加载完成后再显示窗口，避免白屏闪烁（与 settingsWindow/calculatorWindow 一致）
+  mainWindow.once('ready-to-show', () => {
+    mainWindow.show()
+  })
+
+  // 安全兜底：3秒后无论如何都显示窗口，防止页面加载异常时窗口永不出现
+  // （开发模式下 Vite 未启动、或生产环境文件损坏等极端情况）
+  const fallbackShowTimer = setTimeout(() => {
+    if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) {
+      console.warn('[main.js] ready-to-show 未触发，超时显示窗口')
+      mainWindow.show()
+    }
+  }, 3000)
+  mainWindow.once('closed', () => clearTimeout(fallbackShowTimer))
 
   // 根据运行模式加载不同的资源
   if (isDev) {
@@ -1222,36 +1239,45 @@ if (!gotTheLock) {
 
   app.whenReady().then(async () => {
     logger.init()  // 初始化日志模块
-    // ✅ 预热 Python 环境检测（移至 app ready 后）：
-    //   1) 避免模块加载期副作用；2) 此时 logger 已 init，预热日志可落盘
+    // 预热 Python 环境检测（移至 app ready 后）：fire-and-forget，不阻塞窗口创建
     pdfMargin.checkPythonEnv().catch(() => {})
-    await initTempManager()  // 启动 30 分钟定时清理 + 清理上次崩溃遗留的孤儿临时文件
 
-    // ✅ 初始化新打印管线
+    // 初始化新打印管线（同步，轻量）
     initNewPrintPipeline()
 
-    // ✅ 初始化纸张注册表（加载用户自定义纸张）
-    try {
-      const { PaperRegistryProvider } = require('./shared/PaperRegistryProvider')
-      await PaperRegistryProvider.initialize()
-    } catch (err) {
-      console.error('[BOOT] PaperRegistryProvider initialization failed:', err.message)
-    }
-
-    // ✅ 启动 Flask 后端（生产模式下 spawn Python 进程）并等待就绪后再创建窗口
-    // 后端就绪握手失败（spawn 失败 / /health 超时）不应阻断窗口创建：原 fire-and-forget
-    // 语义下窗口必出、仅运行时偶发 connection refused；此处 try/catch 保留该失败语义，避免黑屏无提示。
-    try {
-      await startBackendServer()
-    } catch (err) {
-      console.error('[BOOT] 后端启动/就绪失败，仍创建窗口（前端调用时可能 connection refused）:', err.message)
-    }
-
-    // ✅ 自动更新（ConfigService → Provider + Client → check + fallback）
-    const config = loadConfig()
-    initUpdateManager(config)
-
+    // ── 启动窗口：立即创建，不等后端/磁盘扫描就绪 ──
+    // 生产模式下 spawn Python Flask 后端、扫描临时目录清理孤儿文件、加载用户纸张配置等操作
+    // 均在窗口创建后于后台异步执行，消除启动白屏等待。前端首屏不依赖 Flask API（设置/打印机均走 IPC），
+    // 后端在用户首次触发导入/预览前（通常1-2秒后）必然就绪。
     createWindow()
+
+    // ── 以下为非关键初始化，全部后台异步执行，不阻塞窗口显示 ──
+    // 轻量启动：仅创建临时目录 + 启动清理定时器；孤儿文件扫描延后到窗口显示后
+    void initTempManager().catch((err) => {
+      console.error('[BOOT] initTempManager failed:', err.message)
+    })
+
+    // 加载配置 + 初始化自动更新（可能触发网络检查，延后）
+    const config = loadConfig()
+    setTimeout(() => {
+      try { initUpdateManager(config) } catch (err) {
+        console.error('[BOOT] initUpdateManager failed:', err.message)
+      }
+    }, 500)
+
+    // 纸张注册表（加载用户自定义纸张）— 带 system-only fallback，延后无害
+    setTimeout(() => {
+      const { PaperRegistryProvider } = require('./shared/PaperRegistryProvider')
+      PaperRegistryProvider.initialize().catch((err) => {
+        console.error('[BOOT] PaperRegistryProvider initialization failed:', err.message)
+      })
+    }, 300)
+
+    // 启动 Flask 后端（生产模式下 spawn Python + 等待 /health 就绪；开发模式 no-op）
+    // 后端就绪前用户的 API 调用会自然失败重试；后端通常 1-2 秒内启动完成
+    void startBackendServer().catch((err) => {
+      console.error('[BOOT] 后端启动失败（窗口已显示，功能将在后端就绪后可用）:', err.message)
+    })
 
     app.on('before-quit', () => {
       // ✅ 停止后端 Flask 进程

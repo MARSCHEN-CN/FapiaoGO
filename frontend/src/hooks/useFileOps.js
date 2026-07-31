@@ -958,8 +958,7 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
       return sortedFiles
     })
 
-    // 导入完成：先显示100%完成状态，延迟300ms再关闭弹窗
-    // 避免弹窗瞬间消失与主界面渲染同时发生导致闪烁
+    // 导入完成：先显示100%完成状态，等主界面渲染稳定后再关闭弹窗，避免闪烁
     addImportLog(`导入完成：成功 ${successCount} 个，失败 ${errorCount} 个`)
     setImportStage('completed')
     progressMonotonicRef.current = 100
@@ -970,20 +969,33 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
       currentFile: prev.totalFiles,
     }))
 
-    // 清除之前的定时器（防止多次导入时定时器叠加）
+    // 清除之前的定时器（防止多次导入时叠加）
     if (completeDismissTimerRef.current) {
       clearTimeout(completeDismissTimerRef.current)
-    }
-    // 延迟关闭：显示100%完成状态100ms后，弹窗开始播放淡出动画。
-    // 面板先淡出(200ms)，遮罩在面板消失后再快速淡出(300ms，前70%时间遮罩保持不透明)，
-    // 同时主界面播放淡入动画(300ms)，三重保护确保无闪烁。
-    completeDismissTimerRef.current = setTimeout(() => {
       completeDismissTimerRef.current = null
-      currentAbortRef.current = null
-      setParsing(false)
-      setParseProgress({ current: 0, total: 0 })
-      setImporting(false)
-    }, 100)
+    }
+
+    // 等待主界面DOM稳定后再关闭弹窗：
+    // 1) 双 requestAnimationFrame：确保 React commit → 浏览器 layout/paint 完成一轮
+    //    （flushUpdates + setFiles排序触发的大规模重渲染需要至少一帧完成）
+    // 2) 额外 250ms 停留：让用户看到100%完成状态，同时浏览器完成缩略图/预览区首帧绘制
+    // 3) 然后再关闭弹窗：弹窗面板先快速淡出(150ms)，遮罩在面板完全消失后再淡出(200ms)，
+    //    此时主界面已完全就绪，不会出现"闪一下"。
+    const waitFramesAndDismiss = () => {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          completeDismissTimerRef.current = setTimeout(() => {
+            completeDismissTimerRef.current = null
+            currentAbortRef.current = null
+            setParsing(false)
+            setParseProgress({ current: 0, total: 0 })
+            setImporting(false)
+          }, 250)
+        })
+      })
+    }
+    // 用setTimeout(0)将等待推迟到当前宏任务结束，确保setImportStage('completed')的状态更新先被React处理
+    completeDismissTimerRef.current = setTimeout(waitFramesAndDismiss, 0)
   }, [setFiles, electronAPIRef, settingsRef, queueUpdate, addImportLog])
 
   // ============================

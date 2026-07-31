@@ -79,15 +79,20 @@ export async function runChunkedImport({ sessionId, taskId, files, chunkSize, au
   // 声明在 try 之外，供 catch 块访问（提交阶段致命失败时用 loopIndex 计算未提交 chunk 范围）
   let loopIndex = 0
 
+  // 固定总文件数：total 不随 chunk 提交动态累加，避免新 chunk 加入时 total 跳增导致百分比回退
+  // current 单调累加所有 batch 的已完成数：已完成 batch 的 current=total（贡献等量增长），
+  // 活跃 batch 的 current 从后端 SSE 实时更新。两者相加保证进度严格单调递增。
+  const TOTAL_FILES = files.length
+
   const aggregateProgress = () => {
     let current = 0
-    let total = 0
     for (const p of batchProgress.values()) {
       current += p.current
-      total += p.total
     }
-    if (onAggregateProgress) onAggregateProgress({ current, total })
-    updateProgress(sessionId, { completed: current, total })
+    // current 上限钳制：不超过 TOTAL_FILES（防御性，正常情况下不会超出）
+    if (current > TOTAL_FILES) current = TOTAL_FILES
+    if (onAggregateProgress) onAggregateProgress({ current, total: TOTAL_FILES })
+    updateProgress(sessionId, { completed: current, total: TOTAL_FILES })
   }
 
   // ── cooperative cancel（合同 §7）─────────────────────────

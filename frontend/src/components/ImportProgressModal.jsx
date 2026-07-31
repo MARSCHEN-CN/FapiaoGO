@@ -7,7 +7,7 @@ import { PUBLIC_BASE } from '../config'
  * 功能：
  * - 分阶段显示进度（拆分中 / 解析中 / 组装中 / 完成）
  * - 文件计数显示（如 30/40）
- * - 进度条单调递增，避免回退误导用户
+ * - 进度条严格单调递增：组件内维护displayPct，任何回退值都会被clamp
  * - 自带淡入/淡出动画，关闭时平滑过渡避免闪烁
  *
  * Props:
@@ -35,11 +35,15 @@ const ImportProgressModal = (props) => {
   const [isClosing, setIsClosing] = useState(false)
   const prevShowRef = useRef(shouldShow)
 
+  // 单调递增进度：组件内维护，防止任何原因导致的百分比回退
+  const [displayPct, setDisplayPct] = useState(0)
+
   useEffect(() => {
     if (shouldShow && !prevShowRef.current) {
-      // 从隐藏变为显示：挂载，不播放关闭动画
+      // 从隐藏变为显示：挂载，重置进度，不播放关闭动画
       setMounted(true)
       setIsClosing(false)
+      setDisplayPct(0)
     } else if (!shouldShow && prevShowRef.current) {
       // 从显示变为隐藏：开始淡出动画
       setIsClosing(true)
@@ -49,15 +53,14 @@ const ImportProgressModal = (props) => {
 
   // 淡出动画结束后真正卸载
   const handleOverlayAnimEnd = (e) => {
-    // 只响应overlay的淡出动画结束，忽略子元素的动画
     if (isClosing && e.target === e.currentTarget) {
       setMounted(false)
       setIsClosing(false)
     }
   }
 
-  // 计算阶段文本和计数
-  const { stageText, countText, pct } = useMemo(() => {
+  // 计算原始阶段文本、计数和百分比（不做单调保护）
+  const rawProgress = useMemo(() => {
     if (importStage && importStats) {
       const {
         splitDone, splitTotal,
@@ -94,24 +97,38 @@ const ImportProgressModal = (props) => {
         pctValue = 100
       }
 
-      const displayPct = importStage === 'completed' ? 100 : Math.min(99, Math.max(0, pctValue))
-      return { stageText: stage, countText: count, pct: displayPct }
+      // 非完成阶段上限99%，完成阶段100%
+      const rawPct = importStage === 'completed' ? 100 : Math.min(99, Math.max(0, pctValue))
+      return { stageText: stage, countText: count, rawPct }
     }
 
     if (parseProgress && parseProgress.total > 0) {
       return {
         stageText: '正在处理',
         countText: `${parseProgress.current}/${parseProgress.total}`,
-        pct: Math.round((parseProgress.current / parseProgress.total) * 100),
+        rawPct: Math.round((parseProgress.current / parseProgress.total) * 100),
       }
     }
-    return { stageText: '准备中', countText: '', pct: 0 }
+    return { stageText: '准备中', countText: '', rawPct: 0 }
   }, [importStage, importStats, parseProgress])
+
+  // 单调递增保护：新值只升不降
+  useEffect(() => {
+    const { rawPct } = rawProgress
+    setDisplayPct((prev) => {
+      // completed阶段直接100%
+      if (importStage === 'completed') return 100
+      // 正常情况只升不降
+      return rawPct > prev ? rawPct : prev
+    })
+  }, [rawProgress, importStage])
 
   if (!mounted) return null
 
   const overlayClass = `modal-overlay ipm-overlay${isClosing ? ' ipm-closing' : ''}`
   const panelClass = `ipm-panel${isClosing ? ' ipm-panel-closing' : ''}`
+  const { stageText, countText } = rawProgress
+  const pct = displayPct
 
   return (
     <div className={overlayClass} onAnimationEnd={handleOverlayAnimEnd}>

@@ -198,17 +198,6 @@ function AppContent() {
     handleOpenFolder,
   } = useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sortOrderRef })
 
-  // 导入完成后给主界面添加淡入动画，避免弹窗关闭瞬间的闪烁
-  const [mainFadeIn, setMainFadeIn] = useState(false)
-  const prevImportingRef = useRef(importing)
-  useEffect(() => {
-    if (prevImportingRef.current && !importing) {
-      // 从导入中变为非导入中：触发淡入动画
-      setMainFadeIn(true)
-    }
-    prevImportingRef.current = importing
-  }, [importing])
-
   // ── Print Intent (OS Trust Delegation) ──
   const { submitPrintIntent } = usePrintIntent(electronAPIRef)
 
@@ -810,7 +799,7 @@ function AppContent() {
         toggleSort={toggleSort}
       />
 
-      <main className={`main${mainFadeIn ? ' main-import-fadein' : ''}`} onAnimationEnd={() => setMainFadeIn(false)}>
+      <main className="main">
         {/* 1. Header：计算器、菜单、设置、窗口控制 */}
         <TopBar
           extraSpecial={settings.extraSpecial}

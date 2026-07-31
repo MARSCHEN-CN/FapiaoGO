@@ -812,13 +812,40 @@ export function usePreview({ files, settings, electronAPIRef }) {
                 await switchPreviewFile(pdfDoc, 1, signal, currentRotation)
               }
             } else if (previewFile._previewImageUrl) {
-              // 图片/OFD：加载图片后 drawImage 到全局 Canvas
-              const img = await new Promise((resolve) => {
+              // RE 预览图加载：尝试加载 RE URL 作为图片
+              let img = await new Promise((resolve) => {
                 const image = new Image()
                 image.onload = () => resolve(image)
                 image.onerror = () => resolve(null)
                 image.src = previewFile._previewImageUrl
               })
+              if (!img && previewFile._fileFormat === 'pdf' && !previewFile._pdfData) {
+                // RE 图片加载失败且是 PDF：回退到 pdf.js 直接渲染
+                // 这是多页拆分场景的关键容灾——当 RE 服务未就绪时，
+                // 用 pdf.js 直接从文件数据渲染，保证预览不中断。
+                try {
+                  let buffer = null
+                  if (previewFile.file) {
+                    buffer = await previewFile.file.arrayBuffer()
+                  } else if (electronAPIRef.current?.ipcRenderer && previewFile.printPath) {
+                    const fd = await electronAPIRef.current.ipcRenderer.invoke('read-file', previewFile.printPath)
+                    if (fd?.success) {
+                      const clean = new Uint8Array(fd.data)
+                      buffer = clean.buffer
+                    }
+                  }
+                  if (buffer && !signal?.aborted) {
+                    const pdfData = new Uint8Array(buffer)
+                    previewFile._pdfData = pdfData
+                    const { getOrLoadPdfDocument: sharedLoadPdf } = await getRenderers()
+                    const pdfDoc = await sharedLoadPdf(pdfData)
+                    if (!signal?.aborted && pdfDoc) {
+                      await switchPreviewFile(pdfDoc, 1, signal, currentRotation)
+                      return
+                    }
+                  }
+                } catch (_) { /* pdf.js 回退也失败，静默返回 */ }
+              }
               if (img) {
                 await switchPreviewImage(img, signal, currentRotation)
               }
@@ -1216,8 +1243,11 @@ export function usePreview({ files, settings, electronAPIRef }) {
       if (fmt === 'pdf') {
         // ✅ Render Engine Preview：优先走后端渲染 URL，绕过 pdfjs + Canvas
         if (USE_RENDER_ENGINE_PREVIEW && fObj.docId) {
-          // 多页 PDF 拆页后每个分页项携带真实页码 pageNum；非拆页文件为 null → 回退 1
-          _previewImageUrl = buildPreviewUrl(fObj.docId, fObj.pageNum || 1)
+          // 多页 PDF 拆页后，每个分页文件是独立的单页 PDF，
+          // 注册到 backend Render Engine 后每页 document 只有 1 页。
+          // 因此 page 参数恒为 1，不使用 fObj.pageNum（原始 PDF 中的物理页码）。
+          // pageNum 仅用于前端排序/分组，不参与后端渲染定位。
+          _previewImageUrl = buildPreviewUrl(fObj.docId, 1)
           // 从后端 metadata 获取页面尺寸用于 DocumentState（确定性高，不依赖图片加载）
           if (!fObj._pdfPageWidth && !fObj._imageWidth) {
             try {

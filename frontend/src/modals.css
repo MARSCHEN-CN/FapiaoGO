@@ -2284,14 +2284,14 @@ button.pc-btn.outline,
 }
 
 .ipm-overlay.ipm-closing {
-  animation: ipmOverlayOut 0.3s ease-in both;
+  animation: ipmOverlayOut 0.25s ease-in both;
   pointer-events: none;
 }
 
 @keyframes ipmOverlayOut {
   0%   { opacity: 1; }
-  70%  { opacity: 1; }   /* 前70%时间保持完全不透明，等面板消失 */
-  100% { opacity: 0; }   /* 最后30%快速淡出 */
+  80%  { opacity: 1; }   /* 前80%时间保持完全不透明，等面板完全消失后再淡出 */
+  100% { opacity: 0; }   /* 最后20%快速淡出 */
 }
 
 .ipm-panel {
@@ -2306,7 +2306,7 @@ button.pc-btn.outline,
 }
 
 .ipm-panel.ipm-panel-closing {
-  animation: ipmOut 0.2s ease-in both;
+  animation: ipmOut 0.15s ease-in both;
 }
 
 @keyframes ipmIn {
