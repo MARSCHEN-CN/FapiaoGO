@@ -430,22 +430,28 @@ def parse_invoice_service(file_bytes, filename, auto_orient=True, force_ocr=Fals
                 
                 bbox_data = parse_result.bbox_data
                 
-                # 字段提取：走旧提取（extract_fields），提供完整的字段数据。
-                with metrics.timer('field_extract'):
-                    extra_fields = extract_fields(
-                        raw_text_for_extract, 
-                        bbox_data=bbox_data, 
-                        source_type=source_type,
-                        auxiliary_blocks=auxiliary_blocks,
-                        pymupdf_page=pymupdf_page,
-                    )
+                # 字段提取：优先命中 fields 缓存（与 xml/ofd/image 分支同契约：缓存最终字段结果）。
+                # Step 5F-0 修复：补齐 PDF 缓存消费（此前 cache_read 白读，命中后仍无条件重提取）。
+                if cached_fields:
+                    extra_fields = cached_fields
                     parse_method += '（16步）'
-                
-                with metrics.timer('cache_write'):
-                    try:
-                        set_fields_cache(field_cache_key, extra_fields, params=field_cache_params)
-                    except Exception:
-                        pass
+                else:
+                    # 字段提取：走旧提取（extract_fields），提供完整的字段数据。
+                    with metrics.timer('field_extract'):
+                        extra_fields = extract_fields(
+                            raw_text_for_extract, 
+                            bbox_data=bbox_data, 
+                            source_type=source_type,
+                            auxiliary_blocks=auxiliary_blocks,
+                            pymupdf_page=pymupdf_page,
+                        )
+                        parse_method += '（16步）'
+
+                    with metrics.timer('cache_write'):
+                        try:
+                            set_fields_cache(field_cache_key, extra_fields, params=field_cache_params)
+                        except Exception:
+                            pass
                 # 仅在提取器返回非默认值时才覆盖原有值，避免默认值覆盖正确解析结果
                 ext_type = extra_fields.get('type', '')
                 if ext_type and ext_type != '其他':
