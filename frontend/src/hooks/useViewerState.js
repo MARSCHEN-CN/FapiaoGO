@@ -64,6 +64,9 @@ const SCALE_MAX = 20
  * @property {(panX: number, panY: number) => void} setPan - 设置平移
  * @property {(deltaX: number, deltaY: number) => void} panBy - 增量平移
  * @property {() => void} resetView - 重置 zoom+pan（保留 viewRotation）
+ * @property {() => void} resetForDocument - 6B-1.1：换文档（document.id 变化）时重置整个阅读环境
+ *   （page=0 / mode=fit / zoom=100 / rotation=0 / pan=0,0）。与 goToPage 的区别：
+ *   goToPage 保留 zoom/mode/rotation（同票连续阅读），resetForDocument 全部回默认（新文档从头开始）。
  */
 
 /**
@@ -296,6 +299,23 @@ export function useViewerState({ document, containerSize, initialPage = 0 }) {
     setPanY(0)
   }, [])
 
+  // ─── 6B-1.1：换文档边界（document.id 变化） ───
+  // 两级语义分离：
+  //   同票翻页（goToPage）→ 保留 zoom/mode/rotation，pan 归零（连续阅读）。
+  //   换文档（resetForDocument）→ 全部回默认：page=0 / fit / zoom=100 / rotation=0 / pan=0,0
+  //     （打开一份新文件，与 Edge/Adobe 桌面阅读器行为一致）。
+  // ⚠️ 不重置 fitScale：它是 ViewerViewport 上抬的 authoritative 值（D2-4 单一来源），
+  //    换文档后 ViewerViewport 对新页立即重算上报，无需也不应在此直接写。
+  const resetForDocument = useCallback(() => {
+    setCurrentPage(0)
+    setMode('fit')
+    setScale(null)
+    setZoom(100)
+    setPanX(0)
+    setPanY(0)
+    setViewRotation(0)
+  }, [])
+
   return {
     state: {
       currentPage,
@@ -328,6 +348,7 @@ export function useViewerState({ document, containerSize, initialPage = 0 }) {
       setPan,
       panBy,
       resetView,
+      resetForDocument,
     },
   }
 }

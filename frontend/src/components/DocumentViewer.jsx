@@ -79,6 +79,17 @@ export const DocumentViewer = React.memo(function DocumentViewer({
     viewerReadyNotifiedRef.current = false
   }, [document?.docId])
 
+  // ─── 6B-1.1：换文档重置阅读环境 ───
+  // 两级语义：同票翻页保留 zoom/mode/rotation（goToPage），换文档全清（resetForDocument）。
+  // 依赖 document?.docId（而非 document 对象）：DocumentStore 对同文档的
+  // metadata/thumbnail/page resource 更新不得触发 reset（用户规则）。
+  // ⚠️ actions 每次渲染都是新对象，不能进 deps —— 用 ref 取最新（与 controllerRef 同模式）。
+  const resetActionsRef = useRef(actions)
+  resetActionsRef.current = actions
+  useEffect(() => {
+    resetActionsRef.current.resetForDocument()
+  }, [document?.docId])
+
   // 当前页 PageMeta
   const currentPage = getPage(document, state.currentPage)
 
