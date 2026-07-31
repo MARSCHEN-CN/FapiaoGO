@@ -22,6 +22,7 @@ import { runChunkedImport } from '../import/runChunkedImport'
 import { ensureRenderContract, ensureDocumentMetadata } from '../services/renderDocument'
 import { mapParseResultToFileUpdate } from '../mappers/parseResultMapper'
 import { updateDocumentIdentity } from '../utils/identity'
+import { resolveInstancePageFiles } from '../utils/instancePageOwnership'
 import { createImportSession, getActiveSessionId, getSession, addFilesToSession, replaceFileItems, updateProgress, addDocument } from '../stores/ImportSessionStore'
 import { ensureDocumentFromFileObj, flushDocumentNotifications, getDocument, registerDocument } from '../stores/DocumentStore'
 import { createDocument, createPageMeta } from '../models/InvoiceDocument'
@@ -759,18 +760,24 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
                 // 原因：同票多页可能跨 chunk（chunkSize=100），仅查 chunk 会丢失页面
                 const matchingFiles = readyFiles.filter(f => matchingKeys.has(f.key))
 
-                // ── 模型边界约束（冻结）──
-                // 一个 InvoiceDocument 的所有 pages 必须来自同一个 sourceDocId。
-                // 仅按 invoiceNumber 全局匹配会把「两张不同发票同号」(A.pdf + B.pdf，都 123)
-                // 错误收敛进同一个 Document（列表只显示 1 个、另 1 页被压进 pages[]）。
-                // 这里把异源文件拆出、回退为独立文件，使重复检测层建立 DuplicateGroup，而非错误合并。
-                const targetSourceDocId = assembled.sourceDocId
-                const sameSourceFiles = targetSourceDocId
-                  ? matchingFiles.filter((f) => (f.sourceDocId || f.docId) === targetSourceDocId)
-                  : matchingFiles
+                // ── 模型边界约束（冻结；IS-4.2 Step 4.3 升级为实例身份）──
+                // 一个 InvoiceDocument 的所有 pages 必须属于同一个文件实例。
+                // 仅按 invoiceNumber 全局匹配会把「两张不同发票同号」错误收敛进同一个 Document；
+                // 同内容 A.pdf/B.pdf 又共享 sourceDocId（内容哈希），按 sourceDocId 过滤仍会互相吸收页面。
+                // instanceId（文件实例身份，前端 producer 生成、assembly 透传）比 sourceDocId 更严格：
+                // A/B 实例不同 → 各自只收自己的页；多页 PDF 的所有拆分页共享同一 instanceId → 正确聚合。
+                // 注意：instanceId 只管 Page Ownership；InvoiceDocument Identity 仍由下方 invDocId
+                // （实例 × 发票）承担——一个文件实例可产出多张发票（多票 PDF），DocumentStore 键不能用裸 instanceId。
+                // 归属解析委托纯模块（与 React 解耦，可 Node 验收）；异常回退在此据返回标志告警，不静默退化。
+                const { files: sameInstanceFiles, fallback } = resolveInstancePageFiles(matchingFiles, assembled)
+                if (fallback === 'instance-mismatch') {
+                  console.warn('[hydrateChunk] assembled instanceId=%s 匹配不到 fileObj.instanceId，回退 sourceDocId 过滤（invoiceNumber=%s）', assembled.instanceId, assembled.invoiceNumber)
+                } else if (fallback === 'missing-instanceId') {
+                  console.warn('[hydrateChunk] assembled 缺少 instanceId，使用 legacy sourceDocId 过滤（invoiceNumber=%s）', assembled.invoiceNumber)
+                }
 
-                if (sameSourceFiles.length === 0) {
-                  console.warn('[hydrateChunk] assembled 文档匹配不到同源 file（invoiceNumber=%s），跳过该组装结果以免静默丢失', assembled.invoiceNumber)
+                if (sameInstanceFiles.length === 0) {
+                  console.warn('[hydrateChunk] assembled 文档匹配不到同实例 file（invoiceNumber=%s），跳过该组装结果以免静默丢失', assembled.invoiceNumber)
                   continue
                 }
 
@@ -779,7 +786,7 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
                 // 不要求 pageCount >= 2：单页 assembled 文档仍携带发票号等解析元数据，
                 // 应生成 _inv_ docId 供后续处理，而非退回 fallback 失去业务身份。
                 // FIX: 按 pageNum 升序排列，确保首页作为 representative、页面顺序正确
-                const sortedFiles = [...sameSourceFiles].sort(
+                const sortedFiles = [...sameInstanceFiles].sort(
                   (a, b) => (a.pageNum || 1) - (b.pageNum || 1)
                 )
                 const repFile = sortedFiles[0]
