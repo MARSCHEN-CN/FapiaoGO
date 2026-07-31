@@ -454,6 +454,7 @@ class ParseJobManager:
     def _execute_job(self, job: ParseJob):
         """执行解析任务（在线程池中）"""
         job_id = job.id
+        logger.info("[5EM3-exec] job=%s start", job_id)  # 一次性探针 5E-M3（跑完还原，勿 commit）
 
         with self._lock:
             self._active_tasks[job_id] = True

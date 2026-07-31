@@ -646,6 +646,7 @@ class ImportBatchManager:
         
         注意：必须线程安全、不可阻塞。
         """
+        _5em2_t0 = time.perf_counter()  # 一次性探针 5E-M2（跑完还原，勿 commit）
         # 查找 job 所属 batch
         job_info = self._job_manager.get_job(job_id)
         if not job_info:
@@ -781,6 +782,10 @@ class ImportBatchManager:
                         should_flush = buf.should_flush()
 
         # 在锁外执行 DB 写入（避免持锁时间过长）
+        logger.info(  # 一次性探针 5E-M2（跑完还原，勿 commit）
+            "[5EM2-callback] job=%s status=%s cost_to_flush=%.1fms",
+            job_id, status, (time.perf_counter() - _5em2_t0) * 1000,
+        )
         if should_flush:
             self._flush_result_buffer(batch_id)
 
