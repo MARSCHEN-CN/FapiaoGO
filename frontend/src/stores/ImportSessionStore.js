@@ -260,11 +260,16 @@ export function addDocument(sessionId, doc, options = {}) {
   const instanceKey = resolveDocumentInstanceKey(doc)
   if (!instanceKey) return
   session.documents = session.documents || []
-  const isNew = !session.documents.some(d => resolveDocumentInstanceKey(d) === instanceKey)
+  const existingIdx = session.documents.findIndex(d => resolveDocumentInstanceKey(d) === instanceKey)
+  const isNew = existingIdx === -1
   if (isNew) {
     session.documents.push(doc)
-    documentVersion++  // 即使 silent 也递增：flush 时 useSyncExternalStore 快照依赖此版本号
+  } else {
+    // 更新已存在的文档：assembly 阶段可能更新页数/内容，
+    // 必须替换旧版本，否则 invoiceDocumentsToRows 读到过时数据（单页 vs 多页）
+    session.documents[existingIdx] = doc
   }
+  documentVersion++  // 即使 silent 也递增：flush 时 useSyncExternalStore 快照依赖此版本号
   if (options.silent) {
     // 批处理模式：仅累积待通知，循环结束后由 flushSessionNotifications 统一通知
     if (isNew) pendingNotifySessionIds.add(sessionId)

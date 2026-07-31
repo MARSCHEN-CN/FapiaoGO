@@ -59,8 +59,9 @@ export function invoiceDocumentToRow(invoiceDoc, allFiles) {
 
   if (pageFiles.length > 1) {
     // 多页 → group 条目（_isDocumentGroup: true）
+    // pageNum 可能为 0（第一页），0 是 falsy，不能用 || 1 导致排序错乱
     const sorted = [...pageFiles].sort(
-      (a, b) => (a.pageNum || 1) - (b.pageNum || 1)
+      (a, b) => (a.pageNum ?? 0) - (b.pageNum ?? 0)
     )
     const rep = sorted[0]
     return {

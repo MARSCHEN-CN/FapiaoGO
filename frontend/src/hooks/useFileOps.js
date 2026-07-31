@@ -787,8 +787,9 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
                 // 不要求 pageCount >= 2：单页 assembled 文档仍携带发票号等解析元数据，
                 // 应生成 _inv_ docId 供后续处理，而非退回 fallback 失去业务身份。
                 // FIX: 按 pageNum 升序排列，确保首页作为 representative、页面顺序正确
+                // pageNum 可能为 0（第一页），0 是 falsy，不能用 || 1 导致排序错乱
                 const sortedFiles = [...sameInstanceFiles].sort(
-                  (a, b) => (a.pageNum || 1) - (b.pageNum || 1)
+                  (a, b) => (a.pageNum ?? 0) - (b.pageNum ?? 0)
                 )
                 const repFile = sortedFiles[0]
                 // Step E1.1: Document identity 绑定文件实例（key），而非内容哈希（sourceDocId）。

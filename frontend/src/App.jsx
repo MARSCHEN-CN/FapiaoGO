@@ -742,14 +742,74 @@ function AppContent() {
   // 删除文件由 removeFile 自行处理预览逻辑
   // FIX: 优先使用 displayFiles（document 级别）的第一个条目，
   // 这样同票多页导入时会选中 group 条目（带 documentId），
-  // DisplayAdapter 能正确获取多页 InvoiceDocument 并显示缩略图栏。
+  // ── V2 FIX: 监听 InvoiceDocument 就绪时机（documentId 填充）。
+  // 多页 PDF 导入时：
+  //   1) 初始 displayFiles 由 groupFilesByDocument 产出，documentId = undefined。
+  //      此 previewFile 的 docId 在 DocumentStore 中可能查不到 → activeDocument = null → 空状态。
+  //   2) 解析完成后 InvoiceDocument 就绪，displayFiles 切换为 invoiceDocumentsToRows，
+  //      documentId = 业务装配 ID（如 sourceDocId_inv_invoiceNumber）。
+  //   3) displayFiles.length 可能不变但条目身份已变，旧 previewFile 必须重新预览。
+  //
+  // 与 usePreview.js 内置的 docId 就绪 effect 互补：
+  //   - usePreview 的 effect 监听 files（displayFiles）中 previewFile 的 docId 变化，
+  //     但对多页 group 条目而言，key 不变时它不会重触发。
+  //   - 此处额外监听 documentId 从无到有的跃迁，确保 group 条目也能正确切换。
+  //
+  // V3 FIX: 增加「当前 previewFile 的 docId 与 displayFiles[0].documentId 不一致」
+  //         的兜底——当 previewFile 指向旧的 group 条目（无 documentId）但 displayFiles
+  //         已切换为带业务 documentId 的版本时，强制触发 handlePreview，保证多页
+  //         文件导入后预览区一定能显示内容。
   // ============================
   const prevFilesLengthRef = useRef(0)
+  const prevDocIdPresenceRef = useRef(false)
+  const prevFirstDocIdRef = useRef(null)
   useEffect(() => {
-    if (displayFiles.length > prevFilesLengthRef.current && !previewFile) {
+    if (!displayFiles.length) {
+      prevDocIdPresenceRef.current = false
+      prevFilesLengthRef.current = 0
+      prevFirstDocIdRef.current = null
+      return
+    }
+
+    // 首个条目的 documentId 是否存在（区分 groupFilesByDocument vs invoiceDocumentsToRows）
+    const firstHasDocId = !!displayFiles[0]?.documentId
+    const firstDocId = displayFiles[0]?.documentId || null
+    const prevFirstDocId = prevFirstDocIdRef.current
+
+    // 场景 1: 首次导入（文件数增加）且无预览 → 首次自动预览
+    const lenIncreased = displayFiles.length > prevFilesLengthRef.current
+    if (lenIncreased && !previewFile) {
+      console.log('[AUTO_PREVIEW] scene1: len increased, no preview → handlePreview(first)')
       handlePreview(displayFiles[0])
     }
+
+    // 场景 2: InvoiceDocument 从无到有（documentId 填充）→ 重新预览
+    // 解析完成后 InvoiceDocument 就绪，displayFiles 条目切换为带业务 documentId 的版本，
+    // 旧 previewFile 的 docId 在 DocumentStore 已失效，必须切换到新条目
+    if (firstHasDocId && !prevDocIdPresenceRef.current) {
+      console.log('[AUTO_PREVIEW] scene2: first docId appeared → handlePreview(first)')
+      const pvHasDocumentId = !!previewFile?.documentId
+      if (!previewFile || !pvHasDocumentId) {
+        handlePreview(displayFiles[0])
+      }
+    }
+
+    // 场景 3: 首个条目的 documentId 发生变化（如 assembly 重新绑定）→ 强制重新预览
+    if (firstDocId && firstDocId !== prevFirstDocId) {
+      console.log('[AUTO_PREVIEW] scene3: first docId changed → handlePreview(first)')
+      handlePreview(displayFiles[0])
+    }
+
+    // 场景 4: 当前 previewFile 已不在 displayFiles 中（如被替换为带 documentId 的版本）
+    // 这是多页 PDF 拆分后 placeholder → 实际页面 的典型场景
+    if (previewFile && !displayFiles.some(f => f.key === previewFile.key)) {
+      console.log('[AUTO_PREVIEW] scene4: previewFile missing from displayFiles → handlePreview(first)')
+      handlePreview(displayFiles[0])
+    }
+
     prevFilesLengthRef.current = displayFiles.length
+    prevDocIdPresenceRef.current = firstHasDocId
+    prevFirstDocIdRef.current = firstDocId
   }, [displayFiles.length, previewFile, displayFiles, handlePreview])
 
   if (isCalculatorWindow) {

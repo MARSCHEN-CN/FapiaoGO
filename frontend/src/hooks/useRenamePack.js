@@ -252,13 +252,14 @@ export function useRenamePack({ files, settings, setFiles, parseFiles, parseProg
         if (!newBaseName) continue
 
         if (doc._isDocumentGroup && Array.isArray(doc._pages) && doc._pages.length > 1) {
-          const pages = [...doc._pages].sort((a, b) => (a.pageNum || 1) - (b.pageNum || 1))
+          // pageNum 可能为 0（第一页），0 是 falsy，不能用 || 1 导致排序错乱
+          const pages = [...doc._pages].sort((a, b) => (a.pageNum ?? 0) - (b.pageNum ?? 0))
           for (let i = 0; i < pages.length; i++) {
             const page = pages[i]
             const originalPath = page.printPath || page.path || ''
             if (!originalPath.match(/^[a-zA-Z]:\\|^\\\\/)) continue
             const isFirstPage = i === 0
-            const pageSuffix = isFirstPage ? '' : `_p${page.pageNum || (i + 1)}`
+            const pageSuffix = isFirstPage ? '' : `_p${(page.pageNum ?? 0) + 1}`
             const pageBaseName = newBaseName + pageSuffix
             allFilesToRename.push({
               key: page.key,

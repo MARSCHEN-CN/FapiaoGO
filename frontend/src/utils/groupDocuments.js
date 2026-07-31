@@ -63,18 +63,21 @@ export function groupFilesByDocument(files) {
   const docInstances = new Map()   // docId → [{ pageNums: Set, pages: [] }]
   const pageInstance = new Map()   // 页 fileObj → 所属实例
   for (const f of files) {
-    if (!(f.docId && f.pageNum)) continue
+    // 只跳过无 docId 的非拆分页；pageNum 为 null 代表首页（buildFileObj 将 page_index=0 转为 null）
+    // null 是合法页码，应参与分组
+    if (!f?.docId) continue
+    const pageKey = f.pageNum ?? 0
     let instances = docInstances.get(f.docId)
     if (!instances) {
       instances = []
       docInstances.set(f.docId, instances)
     }
-    let instance = instances.find(inst => !inst.pageNums.has(f.pageNum))
+    let instance = instances.find(inst => !inst.pageNums.has(pageKey))
     if (!instance) {
       instance = { pageNums: new Set(), pages: [] }
       instances.push(instance)
     }
-    instance.pageNums.add(f.pageNum)
+    instance.pageNums.add(pageKey)
     instance.pages.push(f)
     pageInstance.set(f, instance)
   }
@@ -82,7 +85,8 @@ export function groupFilesByDocument(files) {
   // 实例内按 pageNum 升序排列
   for (const instances of docInstances.values()) {
     for (const inst of instances) {
-      inst.pages.sort((a, b) => (a.pageNum || 1) - (b.pageNum || 1))
+      // pageNum 可能为 0，不能用 || 1 导致排序错乱
+      inst.pages.sort((a, b) => (a.pageNum ?? 0) - (b.pageNum ?? 0))
     }
   }
 

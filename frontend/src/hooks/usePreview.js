@@ -234,10 +234,10 @@ export function usePreview({ files, settings, electronAPIRef }) {
       pageSize: { w: pageW, h: pageH },
       pageOrientation: getDocNaturalOrientation({ w: pageW, h: pageH }),
       sourceType: loadedFile._fileFormat || 'pdf',
-      // ⚠️ pageNum 从 null→1 升格后，旧判断 if(pageNum) 会全部命中（单页文件也会 +P1）。
+      // ⚠️ pageNum 是 0-based（buildFileObj 保留后端 page_index），转换为 1-based 用于展示
       //    不要在消费者代码里检查 pageNum 真假值——改用 src/layout/docFacts.js 的
       //    shouldAppendPageSuffix(doc)（检查 pageCount>1）。
-      pageNum: loadedFile.pageNum || 1,
+      pageNum: (loadedFile.pageNum ?? 0) + 1,
     }
   }
 
@@ -576,10 +576,14 @@ export function usePreview({ files, settings, electronAPIRef }) {
     //       skipRenderRef only skips the Canvas pipeline; it does not skip
     //       the render strategy decision. (V6 — Engineering Discipline Law #8)
     // ── Render Dispatcher：独立于 L2 缓存，始终评估 RE 可用性 ──
+    // 解析后拆分页：RE 预览使用 sourceDocId + pageNum，而非业务 docId + previewPage
+    const isParsedSplitPage = !!(previewFile.sourceDocId && previewFile.docId !== previewFile.sourceDocId)
+    const reDocId = isParsedSplitPage ? previewFile.sourceDocId : previewFile.docId
+    const rePage = isParsedSplitPage ? ((previewFile.pageNum ?? 0) + 1) : previewPage
     const previewSpec = renderCommandReady
       ? buildRenderSpec(renderCommand, {
-          docId: previewFile.docId,
-          page: previewPage,
+          docId: reDocId,
+          page: rePage,
           dpi: PREVIEW_DPI,
           marginsMm: { top: settings.marginTop, right: settings.marginRight, bottom: settings.marginBottom, left: settings.marginLeft },
         })
@@ -705,11 +709,25 @@ export function usePreview({ files, settings, electronAPIRef }) {
         console.log(`[PREVIEW FLOW ${renderToken}] RECOVER_SKIP | token expired`)
         return
       }
-      console.log(`[PREVIEW FLOW ${renderToken}] RECOVER_START | docId=${fileObj.docId?.slice(0,20)}`)
+      // 解析后拆分页：RE 预览使用 sourceDocId（后端注册的原始 PDF ID）
+      const isParsedSplitPage = !!(fileObj.sourceDocId && fileObj.docId !== fileObj.sourceDocId)
+      const effectiveDocId = isParsedSplitPage ? fileObj.sourceDocId : fileObj.docId
+      // 分组条目（多页聚合）：docId === sourceDocId，RE URL 使用 sourceDocId 构建，
+      // 但 autoRegister 只能注册当前 fileObj 的 file（rep 的单页拆分文件），
+      // 其 docId 与原 PDF 的 sourceDocId 不一致，注册后重试仍会失败。
+      // 因此跳过 autoRegister，直接落入 canvas 容灾。
+      const isGroupedEntry = !!fileObj._isDocumentGroup
+      console.log(`[PREVIEW FLOW ${renderToken}] RECOVER_START | docId=${effectiveDocId?.slice(0,20)} | grouped=${isGroupedEntry}`)
+      if (isGroupedEntry) {
+        console.log(`[PREVIEW FLOW ${renderToken}] RECOVER_SKIP_AUTOREGISTER | grouped entry detected, skipping autoRegister to avoid docId mismatch`)
+        setReBlockedDocId(fileObj.docId)
+        console.log(`[PREVIEW FLOW ${renderToken}] RECOVER_FALLBACK | marked RE blocked, falling back to canvas`)
+        return
+      }
       // 1. 探测失败原因：DOC_NOT_REGISTERED（可恢复）还是已注册但渲染错误（不可恢复）
       let reason = 'unknown'
       try {
-        const metaResp = await fetch(`${BACKEND_URL}/metadata/${fileObj.docId}`, { mode: 'cors' })
+        const metaResp = await fetch(`${BACKEND_URL}/metadata/${effectiveDocId}`, { mode: 'cors' })
         if (metaResp.status === 404) {
           const body = await metaResp.json().catch(() => ({}))
           if (body && body.error === 'DOC_NOT_REGISTERED') reason = 'DOC_NOT_REGISTERED'
@@ -1203,8 +1221,15 @@ export function usePreview({ files, settings, electronAPIRef }) {
       if (fmt === 'image' || fmt === 'ofd') {
         // ✅ Render Engine Preview：优先走后端渲染 URL
         if (USE_RENDER_ENGINE_PREVIEW && fObj.docId) {
-          // 多页 PDF 拆页后每个分页项携带真实页码 pageNum；非拆页文件为 null → 回退 1
-          _previewImageUrl = buildPreviewUrl(fObj.docId, fObj.pageNum || 1)
+          // 多页 PDF 拆页身份判定：
+          //   解析前：docId === sourceDocId → 仍指向原 PDF 文档，用 pageNum 定位页码
+          //   解析后：docId !== sourceDocId → 每页是独立单页文档，
+          //     但后端仍以 sourceDocId 注册原始 PDF，因此必须用 sourceDocId + pageNum
+          //   非拆页文件（无 sourceDocId）：用 docId
+          const isParsedSplitPage = !!(fObj.sourceDocId && fObj.docId !== fObj.sourceDocId)
+          const effectiveDocId = isParsedSplitPage ? fObj.sourceDocId : fObj.docId
+          const pageForPreview = (fObj.pageNum ?? 0) + 1
+          _previewImageUrl = buildPreviewUrl(effectiveDocId, pageForPreview)
           return { ...fObj, _previewImageUrl, _fileFormat: fmt }
         }
 
@@ -1243,15 +1268,19 @@ export function usePreview({ files, settings, electronAPIRef }) {
       if (fmt === 'pdf') {
         // ✅ Render Engine Preview：优先走后端渲染 URL，绕过 pdfjs + Canvas
         if (USE_RENDER_ENGINE_PREVIEW && fObj.docId) {
-          // 多页 PDF 拆页后，每个分页文件是独立的单页 PDF，
-          // 注册到 backend Render Engine 后每页 document 只有 1 页。
-          // 因此 page 参数恒为 1，不使用 fObj.pageNum（原始 PDF 中的物理页码）。
-          // pageNum 仅用于前端排序/分组，不参与后端渲染定位。
-          _previewImageUrl = buildPreviewUrl(fObj.docId, 1)
+          // 多页 PDF 拆页身份判定：
+          //   解析前：docId === sourceDocId → 仍指向原 PDF 文档，用 pageNum 定位页码
+          //   解析后：docId !== sourceDocId → 每页是独立单页文档，
+          //     但后端仍以 sourceDocId 注册原始 PDF，因此必须用 sourceDocId + pageNum
+          //   非拆页文件（无 sourceDocId）：用 docId
+          const isParsedSplitPage = !!(fObj.sourceDocId && fObj.docId !== fObj.sourceDocId)
+          const effectiveDocId = isParsedSplitPage ? fObj.sourceDocId : fObj.docId
+          const pageForPreview = (fObj.pageNum ?? 0) + 1
+          _previewImageUrl = buildPreviewUrl(effectiveDocId, pageForPreview)
           // 从后端 metadata 获取页面尺寸用于 DocumentState（确定性高，不依赖图片加载）
           if (!fObj._pdfPageWidth && !fObj._imageWidth) {
             try {
-              const metaResp = await fetch(`${BACKEND_URL}/metadata/${fObj.docId}`, { signal })
+              const metaResp = await fetch(`${BACKEND_URL}/metadata/${effectiveDocId}`, { signal })
               if (metaResp.ok) {
                 const meta = await metaResp.json()
                 if (meta.success && meta.page_width > 0) {
@@ -1476,10 +1505,10 @@ export function usePreview({ files, settings, electronAPIRef }) {
       contentRotation: init.contentRotation, // Legacy 迁移：旧 fileRotations 作为 contentRotation 来源
       rotation: init.contentRotation, // [LEGACY 镜像] = contentRotation
       sourceType: loadedFile._fileFormat || 'pdf',
-      // ⚠️ pageNum 从 null→1 升格后，旧判断 if(pageNum) 会全部命中（单页文件也会 +P1）。
+      // ⚠️ pageNum 是 0-based（buildFileObj 保留后端 page_index），转换为 1-based 用于展示
       //    不要在消费者代码里检查 pageNum 真假值——改用 src/layout/docFacts.js 的
       //    shouldAppendPageSuffix(doc)（检查 pageCount>1）。
-      pageNum: loadedFile.pageNum || 1,
+      pageNum: (loadedFile.pageNum ?? 0) + 1,
     }
     // 🔴 V17 不变式：缓存身份必须包含每一个影响 RenderCommand 的 Fact。
     //    paperLandscape 由 PaperOrientation Fact 驱动绘制（renderCommand.paperLandscape），
@@ -1544,11 +1573,12 @@ export function usePreview({ files, settings, electronAPIRef }) {
       //    不依赖尚未提交的 useMemo。这正是 V16「renderCommand 实时派生、不缓存」的设计意图。
       if (l2Command) {
         try {
-          // ✅ 复用上方已构造的 l2Command：contentRotation 真值在 documentStateRef.current
-          //    （Single Source of Truth），不再用 fileRotations 闭包旧值覆盖（删掉第二个真相源）。
+          const isParsedSplitPage = !!(loadedFile.sourceDocId && loadedFile.docId !== loadedFile.sourceDocId)
+          const effectiveDocId = isParsedSplitPage ? loadedFile.sourceDocId : loadedFile.docId
+          const pageForPreview = (loadedFile.pageNum ?? 0) + 1
           l2Spec = buildRenderSpec(l2Command, {
-            docId: loadedFile.docId,
-            page: loadedFile.pageNum || 1,
+            docId: effectiveDocId,
+            page: pageForPreview,
             dpi: PREVIEW_DPI,
             marginsMm: {
               top: settingsRef.current.marginTop, right: settingsRef.current.marginRight,
@@ -1723,6 +1753,13 @@ export function usePreview({ files, settings, electronAPIRef }) {
   //       且原代码没有任何 effect 监听 docId 变化 → 自动预览永远停留在 Canvas，直到点击才切 RE。
   // 修复：监听当前预览文件在 files 中的实时 docId，一旦就绪（且与原 previewFile.docId 不同）
   //       重走 doLoadPreview，统一到 RE 路径，使自动预览与点击渲染一致。
+  //
+  // V2 FIX: 增加 null → value 跃迁检测。场景：
+  //   - 预览在 placeholder 阶段触发（docId='')
+  //   - 解析完成后 docId 被回填（物理 docId 或业务 invDocId）
+  //   - 原代码 `live.docId && live.docId !== pf.docId` 在 live.docId 非空但与 pf.docId
+  //     不同时才触发；pf.docId 初始为 null/'' 时此条件成立，但如果 live.docId 恰为 falsy
+  //     值会漏过。显式检查 `!pf.docId` 或 `live.docId !== pf.docId` 更稳健。
   const livePreviewDocId = useMemo(
     () => files.find(f => f.key === previewFile?.key)?.docId ?? null,
     [files, previewFile?.key]
@@ -1731,10 +1768,103 @@ export function usePreview({ files, settings, electronAPIRef }) {
     const pf = previewFileRef.current
     if (!pf) return
     const live = filesRef.current.find(f => f.key === pf.key)
-    if (live && live.docId && live.docId !== pf.docId) {
+    if (!live) return
+    // 触发条件：docId 从 null/undefined/'' 跃迁到非空，或两个不同的非空 docId 之间切换
+    const wasEmpty = !pf.docId
+    const changed = live.docId !== pf.docId
+    if (changed) {
+      console.log(`[PREVIEW_FLOW] docId transition | ${pf.docId || '<empty>'} → ${live.docId || '<empty>'} | wasEmpty=${wasEmpty}`)
       handlePreviewRef.current?.(live)
     }
   }, [livePreviewDocId])
+
+  // ── 文件状态变化监听：parsed 文件出现时自动预览 ──
+  // 根因：多页文件导入后，占位符先被添加，自动预览触发时文件还未解析。
+  //       当文件从 uploading/parsing 变为 parsed 状态时，filesKeyStr 不变（key 集合不变），
+  //       导致上面的 useEffect 不会重新执行，预览区保持空状态。
+  // 修复：监听已解析文件的 key 列表变化，当有新文件变为 parsed 状态时，
+  //       如果当前没有预览或预览的文件不是 parsed 状态，自动触发预览。
+  //
+  // V2 FIX: 增加 documentId 匹配检查——多页 PDF 装配完成后，
+  //         displayFiles 条目被替换为带 documentId 的版本（同一个 key，新的引用）。
+  //         此处确保在这种替换场景下（key 存在但引用不同）也会重新触发预览。
+  // V3 FIX: 增加 prevParsedCount 追踪，检测「parsed 数量增加但 previewFile 仍是旧对象」的边界。
+  const parsedFileKeys = useMemo(() => {
+    return files.filter(f => f.status === 'parsed').map(f => f.key).join(',')
+  }, [files])
+  const prevParsedKeysRef = useRef('')
+  const prevParsedCountRef = useRef(0)
+  // 追踪 files 引用的变化，用于检测结构性变更（如 groupFilesByDocument → invoiceDocumentsToRows）
+  const prevFilesRef = useRef([])
+  useEffect(() => {
+    const parsedFiles = files.filter(f => f.status === 'parsed')
+    const parsedCount = parsedFiles.length
+    const countIncreased = parsedCount > prevParsedCountRef.current
+    prevParsedCountRef.current = parsedCount
+
+    // 即使 parsedFileKeys 未变化（相同 key 集合），也需要检测 files 对象引用是否变化。
+    // 典型场景：groupFilesByDocument → invoiceDocumentsToRows 过渡，key 不变但对象结构改变（新增 documentId 等字段）。
+    const filesRefChanged = prevFilesRef.current !== files
+    prevFilesRef.current = files
+
+    if (prevParsedKeysRef.current === parsedFileKeys && !filesRefChanged) return
+    prevParsedKeysRef.current = parsedFileKeys
+
+    if (parsedCount === 0) return
+
+    const pf = previewFileRef.current
+    const pfKey = pf?.key
+    const live = pfKey ? filesRef.current.find(f => f.key === pfKey) : null
+    const pfChanged = live && live !== pf  // 引用替换场景
+
+    // 若当前预览文件已不存在于 filesRef 中（被替换或移除），切换到第一个已解析的文件
+    if (pfKey && !live) {
+      console.log('[PREVIEW_FLOW] parsedFileKeys effect: pf missing → handlePreview(firstParsed)')
+      handlePreviewRef.current?.(parsedFiles[0])
+      return
+    }
+
+    // 场景 A: 当前没有预览文件 → 预览第一个已解析的文件
+    if (!pf) {
+      console.log('[PREVIEW_FLOW] parsedFileKeys effect: no pf → handlePreview(firstParsed)')
+      handlePreviewRef.current?.(parsedFiles[0])
+      return
+    }
+
+    // 场景 B: 预览文件存在但不是 parsed 状态（仍在解析中或解析失败）
+    if (pf.status !== 'parsed') {
+      console.log('[PREVIEW_FLOW] parsedFileKeys effect: pf not parsed → handlePreview(firstParsed)')
+      handlePreviewRef.current?.(parsedFiles[0])
+      return
+    }
+
+    // 场景 C: 预览文件是 parsed，但对象已被替换（新的字段如 docId/documentId 已回填）
+    if (pfChanged) {
+      console.log('[PREVIEW_FLOW] parsedFileKeys effect: pf replaced → handlePreview(live)')
+      handlePreviewRef.current?.(live)
+      return
+    }
+
+    // 场景 D: parsed 数量增加，但当前预览文件仍是旧对象 —— 强制重新预览以确保内容刷新
+    if (countIncreased) {
+      const pfDocId = pf.docId
+      const liveDocId = live?.docId
+      if (pfDocId !== liveDocId) {
+        console.log('[PREVIEW_FLOW] parsedFileKeys effect: docId changed with count+ → handlePreview(live)')
+        handlePreviewRef.current?.(live || parsedFiles[0])
+      }
+    }
+
+    // 场景 E: files 引用已变化但 parsedKeys 未变（结构过渡场景），且 previewFile 的 docId/documentId 与 live 不一致
+    if (filesRefChanged && !pfChanged && pf) {
+      const pfHasDocId = !!(pf.documentId || pf.docId)
+      const liveHasDocId = !!(live?.documentId || live?.docId)
+      if (pfHasDocId !== liveHasDocId) {
+        console.log('[PREVIEW_FLOW] parsedFileKeys effect: docId presence changed → handlePreview(live)')
+        handlePreviewRef.current?.(live || parsedFiles[0])
+      }
+    }
+  }, [parsedFileKeys, files])
 
   // ── Canvas 导航箭头 ──
   const handleCanvasMouseMove = useCallback((e) => {

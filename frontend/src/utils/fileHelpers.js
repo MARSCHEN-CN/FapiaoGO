@@ -47,7 +47,8 @@ export function buildFileObj(file, name, path, previewImage = null, docId = null
     instanceId: instanceId || key,
     // 多页 PDF 拆页后，每个分页项携带其在原文档中的真实页码。
     // 预览 URL 必须用它而非硬编码 1，否则所有分页都显示第 1 页（串线）。
-    pageNum: pageNum || null,
+    // 使用 ?? 而非 ||，保留 pageNum=0 作为合法的首页页码
+    pageNum: pageNum ?? null,
     identity,
     // 预计算 searchText，确保所有文件（含未解析或解析失败的）都能快速搜索
     searchText: buildSearchText({ name }),

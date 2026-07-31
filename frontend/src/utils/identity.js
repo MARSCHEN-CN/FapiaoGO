@@ -70,17 +70,17 @@ export function resolveIdentity(fileObj) {
 
 /**
  * 由文档 id + 页码推导页面实例 id。
- * 单页文档（pageNum 缺省或等于 1）不携带 pageId。
+ * 单页文档（pageNum 缺省或为 0）不携带 pageId。
  *
  * @param {string} docId
- * @param {number} [pageNum]
+ * @param {number} [pageNum]  0-based 页码（0 = 首页）
  * @param {string} [explicitPageId]
  * @returns {string|undefined}
  */
 export function resolvePageId(docId, pageNum, explicitPageId) {
   if (explicitPageId) return explicitPageId
   if (!docId) return undefined
-  if (pageNum == null || pageNum <= 1) return undefined
+  if (pageNum == null || pageNum < 1) return undefined
   return `${docId}:p${pageNum}`
 }
 
