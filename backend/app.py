@@ -923,6 +923,20 @@ def split_pdf():
         # page_id 仍 = f"{file_hash}_{i}"（i=0-based 页序），输出 pages[] 顺序不变。
         SPLIT_MAX_WORKERS = 8
         page_count = doc.page_count
+
+        # ── Step 5F-1：单页 PDF 提前返回（不拆页、不 base64）──
+        # 前端 processPdfFile 对 total_pages<=1 已走「按原文件处理」（fileHelpers.js guard），
+        # 此处仅返回页数 + doc_id，省略 extract_page_pdf / base64 编码 / 页面缓存写入，
+        # 消除「131 个单页 PDF × 完整拆页往返」的结构性浪费（≈9s）。doc 生命周期由 registry 托管。
+        if page_count <= 1:
+            return jsonify({
+                "success": True,
+                "doc_id": doc.doc_id,
+                "total_pages": 1,
+                "pages": [],
+                "expires_in": _page_cache_ttl,
+            })
+
         chunk_count = min(page_count, SPLIT_MAX_WORKERS)
         chunk_size = (page_count + chunk_count - 1) // chunk_count if chunk_count else 1
         chunks = []

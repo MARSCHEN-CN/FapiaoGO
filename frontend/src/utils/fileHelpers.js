@@ -77,15 +77,14 @@ export async function processPdfFile(file, getPathFn) {
 
     if (data.success && data.pages) {
       const pages = data.pages
-      const totalPages = pages.length
+      // Step 5F-1：后端单页提前返回（total_pages=1, pages=[]，不拆页不 base64）；
+      // total_pages 优先（多页时与 pages.length 一致）。
+      const totalPages = data.total_pages || pages.length
       console.log(`[App] 检测到 PDF: ${file.name}, ${totalPages} 页`)
 
-      // TEMP(V17): Guard against single-page PDFs entering the split pipeline.
-      // The long-term fix is to move the pageCount decision to the import
-      // dispatcher so processPdfFile() only handles multi-page PDFs.
-      // When upstream dispatcher is in place, change this to assert(totalPages > 1).
+      // Step 5F-1：单页 PDF 按原文件处理（后端不拆页，此处不再进入拆页循环）
       if (totalPages <= 1) {
-        console.log(`[App] PDF ${file.name} 仅 ${totalPages} 页，无需拆分，按原文件处理`)
+        console.log(`[App] PDF ${file.name} 单页，无需拆分，按原文件处理`)
         const fileObj = buildFileObj(file.file || file, file.name, getPathFn(file))
         toAdd.push(fileObj)
         toParse.push(fileObj)

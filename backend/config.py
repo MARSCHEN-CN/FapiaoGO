@@ -49,8 +49,9 @@ CACHE_PARAMS = {
 # 是否启用缓存（可通过环境变量覆盖）
 ENABLE_CACHE = os.environ.get('ENABLE_CACHE', '1') == '1'
 
-# 是否启用详细缓存日志  修改后（默认启用调试）
-CACHE_DEBUG = os.environ.get('CACHE_DEBUG', '1') == '1'
+# 是否启用详细缓存日志  Step 5F-2：默认 0（生产：fields/OCR 缓存正常命中消费）；
+# 设 CACHE_DEBUG=1 = 开发调试强制绕过（验证 field_extract 成本时临时开）。
+CACHE_DEBUG = os.environ.get('CACHE_DEBUG', '0') == '1'
 
 # 是否启用「导入完成后自动预热预览」（Phase P-Render-Resource-Unification / P1）。
 # 默认关闭：导入期不再 fire-and-forget 触发 preview warmup，预览改为用户首次
