@@ -42,6 +42,10 @@ export function getDocumentVersion() { return documentVersion }
 /** @type {Set<(sessionId: string) => void>} */
 const subscribers = new Set()
 
+// ── 批量通知（B-1，镜像 DocumentStore silent + flushDocumentNotifications）──
+/** 待 flush 的会话通知目标：silent addDocument 累积，flushSessionNotifications 一次性清空 */
+const pendingNotifySessionIds = new Set()
+
 // ── Session 自动回收（P6-C，与 TaskRegistry TTL 同模式）──
 // 会话到达终态后延迟移除，期间仍可被 UI 查询（最近历史），
 // 避免长会话下 sessions Map 单调增长。owner = 本 store 自身。
@@ -82,6 +86,20 @@ export function subscribe(fn) {
 function notify(sessionId) {
   for (const fn of subscribers) {
     try { fn(sessionId) } catch (_) { /* ignore subscriber errors */ }
+  }
+}
+
+/**
+ * 批量刷新 ImportSessionStore 通知（B-1）。
+ * 配合 addDocument({ silent: true }) 使用：hydration 等大批量路径在循环内静默添加文档，
+ * 循环结束后调用本函数一次性 notify，避免 N 文档 N 次通知。
+ * 仅当该 session 存在待发通知时才 notify（幂等，无 pending 时为 no-op）。
+ * @param {string} targetSessionId
+ */
+export function flushSessionNotifications(targetSessionId) {
+  if (!targetSessionId) return
+  if (pendingNotifySessionIds.delete(targetSessionId)) {
+    notify(targetSessionId)
   }
 }
 
@@ -225,30 +243,35 @@ export function resolveDocumentInstanceKey(doc) {
  * 向会话中添加一个 InvoiceDocument（双写模式，E-1）。
  * 通过实例身份去重（IS-4.2 Step 4.2）：去重键 = instanceId || id || docId。
  * 同 instanceId 的文档不会被重复添加；同内容 A/B（不同 instanceId）各自保留。
+ *
+ * 批处理（B-1）：options.silent=true 时注册后不立即 notify，由调用方在循环结束后
+ * 调用 flushSessionNotifications(sessionId) 统一通知，避免 N 文档 N 次通知（hydration 大批量路径）。
+ * 非 silent 时行为与原一致：每次 addDocument 都 notify（含去重跳过，无害 no-op 重渲染），
+ * 以保持单文档 add 的既有语义（Case 1）。
+ *
  * @param {string} sessionId
  * @param {Object} doc - InvoiceDocument（来自 DocumentStore）
+ * @param {{silent?: boolean}} [options] - silent=true 时注册后不立即 notify（批处理统一 flush）
  */
-export function addDocument(sessionId, doc) {
+export function addDocument(sessionId, doc, options = {}) {
   const session = sessions.get(sessionId)
   if (!session) return
   // IS-4.2 Step 4.2：去重键 = instanceId || id || docId（无 instanceId 回退 id||docId，行为不变）
   const instanceKey = resolveDocumentInstanceKey(doc)
   if (!instanceKey) return
   session.documents = session.documents || []
-  const docId = doc?.id || doc?.docId // E1 探针：仅用于 _inv_ 只读解析与日志，不参与去重
-  const pages = doc?.pages?.length ?? '?'
-  // [E1] 验证探针增强：InvoiceDocument 不持有 sourceDocId/invoiceNumber 字段，
-  // 二者编码在 docId 中（格式 `${sourceDocId}_inv_${invoiceNumber}`，sourceDocId 为 hex 哈希不含 '_inv_'）。
-  // 仅做只读解析，不调 store getter、不引入新 import（符合探针纪律）。
-  const [e1SourceDocId, e1InvoiceNo] = (docId || '').split('_inv_')
-  if (!session.documents.some(d => resolveDocumentInstanceKey(d) === instanceKey)) {
+  const isNew = !session.documents.some(d => resolveDocumentInstanceKey(d) === instanceKey)
+  if (isNew) {
     session.documents.push(doc)
-    documentVersion++
-    console.log(`[E1] addDocument: docId=${docId}, sourceDocId=${e1SourceDocId || '-'}, invoiceNumber=${e1InvoiceNo || '-'}, pages=${pages}, docsCount=${session.documents.length}`)
-  } else {
-    console.log(`[E1] addDocument: dedup skipped docId=${docId}, sourceDocId=${e1SourceDocId || '-'}, invoiceNumber=${e1InvoiceNo || '-'}, already exists (pages=${pages})`)
+    documentVersion++  // 即使 silent 也递增：flush 时 useSyncExternalStore 快照依赖此版本号
   }
-  notify(sessionId)
+  if (options.silent) {
+    // 批处理模式：仅累积待通知，循环结束后由 flushSessionNotifications 统一通知
+    if (isNew) pendingNotifySessionIds.add(sessionId)
+  } else {
+    // 原行为：每次 addDocument 都 notify（含去重跳过）
+    notify(sessionId)
+  }
 }
 
 /**

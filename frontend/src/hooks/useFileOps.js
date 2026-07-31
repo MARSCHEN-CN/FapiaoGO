@@ -23,7 +23,7 @@ import { ensureRenderContract, ensureDocumentMetadata } from '../services/render
 import { mapParseResultToFileUpdate } from '../mappers/parseResultMapper'
 import { updateDocumentIdentity } from '../utils/identity'
 import { resolveInstancePageFiles } from '../utils/instancePageOwnership'
-import { createImportSession, getActiveSessionId, getSession, addFilesToSession, replaceFileItems, updateProgress, addDocument } from '../stores/ImportSessionStore'
+import { createImportSession, getActiveSessionId, getSession, addFilesToSession, replaceFileItems, updateProgress, addDocument, flushSessionNotifications } from '../stores/ImportSessionStore'
 import { ensureDocumentFromFileObj, flushDocumentNotifications, getDocument, registerDocument } from '../stores/DocumentStore'
 import { createDocument, createPageMeta } from '../models/InvoiceDocument'
 import { processImportedFiles } from '../processors/invoicePostProcessor'
@@ -666,6 +666,7 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
               }
             }
             let docsTouched = false
+            let sessionDocsTouched = false
             for (let j = 0; j < chunk.length; j += HYDRATION_CHUNK) {
               const chunkFiles = chunk.slice(j, j + HYDRATION_CHUNK)
               for (const fileObj of chunkFiles) {
@@ -825,7 +826,8 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
                 doc.sourceDocId = repFile.docId || assembled.sourceDocId || ''
                 doc._pageKeys = sortedFiles.map(f => f.key)
                 if (session?.id) {
-                  addDocument(session.id, doc)
+                  addDocument(session.id, doc, { silent: true })
+                  sessionDocsTouched = true
                   console.log('[ADD DOCUMENT][assembly]', {
                     id: doc?.id || doc?.docId,
                     pages: doc?.pages?.length,
@@ -853,7 +855,8 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
                     // 为单页文档设置 _pageKeys（强身份匹配），与 assembly 多页文档一致，
                     // 避免 invoiceDocumentToRow 弱身份回退匹配失败导致文档不显示
                     if (!doc._pageKeys) doc._pageKeys = [fileObj.key]
-                    addDocument(session.id, doc)
+                    addDocument(session.id, doc, { silent: true })
+                    sessionDocsTouched = true
                     console.log('[ADD DOCUMENT][gate-reject]', {
                       id: doc?.id || doc?.docId,
                       effectiveDocId,
@@ -866,6 +869,10 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
               if (docsTouched) {
                 flushDocumentNotifications()
                 docsTouched = false
+              }
+              if (sessionDocsTouched) {
+                flushSessionNotifications(session.id)
+                sessionDocsTouched = false
               }
             }
 
@@ -888,7 +895,8 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
                   if (doc && session?.id) {
                     // 为单页文档设置 _pageKeys（强身份匹配）
                     if (!doc._pageKeys) doc._pageKeys = [fileObj.key]
-                    addDocument(session.id, doc)
+                    addDocument(session.id, doc, { silent: true })
+                    sessionDocsTouched = true
                     console.log('[ADD DOCUMENT][fallback]', {
                       id: doc?.id || doc?.docId,
                       pages: doc?.pages?.length,
@@ -901,6 +909,10 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
             if (docsTouched) {
               flushDocumentNotifications()
               docsTouched = false
+            }
+            if (sessionDocsTouched) {
+              flushSessionNotifications(session.id)
+              sessionDocsTouched = false
             }
           },
         },
