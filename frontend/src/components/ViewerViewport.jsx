@@ -255,11 +255,19 @@ function ViewerViewportInner({
     )
   }
 
-  const transformStr = buildTransformString({ panX, panY, scale: renderScale, rotation: effRotation })
+  // 6B-4.1：Layout/Visual 尺寸分离。
+  // 此前 wrapper 布局尺寸 = 原始 dims（未乘 scale）+ transform scale() 只改视觉，
+  // 布局撑起外层 .canvas-scroll(overflow:auto) 滚动 → Fit 模式也出现滚动条
+  // （CSS transform 不参与布局计算的经典坑）。
+  // 修复：scale 乘入布局尺寸（width/height），transform 只保留 translate+rotate。
+  // 视觉像素不变（布局×scale ≡ 原布局×transform scale），仅滚动范围修正。
+  const transformStr = buildTransformString({ panX, panY, scale: 1, rotation: effRotation })
 
   // 尺寸是否已知（PageMeta 有值，或图片已加载拿到自然尺寸）。
   // 未知时先隐藏图片并显示占位，避免以错误尺寸闪现。
   const dimsKnown = dims.width > 0 && dims.height > 0
+  const layoutW = dims.width ? `${dims.width * renderScale}px` : 'auto'
+  const layoutH = dims.height ? `${dims.height * renderScale}px` : 'auto'
 
   return (
     <div
@@ -276,8 +284,8 @@ function ViewerViewportInner({
         style={{
           transform: transformStr,
           willChange: 'transform',
-          width: dims.width ? `${dims.width}px` : 'auto',
-          height: dims.height ? `${dims.height}px` : 'auto',
+          width: layoutW,
+          height: layoutH,
           opacity: dimsKnown ? 1 : 0,
         }}
       >
