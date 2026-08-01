@@ -53,6 +53,7 @@ import { wheelZoomFactor } from '../hooks/continuousZoom.mjs'
  */
 function ViewerViewportInner({
   page,
+  document,
   previewUrl,
   zoom,
   panX,
@@ -86,13 +87,43 @@ function ViewerViewportInner({
   useEffect(() => {
     setNaturalDims(null)
     retryRef.current = 0
+    // Architecture Law D1：强制延迟测量机制
+    // 当 previewUrl 变化时（加载新文件/页面），强制在两帧后执行一次 ResizeObserver 测量。
+    // 这确保了在新布局完全应用到 DOM 后，再计算 fitScale，防止因时序竞争导致的尺寸测量错误。
+    // （DisplayAdapter 通过 position:absolute;inset:0 + inline-style 复位确保容器尺寸稳定。）
+    let frame1, frame2
+    const forceMeasure = () => {
+      if (viewportRef.current) {
+        const style = getComputedStyle(viewportRef.current)
+        const padX = Number.parseFloat(style.paddingLeft) + Number.parseFloat(style.paddingRight)
+        const padY = Number.parseFloat(style.paddingTop) + Number.parseFloat(style.paddingBottom)
+        const w = viewportRef.current.clientWidth - padX
+        const h = viewportRef.current.clientHeight - padY
+        if (w > 0 && h > 0) {
+          lastValidSizeRef.current = { width: w, height: h }
+          setMeasuredSize({ width: w, height: h })
+        }
+      }
+    }
+    frame1 = requestAnimationFrame(() => {
+      frame2 = requestAnimationFrame(forceMeasure)
+    })
+    return () => {
+      cancelAnimationFrame(frame1)
+      cancelAnimationFrame(frame2)
+    }
   }, [previewUrl])
 
   // ─── D2-1：ResizeObserver 自测量视口内容区 ───
   // 测量 .viewer-viewport 的 clientWidth/Height 减去 padding，
-  // 得到图片真实可用区域。替代外层 prop containerSize（测量对象为 .canvas-scroll，
-  // 不含 viewport 自身 padding 和 thumbnail bar 高度，导致 fitScale 偏大）。
+  // 得到图片真实可用区域。Fit 计算的唯一数据源。
   const [measuredSize, setMeasuredSize] = useState({ width: 0, height: 0 })
+
+  // 保存最后一次有效测量值。
+  // 当 measuredSize 临时为 0（首次挂载）时，使用 lastValidSize 作为 fallback，
+  // 防止 fitScale 突变为 1（actual 尺寸）导致渲染跳变。
+  const lastValidSizeRef = useRef({ width: 0, height: 0 })
+
   useEffect(() => {
     const el = viewportRef.current
     if (!el) return
@@ -106,6 +137,10 @@ function ViewerViewportInner({
       const h = el.clientHeight - padY
       setMeasuredSize((prev) => {
         if (prev.width === w && prev.height === h) return prev
+        // Architecture Law D1：保存有效测量值，作为下一次测量前的 fallback
+        if (w > 0 && h > 0) {
+          lastValidSizeRef.current = { width: w, height: h }
+        }
         return { width: w, height: h }
       })
     }
@@ -118,18 +153,44 @@ function ViewerViewportInner({
     observer.observe(el)
     // 首次立即测量（ResizeObserver 首次回调可能延迟一帧）
     update()
-    return () => observer.disconnect()
+
+    // 补充 window resize 监听：当浏览器窗口大小变化时，ResizeObserver
+    // 可能因浏览器节流机制延迟触发。直接监听 window resize 确保及时响应。
+    const handleWindowResize = () => {
+      if (!ticking) {
+        requestAnimationFrame(update)
+        ticking = true
+      }
+    }
+    window.addEventListener('resize', handleWindowResize)
+
+    return () => {
+      observer.disconnect()
+      window.removeEventListener('resize', handleWindowResize)
+    }
   }, [])
 
   // 计算有效旋转和尺寸
   const effRotation = page ? effectiveRotation(page, viewRotation) : 0
-  // 基础尺寸：优先 PageMeta；缺失（0×0，过渡期注册）时回退到已加载图片的自然尺寸。
-  const baseW = page && page.width ? page.width : naturalDims ? naturalDims.width : 0
-  const baseH = page && page.height ? page.height : naturalDims ? naturalDims.height : 0
+  
+  // Architecture Law D1：强制使用图片加载后的真实物理尺寸 (naturalDims) 作为基准。
+  // 移除对 PageMeta.width/height 的依赖，因为 PageMeta 可能被业务逻辑（如打印排版）
+  // 修改为逻辑尺寸（如 A5 纸的尺寸），而非图片的真实像素。
+  // 只有图片的 naturalWidth/Height 能保证“如实展示”，确保 fitScale 计算基准一致。
+  // 如果图片尚未加载，回退到 PageMeta，但这只是临时状态，加载完成后会立即纠正。
+  const baseW = naturalDims ? naturalDims.width : (page ? page.width : 0)
+  const baseH = naturalDims ? naturalDims.height : (page ? page.height : 0)
   const dims = rotatedDimensions(baseW, baseH, effRotation)
 
+  // Architecture Law D1：使用有效测量尺寸。
+  // 当 measuredSize 临时为 0（切文件/测量中）时，使用 lastValidSizeRef 作为 fallback，
+  // 防止 fitScale 突变为 1（actual 尺寸）导致渲染跳变。
+  const effectiveSize = (measuredSize.width > 0 && measuredSize.height > 0)
+    ? measuredSize
+    : lastValidSizeRef.current
+
   // 计算 fit scale（D2-1：使用自测量尺寸，非外层 prop）
-  const fitScale = computeFitScale(dims.width, dims.height, measuredSize.width, measuredSize.height)
+  const fitScale = computeFitScale(dims.width, dims.height, effectiveSize.width, effectiveSize.height)
 
   // D2-4 5C：上抬 authoritative fitScale 给 useViewerState（fit 相对显示 + 档位换算的单一真相）。
   // reportFitScale 内置相等短路（prev===fs 不 setState），fitScale 稳定时不触发 re-render，
@@ -145,7 +206,7 @@ function ViewerViewportInner({
   const useNewModel = mode !== undefined
   // 6B-1：fitWidthScale（适应宽度 = 横向铺满，高度超出靠 pan/拖拽查看）；
   // actual 模式 = 原始像素（renderScale=1，PageMeta 为 img 自然像素）。
-  const fitWidthScale = dims.width > 0 && measuredSize.width > 0 ? measuredSize.width / dims.width : 1
+  const fitWidthScale = dims.width > 0 && effectiveSize.width > 0 ? effectiveSize.width / dims.width : 1
   const renderScale = useNewModel
     ? (mode === 'manual' && manualScale != null ? manualScale
       : mode === 'fitWidth' ? fitWidthScale
@@ -159,8 +220,10 @@ function ViewerViewportInner({
     const h = e.target?.naturalHeight || 0
     if (w <= 0 || h <= 0) return
     setNaturalDims({ width: w, height: h })
-    // PageMeta 缺失尺寸时上报，由 DocumentViewer 回填 DocumentStore（D1：尺寸属于业务数据）
-    if (page && (!page.width || !page.height)) {
+    // Architecture Law D1：始终上报图片的真实物理尺寸 (naturalDims)。
+    // 移除对 PageMeta 尺寸是否为 0 的判断，确保能彻底纠正数据模型中可能存在的
+    // “虚拟尺寸”（如由打印排版逻辑赋予的 A5 尺寸）。展示区只关心真实像素。
+    if (page) {
       onNaturalSize?.(page.index, w, h)
     }
   }, [page, onNaturalSize])
@@ -246,11 +309,33 @@ function ViewerViewportInner({
 
   // 无页面数据时显示占位
   if (!page || !previewUrl) {
+    // Architecture Law D1：彻底空状态（无文件）下，不渲染任何 placeholder。
+    if (!document) {
+      // 用户未选择任何文件，展示区完全留空
+      return (
+        <div className="viewer-viewport" ref={viewportRef}></div>
+      )
+    }
+
+    // 文档已注册但无页面数据（pageCount=0），显示空状态而非无限加载
+    if (document.pageCount === 0) {
+      return (
+        <div className="viewer-viewport" ref={viewportRef}>
+          <div className="viewer-placeholder">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" style={{ marginBottom: '8px', opacity: 0.4 }}>
+              <path d="M14 2H6C4.9 2 4 2.9 4 4v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"/>
+              <path d="M14 2v6h6" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"/>
+            </svg>
+            <span>暂无页面内容</span>
+          </div>
+        </div>
+      )
+    }
+
+    // 文档有 pageCount 但 page 为 null（可能是页面索引越界或尚未就绪），显示加载提示
     return (
       <div className="viewer-viewport" ref={viewportRef}>
-        <div className="viewer-placeholder">
-          {loading ? '加载中...' : '无预览'}
-        </div>
+        <div className="viewer-placeholder">加载中...</div>
       </div>
     )
   }

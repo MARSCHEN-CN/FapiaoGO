@@ -38,7 +38,10 @@
   display: flex;
   /* 大 padding 给阴影留足渲染空间（上16/左右20/下20px），
      配合 .paper 柔化阴影 + mask-image 边缘渐变遮罩，
-     阴影到达滚动容器边界时自然"消融"淡出而非硬切 */
+     阴影到达滚动容器边界时自然"消融"淡出而非硬切。
+     ⚠️ 仅用于 Legacy PreviewCanvas（打印预览/纸张模拟）路径。
+     DocumentViewer（文档查看器）路径通过 DisplayAdapter inline-style 复位
+     （padding:0 / mask:none），根容器 position:absolute;inset:0 自成一体。 */
   padding: 16px 20px 20px;
   cursor: grab;
   /* 始终预留滚动条槽位，避免滚动条出现/消失导致容器宽度振荡 */
@@ -52,6 +55,10 @@
     linear-gradient(to bottom, transparent 0%, #000 24px, #000 calc(100% - 24px), transparent 100%),
     linear-gradient(to right, transparent 0%, #000 24px, #000 calc(100% - 24px), transparent 100%);
   mask-composite: intersect;
+  /* 建立绝对定位 containing block：DisplayAdapter 使用 position:absolute;inset:0
+     填满本容器的 padding-box，必须有 position:relative 才能正确相对 .canvas-scroll
+     定位（否则会向上查找 .canvas 作为定位祖先，导致布局偏移）。 */
+  position: relative;
 }
 
 /* 拖拽进行?*/
@@ -297,10 +304,130 @@
   flex-shrink: 0;
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: flex-start; /* 改为 flex-start，配合 margin-left: auto 使用 */
   padding: 4px 20px 6px;
   position: relative;
-  z-index: 5;  /* 毛玻璃浮在阴影溢出的纸张上方 */
+  z-index: 5;
+}
+
+/* ─── 页码导航（始终居中）─── */
+.page-navigator {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  user-select: none;
+  flex-shrink: 0; /* 防止被挤压 */
+  z-index: 10; /* 确保浮在其他元素之上 */
+}
+
+.page-nav-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+  transition: all 150ms ease;
+}
+
+/* 首页/末页按钮：略小的宽度 */
+.page-nav-btn-first,
+.page-nav-btn-last {
+  width: 24px;
+}
+
+.page-nav-btn:hover:not(:disabled) {
+  background: var(--accent-soft, rgba(79, 124, 255, 0.10));
+  color: var(--accent);
+}
+
+.page-nav-btn:active:not(:disabled) {
+  transform: scale(0.92);
+}
+
+.page-nav-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.page-nav-indicator {
+  font-size: 13px;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  letter-spacing: 0.5px;
+  /* Architecture Law: 使用 Grid 三列布局，确保分隔符始终居中。
+     左列：当前页码（右对齐）
+     中列：分隔符 "/" （始终居中）
+     右列：总页数（左对齐）
+     这样无论数字位数如何变化（1->2位），分隔符位置不变。 */
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 0;
+  min-width: 56px; /* 保证双位数页码时不抖动：如 "9 / 9" → "10 / 10" */
+}
+
+.page-nav-cur {
+  justify-self: end;
+}
+
+/* 可点击页码样式 */
+.page-nav-clickable {
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+  transition: all 150ms ease;
+}
+
+.page-nav-clickable:hover {
+  background: var(--accent-soft, rgba(79, 124, 255, 0.10));
+  color: var(--accent);
+}
+
+.page-nav-clickable:focus {
+  outline: none;
+  background: var(--accent-soft, rgba(79, 124, 255, 0.10));
+}
+
+/* 页码输入框 */
+.page-nav-input {
+  width: 32px;
+  padding: 2px 4px;
+  border: 1px solid var(--border-light, #e5e7eb);
+  border-radius: 4px;
+  background: var(--surface, #fff);
+  color: var(--text-1);
+  font-size: 13px;
+  font-family: inherit;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  outline: none;
+  transition: border-color 150ms ease;
+}
+
+.page-nav-input:focus {
+  border-color: var(--accent, #4f7cff);
+  box-shadow: 0 0 0 2px var(--accent-soft, rgba(79, 124, 255, 0.15));
+}
+
+.page-nav-total {
+  justify-self: start;
+}
+
+/* 分隔符：始终居中 */
+.page-nav-sep {
+  color: var(--text-3);
+  margin: 0 2px;
+  text-align: center;
+  justify-self: center;
 }
 
 /* 状态指示器 */
@@ -310,6 +437,8 @@
   gap: 2px;
   padding: 5px 12px;
   background: var(--float-bg);
+  margin-left: auto; /* Architecture Law: 强制推到最右侧，无论左侧是否有其他元素 */
+  flex-shrink: 0; /* 防止被挤压 */
   backdrop-filter: var(--float-blur);
   -webkit-backdrop-filter: var(--float-blur);
   border-radius: var(--float-radius-pill);

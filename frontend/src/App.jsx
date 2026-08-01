@@ -43,6 +43,7 @@ import Sidebar from './components/Sidebar'
 import TopBar from './components/TopBar'
 import { DisplayAdapter, resolveDocId } from './components/DisplayAdapter'
 import { ZoomToolbar } from './components/ZoomToolbar'
+import { PageNavigator } from './components/PageNavigator'
 import { useDocument } from './hooks/useDocument'
 import { removeDocument, getRegisteredDocIds } from './stores/DocumentStore'
 import { clearActiveSession, getActiveSessionId, removeFilesFromSession } from './stores/ImportSessionStore'
@@ -1089,8 +1090,17 @@ function AppContent() {
           )}
         </div>
 
-        {/* 4. Status：状态指示器 */}
+        {/* 4. Status：状态指示器 + 页码导航 */}
         <div className="status-bar">
+          {viewerController && viewerController.totalPages > 1 && (
+            <PageNavigator
+              currentPage={viewerController.currentPage}
+              totalPages={viewerController.totalPages}
+              onPrev={viewerController.actions.prevPage}
+              onNext={viewerController.actions.nextPage}
+              onJump={viewerController.actions.goToPage}
+            />
+          )}
           <StatusIndicator
             paperSize={settings.paperSize}
             landscape={settings.landscape}

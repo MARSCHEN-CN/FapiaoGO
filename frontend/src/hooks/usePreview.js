@@ -952,6 +952,8 @@ export function usePreview({ files, settings, electronAPIRef }) {
       renderCommand, renderCommandReady])
 
   // ResizeObserver ✅ 使用 requestAnimationFrame 节流，避免频繁重绘
+  // 补充 window resize 监听：当浏览器窗口大小变化时，ResizeObserver
+  // 可能因浏览器节流机制延迟触发。直接监听 window resize 确保及时响应。
   useEffect(() => {
     const el = previewContainerRef.current
     if (!el) return
@@ -972,7 +974,20 @@ export function usePreview({ files, settings, electronAPIRef }) {
       }
     })
     observer.observe(el)
-    return () => observer.disconnect()
+    // 首次立即测量
+    update()
+    // 补充 window resize 监听，确保窗口大小变化时及时响应
+    const handleWindowResize = () => {
+      if (!ticking) {
+        requestAnimationFrame(update)
+        ticking = true
+      }
+    }
+    window.addEventListener('resize', handleWindowResize)
+    return () => {
+      observer.disconnect()
+      window.removeEventListener('resize', handleWindowResize)
+    }
   }, [previewFile])
 
   // Display 计算

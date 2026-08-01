@@ -79,6 +79,8 @@ const SCALE_MAX = 20
  * @returns {{ state: ViewerState, actions: ViewerActions }}
  */
 export function useViewerState({ document, containerSize, initialPage = 0 }) {
+  // Architecture Law D1：容错 null document（双 Buffer 文件切换期间）。
+  // max 为 0 时 currentPage clamp 到 0，后续 document 就绪后由 goToPageRef 导航。
   const [currentPage, setCurrentPage] = useState(() => {
     const max = document ? document.pageCount - 1 : 0
     return Math.min(max, Math.max(0, initialPage))
@@ -232,7 +234,7 @@ export function useViewerState({ document, containerSize, initialPage = 0 }) {
   // ─── Page Navigation ───
 
   const goToPage = useCallback((index) => {
-    if (!document) return
+    if (!document || document.pageCount <= 0) return
     const clamped = Math.min(document.pageCount - 1, Math.max(0, index))
     setCurrentPage(clamped)
     // 6B-1：切页保留 zoom/mode/rotation（Viewer 状态独立于 Page）。
@@ -304,8 +306,11 @@ export function useViewerState({ document, containerSize, initialPage = 0 }) {
   //   同票翻页（goToPage）→ 保留 zoom/mode/rotation，pan 归零（连续阅读）。
   //   换文档（resetForDocument）→ 全部回默认：page=0 / fit / zoom=100 / rotation=0 / pan=0,0
   //     （打开一份新文件，与 Edge/Adobe 桌面阅读器行为一致）。
-  // ⚠️ 不重置 fitScale：它是 ViewerViewport 上抬的 authoritative 值（D2-4 单一来源），
-  //    换文档后 ViewerViewport 对新页立即重算上报，无需也不应在此直接写。
+  // 6B-4.3：不重置 fitScale。resetForDocument 在 useEffect 中执行，晚于
+  //   ViewerViewport 的 onFitScaleChange effect（child→parent 顺序）。
+  //   若清零 fitScale，会覆写 ViewerViewport 刚上报的正确值，且因本地 fitScale
+  //   未变导致 onFitScaleChange 不再触发，useViewerState.fitScale 永久停滞在 0。
+  //   fitScale 由 ViewerViewport 通过 reportFitScale 自然上报，无需手动清零。
   const resetForDocument = useCallback(() => {
     setCurrentPage(0)
     setMode('fit')

@@ -80,27 +80,34 @@ export function ThumbnailStrip({ document, currentPage, onPageSelect }) {
     }
   }, [])
 
-  // 文档无效或单页时不渲染缩略图栏。
-  // ⚠️ 必须在所有 hooks 之后执行：多页↔单页切换时若提前 return，
-  // 本次 render 的 hooks 数量会少于上次，React 报 "Rendered fewer hooks than expected"。
-  if (!document || document.pageCount <= 1) return null
+  // 文档无效或单页时隐藏缩略图栏，但保持 DOM 结构稳定。
+  // Architecture Law D1：ThumbnailStrip 是 navigation overlay，不是 layout owner。
+  // 始终渲染 sidebar div（通过 CSS 控制宽度），防止 ViewerViewport 尺寸跳变。
+  const isVisible = !!(document && document.pageCount > 1)
 
   return (
-    <div className="viewer-thumbnail-sidebar" role="navigation" aria-label="页面缩略图">
-      <div className="viewer-thumbnail-list" ref={stripRef}>
-        {document.pages.map((page, index) => (
-          <div key={page.pageId} ref={(el) => setItemRef(index, el)}>
-            <ThumbnailItem
-              index={index}
-              thumbnailUrl={thumbnailUrls[index]}
-              active={index === currentPage}
-              shouldLoad={shouldLoadPage(index)}
-              aspectRatio={aspectRatios[index]}
-              onClick={handlePageSelect}
-            />
-          </div>
-        ))}
-      </div>
+    <div
+      className={`viewer-thumbnail-sidebar${isVisible ? '' : ' viewer-thumbnail-sidebar--hidden'}`}
+      role="navigation"
+      aria-label={isVisible ? '页面缩略图' : '隐藏的缩略图导航'}
+      aria-hidden={!isVisible}
+    >
+      {isVisible && (
+        <div className="viewer-thumbnail-list" ref={stripRef}>
+          {document.pages.map((page, index) => (
+            <div key={page.pageId} ref={(el) => setItemRef(index, el)}>
+              <ThumbnailItem
+                index={index}
+                thumbnailUrl={thumbnailUrls[index]}
+                active={index === currentPage}
+                shouldLoad={shouldLoadPage(index)}
+                aspectRatio={aspectRatios[index]}
+                onClick={handlePageSelect}
+              />
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
