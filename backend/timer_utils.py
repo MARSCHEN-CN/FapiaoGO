@@ -6,7 +6,6 @@ import time
 import logging
 from contextlib import contextmanager
 from functools import wraps
-import threading
 
 logger = logging.getLogger(__name__)
 
@@ -134,49 +133,64 @@ def timeout_decorator(max_time=MAX_PARSE_TIME, raise_exception=False):
 
 
 # ============================
-# 带超时的线程执行（可强制终止）
+# 带超时的进程执行（可强制终止）
 # ============================
 
 def run_with_timeout(func, args=(), kwargs=None, timeout=MAX_PARSE_TIME):
-    """
-    在线程中执行函数，支持超时强制终止
-    
+    """在独立进程中执行函数，支持超时强制终止。
+
+    使用 multiprocessing.Process 代替 threading.Thread，
+    确保超时后能真正终止执行（Python 线程无法被强制杀死，
+    daemon 线程超时后仍会在后台继续运行，造成 CPU/内存/GPU 资源泄漏）。
+
+    注意：func 及其参数必须可 pickle。对于持有 OCR 模型等不可 pickle
+    对象的闭包，请使用 check_timeout 软超时模式代替。
+
     Args:
-        func: 要执行的函数
+        func: 要执行的函数（必须可 pickle）
         args: 位置参数
         kwargs: 关键字参数
         timeout: 超时时间（秒）
-    
+
     Returns:
         tuple: (success, result/error)
     """
     if kwargs is None:
         kwargs = {}
-    
-    result_container = {'success': False, 'result': None, 'error': None}
-    thread = None
-    
+
+    from multiprocessing import Process, Queue
+
+    result_queue = Queue()
+
     def target():
         try:
-            result_container['result'] = func(*args, **kwargs)
-            result_container['success'] = True
+            result = func(*args, **kwargs)
+            result_queue.put(('success', result))
         except Exception as e:
-            result_container['error'] = e
-            logger.exception('[Timeout] 函数执行异常')
-    
-    thread = threading.Thread(target=target)
-    thread.daemon = True
-    thread.start()
-    thread.join(timeout)
-    
-    if thread.is_alive():
-        logger.warning('[Timeout] 函数执行超时（%ds），强制终止', timeout)
+            result_queue.put(('error', e))
+
+    p = Process(target=target, daemon=True)
+    p.start()
+    p.join(timeout)
+
+    if p.is_alive():
+        p.terminate()
+        p.join(timeout=5)
+        if p.is_alive():
+            p.kill()
+            p.join(timeout=5)
+        logger.warning('[Timeout] 函数执行超时（%ds），已强制终止进程', timeout)
         return (False, TimeoutException(f'执行超时，超过 {timeout} 秒'))
-    
-    if result_container['success']:
-        return (True, result_container['result'])
-    else:
-        return (False, result_container['error'])
+
+    if not result_queue.empty():
+        status, result = result_queue.get_nowait()
+        if status == 'success':
+            return (True, result)
+        else:
+            logger.exception('[Timeout] 函数执行异常', exc_info=result)
+            return (False, result)
+
+    return (False, TimeoutException('进程已结束但未返回结果'))
 
 
 # ============================

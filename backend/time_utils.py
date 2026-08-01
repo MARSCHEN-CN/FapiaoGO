@@ -2,6 +2,7 @@
 时间工具模块 - 确保整个项目使用北京时间(UTC+8)
 """
 
+import logging
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -87,8 +88,6 @@ def format_timestamp(ts, fmt='%Y-%m-%d %H:%M:%S'):
 # ============================
 # 日志格式化器
 # ============================
-
-import logging
 
 class BeijingTimeFormatter(logging.Formatter):
     """自定义日志格式化器，使用北京时间"""

@@ -2,7 +2,7 @@
 
 const fs = require('fs')
 const path = require('path')
-const { execSync, execFile, execFileSync } = require('child_process')
+const { execFile } = require('child_process')
 const { TEMP_DIR } = require('./temp-manager')
 const { formatCurrentDate } = require('./constants')
 const { ZipArchive } = require('archiver')
@@ -171,15 +171,9 @@ function find7zPath() {
     } catch {}
   }
 
-  try {
-    const result = execFileSync('where.exe', ['7z'], { encoding: 'utf-8', timeout: 3000, stdio: ['ignore', 'pipe', 'ignore'] }).trim()
-    const first = result.split(/\r?\n/)[0].trim()
-    if (first && fs.existsSync(first)) {
-      _7zPathCache = first
-      return _7zPathCache
-    }
-  } catch (e) {}
-
+  // 未在常见路径找到，返回 null。
+  // where.exe 异步查找由 initArchivePaths() 在启动时预缓存，
+  // 避免同步 execFileSync 阻塞 Electron 主进程。
   _7zPathCache = null
   return _7zPathCache
 }
@@ -262,17 +256,48 @@ function findWinRarPath() {
     } catch {}
   }
 
-  try {
-    const result = execFileSync('where.exe', ['rar'], { encoding: 'utf-8', timeout: 3000, stdio: ['ignore', 'pipe', 'ignore'] }).trim()
-    const first = result.split(/\r?\n/)[0].trim()
-    if (first && fs.existsSync(first)) {
-      _rarPathCache = first
-      return _rarPathCache
-    }
-  } catch (e) {}
-
+  // 未在常见路径找到，返回 null。
+  // where.exe 异步查找由 initArchivePaths() 在启动时预缓存，
+  // 避免同步 execFileSync 阻塞 Electron 主进程。
   _rarPathCache = null
   return _rarPathCache
+}
+
+/**
+ * 异步预缓存 7z / WinRAR 路径（应用启动时调用）。
+ * 使用异步 execFile 执行 where.exe，不阻塞 Electron 主进程。
+ * 若常见路径已命中则跳过 where.exe 查找。
+ */
+async function initArchivePaths() {
+  // 7z
+  if (find7zPath() === null) {
+    try {
+      const result = await new Promise((resolve) => {
+        execFile('where.exe', ['7z'], { encoding: 'utf-8', timeout: 3000 }, (err, stdout) => {
+          resolve(err ? null : stdout)
+        })
+      })
+      if (result) {
+        const first = result.trim().split(/\r?\n/)[0].trim()
+        if (first && fs.existsSync(first)) _7zPathCache = first
+      }
+    } catch {}
+  }
+
+  // WinRAR
+  if (findWinRarPath() === null) {
+    try {
+      const result = await new Promise((resolve) => {
+        execFile('where.exe', ['rar'], { encoding: 'utf-8', timeout: 3000 }, (err, stdout) => {
+          resolve(err ? null : stdout)
+        })
+      })
+      if (result) {
+        const first = result.trim().split(/\r?\n/)[0].trim()
+        if (first && fs.existsSync(first)) _rarPathCache = first
+      }
+    } catch {}
+  }
 }
 
 /**
@@ -320,4 +345,5 @@ module.exports = {
   createArchiveWith7z,
   findWinRarPath,
   createRarWithWinRAR,
+  initArchivePaths,
 }

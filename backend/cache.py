@@ -845,22 +845,6 @@ def _infer_namespace_and_key(raw_key: str):
     return 'ocr', raw_key, None
 
 
-# ── 一次性探针 5E-M1（跑完 git checkout 还原，勿 commit）──
-_5EM1 = {'count': 0, 'total': 0.0, 'max': 0.0}
-
-
-def _5em1(op, t0):
-    el = (time.perf_counter() - t0) * 1000
-    s = _5EM1
-    s['count'] += 1
-    s['total'] += el
-    s['max'] = max(s['max'], el)
-    if s['count'] % 100 == 0:
-        logging.getLogger(__name__).info(
-            '[5EM1-cache] op=%s count=%d avg=%.1fms max=%.1fms',
-            op, s['count'], s['total'] / s['count'], s['max'])
-
-
 def get_ocr_cache(file_bytes, params=None):
     """从缓存读取（向后兼容）
 
@@ -870,30 +854,22 @@ def get_ocr_cache(file_bytes, params=None):
     """
     if not ENABLE_CACHE:
         return None
-    _t0 = time.perf_counter()
-    try:
-        raw_key = get_file_hash(file_bytes)
-        ns, clean_key, inferred_params = _infer_namespace_and_key(raw_key)
-        if params is not None:
-            inferred_params = params
-        return _get_manager().get(ns, clean_key, inferred_params)
-    finally:
-        _5em1('ocr_get', _t0)
+    raw_key = get_file_hash(file_bytes)
+    ns, clean_key, inferred_params = _infer_namespace_and_key(raw_key)
+    if params is not None:
+        inferred_params = params
+    return _get_manager().get(ns, clean_key, inferred_params)
 
 
 def set_ocr_cache(file_bytes, result, params=None):
     """将结果写入缓存（向后兼容）"""
     if not ENABLE_CACHE:
         return
-    _t0 = time.perf_counter()
-    try:
-        raw_key = get_file_hash(file_bytes)
-        ns, clean_key, inferred_params = _infer_namespace_and_key(raw_key)
-        if params is not None:
-            inferred_params = params
-        _get_manager().set(ns, clean_key, result, params=inferred_params)
-    finally:
-        _5em1('ocr_set', _t0)
+    raw_key = get_file_hash(file_bytes)
+    ns, clean_key, inferred_params = _infer_namespace_and_key(raw_key)
+    if params is not None:
+        inferred_params = params
+    _get_manager().set(ns, clean_key, result, params=inferred_params)
 
 
 def get_fields_cache(key, params=None):
@@ -905,22 +881,14 @@ def get_fields_cache(key, params=None):
     """
     if not ENABLE_CACHE:
         return None
-    _t0 = time.perf_counter()
-    try:
-        return _get_manager().get("fields", key, params)
-    finally:
-        _5em1('fields_get', _t0)
+    return _get_manager().get("fields", key, params)
 
 
 def set_fields_cache(key, result, params=None):
     """将字段提取结果写入缓存（fields 命名空间）"""
     if not ENABLE_CACHE:
         return
-    _t0 = time.perf_counter()
-    try:
-        _get_manager().set("fields", key, result, params=params)
-    finally:
-        _5em1('fields_set', _t0)
+    _get_manager().set("fields", key, result, params=params)
 
 
 def cleanup_expired_cache(cache_dir=None):

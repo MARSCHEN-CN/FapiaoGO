@@ -501,6 +501,11 @@ export class PriorityQueue {
   complete(key) {
     this.processing.delete(key)
     this.completed.add(key)
+    // 防止长期运行时 completed 集合无限增长导致内存泄漏
+    if (this.completed.size > 2000) {
+      this.completed.clear()
+      this.completed.add(key)
+    }
   }
 
   /**

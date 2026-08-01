@@ -18,6 +18,7 @@ const { init: initTempManager, cleanupAllTempFiles, TEMP_DIR } = require('./temp
 const { registerFileOpsHandlers } = require('./ipc-file-ops')
 const { registerRenameHandlers } = require('./ipc-rename')
 const { registerPackHandlers } = require('./ipc-pack')
+const { initArchivePaths } = require('./archive-utils')
 const pdfMargin = require('./print-service/pdf-margin-processor')
 const { initUpdateManager } = require('./services/Update/UpdateManager')
 const { load: loadConfig } = require('./services/ConfigService')
@@ -1256,6 +1257,9 @@ if (!gotTheLock) {
     void initTempManager().catch((err) => {
       console.error('[BOOT] initTempManager failed:', err.message)
     })
+
+    // 异步预缓存 7z / WinRAR 路径（不阻塞主进程）
+    void initArchivePaths().catch(() => {})
 
     // 加载配置 + 初始化自动更新（可能触发网络检查，延后）
     const config = loadConfig()

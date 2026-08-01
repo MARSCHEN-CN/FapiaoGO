@@ -6,6 +6,8 @@ import io
 import os
 import logging
 
+from pdf_utils import _is_image_page
+
 logger = logging.getLogger(__name__)
 
 # =========================
@@ -132,15 +134,6 @@ def _detect_by_extension(filename):
 # =========================
 # PDF 安全检查
 # =========================
-
-def _is_image_page(page) -> bool:
-    """判断单个 PDF 页面是否为图片型：无可提取文本但有嵌入图片"""
-    text = (page.get_text("text") or "").strip()
-    if len(text) >= 10:
-        return False
-    images = page.get_images(full=True)
-    return len(images) > 0
-
 
 def validate_pdf(raw_bytes):
     """

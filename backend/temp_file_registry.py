@@ -297,7 +297,12 @@ class TempFileRegistry:
             doc_id=doc_id,
             status="active",
         )
-        self.retain(rec)  # rec.refId 已非空 → retain 直接登记，不重新生成
+        try:
+            self.retain(rec)  # rec.refId 已非空 → retain 直接登记，不重新生成
+        except Exception:
+            # retain 失败时清理已落盘的临时文件，避免孤儿文件
+            self._storage.delete(path)
+            raise
         return self.get(ref_id)
 
     def read_bytes(self, ref_id: str) -> bytes:

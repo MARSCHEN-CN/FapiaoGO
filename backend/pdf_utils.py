@@ -149,6 +149,18 @@ def _is_image_page(page) -> bool:
     return len(images) > 0
 
 
+def _count_image_pages(doc) -> tuple:
+    """统计文档中的图片型页面数，返回 (total_pages, image_pages)。
+
+    classify_pdf 和 need_ocr 的共享逻辑，消除重复遍历代码。
+    """
+    total = len(doc)
+    if total == 0:
+        return 0, 0
+    image_pages = sum(1 for p in doc if _is_image_page(p))
+    return total, image_pages
+
+
 def classify_pdf(pdf_bytes) -> str:
     """分类 PDF 为文本型或图片型。
 
@@ -164,10 +176,9 @@ def classify_pdf(pdf_bytes) -> str:
     try:
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
         try:
-            total = len(doc)
+            total, image_pages = _count_image_pages(doc)
             if total == 0:
                 return 'image'
-            image_pages = sum(1 for p in doc if _is_image_page(p))
             kind = 'image' if image_pages > total / 2 else 'text'
             logger.info("[CLASSIFY_PDF] pages=%d, image_pages=%d, kind=%s", total, image_pages, kind)
             return kind
@@ -199,11 +210,10 @@ def need_ocr(text, doc=None):
     # ── 优先：基于 PDF 结构判断 ──
     if doc is not None:
         try:
-            total_pages = len(doc)
+            total_pages, image_pages = _count_image_pages(doc)
             if total_pages == 0:
                 logger.info("[NEED_OCR] doc has 0 pages, returning True")
                 return True
-            image_pages = sum(1 for p in doc if _is_image_page(p))
             is_image_pdf = image_pages > total_pages / 2
             logger.info(
                 "[NEED_OCR] pages=%d, image_pages=%d, is_image_pdf=%s",
