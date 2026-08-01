@@ -34,9 +34,10 @@ function restoreOriginalName(pageName) {
  *
  * @param {import('../models/InvoiceDocument').InvoiceDocument} invoiceDoc
  * @param {import('../models/ImportSession').SessionFile[]} allFiles - session.files[]
+ * @param {{ keyIndex?: Map<string, Object>, docIdIndex?: Map<string, Object[]> }} [fileIndex] - 预构建索引（可选，提供时 O(1) 查找）
  * @returns {Object|null} FileCardRow 条目，或 null（无匹配文件时）
  */
-export function invoiceDocumentToRow(invoiceDoc, allFiles) {
+export function invoiceDocumentToRow(invoiceDoc, allFiles, fileIndex) {
   if (!invoiceDoc?.docId) return null
 
   // _pageKeys 是 assembly 阶段精确记录的页面 fileObj key 列表（强身份），
@@ -44,18 +45,30 @@ export function invoiceDocumentToRow(invoiceDoc, allFiles) {
   // 这避免了「session.files[].docId 被逐页身份改写 → candidates 为空 → 整票被过滤」的断链。
   let pageFiles
   if (Array.isArray(invoiceDoc._pageKeys) && invoiceDoc._pageKeys.length) {
-    pageFiles = allFiles.filter((f) => invoiceDoc._pageKeys.includes(f.key))
+    if (fileIndex?.keyIndex) {
+      // O(1) 查找：利用预构建的 key→file 索引
+      pageFiles = invoiceDoc._pageKeys
+        .map((key) => fileIndex.keyIndex.get(key))
+        .filter(Boolean)
+    } else {
+      pageFiles = allFiles.filter((f) => invoiceDoc._pageKeys.includes(f.key))
+    }
   } else {
     // 弱身份回退：旧路径兼容（无 _pageKeys 时按 sourceDocId/docId 匹配）
     // E-2.2: InvoiceDocument.docId = 组装 identity（sourceDocId_inv_invoiceNumber），
     // 而 session.files[].docId = 原始导入文件 identity（sourceDocId），
     // 因此匹配字段使用 sourceDocId，回退到 docId。
     const matchDocId = invoiceDoc.sourceDocId || invoiceDoc.docId
-    pageFiles = allFiles.filter((f) => f.docId === matchDocId && f.key)
+    if (fileIndex?.docIdIndex) {
+      // O(1) 查找：利用预构建的 docId→files 索引
+      pageFiles = fileIndex.docIdIndex.get(matchDocId) || []
+    } else {
+      pageFiles = allFiles.filter((f) => f.docId === matchDocId && f.key)
+    }
   }
 
   // 无匹配 fileObj → 异常状态，不产生条目
-  if (pageFiles.length === 0) return null
+  if (!pageFiles || pageFiles.length === 0) return null
 
   if (pageFiles.length > 1) {
     // 多页 → group 条目（_isDocumentGroup: true）
@@ -93,6 +106,25 @@ export function invoiceDocumentsToRows(invoiceDocs, allFiles) {
   if (!Array.isArray(invoiceDocs) || invoiceDocs.length === 0) return []
   if (!Array.isArray(allFiles)) return []
 
+  // ── 预构建索引（O(n)，一次性）──
+  // keyIndex: key → file（用于 _pageKeys 强身份匹配）
+  // docIdIndex: docId → file[]（用于弱身份回退匹配）
+  const keyIndex = new Map()
+  const docIdIndex = new Map()
+  for (const f of allFiles) {
+    if (!f) continue
+    if (f.key) keyIndex.set(f.key, f)
+    if (f.docId) {
+      const list = docIdIndex.get(f.docId)
+      if (list) {
+        list.push(f)
+      } else {
+        docIdIndex.set(f.docId, [f])
+      }
+    }
+  }
+  const fileIndex = { keyIndex, docIdIndex }
+
   // 构建 page key → 在排序后 files 中的索引位置（O(n)，一次性）
   const pageIndex = new Map()
   for (let i = 0; i < allFiles.length; i++) {
@@ -105,7 +137,7 @@ export function invoiceDocumentsToRows(invoiceDocs, allFiles) {
   // 先转换所有 docs，附带排序键（首个 page 的位置）
   const withOrder = []
   for (const doc of invoiceDocs) {
-    const row = invoiceDocumentToRow(doc, allFiles)
+    const row = invoiceDocumentToRow(doc, allFiles, fileIndex)
     if (!row) continue
 
     // 找到该 document 所有 pages 在排序后列表中的最小索引
