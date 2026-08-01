@@ -52,13 +52,20 @@ export function ThumbnailStrip({ document, currentPage, onPageSelect }) {
     return Math.abs(index - currentPage) <= LAZY_RANGE
   }, [currentPage])
 
-  // 当前页变化时自动滚动到可视区
+  // 当前页变化时自动滚动到可视区（6B-2.1 滚动策略：来源区分）。
+  // - 新文档首次定位（docId 变化）→ smooth（保留一次定位动画）
+  // - 同文档内切页（缩略图点击/翻页）→ auto（即时定位）
+  //   原因：快速连续翻页时 smooth 动画互相打断/排队追 currentPage，
+  //   且内容已即时切换（6B-1.3），左栏应"跟随"而非"慢半拍滑动"。
+  const lastDocIdRef = useRef(null)
   useEffect(() => {
     const el = itemRefs.current.get(currentPage)
     if (el && stripRef.current) {
-      el.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+      const isNewDocument = document?.docId !== lastDocIdRef.current
+      lastDocIdRef.current = document?.docId ?? null
+      el.scrollIntoView({ block: 'nearest', behavior: isNewDocument ? 'smooth' : 'auto' })
     }
-  }, [currentPage])
+  }, [currentPage, document?.docId])
 
   const handlePageSelect = useCallback((index) => {
     onPageSelect?.(index)
