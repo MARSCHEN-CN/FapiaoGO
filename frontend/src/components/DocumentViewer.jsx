@@ -123,22 +123,14 @@ export const DocumentViewer = React.memo(function DocumentViewer({
     }
   }, [document])
 
-  // ═══ 页面切换过渡动画 ═══
-  const transitionTimerRef = useRef(null)
-
+  // ═══ 页面切换：立即响应（6B-1.3 移除 200ms 过渡延迟）═══
+  // 此前 setTimeout(200ms) 人为增加输入延迟：点击缩略图 → 无反馈 → 突然切换。
+  // 文档查看器语义：点击 → 立即更新 currentPage（选中态/内容同步切换），
+  // 动画/淡入淡出应放在视觉过渡层（CSS），不阻塞 state 变化。
   const handleGoToPage = useCallback((index) => {
     if (index === state.currentPage) return
-    if (transitionTimerRef.current) clearTimeout(transitionTimerRef.current)
-    transitionTimerRef.current = setTimeout(() => {
-      actions.goToPage(index)
-    }, 200)
+    actions.goToPage(index)
   }, [state.currentPage, actions])
-
-  useEffect(() => {
-    return () => {
-      if (transitionTimerRef.current) clearTimeout(transitionTimerRef.current)
-    }
-  }, [])
 
   return (
     <div className="document-viewer">
