@@ -140,7 +140,13 @@ export const DisplayAdapter = React.memo(function DisplayAdapter({
   }, [])
 
   return (
-    <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+    // 6B-4.2：容器高度必须由 flex 撑满，而非内容撑高。
+    // 此前 height:100% 在 flex 容器（.canvas-scroll）中解析失败 → 高度退化为
+    // 内容高度（wrapper+padding）→ 图片 wrapper 小 → 容器塌缩 61px；
+    // PDF wrapper 大 → 被内容撑高掩盖（看似正常）。
+    // 修复：flex:1 + min-height:0 + display:flex（canvas-scroll 内 stretch 撑满），
+    // .document-viewer(flex:1) 在 flex 容器中正确占满。
+    <div style={{ position: 'relative', flex: 1, minWidth: 0, minHeight: 0, display: 'flex' }}>
       {/* PreviewCanvas 作为底层持续存在，直到 DocumentViewer 完全就绪 */}
       <div
         style={{
