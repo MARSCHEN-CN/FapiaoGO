@@ -124,6 +124,11 @@ export function completePrinting() {
 
 /**
  * 取消会话。
+ *
+ * 不清除 _activeSessionId——与 completePrinting 保持一致，
+ * UI 需要在终态后查询 session 显示"已取消"状态。
+ * 由 cleanCompletedSessions 在用户关闭面板时清理。
+ *
  * @returns {object|null}
  */
 export function cancelPrinting() {
@@ -131,7 +136,6 @@ export function cancelPrinting() {
   if (!session) return null
   const updated = markSessionCancelled(session)
   sessions.set(session.id, updated)
-  _activeSessionId = null
   notify()
   return updated
 }

@@ -72,7 +72,7 @@ function registerRenameHandlers(ctx) {
       let lastErr = null
       for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
-          fs.unlinkSync(filePath)
+          await fs.promises.unlink(filePath)
           return true
         } catch (e) {
           lastErr = e
@@ -111,15 +111,21 @@ function registerRenameHandlers(ctx) {
         const outputDir = targetFolder || path.dirname(originalPath)
 
         if (targetFolder) {
-          fs.mkdirSync(targetFolder, { recursive: true })
+          await fs.promises.mkdir(targetFolder, { recursive: true })
         }
 
         let newPath = path.join(outputDir, newName)
 
         let counter = 1
-        while (fs.existsSync(newPath) && newPath !== originalPath) {
-          newPath = path.join(outputDir, `${newBaseName}_${counter}${ext}`)
-          counter++
+        while (true) {
+          try {
+            await fs.promises.access(newPath)
+            if (newPath === originalPath) break
+            newPath = path.join(outputDir, `${newBaseName}_${counter}${ext}`)
+            counter++
+          } catch {
+            break  // 文件不存在，可以使用
+          }
         }
 
         if (newPath === originalPath) {
@@ -139,14 +145,14 @@ function registerRenameHandlers(ctx) {
         let partialSuccess = false
 
         if (targetFolder && keepOriginal) {
-          fs.copyFileSync(originalPath, newPath)
+          await fs.promises.copyFile(originalPath, newPath)
         } else if (targetFolder && !keepOriginal) {
           if (sameDisk) {
-            fs.renameSync(originalPath, newPath)
+            await fs.promises.rename(originalPath, newPath)
           } else {
-            fs.copyFileSync(originalPath, newPath)
+            await fs.promises.copyFile(originalPath, newPath)
             try {
-              fs.unlinkSync(originalPath)
+              await fs.promises.unlink(originalPath)
             } catch (unlinkErr) {
               try {
                 await unlinkWithRetry(originalPath)
@@ -157,7 +163,7 @@ function registerRenameHandlers(ctx) {
             }
           }
         } else {
-          fs.renameSync(originalPath, newPath)
+          await fs.promises.rename(originalPath, newPath)
         }
 
         result.renamed++

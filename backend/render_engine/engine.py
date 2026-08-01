@@ -668,28 +668,12 @@ class RenderEngine:
         """Render an image (non-PDF) to a pixmap with margins.
 
         Uses doc.file_bytes stored by Registry at registration time.
-        fitz opens the image as a single-page document and rasterizes it.
+        Delegates to `_open_fitz_image_doc` for EXIF normalization and opening.
         """
         if not doc.file_bytes:
             raise ValueError(f"Cannot render image (no file_bytes): {doc.path}")
 
-        # Normalize EXIF orientation + coerce to RGB JPEG (stable fitz input).
-        # normalize_image_bytes returns the normalized JPEG on success, or the
-        # original bytes unchanged on failure (identity check below).
-        img_bytes = normalize_image_bytes(doc.file_bytes)
-        try:
-            if img_bytes is doc.file_bytes:
-                # normalize failed — fall back to path-derived filetype
-                filetype = doc.path.rsplit(".", 1)[-1].lower() if doc.path else "png"
-                _FITZ_IMAGE_TYPES = {"png", "jpg", "jpeg", "gif", "bmp", "tiff", "tif", "webp"}
-                if filetype not in _FITZ_IMAGE_TYPES:
-                    filetype = "png"  # 安全回退
-                img_doc = fitz.open(stream=img_bytes, filetype=filetype)
-            else:
-                # normalized to JPEG — fitz sniffs JPEG from content
-                img_doc = fitz.open(stream=img_bytes)
-        except Exception as exc:
-            raise ValueError(f"Cannot open image with fitz: {exc}") from exc
+        img_doc = _open_fitz_image_doc(doc.file_bytes, doc.path)
 
         try:
             pix = img_doc[0].get_pixmap(dpi=preset.dpi)
@@ -744,30 +728,57 @@ def _apply_grayscale(pix) -> "fitz.Pixmap":
         return data
 
 
+# Supported fitz image file types
+_FITZ_IMAGE_TYPES = {"png", "jpg", "jpeg", "gif", "bmp", "tiff", "tif", "webp"}
+
+
+def _open_fitz_image_doc(file_bytes: bytes, path: str = None) -> "fitz.Document":
+    """Open an image file as a fitz.Document with EXIF normalization.
+
+    Shared by all image render paths (legacy + spec) to ensure identical
+    preprocessing: EXIF orientation fixup + RGB JPEG coercion.
+
+    Args:
+        file_bytes: Raw image bytes.
+        path: Optional file path used to derive filetype on normalization failure.
+
+    Returns:
+        A fitz.Document opened from the (possibly normalized) image bytes.
+
+    Raises:
+        ValueError: When file_bytes is empty or fitz cannot open the image.
+    """
+    if not file_bytes:
+        raise ValueError(f"Cannot open image document (empty bytes): {path or '?'}")
+
+    # Normalize EXIF orientation + RGB JPEG. On success returns a new JPEG
+    # byte object; on failure returns the original unchanged (identity check).
+    norm = normalize_image_bytes(file_bytes)
+    try:
+        if norm is file_bytes:
+            # Normalize failed — fall back to path-derived filetype
+            filetype = None
+            if path:
+                filetype = path.rsplit(".", 1)[-1].lower() if "." in path else None
+            if filetype not in _FITZ_IMAGE_TYPES:
+                filetype = "png"  # safe fallback
+            return fitz.open(stream=norm, filetype=filetype)
+        # Normalized to JPEG — fitz sniffs JPEG from content
+        return fitz.open(stream=norm)
+    except Exception as e:
+        raise ValueError(f"Cannot open image document: {path or '?'}") from e
+
+
 def _open_image_doc(doc) -> "fitz.Document":
     """Open an image document for rendering (Commit B-1 spec path; additive).
 
-    Used by `_render_spec_page`'s image branch. Normalizes EXIF orientation and
-    coerces to RGB JPEG (shared with `_render_image_page` via normalize_image_bytes)
-    so both render paths apply identical preprocessing.
+    Used by `_render_spec_page`'s image branch. Delegates to the shared
+    `_open_fitz_image_doc` for identical preprocessing.
     """
     img_bytes = getattr(doc, "file_bytes", None)
     if not img_bytes:
         raise ValueError(f"Cannot open image document (no file_bytes): {getattr(doc, 'path', '?')}")
-    # Normalize EXIF orientation + RGB JPEG. On success returns a new JPEG
-    # byte object; on failure returns the original unchanged (identity check).
-    norm = normalize_image_bytes(img_bytes)
-    try:
-        if norm is img_bytes:
-            filetype = getattr(doc, "path", None)
-            filetype = filetype.rsplit(".", 1)[-1].lower() if filetype else "png"
-            _FITZ_IMAGE_TYPES = {"png", "jpg", "jpeg", "gif", "bmp", "tiff", "tif", "webp"}
-            if filetype not in _FITZ_IMAGE_TYPES:
-                filetype = "png"
-            return fitz.open(stream=norm, filetype=filetype)
-        return fitz.open(stream=norm)
-    except Exception as e:
-        raise ValueError(f"Cannot open image document: {getattr(doc, 'path', '?')}") from e
+    return _open_fitz_image_doc(img_bytes, getattr(doc, "path", None))
 
 
 def _apply_margins(pix, preset: RenderPreset, vs: dict,

@@ -98,7 +98,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
       }
     },
     removeListener: (channel, func) => {
-      ipcRenderer.removeListener(channel, func)
+      if (ALLOWED_ON.includes(channel)) {
+        ipcRenderer.removeListener(channel, func)
+      } else {
+        console.warn(`[preload] Blocked removeListener for unallowed channel: ${channel}`)
+      }
     }
   },
 

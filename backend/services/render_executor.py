@@ -127,7 +127,9 @@ def draw_render_command(page, command: dict, source_bytes: bytes):
     try:
         page_idx = int((command.get('sourceRef') or {}).get('page', 0) or 0)
         if page_idx < 0 or page_idx >= len(src_doc):
-            page_idx = 0
+            raise ValueError(
+                f"Page {page_idx} out of range for PDF with {len(src_doc)} pages"
+            )
         src_page = src_doc[page_idx]
         matrix = _rotation_matrix(scale, rotation)
         pix = src_page.get_pixmap(matrix=matrix)

@@ -233,6 +233,11 @@ export function failExport(id, result) {
 
 /**
  * 标记会话取消。
+ *
+ * 不清除 _activeSessionId——与 completeExport/failExport 保持一致，
+ * UI 需要在终态后查询 result 显示"已取消"状态。
+ * 由 clearActiveSession 在用户关闭面板时清理。
+ *
  * @param {number} id
  * @param {object} [result] - ExportResult（可选）
  * @returns {object|null}
@@ -245,7 +250,6 @@ export function cancelExport(id, result = null) {
     details: session.details,
   }
   sessions.set(id, updated)
-  _activeSessionId = null
   notify()
   return updated
 }

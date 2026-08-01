@@ -74,13 +74,18 @@ def _append_pdf_source(doc, source_bytes, page, pdf_doc=None):
     pdf_doc: optional already-open fitz.Document owned by the caller (used when
     the same source is referenced by several commands, so it is read + parsed
     only once). When omitted, source_bytes is opened+closed here (per-command).
+
+    Raises:
+        ValueError: when the requested page is out of range.
     """
     owned = pdf_doc is None
     src_doc = pdf_doc if pdf_doc is not None else fitz.open(stream=source_bytes)
     try:
         n = len(src_doc)
         if page < 0 or page >= n:
-            page = 0
+            raise ValueError(
+                f"Page {page} out of range for PDF with {n} pages"
+            )
         doc.insert_pdf(src_doc, from_page=page, to_page=page)
     finally:
         if owned:

@@ -52,6 +52,10 @@ class NullStorageBackend:
         return None
 
 
+# Default max file size for temp spool (50 MB)
+DEFAULT_MAX_SPOOL_SIZE = 50 * 1024 * 1024
+
+
 class LocalTempFileStorageBackend:
     """Commit 2 真实 I/O 后端：把上传流 spool 到本地临时文件。
 
@@ -59,10 +63,16 @@ class LocalTempFileStorageBackend:
     它只知道 path/sha256/doc_id 等 metadata，落盘/读取/删除都委托给本后端。
     """
 
-    def __init__(self, base_dir: Optional[str] = None):
+    def __init__(self, base_dir: Optional[str] = None, max_size: int = DEFAULT_MAX_SPOOL_SIZE):
+        """
+        Args:
+            base_dir: Temp file root directory. Defaults to config.TEMP_ROOT.
+            max_size: Maximum file size in bytes for spooling (default: 50 MB).
+        """
         # P2-1：默认根来自 config.TEMP_ROOT（env INVOICE_TEMP_ROOT 注入），
         # 不再隐式依赖 tempfile.gettempdir()，保证父子进程同 root（INV-IS3-5）。
         self._base_dir = base_dir or config.TEMP_ROOT
+        self._max_size = max_size
         os.makedirs(self._base_dir, exist_ok=True)
 
     def spool(self, ref_id: str, stream, filename: str):
@@ -73,17 +83,32 @@ class LocalTempFileStorageBackend:
         分块流式写入，避免一次性读入内存（大文件友好）。
         filename 仅保留为元数据/可读名，绝不含进哈希（保持 content-only 身份），
         也不再进入存储文件名（存储文件名严格等于 refId）。
+
+        Raises:
+            ValueError: When the stream exceeds the configured max_size.
         """
         path = self.path_for(ref_id)
         h = hashlib.sha256()
         size = 0
-        with open(path, "wb") as out:
-            for chunk in iter(lambda: stream.read(65536), b""):
-                if not chunk:
-                    break
-                h.update(chunk)
-                out.write(chunk)
-                size += len(chunk)
+        try:
+            with open(path, "wb") as out:
+                for chunk in iter(lambda: stream.read(65536), b""):
+                    if not chunk:
+                        break
+                    size += len(chunk)
+                    if size > self._max_size:
+                        raise ValueError(
+                            f"File too large: {size} bytes exceeds max {self._max_size} bytes"
+                        )
+                    h.update(chunk)
+                    out.write(chunk)
+        except Exception:
+            # Clean up partial file on error
+            try:
+                os.unlink(path)
+            except FileNotFoundError:
+                pass
+            raise
         return path, size, h.hexdigest()
 
     def path_for(self, ref_id: str) -> str:

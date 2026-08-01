@@ -746,25 +746,29 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
     const failed = []
 
     setPrinting(true)
-    setPrintFilesAndRef(filesToPrint.map(f => ({ key: f.key, name: f.name })))
+    setPrintFilesAndRef(filesToPrint.map(f => ({ key: f._jobKey || f.key, name: f.name })))
     const init = {}
-    for (const f of filesToPrint) init[f.key] = { status: 'waiting' }
+    for (const f of filesToPrint) {
+      const trackKey = f._jobKey || f.key
+      init[trackKey] = { status: 'waiting' }
+    }
     setPrintProgress(init)
 
     for (const f of filesToPrint) {
-      setPrintProgress(prev => ({ ...prev, [f.key]: { status: 'printing' } }))
+      const trackKey = f._jobKey || f.key
+      setPrintProgress(prev => ({ ...prev, [trackKey]: { status: 'printing' } }))
       try {
         const result = await printSingleSourceFile(f, printSettings)
         if (result?.success) {
-          setPrintProgress(prev => ({ ...prev, [f.key]: { status: 'done' } }))
+          setPrintProgress(prev => ({ ...prev, [trackKey]: { status: 'done' } }))
           completed.push(f)
         } else {
           const msg = result?.message || result?.error || '打印失败'
-          setPrintProgress(prev => ({ ...prev, [f.key]: { status: 'error', error: msg } }))
+          setPrintProgress(prev => ({ ...prev, [trackKey]: { status: 'error', error: msg } }))
           failed.push(f)
         }
       } catch (err) {
-        setPrintProgress(prev => ({ ...prev, [f.key]: { status: 'error', error: err?.message || '未知异常' } }))
+        setPrintProgress(prev => ({ ...prev, [trackKey]: { status: 'error', error: err?.message || '未知异常' } }))
         failed.push(f)
       }
     }
@@ -818,7 +822,7 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
       if (settings.extraSpecial) {
         // 一普二专：合并两轮进度为一个连续序列，避免进度条重置
         const specialFiles = allParsed.filter(f => f.invoiceType?.includes('专票'))
-        // 第二轮专票项使用独立 key（+ '_v2'），在进度列表中单独展示
+        // 第二轮专票项使用独立 _jobKey（+ '_v2'），在进度列表中单独展示
         const mergedJobs = [
           ...allParsed.map(f => ({ ...f, _jobKey: f.key, _round: 1 })),
           ...specialFiles.map(f => ({ ...f, _jobKey: f.key + '_v2', _round: 2 })),
@@ -826,16 +830,9 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
         console.log('[PRINT] 一普二专: 合并 %d 个任务（第1轮%d + 第2轮%d）',
           mergedJobs.length, allParsed.length, specialFiles.length)
 
-        // printAllSourceFiles 内部用 _jobKey 替代 f.key 追踪进度
-        const originalKey = 'key'
-        for (const job of mergedJobs) {
-          job.key = job._jobKey
-        }
+        // printAllSourceFiles 内部使用 _jobKey 做进度追踪，
+        // 不再 mutate f.key——避免旋转角度丢失和异常时 key 无法恢复
         const r = await printAllSourceFiles(mergedJobs, printSettings)
-        // 恢复原始 key（不影响外部状态）
-        for (const job of mergedJobs) {
-          job.key = job._jobKey.replace('_v2', '')
-        }
         showPrintSummary(r.completed, r.failed)
       } else {
         console.log('[PRINT] Source → 批量打印 %d 个文件', allParsed.length)

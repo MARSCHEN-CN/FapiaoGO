@@ -647,6 +647,7 @@ class ImportBatchManager:
         注意：必须线程安全、不可阻塞。
         """
         _5em2_t0 = time.perf_counter()  # 一次性探针 5E-M2（跑完还原，勿 commit）
+        
         # 查找 job 所属 batch
         job_info = self._job_manager.get_job(job_id)
         if not job_info:
@@ -655,139 +656,183 @@ class ImportBatchManager:
         if not batch_id:
             return  # 非批量任务，忽略
 
-        # IS-2 Commit 5：本 job 的 temp 文件引用在此释放（无论 success/failed/cancelled）。
-        # 释放时机 = worker 已到达终态这一刻，故绝不会在 worker 仍在读取文件时删文件。
-        # release() 幂等：即便完成回调被重复触发，也不会二次删除（INV-3）。
+        # IS-2 Commit 5：本 job 的 temp 文件引用在此释放
+        self._release_temp_file(job_info)
+
+        # 读取解析结果
+        db_record, full_result = self._extract_job_result(job_id, status)
+
+        # 读取分组元信息
+        metrics = job_info.get('metrics', {}) or {}
+        src_doc_id = metrics.get('source_doc_id', '')
+        instance_id = metrics.get('instance_id', '')
+
+        # 更新聚合计数 + 缓冲结果
+        should_flush = self._update_batch_and_buffer(
+            batch_id, status, db_record, full_result, metrics,
+            src_doc_id, instance_id
+        )
+
+        # 在锁外执行 DB 写入
+        logger.info(
+            "[5EM2-callback] job=%s status=%s cost_to_flush=%.1fms",
+            job_id, status, (time.perf_counter() - _5em2_t0) * 1000,
+        )
+        if should_flush:
+            self._flush_result_buffer(batch_id)
+
+    def _release_temp_file(self, job_info: dict):
+        """释放 job 关联的临时文件引用"""
         ref_id = job_info.get('metrics', {}).get('ref_id')
         if ref_id:
             self._temp_registry.release(ref_id)
 
-        # 读取解析结果（从 ocr_cache）
+    def _extract_job_result(self, job_id: str, status: str):
+        """提取 job 执行结果"""
         db_record = None
         full_result = None
         if status == 'success':
             result = self._job_manager.get_job_result(job_id)
             if result and isinstance(result, dict):
                 db_record = result.get('db_record')
-                full_result = result  # C.6: 保存完整结果用于 assembly
+                full_result = result
+        return db_record, full_result
 
-        # C.6: 读取分组元信息
-        metrics = job_info.get('metrics', {}) or {}
-        src_doc_id = metrics.get('source_doc_id', '')
-        # IS-4.2 Step3：文档实例身份（Step2 已透传），用作 PageResultStore 分桶键。
-        instance_id = metrics.get('instance_id', '')
+    def _update_batch_and_buffer(self, batch_id, status, db_record, full_result,
+                                  metrics, src_doc_id, instance_id):
+        """更新批次计数并缓冲解析结果
 
-        # 更新聚合计数 + 缓冲结果
+        Returns:
+            bool: 是否需要触发 flush
+        """
         should_flush = False
         with self._batch_lock:
             batch = self._batches.get(batch_id)
             if not batch:
-                return
+                return False
 
-            # 护栏：已取消的批次忽略迟到回调（防止 cancelled → success++ 状态污染）
-            # 场景：用户取消后，正在运行的 OCR 非 cooperative cancel，完成后回调到达
+            # 护栏：已取消的批次忽略迟到回调
             if batch.status == 'cancelled':
-                logger.debug(f"[ImportBatch] 忽略已取消批次的回调: {batch_id}, job={job_id}")
-                return
+                logger.debug(f"[ImportBatch] 忽略已取消批次的回调: {batch_id}")
+                return False
 
+            # 更新聚合计数
             if status == 'success':
                 batch.success += 1
             else:
                 batch.failed += 1
             batch.touch()
 
-            # 加入结果缓冲
+            # 处理结果缓冲
             if db_record and full_result:
-                # IS-4.2 Step3：分桶键 = 文档实例身份 instance_id（同内容 A/B 不同桶，
-                # 不再互相覆盖）。缺失时 legacy 兜底用 source_doc_id（旧任务兼容）但记 warning，
-                # 绝不静默。source_doc_id（内容哈希）降级为桶内溯源元数据，不参与分桶。
-                bucket_key = instance_id
-                if not bucket_key:
-                    if src_doc_id:
-                        logger.warning(
-                            "[ImportBatch] instance_id 缺失，legacy 兜底用 source_doc_id 分桶 "
-                            "(同内容多实例可能合并): batch=%s source=%s",
-                            batch_id, src_doc_id,
-                        )
-                        bucket_key = src_doc_id
-                if bucket_key:
-                    # C.6: 所有带分组身份的页面都进入 PageResultStore（按实例分桶）
-                    # v3 原则：page_num/total_pages 是页元数据（决定合并置信度/连续性），
-                    # 不应作为组装许可条件。缺失时默认当前页为独立单页。
-                    should_flush = False
-                    page_num_str = metrics.get('page_num', '')
-                    total_pages_str = metrics.get('total_pages', '')
-                    page_num = int(page_num_str) if page_num_str.isdigit() else 0
-                    total_pages = int(total_pages_str) if total_pages_str.isdigit() else 1
-                    # Step 0.6: 不再用 page_num 推断/污染 total_pages。
-                    # /split_pdf 返回 1-based page_index，末页 page_num==total_pages 属正常；
-                    # 旧的 `total_pages = page_num + 1` 会把它抬成 N+1，导致闸门永远收不齐。
-                    # 此处仅对真实越界告警，绝不改写业务状态。
-                    if page_num > total_pages:
-                        logger.warning(
-                            "[IMPORT] page_num 超出 total_pages（疑似契约异常）: "
-                            "page_num=%s total_pages=%s bucket=%s",
-                            page_num, total_pages, bucket_key,
-                        )
-                    # Step 0.6: 归一化 page_num 为 0-based 再入 Store。
-                    # 拆页入口 page_index=1-based → page_num>0 时 -1 对齐；
-                    # 单页入口 pageNum=null→0 已是 0-based，避免 0-1=-1。
-                    normalized_page_num = page_num - 1 if page_num > 0 else 0
-                    from page_result_store import get_page_result_store
-                    from invoice_assembly_pipeline import (
-                        assemble as _assemble_invoice,
-                        invoice_document_to_db_record,
+                should_flush = self._buffer_result(
+                    batch, batch_id, db_record, full_result,
+                    metrics, src_doc_id, instance_id
+                )
+            else:
+                # 无有效结果（失败/取消），直接跳过缓冲
+                pass
+
+        return should_flush
+
+    def _buffer_result(self, batch, batch_id, db_record, full_result,
+                       metrics, src_doc_id, instance_id):
+        """将解析结果加入缓冲区（带分组或直写）"""
+        bucket_key = self._resolve_bucket_key(instance_id, src_doc_id, batch_id)
+        
+        if bucket_key:
+            return self._buffer_with_assembly(
+                batch, batch_id, db_record, full_result,
+                metrics, src_doc_id, bucket_key
+            )
+        else:
+            return self._buffer_directly(batch_id, db_record)
+
+    def _resolve_bucket_key(self, instance_id, src_doc_id, batch_id):
+        """确定分桶键（instance_id 优先，src_doc_id 兜底）"""
+        bucket_key = instance_id
+        if not bucket_key and src_doc_id:
+            logger.warning(
+                "[ImportBatch] instance_id 缺失，legacy 兜底用 source_doc_id 分桶: batch=%s source=%s",
+                batch_id, src_doc_id,
+            )
+            bucket_key = src_doc_id
+        return bucket_key
+
+    def _buffer_with_assembly(self, batch, batch_id, db_record, full_result,
+                               metrics, src_doc_id, bucket_key):
+        """按桶处理页面组装和缓冲"""
+        should_flush = False
+        
+        # 解析页面信息
+        page_num, total_pages = self._parse_page_info(metrics, bucket_key)
+        normalized_page_num = page_num - 1 if page_num > 0 else 0
+        
+        # 加入 PageResultStore
+        from page_result_store import get_page_result_store
+        from invoice_assembly_pipeline import (
+            assemble as _assemble_invoice,
+            invoice_document_to_db_record,
+        )
+        
+        store = get_page_result_store()
+        completed = store.put(
+            bucket_key, normalized_page_num, total_pages,
+            full_result, source_doc_id=src_doc_id
+        )
+        
+        if completed:
+            # 所有页收齐 → 组装 → 入库缓冲
+            pages = store.get_pages(bucket_key)
+            if pages:
+                invoice_docs = _assemble_invoice(pages)
+                for inv_doc in invoice_docs:
+                    inv_db = invoice_document_to_db_record(
+                        inv_doc,
+                        fallback_hash=db_record.get('hash_sha256', ''),
+                        fallback_filename=db_record.get('file_name', ''),
+                        fallback_raw_text=db_record.get('raw_text', ''),
                     )
-                    store = get_page_result_store()
-                    completed = store.put(
-                        bucket_key,
-                        normalized_page_num,
-                        total_pages,
-                        full_result,
-                        source_doc_id=src_doc_id,  # 内容溯源（不参与分桶）
-                    )
-                    if completed:
-                        # 所有页收齐 → 组装 → 入库缓冲
-                        pages = store.get_pages(bucket_key)
-                        if pages:
-                            invoice_docs = _assemble_invoice(pages)
-                            for inv_doc in invoice_docs:
-                                inv_db = invoice_document_to_db_record(
-                                    inv_doc,
-                                    fallback_hash=db_record.get('hash_sha256', ''),
-                                    fallback_filename=db_record.get('file_name', ''),
-                                    fallback_raw_text=db_record.get('raw_text', ''),
-                                )
-                                buf = self._result_buffers.get(batch_id)
-                                if buf:
-                                    buf.add(inv_db)
-                                    should_flush = buf.should_flush()
-                                # E-2.2: 存储组装后的 InvoiceDocument 元信息
-                                # IS-4.2 Step3：三身份并存——instanceId(实例) / sourceDocId(内容) /
-                                # invoiceNumber(业务)。instanceId=bucket_key（legacy 兜底时=source_doc_id）。
-                                batch.assembled_documents.append({
-                                    'instanceId': bucket_key,
-                                    'sourceDocId': src_doc_id,
-                                    'invoiceNumber': inv_doc.get('invoice_number', ''),
-                                    'invoiceType': inv_doc.get('invoice_type', ''),
-                                    'pageCount': len(pages) if isinstance(pages, list) else 0,
-                                })
-                        store.remove(bucket_key)
-                    # 未收齐 → 不写入缓冲，等全部页到达后再组装
-                else:
-                    # 无分组信息 → 旧路径：直写
                     buf = self._result_buffers.get(batch_id)
                     if buf:
-                        buf.add(db_record)
+                        buf.add(inv_db)
                         should_flush = buf.should_flush()
+                    # 存储组装后的 InvoiceDocument 元信息
+                    batch.assembled_documents.append({
+                        'instanceId': bucket_key,
+                        'sourceDocId': src_doc_id,
+                        'invoiceNumber': inv_doc.get('invoice_number', ''),
+                        'invoiceType': inv_doc.get('invoice_type', ''),
+                        'pageCount': len(pages) if isinstance(pages, list) else 0,
+                    })
+            store.remove(bucket_key)
+        
+        return should_flush
 
-        # 在锁外执行 DB 写入（避免持锁时间过长）
-        logger.info(  # 一次性探针 5E-M2（跑完还原，勿 commit）
-            "[5EM2-callback] job=%s status=%s cost_to_flush=%.1fms",
-            job_id, status, (time.perf_counter() - _5em2_t0) * 1000,
-        )
-        if should_flush:
-            self._flush_result_buffer(batch_id)
+    def _parse_page_info(self, metrics, bucket_key):
+        """解析页面页码和总页数"""
+        page_num_str = metrics.get('page_num', '')
+        total_pages_str = metrics.get('total_pages', '')
+        page_num = int(page_num_str) if page_num_str.isdigit() else 0
+        total_pages = int(total_pages_str) if total_pages_str.isdigit() else 1
+        
+        # 检查页码越界
+        if page_num > total_pages:
+            logger.warning(
+                "[IMPORT] page_num 超出 total_pages（疑似契约异常）: "
+                "page_num=%s total_pages=%s bucket=%s",
+                page_num, total_pages, bucket_key,
+            )
+        
+        return page_num, total_pages
+
+    def _buffer_directly(self, batch_id, db_record):
+        """无分组信息时直接写入缓冲"""
+        buf = self._result_buffers.get(batch_id)
+        if buf:
+            buf.add(db_record)
+            return buf.should_flush()
+        return False
 
     # ─── 结果写入 ───────────────────────────────────────────
 

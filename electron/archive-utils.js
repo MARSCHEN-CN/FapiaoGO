@@ -77,6 +77,7 @@ function resolveArchiveFileNames(files) {
  *   1. 对 PDF/图片/Office 等已压缩格式使用 STORE（不压缩，直接打包），速度接近文件系统拷贝
  *   2. 流式写入，高水位线 1MB 平衡背压与吞吐
  *   3. 使用同步 stat 校验源文件存在，避免异步竞态
+ *   4. 双重完成判定：同时监听 archive finalize 和 output close，确保异常场景下也能正确完成
  * @param {Array} files - [{ originalPath, targetName }]
  * @param {string} archivePath - 输出路径
  */
@@ -87,24 +88,45 @@ async function createZipArchive(files, archivePath) {
       if (isCompressible(f.targetName)) { anyCompressible = true; break }
     }
 
+    let settled = false
+    const settle = (err) => {
+      if (settled) return
+      settled = true
+      if (err) reject(err)
+      else resolve()
+    }
+
     const output = fs.createWriteStream(archivePath, { highWaterMark: 1024 * 1024 })
     const archive = new ZipArchive({
       zlib: { level: anyCompressible ? 1 : 0 },
       forceZip64: false,
     })
 
-    output.on('close', () => {
-      resolve()
-    })
-    output.on('error', reject)
+    let archiveFinalized = false
+    let outputClosed = false
 
-    archive.on('error', reject)
+    const checkComplete = () => {
+      if (archiveFinalized && outputClosed) settle(null)
+    }
+
+    output.on('close', () => {
+      outputClosed = true
+      checkComplete()
+    })
+    output.on('error', (err) => settle(err))
+
+    archive.on('error', (err) => settle(err))
     archive.on('warning', (err) => {
       if (err.code === 'ENOENT') {
         console.warn('[pack] archiver warning:', err)
       } else {
-        reject(err)
+        settle(err)
       }
+    })
+
+    archive.on('finalize', () => {
+      archiveFinalized = true
+      checkComplete()
     })
 
     archive.pipe(output)
@@ -161,6 +183,8 @@ function find7zPath() {
   _7zPathCache = null
   return _7zPathCache
 }
+
+let _rarPathCache = undefined
 
 /**
  * 硬链接优先 → 回退拷贝
@@ -222,14 +246,33 @@ async function createArchiveWith7z(files, archivePath, sevenZipPath) {
 }
 
 function findWinRarPath() {
+  if (_rarPathCache !== undefined) return _rarPathCache
+
   const commonPaths = [
     'C:\\Program Files\\WinRAR\\rar.exe',
     'C:\\Program Files (x86)\\WinRAR\\rar.exe',
+    path.join(process.env.LOCALAPPDATA || '', 'WinRAR', 'rar.exe'),
   ]
   for (const p of commonPaths) {
-    try { if (fs.existsSync(p)) return p } catch {}
+    try {
+      if (fs.existsSync(p)) {
+        _rarPathCache = p
+        return _rarPathCache
+      }
+    } catch {}
   }
-  return null
+
+  try {
+    const result = execFileSync('where.exe', ['rar'], { encoding: 'utf-8', timeout: 3000, stdio: ['ignore', 'pipe', 'ignore'] }).trim()
+    const first = result.split(/\r?\n/)[0].trim()
+    if (first && fs.existsSync(first)) {
+      _rarPathCache = first
+      return _rarPathCache
+    }
+  } catch (e) {}
+
+  _rarPathCache = null
+  return _rarPathCache
 }
 
 /**

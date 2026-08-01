@@ -37,8 +37,8 @@ function registerPackHandlers(ctx) {
         outputDir = result.filePaths[0]
       }
 
-      // 同步 mkdir（recursive 幂等，比 await mkdir 快，省掉 microtask 调度）
-      fs.mkdirSync(outputDir, { recursive: true })
+      // 异步 mkdir（recursive 幂等）
+      await fs.promises.mkdir(outputDir, { recursive: true })
 
       // 2. 解析打包设置
       const archiveFormat = (packSettings.packArchiveFormat || 'ZIP').toUpperCase()
@@ -55,9 +55,14 @@ function registerPackHandlers(ctx) {
       const archiveExt = path.extname(archiveName)
       const archiveBase = path.basename(archiveName, archiveExt)
       let counter = 1
-      while (fs.existsSync(finalArchivePath)) {
-        finalArchivePath = path.join(outputDir, `${archiveBase}_${counter}${archiveExt}`)
-        counter++
+      while (true) {
+        try {
+          await fs.promises.access(finalArchivePath)
+          finalArchivePath = path.join(outputDir, `${archiveBase}_${counter}${archiveExt}`)
+          counter++
+        } catch {
+          break  // 文件不存在，可以使用
+        }
       }
 
       const packResult = { success: true, packed: 0, failed: 0, errors: [], outputDir, archivePath: finalArchivePath }
@@ -107,12 +112,14 @@ function registerPackHandlers(ctx) {
           if (!path.isAbsolute(originalPath)) {
             originalPath = path.resolve(originalPath)
           }
-          if (!fs.existsSync(originalPath)) {
+          try {
+            await fs.promises.access(originalPath)
+          } catch {
             packResult.failed++
             packResult.errors.push({ file: file.name, error: '源文件不存在' })
             continue
           }
-          const st = fs.statSync(originalPath)
+          const st = await fs.promises.stat(originalPath)
           if (!st.isFile()) {
             packResult.failed++
             packResult.errors.push({ file: file.name, error: '不是有效文件' })

@@ -82,8 +82,15 @@ def preview(doc_id: str):
     """
     page = _int_param("page", 1)
 
-    # ── [DIAG] Layer 1: HTTP 入口 — 每次请求都打印，用于证明浏览器是否真的发了请求 ──
-    print(f"[HTTP] sig={request.args.get('spec_sig','-')[:8]} ox={request.args.get('ox','-')} oy={request.args.get('oy','-')} margin_l={request.args.get('margin_l','-')}", flush=True)
+    # ── [DIAG] Layer 1: HTTP 入口 — 调试日志（受 RE_DEBUG 控制）──
+    if _render_spec_log_enabled():
+        logger.debug(
+            "[HTTP] sig=%s ox=%s oy=%s margin_l=%s",
+            request.args.get('spec_sig', '-')[:8],
+            request.args.get('ox', '-'),
+            request.args.get('oy', '-'),
+            request.args.get('margin_l', '-'),
+        )
 
     # ── Commit A：先解析 spec（malformed → 400，早于任何渲染工作）──
     # 完整纪律见 v16-stage1-design.md §Step4 Commit A / §3c。
@@ -110,8 +117,13 @@ def preview(doc_id: str):
     if isinstance(resp, tuple):
         return resp
     resp.headers["Cache-Control"] = "public, max-age=0, must-revalidate"
-    # ── [DIAG] 响应元数据：ETag + Content-Length，用于判断"拖边距后 JPEG 是否真的变了" ──
-    print(f"[RESPONSE] etag={resp.headers.get('ETag','-')[:16]} len={resp.headers.get('Content-Length','-')}", flush=True)
+    # ── [DIAG] 响应元数据：ETag + Content-Length（调试日志，受 RE_DEBUG 控制）──
+    if _render_spec_log_enabled():
+        logger.debug(
+            "[RESPONSE] etag=%s len=%s",
+            resp.headers.get('ETag', '-')[:16],
+            resp.headers.get('Content-Length', '-'),
+        )
 
     # ── Commit A/B：回显 RenderSpec（诊断）──
     # Commit A：spec 仅诊断、零渲染影响；Legacy 客户端（无 ?spec=）输出不变。
