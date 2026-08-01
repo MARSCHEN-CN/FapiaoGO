@@ -74,6 +74,11 @@ const PdfExportConfirmModal = ({
           <div className="pe-header-left">
             <h3 className="pe-title">导出PDF</h3>
           </div>
+          <button className="modal-close-btn" onClick={onCancel} aria-label="关闭">
+            <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <line x1="3" y1="3" x2="13" y2="13" /><line x1="13" y1="3" x2="3" y2="13" />
+            </svg>
+          </button>
         </div>
 
         {/* ── 主体 ── */}

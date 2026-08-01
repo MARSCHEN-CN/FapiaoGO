@@ -160,7 +160,14 @@ const ExcelExportFieldsModal = ({
             <h3 className="xec-title">导出为 Excel</h3>
             <span className="xec-subtitle">选择导出字段</span>
           </div>
-          <span className="xec-file-count">已选择 {files.length} 个文件</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <span className="xec-file-count">已选择 {files.length} 个文件</span>
+            <button className="modal-close-btn" onClick={onCancel} aria-label="关闭">
+              <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5">
+                <line x1="3" y1="3" x2="13" y2="13" /><line x1="13" y1="3" x2="3" y2="13" />
+              </svg>
+            </button>
+          </div>
         </div>
 
         {/* ── 主体 ── */}
