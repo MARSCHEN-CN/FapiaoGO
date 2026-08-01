@@ -140,6 +140,24 @@ export function clearActiveSession() {
 }
 
 /**
+ * 重新激活已终态的会话（复用前清除清理定时器 + 重置状态）。
+ *
+ * 场景：上次导入 completed 后 60 秒内用户再次导入，
+ * processFilesForAddition 复用活跃 session。若不调用此函数，
+ * scheduleSessionCleanup 设置的 60s 定时器会在新导入进行中触发
+ * removeSession，导致 session 被删除、所有后续 store 操作变为 no-op。
+ *
+ * @param {string} id - 会话 ID
+ */
+export function reactivateSession(id) {
+  clearSessionCleanupTimer(id)
+  const session = sessions.get(id)
+  if (session && (session.status === 'completed' || session.status === 'cancelled' || session.status === 'failed')) {
+    session.status = 'running'
+  }
+}
+
+/**
  * 获取会话。
  * @param {string} id
  * @returns {import('../models/ImportSession').ImportSessionData|undefined}
@@ -333,8 +351,14 @@ export function getChildBatchIds(sessionId) {
 export function attachFilesToBatch(sessionId, fileIds, batchId) {
   const session = sessions.get(sessionId)
   if (!session) return
+  // 构建 key→file 索引，避免 O(n×m) 线性查找
+  const fileIndex = new Map()
+  for (const f of session.files) {
+    if (f.key) fileIndex.set(f.key, f)
+    if (f.id && f.id !== f.key) fileIndex.set(f.id, f)
+  }
   for (const fid of fileIds) {
-    const file = session.files.find(f => f.key === fid || f.id === fid)
+    const file = fileIndex.get(fid)
     if (file) file.batchId = batchId
   }
   notify(sessionId)
