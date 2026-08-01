@@ -46,6 +46,8 @@ import { ZoomToolbar } from './components/ZoomToolbar'
 import { useDocument } from './hooks/useDocument'
 import { removeDocument, getRegisteredDocIds } from './stores/DocumentStore'
 import { clearActiveSession, getActiveSessionId, removeFilesFromSession } from './stores/ImportSessionStore'
+import { resolvePreviewUrl } from './utils/previewResourceResolver'
+import { prefetchPreviewUrls } from './utils/previewPrefetcher'
 import StatusIndicator from './components/StatusIndicator'
 import ActionBar from './components/ActionBar'
 import InvoiceDetail from './components/InvoiceDetail'
@@ -147,6 +149,33 @@ function AppContent() {
   // Display Area Refactor Step 10：当前预览文件是否已注册 InvoiceDocument。
   // 用于门控 legacy 加载遮罩（新路径 DocumentViewer 自行管理加载态）。
   const activeDocument = useDocument(resolveDocId(previewFile))
+
+  // ── 6B-3 Preview Prefetch v1：相邻文件预览预热 ──
+  // 用户查看意图（当前 previewFile）→ 预热 ±PREFETCH_RANGE 相邻文件 page1 的 preview URL。
+  // 核心目标 = 提前让 render resource 热起来（首次 701ms → 点击时后端 render cache 6ms 命中），
+  // 不做 LRU/缓存管理/方向感知（v2）。effect cleanup 自动取消未开始任务（token 语义）。
+  const PREFETCH_RANGE = 3
+  useEffect(() => {
+    if (!previewFile) return
+    const curDocId = resolveDocId(previewFile)
+    if (!curDocId) return
+    const idx = displayFiles.findIndex((f) => resolveDocId(f) === curDocId)
+    if (idx < 0) return
+    const urls = []
+    const lo = Math.max(0, idx - PREFETCH_RANGE)
+    const hi = Math.min(displayFiles.length - 1, idx + PREFETCH_RANGE)
+    for (let i = lo; i <= hi; i += 1) {
+      if (i === idx) continue
+      const f = displayFiles[i]
+      const docId = resolveDocId(f)
+      if (!docId) continue
+      // 第一版只预热 page1（多页后续页属 v2）：page.index=0 → renderPage=1，
+      // URL 与 DocumentViewer 真实打开路径（resolvePreviewUrl）完全一致。
+      urls.push(resolvePreviewUrl({ renderDocId: docId, index: 0 }, docId))
+    }
+    if (urls.length === 0) return
+    return prefetchPreviewUrls(urls)
+  }, [previewFile, displayFiles])
 
   // D2-4.1：DocumentViewer 路径是否激活（与 DisplayAdapter 路由条件严格一致）。
   // 激活时 control-bar 的缩放控件改由 ZoomToolbar 渲染（状态源 useViewerState，经 controller
