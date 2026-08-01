@@ -23,7 +23,7 @@ import { ensureRenderContract, ensureDocumentMetadata } from '../services/render
 import { mapParseResultToFileUpdate } from '../mappers/parseResultMapper'
 import { updateDocumentIdentity } from '../utils/identity'
 import { resolveInstancePageFiles } from '../utils/instancePageOwnership'
-import { createImportSession, getActiveSessionId, getSession, addFilesToSession, replaceFileItems, updateProgress, addDocument, flushSessionNotifications } from '../stores/ImportSessionStore'
+import { createImportSession, getActiveSessionId, getSession, reactivateSession, addFilesToSession, replaceFileItems, updateProgress, addDocument, flushSessionNotifications } from '../stores/ImportSessionStore'
 import { ensureDocumentFromFileObj, flushDocumentNotifications, getDocument, registerDocument } from '../stores/DocumentStore'
 import { createDocument, createPageMeta } from '../models/InvoiceDocument'
 import { processImportedFiles } from '../processors/invoicePostProcessor'
@@ -342,6 +342,10 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
     let session = getActiveSessionId() ? getSession(getActiveSessionId()) : null
     if (!session) {
       session = createImportSession()
+    } else {
+      // 复用已终态 session 前，清除 60s 清理定时器并重置状态，
+      // 否则定时器在新导入进行中触发 removeSession 导致 session 被删除
+      reactivateSession(session.id)
     }
     // 清除上次导入残留的 batch IDs，防止 gate 早返回后 onAbort
     // 用旧 batchId 调 cancelImportBatch 产生 404（IS-4.2.1）
