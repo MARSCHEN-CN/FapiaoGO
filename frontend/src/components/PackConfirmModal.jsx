@@ -127,7 +127,14 @@ const PackConfirmModal = ({
             <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 600, color: 'var(--text)' }}>导出为压缩包</h3>
             <span style={{ fontSize: '12px', color: 'var(--text-3)' }}>确认打包设置</span>
           </div>
-          <span style={{ fontSize: '12px', color: 'var(--text-3)' }}>已选择 {parsedFiles.length} 个文件</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <span style={{ fontSize: '12px', color: 'var(--text-3)' }}>已选择 {parsedFiles.length} 个文件</span>
+            <button className="modal-close-btn" onClick={onCancel} aria-label="关闭">
+              <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5">
+                <line x1="3" y1="3" x2="13" y2="13" /><line x1="13" y1="3" x2="3" y2="13" />
+              </svg>
+            </button>
+          </div>
         </div>
 
         {/* ── 主体 = 打包设置（从设置-打包页原样迁移） ── */}
