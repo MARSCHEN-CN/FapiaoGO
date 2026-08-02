@@ -11,18 +11,18 @@
  *   DocumentViewer 是展示区唯一渲染器，PreviewCanvas 仅作 merge 兜底。
  *
  * 身份契约（Split Page Render Identity）：
- *   FileItem 若携带 sourceDocId → 它是父 PDF 的一页（拆分页）。
+ *   FileItem 若携带 sourceDocId 且不是多页文档组（_isDocumentGroup）→ 它是父 PDF 的
+ *   一个独立分页（拆分页）。多页发票组（_isDocumentGroup=true）不走拆分页路径，
+ *   而是使用 DocumentStore 中的多页 InvoiceDocument（assembly 路径注册）。
  *   展示区永远只问："我要展示源文档的第几页？"
  *   合成的单页 Document PageMeta 直接携带 renderDocId=sourceDocId,
- *   renderPage=pageNum+1，resolver 默认路径即可得到正确 URL
- *   （/preview/{sourceDocId}?page={pageNum+1}），无需特殊分支。
- *   不再依赖 DocumentStore 对兄弟拆分页做错误的多页聚合。
+ *   renderPage=pageNum（1-based，后端 page_index），resolver 默认路径即可得到正确 URL
+ *   （/preview/{sourceDocId}?page={pageNum}），无需特殊分支。
  *
  *   合成 Document 使用唯一 docId = `__display_${file.key}`，
  *   保证切换不同拆分页时 React 能检测到 document 身份变化（sourceDocId
  *   对同一父 PDF 的所有页相同，不能作为 docId，否则 resetForDocument、
- *   viewerReadyNotifiedRef 等依赖 docId 的 effect 不会触发，导致
- *   后续页永远卡在 loading buffer）。
+ *   viewerReadyNotifiedRef 等依赖 docId 的 effect 不会触发）。
  *
  * CSS 隔离：
  *   DocumentViewer 路径下，DisplayAdapter 根容器 position:absolute;inset:0
@@ -31,14 +31,19 @@
  *   通过 effect 复位 .canvas-scroll 的 padding/mask（inline style），
  *   防止 legacy 样式穿透。mergeActive 时恢复 legacy 样式。
  *
- * Double Buffer 策略：
- *   DocumentViewer 始终 mounted。切文件时 old-frame buffer 显示旧帧，
- *   DocumentViewer 就绪后 fade-in，old-frame fade-out。
+ * Old-frame buffer 已移除：
+ *   此前在 DocumentViewer 路径下叠加了一层 PreviewCanvas 作为"旧帧缓冲"，
+ *   用于切文件过渡期间显示上一文件的最后稳定帧。但这导致：
+ *   1. PreviewCanvas 发起 legacy usePreview.js 请求（携带 paper_w 安全边距参数）
+ *   2. 切换文件时缓冲层显示旧文件内容（"点B显示A的内容"）
+ *   3. 两个 loading 状态并存（"看到两个加载中"）
+ *   4. DocumentViewer 永远不 ready 时缓冲层永远不消失
+ *   DocumentViewer 自带 loading 状态，无需外部缓冲。
  *
  * @module components/DisplayAdapter
  */
 
-import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import React, { useEffect, useRef, useMemo } from 'react'
 import { DocumentViewer } from './DocumentViewer'
 import PreviewCanvas from './PreviewCanvas'
 import { useDocument } from '../hooks/useDocument'
@@ -108,30 +113,26 @@ export const DisplayAdapter = React.memo(function DisplayAdapter({
   const storeDocId = file?.documentId || resolveDocId(file)
   const storeDocument = useDocument(storeDocId)
 
-  // 拆分页判定：fileObj 携带 sourceDocId → 父 PDF 的一个分页。
-  // 此时不依赖 DocumentStore 聚合（兄弟共享 sourceDocId 会错误拼成多页 Document），
-  // 直接合成一个单页 Document，其 PageMeta 携带正确的 renderDocId/renderPage。
-  const isSplitPage = !!file?.sourceDocId
+  // 拆分页判定：fileObj 携带 sourceDocId 且不是多页文档组 → 父 PDF 的一个独立分页。
+  // _isDocumentGroup=true 的多页发票不作为拆分页，应走 DocumentStore 多页文档路径。
+  const isSplitPage = !!file?.sourceDocId && !file?._isDocumentGroup
 
   // 合成最终 Document：
-  //   - 拆分页：单页 doc，docId 唯一（基于 file.key）保证 React 变更检测，
-  //     page.renderDocId = sourceDocId，page.renderPage = pageNum + 1（渲染资源身份）。
-  //   - 非拆分页：透传 DocumentStore 查询结果（可能是多页组装文档、单页图片/PDF/OFD）
+  //   - 拆分页（独立单页）：单页 doc，docId 唯一（基于 file.key）保证 React 变更检测，
+  //     page.renderDocId = sourceDocId，page.renderPage = pageNum（1-based，后端 page_index）。
+  //   - 非拆分页（多页组 / 普通文件）：透传 DocumentStore 查询结果
   const effectiveDocument = useMemo(() => {
     if (!file) return null
     if (isSplitPage) {
       const sourceDocId = file.sourceDocId
-      const pageNum = file.pageNum ?? 0
+      const pageNum = file.pageNum ?? 1  // 1-based（后端 page_index = i+1）
       const page = createPageMeta({
         docId: sourceDocId,
         index: 0,
         renderDocId: sourceDocId,
-        renderPage: pageNum + 1,
+        renderPage: pageNum,  // 1-based，直接用于 /preview/{sourceDocId}?page=N
       })
       return createDocument({
-        // 使用唯一 docId 保证切换不同拆分页时 React 能检测到 document 变化，
-        // 触发 resetForDocument 和 viewerReady 逻辑。
-        // 加 __display_ 前缀避免与任何真实 DocumentStore 键冲突。
         docId: `__display_${file.key || sourceDocId}`,
         fileKey: file.key || '',
         pages: [page],
@@ -140,31 +141,8 @@ export const DisplayAdapter = React.memo(function DisplayAdapter({
     return storeDocument || null
   }, [file, isSplitPage, file?.key, file?.sourceDocId, file?.pageNum, storeDocument])
 
-  // 拆分页永远是单页，initialPage = 0；非拆分页使用 file.pageNum（0-based）
-  const initialPage = isSplitPage ? 0 : (file?.pageNum ?? 0)
-
-  // ── Viewer 就绪状态管理 ──
-  const [viewerFullyReady, setViewerFullyReady] = useState(false)
-  // file.key 变化（切文件）时重置就绪状态，触发 old-frame buffer 显示
-  useEffect(() => {
-    setViewerFullyReady(false)
-  }, [file?.key])
-
-  // ── Old Frame Buffer 机制 ──
-  const prevStablePreviewUrlRef = useRef(null)
-  useEffect(() => {
-    if (viewerFullyReady && previewUrl) {
-      prevStablePreviewUrlRef.current = previewUrl
-    }
-  }, [previewUrl, viewerFullyReady])
-  const bufferPreviewUrl = viewerFullyReady ? previewUrl : (prevStablePreviewUrlRef.current || previewUrl)
-  const stableFileRef = useRef(file)
-  useEffect(() => {
-    if (viewerFullyReady && file) {
-      stableFileRef.current = file
-    }
-  }, [file, viewerFullyReady])
-  const bufferFile = viewerFullyReady ? file : (stableFileRef.current || file)
+  // 拆分页永远是单页；多页组从首页开始；普通文件也是单页 → 统一 initialPage = 0
+  const initialPage = 0
 
   const rootRef = useRef(null)
   // 保存 .canvas-scroll 原始样式（首次 isolation 时保存一次）
@@ -172,11 +150,6 @@ export const DisplayAdapter = React.memo(function DisplayAdapter({
 
   // ── CSS 隔离：将 .canvas-scroll 复位为纯滚动容器，移除 legacy 打印样式 ──
   // Architecture Law D1：展示区如实展示，不消费安全边距/纸张阴影/mask-image。
-  // 策略：
-  //   - mergeActive=false（DocumentViewer 路径）：application 隔离样式（padding:0/mask:none）。
-  //   - mergeActive=true（PreviewCanvas 路径）：恢复 legacy 样式（PreviewCanvas 需要纸张阴影/padding）。
-  //   - 卸载时：恢复原始样式。
-  //   - 不随 file 切换反复 save/restore，避免两帧闪烁。
   useEffect(() => {
     let el = rootRef.current
     if (!el) {
@@ -234,10 +207,6 @@ export const DisplayAdapter = React.memo(function DisplayAdapter({
     }
   }, [mergeActive])
 
-  const handleViewerReady = useCallback(() => {
-    setViewerFullyReady(true)
-  }, [])
-
   // ── 合并模式：唯一保留 PreviewCanvas 的场景 ──
   if (mergeActive) {
     return (
@@ -257,9 +226,10 @@ export const DisplayAdapter = React.memo(function DisplayAdapter({
   }
 
   // ── DocumentViewer 单一路径 ──
-  // position: absolute; inset: 0 填满 .canvas-scroll 的 padding-box（已设 position:relative），
+  // position: absolute; inset: 0 填满 .canvas-scroll 的 padding-box，
   // 从布局上彻底脱离 legacy padding 影响——展示区所见即所得。
-  // overflow: hidden 自成一体，ViewerViewport 内部处理 pan/zoom，不依赖 .canvas-scroll 滚动。
+  // overflow: hidden 自成一体，ViewerViewport 内部处理 pan/zoom。
+  // 不再叠加 old-frame buffer（PreviewCanvas），避免 legacy 请求和内容错位。
   return (
     <div
       ref={rootRef}
@@ -274,57 +244,14 @@ export const DisplayAdapter = React.memo(function DisplayAdapter({
         background: 'transparent',
       }}
     >
-      {/* Old Frame Buffer：切文件过渡期间显示旧文件的最后稳定帧 */}
-      <div
-        style={{
-          position: 'absolute',
-          inset: 0,
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          justifyContent: 'center',
-          overflow: 'hidden',
-          opacity: viewerFullyReady ? 0 : 1,
-          transition: 'opacity 0.15s ease-out',
-          zIndex: viewerFullyReady ? 1 : 3,
-          pointerEvents: viewerFullyReady ? 'none' : 'auto',
-        }}
-      >
-        <PreviewCanvas
-          previewFile={bufferFile}
-          previewCanvas={previewCanvas}
-          previewUrl={bufferPreviewUrl}
-          grayscale={grayscale}
-          previewRenderVersion={previewRenderVersion}
-          paperLayout={paperLayout}
-          contentLayout={contentLayout}
-          previewRotation={previewRotation}
-          previewLoading={previewLoading}
-          containerSize={containerSize}
-        />
-      </div>
-
-      {/* DocumentViewer：始终 mounted */}
-      <div
-        style={{
-          position: 'absolute',
-          inset: 0,
-          display: 'flex',
-          flexDirection: 'column',
-          zIndex: 2,
-          pointerEvents: 'auto',
-        }}
-      >
-        <DocumentViewer
-          document={effectiveDocument}
-          containerSize={containerSize}
-          initialPage={initialPage}
-          grayscale={grayscale}
-          onViewerController={onViewerController}
-          onViewerReady={handleViewerReady}
-          file={file}
-        />
-      </div>
+      <DocumentViewer
+        document={effectiveDocument}
+        containerSize={containerSize}
+        initialPage={initialPage}
+        grayscale={grayscale}
+        onViewerController={onViewerController}
+        file={file}
+      />
     </div>
   )
 })

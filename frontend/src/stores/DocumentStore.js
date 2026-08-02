@@ -144,7 +144,7 @@ export function ensureDocumentFromFileObj(fileObj, siblings = null, options = {}
   // 过滤同 docId 的分页，提取 pageNum（去重 + 升序）
   // 多页 PDF 拆分场景：兄弟页面可能尚未解析（docId 仍是 sourceDocId），
   // 必须同时包含同 sourceDocId 的兄弟，否则解析完成前聚合会丢失兄弟页面。
-  // pageNum 是 0-based（buildFileObj 保留后端 page_index），null 视为 0
+  // pageNum 是 1-based（后端 page_index = i+1），null 视为 1（首页默认）
   const seen = new Set()
   const pageNums = []
   const sourceDocId = fileObj.sourceDocId
@@ -153,7 +153,7 @@ export function ensureDocumentFromFileObj(fileObj, siblings = null, options = {}
     const matchesDocId = f.docId === docId
     const sharesSource = !!(sourceDocId && f.sourceDocId === sourceDocId)
     if (!matchesDocId && !sharesSource) continue
-    const pageNum = f.pageNum ?? 0
+    const pageNum = f.pageNum ?? 1
     if (!seen.has(pageNum)) {
       seen.add(pageNum)
       pageNums.push(pageNum)
@@ -171,16 +171,16 @@ export function ensureDocumentFromFileObj(fileObj, siblings = null, options = {}
     }
   }
 
-  // siblings 聚合场景：
+  // siblings 聚合场景（pageNum 是 1-based，后端 page_index = i+1）：
   // - pageNums.length > 1（原始多页 PDF，未拆分）：同一 docId 对应物理多页，
-  //   pageNum 是 0-based：index = pageNum, renderPage = pageNum + 1
+  //   index = pageNum - 1（0-based 数组索引），renderPage = pageNum（1-based URL 参数）
   // - pageNums.length === 1（拆分后的单页文件/单页图片/OFD）：每个 docId 对应物理单页，
   //   不管 fileObj.pageNum 是多少（它是父 PDF 中的页码，用于排序），物理文件内只有 1 页，
   //   index = 0，renderPage = 1。
   const isSinglePagePhysicalDoc = pageNums.length === 1
   const pages = pageNums.map((pageNum) => {
-    const index = isSinglePagePhysicalDoc ? 0 : pageNum
-    const renderPage = isSinglePagePhysicalDoc ? 1 : pageNum + 1
+    const index = isSinglePagePhysicalDoc ? 0 : Math.max(0, pageNum - 1)
+    const renderPage = isSinglePagePhysicalDoc ? 1 : Math.max(1, pageNum)
     const prev = prevByIndex.get(index)
     return createPageMeta({
       docId,

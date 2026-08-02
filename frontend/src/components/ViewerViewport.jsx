@@ -220,9 +220,9 @@ function ViewerViewportInner({
     const h = e.target?.naturalHeight || 0
     if (w <= 0 || h <= 0) return
     setNaturalDims({ width: w, height: h })
-    // Architecture Law D1：始终上报图片的真实物理尺寸 (naturalDims)。
+    // Architecture Law D1：强制使用上报的真实物理尺寸 (naturalDims)。
     // 移除对 PageMeta 尺寸是否为 0 的判断，确保能彻底纠正数据模型中可能存在的
-    // “虚拟尺寸”（如由打印排版逻辑赋予的 A5 尺寸）。展示区只关心真实像素。
+    // "虚拟尺寸"（如由打印排版逻辑赋予的 A5 尺寸）。展示区只关心真实像素。
     if (page) {
       onNaturalSize?.(page.index, w, h)
     }

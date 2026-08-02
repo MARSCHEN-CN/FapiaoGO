@@ -404,9 +404,19 @@ function AppContent() {
       const bizDocId = f.documentId
       if (bizDocId) referenced.add(bizDocId)
     }
-    for (const docId of getRegisteredDocIds()) {
-      if (!referenced.has(docId)) removeDocument(docId)
+    const registered = getRegisteredDocIds()
+
+    // Race condition guard：导入期间，文档注册（DocumentStore，同步）先于
+    // files 状态更新（queueUpdate 经 requestIdleCallback/setTimeout，异步 100-200ms）。
+    // 若 displayFiles 有条目但均无 docId（referenced 为空），而 DocumentStore 中已注册文档，
+    // 这是过渡态——跳过 GC，等 files 状态更新后 displayFiles 变化触发 GC 重跑。
+    // files 真正清空（清空操作）时 displayFiles.length === 0，GC 正常执行。
+    if (displayFiles.length > 0 && referenced.size === 0 && registered.length > 0) {
+      return
     }
+
+    const toRemove = registered.filter(id => !referenced.has(id))
+    for (const docId of toRemove) removeDocument(docId)
   }, [displayFiles])
 
   const removeFailedFiles = useCallback((removeSource = false) => {

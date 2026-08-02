@@ -736,6 +736,9 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
                 }
               }
               if (docsTouched) {
+                // 先 flush 文件状态（确保 files 带 docId），再通知 DocumentStore 变更，
+                // 避免 GC 在 files 状态滞后时误删刚注册的文档（race condition）。
+                flushUpdates()
                 flushDocumentNotifications()
                 docsTouched = false
               }
@@ -872,6 +875,7 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
               }
 
               if (docsTouched) {
+                flushUpdates()
                 flushDocumentNotifications()
                 docsTouched = false
               }
@@ -912,6 +916,7 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
               }
             }
             if (docsTouched) {
+              flushUpdates()
               flushDocumentNotifications()
               docsTouched = false
             }
