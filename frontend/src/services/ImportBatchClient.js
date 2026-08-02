@@ -147,7 +147,7 @@ export function subscribeBatchProgress(batchId, callbacks) {
       }
 
       // 检查终态
-      if (['completed', 'failed', 'cancelled'].includes(progress.status)) {
+      if (['completed', 'completed_with_errors', 'failed', 'cancelled'].includes(progress.status)) {
         // 先关闭 SSE 释放连接槽，再调 onComplete（hydration fetch 需要连接）
         console.log('[ImportBatchClient] SSE 终态，关闭 EventSource')
         eventSource.close()

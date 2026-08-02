@@ -172,7 +172,7 @@ export async function runChunkedImport({ sessionId, taskId, files, chunkSize, au
                 resolve(progress)
                 return
               }
-              if (progress.status === 'completed') {
+              if (progress.status === 'completed' || progress.status === 'completed_with_errors') {
                 if (hydrateChunk) {
                   await hydrateChunk({ batchId, chunk, signal, client: { getBatchResults }, terminalFileKeys })
                 }
