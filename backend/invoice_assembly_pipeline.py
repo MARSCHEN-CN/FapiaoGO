@@ -55,26 +55,56 @@ logger = logging.getLogger(__name__)
 
 import re
 
-# 页码标记正则（与 multi_page_analyzer 同构）
+# 页码标记正则（支持更多变体，容忍OCR常见空格/格式问题）
+# 注意：所有模式都必须包含"页"字作为锚点，避免日期、金额等数字/斜杠组合产生假阳性
 _PAGE_MARKER_RE = re.compile(
-    r'共\s*(\d+)\s*页\s*第\s*(\d+)\s*页'
-    r'|第\s*(\d+)\s*页\s*/\s*(\d+)'
-    r'|第\s*(\d+)\s*页\s*共\s*(\d+)\s*页'
+    # 标准格式：共N页 第M页
+    r'共\s*(\d+)\s*页\s*[，,。.\s-]*\s*第\s*(\d+)\s*页'
+    # 格式：第M页/共N页 或 第M页 / N页
+    r'|第\s*(\d+)\s*页\s*/\s*(?:共\s*)?(\d+)\s*页'
+    # 格式：第M页 共N页
+    r'|第\s*(\d+)\s*页\s*[，,。.\s-]*\s*共\s*(\d+)\s*页'
 )
 
 
 def _extract_page_marker(text: str) -> Optional[tuple]:
-    """提取页码标记 → (current_page, total_pages)"""
-    m = _PAGE_MARKER_RE.search(text)
-    if not m:
+    """提取页码标记 → (current_page, total_pages)
+    
+    支持格式（都必须包含"页"字锚点）：
+    1. 共N页 第M页
+    2. 第M页/共N页 / 第M页/N页
+    3. 第M页 共N页
+    
+    校验：1 <= current <= total <= 100，过滤假阳性
+    """
+    if not text:
         return None
-    groups = m.groups()
-    if groups[0] is not None:
-        return (int(groups[1]), int(groups[0]))
-    if groups[2] is not None:
-        return (int(groups[2]), int(groups[3]))
-    if groups[4] is not None:
-        return (int(groups[4]), int(groups[5]))
+    for m in _PAGE_MARKER_RE.finditer(text):
+        groups = m.groups()
+        # 模式1: 共N页 第M页 → groups = (N, M, None, None, None, None)
+        if groups[0] is not None and groups[1] is not None:
+            try:
+                cur, total = int(groups[1]), int(groups[0])
+                if 1 <= cur <= total <= 100:
+                    return (cur, total)
+            except (ValueError, IndexError):
+                pass
+        # 模式2: 第M页/共N页 → groups = (None, None, M, N, None, None)
+        if groups[2] is not None and groups[3] is not None:
+            try:
+                cur, total = int(groups[2]), int(groups[3])
+                if 1 <= cur <= total <= 100:
+                    return (cur, total)
+            except (ValueError, IndexError):
+                pass
+        # 模式3: 第M页 共N页 → groups = (None, None, None, None, M, N)
+        if groups[4] is not None and groups[5] is not None:
+            try:
+                cur, total = int(groups[4]), int(groups[5])
+                if 1 <= cur <= total <= 100:
+                    return (cur, total)
+            except (ValueError, IndexError):
+                pass
     return None
 
 
@@ -124,87 +154,177 @@ def _invoice_state(inv_a: str, inv_b: str) -> str:
 
 
 def group_pages_into_documents(pages: List[Dict]) -> List[Dict]:
-    """三因子分组：page sequence → invoiceNumber 一致性
-
-    输入：单 sourceDocId 的 PageResult 列表。
-    算法：
-        - 排序后扫描，marker 序列连续性优先，发票号冲突则拆分
-        - 两端无 marker 时回退物理 page_num 连续（号码冲突不合并）
-        - 每组用 MATCH/MISSING 校验（CONFLICT 已在分组时拆分）
-    返回：[{pages, invoiceNumber, status, warnings}]
+    """严格按两条件判定同票多页：
+    条件1：所有页面发票号码一致（不冲突）
+    条件2：存在"共N页 第M页"标记，且标记支持该PDF物理页数=N的多页发票
+           （至少有一页明确标注total=N，且有页码1和N的标记，或标记序列连续）
+    
+    判定原则（安全优先，宁拆勿错合）：
+    - 必须有明确的"共N页 第M页"标记证据
+    - 必须有发票号一致性证据
+    - 物理页数必须等于标记声明的N
+    - 证据不足 → 一律拆分为单页
     """
     if not pages:
+        logger.info('[InvoiceAssembly] 空页面列表，返回空')
         return []
 
     sorted_pages = sorted(pages, key=_page_num_key)
-
-    # ── 扫描构建候选组 ──
-    groups: List[List[Dict]] = []
-    current: List[Dict] = []
-
-    for page in sorted_pages:
-        if not current:
-            current.append(page)
+    n = len(sorted_pages)
+    
+    logger.info(f'[InvoiceAssembly] ===== 开始分组判定，共{n}页 ===')
+    
+    # 单页直接返回
+    if n <= 1:
+        result = [{
+            'pages': sorted_pages,
+            'invoiceNumber': _resolve_invoice_number(sorted_pages[0]),
+            'status': 'MATCH',
+            'warnings': [],
+        }]
+        logger.info('[InvoiceAssembly] 单页文档，直接返回不分组')
+        return result
+    
+    # ── 预检查：提取所有页的 marker 和 invoice_number ──
+    page_markers = []
+    page_invoices = []
+    logger.info('[InvoiceAssembly] --- 逐页检查 ---')
+    for i, p in enumerate(sorted_pages):
+        marker = _resolve_marker(p)
+        inv = _resolve_invoice_number(p)
+        text_preview = (_page_raw_text(p) or '')[:100]
+        page_num = _page_num_key(p)
+        page_markers.append(marker)
+        page_invoices.append(inv)
+        logger.info(
+            f'[InvoiceAssembly] 页{i} (page_num={page_num}): '
+            f'marker={marker}, invoice={inv}, '
+            f'text_preview="{text_preview}..."'
+        )
+    
+    # ── 条件1检查：发票号一致性 ──
+    logger.info('[InvoiceAssembly] --- 条件1：发票号一致性检查 ---')
+    ref_inv = ''
+    invoice_conflict = False
+    for inv in page_invoices:
+        if not inv:
+            logger.info('[InvoiceAssembly] 某页发票号为空，跳过')
             continue
-
-        last = current[-1]
-        last_marker = _resolve_marker(last)
-        page_marker = _resolve_marker(page)
-
-        # A: 标记连续性（最高优先级）→ 发票号冲突则拆分
-        if _marker_continuous(last_marker, page_marker):
-            last_inv = _resolve_invoice_number(last)
-            cur_inv = _resolve_invoice_number(page)
-            if _invoice_state(last_inv, cur_inv) == 'CONFLICT':
-                # Step 1.1: 标记连续但发票号冲突 → 身份边界，不进入同 Document
-                groups.append(current)
-                current = [page]
-            else:
-                current.append(page)
+        if not ref_inv:
+            ref_inv = inv
+            logger.info(f'[InvoiceAssembly] 基准发票号: {ref_inv}')
+        elif inv != ref_inv:
+            invoice_conflict = True
+            logger.error(
+                f'[InvoiceAssembly] 发票号冲突！基准={ref_inv}, 发现={inv} → 拆分'
+            )
+            break
+    
+    if invoice_conflict:
+        # 发票号冲突 → 直接拆分（不同发票肯定不能合并）
+        logger.info('[InvoiceAssembly] ❌ 条件1不满足（发票号冲突）→ 拆分为单页')
+        return _split_all_to_single(sorted_pages, page_invoices)
+    
+    # ── 条件2检查：页码标记证据 ──
+    logger.info('[InvoiceAssembly] --- 条件2：页码标记证据检查 ---')
+    
+    # 统计所有出现的 total 值
+    total_counts: Dict[int, int] = {}
+    pages_with_marker = 0
+    all_currents = []
+    for idx, marker in enumerate(page_markers):
+        if marker is None:
+            logger.info(f'[InvoiceAssembly] 页{idx} 无页码标记')
             continue
+        pages_with_marker += 1
+        cur, total = marker
+        all_currents.append(cur)
+        total_counts[total] = total_counts.get(total, 0) + 1
+        logger.info(f'[InvoiceAssembly] 页{idx} 有标记: 第{cur}页/共{total}页')
+    
+    logger.info(f'[InvoiceAssembly] 有标记的页数: {pages_with_marker}/{n}')
+    logger.info(f'[InvoiceAssembly] total分布: {total_counts}')
+    logger.info(f'[InvoiceAssembly] 当前页序号集合: {all_currents}')
+    
+    # 没有任何marker → 不是多页发票 → 拆分
+    if pages_with_marker == 0:
+        logger.info('[InvoiceAssembly] ❌ 条件2不满足（无任何页码标记）→ 拆分为单页')
+        return _split_all_to_single(sorted_pages, page_invoices)
+    
+    # 找出出现次数最多的total作为候选N
+    candidate_n = max(total_counts.keys(), key=lambda k: total_counts[k])
+    logger.info(f'[InvoiceAssembly] 候选总页数N={candidate_n}（出现次数最多）')
+    
+    # 关键校验1：物理页数必须等于候选N
+    logger.info(
+        f'[InvoiceAssembly] 校验1: 物理页数({n}) vs 候选N({candidate_n})'
+    )
+    if n != candidate_n:
+        logger.info(
+            f'[InvoiceAssembly] ❌ 校验1失败: 物理页数({n}) != 标记声明总页数({candidate_n}) → 拆分'
+        )
+        return _split_all_to_single(sorted_pages, page_invoices)
+    logger.info('[InvoiceAssembly] ✅ 校验1通过')
+    
+    # 关键校验2：候选N必须 >= 2（单页发票不需要合并）
+    logger.info(f'[InvoiceAssembly] 校验2: 候选N({candidate_n}) >= 2')
+    if candidate_n < 2:
+        logger.info(f'[InvoiceAssembly] ❌ 校验2失败: N={candidate_n}（单页）→ 拆分')
+        return _split_all_to_single(sorted_pages, page_invoices)
+    logger.info('[InvoiceAssembly] ✅ 校验2通过')
+    
+    # 关键校验3：必须有第1页和第N页的标记（首尾页证据齐全）
+    has_first_page = 1 in all_currents
+    has_last_page = candidate_n in all_currents
+    logger.info(
+        f'[InvoiceAssembly] 校验3: 首页标记(第1页)={has_first_page}, '
+        f'末页标记(第{candidate_n}页)={has_last_page}'
+    )
+    
+    if not (has_first_page and has_last_page):
+        logger.info(
+            f'[InvoiceAssembly] ❌ 校验3失败: '
+            f'首尾标记缺失 → 拆分'
+        )
+        return _split_all_to_single(sorted_pages, page_invoices)
+    logger.info('[InvoiceAssembly] ✅ 校验3通过')
+    
+    # 关键校验4：发票号不能为空（多页发票应该能识别到发票号）
+    logger.info(f'[InvoiceAssembly] 校验4: 发票号不为空 = {bool(ref_inv)}')
+    if not ref_inv:
+        # 即使标记符合，但完全没有识别到发票号 → 安全起见拆分
+        logger.info('[InvoiceAssembly] ❌ 校验4失败: 有页码标记但无发票号 → 安全拆分')
+        return _split_all_to_single(sorted_pages, page_invoices)
+    logger.info('[InvoiceAssembly] ✅ 校验4通过')
+    
+    # ── 所有校验通过 → 合并为同票多页 ──
+    logger.info(
+        f'[InvoiceAssembly] ✅ 同票多页判定通过: invoice={ref_inv}, '
+        f'total_pages={candidate_n}, pages_with_marker={pages_with_marker}/{n}'
+    )
+    return [{
+        'pages': sorted_pages,
+        'invoiceNumber': ref_inv,
+        'status': 'MATCH',
+        'warnings': [],
+    }]
 
-        # B: 两端均无标记 → 物理连续降级（号码冲突不合并）
-        seq_ok = False
-        if last_marker is None and page_marker is None:
-            if _physically_consecutive(last, page):
-                last_inv = _resolve_invoice_number(last)
-                cur_inv = _resolve_invoice_number(page)
-                if _invoice_state(last_inv, cur_inv) != 'CONFLICT':
-                    seq_ok = True
 
-        if seq_ok:
-            current.append(page)
-        else:
-            groups.append(current)
-            current = [page]
-
-    if current:
-        groups.append(current)
-
-    # ── 校验每组 ──
+def _split_all_to_single(sorted_pages: List[Dict], page_invoices: List[str]) -> List[Dict]:
+    """将所有页面拆分为单页组"""
+    logger.info(f'[InvoiceAssembly] === 拆分为{len(sorted_pages)}个单页文档 ===')
     results = []
-    for group in groups:
-        ref_inv = _resolve_invoice_number(group[0])
-        warnings: List[str] = []
-        state = 'MATCH'
-
-        for page in group[1:]:
-            p_inv = _resolve_invoice_number(page)
-            s = _invoice_state(ref_inv, p_inv)
-            if s == 'MISSING' and state == 'MATCH':
-                state = 'MISSING'
-                warnings.append('invoice_number_missing_on_some_pages')
-            elif s == 'CONFLICT':
-                state = 'CONFLICT'
-                warnings.append(f'invoice_conflict: {ref_inv} vs {p_inv}')
-
+    for i, p in enumerate(sorted_pages):
+        inv = page_invoices[i] if i < len(page_invoices) else ''
+        page_num = _page_num_key(p)
+        logger.info(f'[InvoiceAssembly] 拆分: 页{i} (page_num={page_num}), invoice={inv}')
         results.append({
-            'pages': group,
-            'invoiceNumber': ref_inv,
-            'status': state,
-            'warnings': warnings,
+            'pages': [p],
+            'invoiceNumber': inv,
+            'status': 'MATCH',
+            'warnings': [],
         })
-
+    logger.info(f'[InvoiceAssembly] 拆分完成，共{len(results)}个单页文档')
     return results
 
 
@@ -230,8 +350,11 @@ def assemble(pages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         单页情况：直接透传。
     """
     if not pages:
+        logger.info('[InvoiceAssembly] assemble: 空页面列表，返回空')
         return []
 
+    logger.info(f'[InvoiceAssembly] assemble: 开始组装，共{len(pages)}页')
+    
     # 三因子分组（替代原先 invoice_number 分组）
     assembled_groups = group_pages_into_documents(pages)
 

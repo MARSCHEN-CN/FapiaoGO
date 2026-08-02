@@ -922,11 +922,26 @@ class ImportBatchManager:
             full_result, source_doc_id=src_doc_id
         )
         
+        logger.info(
+            f'[ImportBatch] 页面存储: bucket={bucket_key}, '
+            f'page_num={page_num}, total_pages={total_pages}, '
+            f'completed={completed}'
+        )
+        
         if completed:
             # 所有页收齐 → 组装 → 入库缓冲
             pages = store.get_pages(bucket_key)
             if pages:
+                logger.info(
+                    f'[ImportBatch] 所有页收齐，开始组装: '
+                    f'bucket={bucket_key}, pages_count={len(pages)}'
+                )
                 invoice_docs = _assemble_invoice(pages)
+                logger.info(
+                    f'[ImportBatch] 组装完成: '
+                    f'bucket={bucket_key}, doc_count={len(invoice_docs)}, '
+                    f'pages_per_doc={[len(d.get("pages", [])) for d in invoice_docs]}'
+                )
                 for inv_doc in invoice_docs:
                     inv_db = invoice_document_to_db_record(
                         inv_doc,
@@ -957,17 +972,36 @@ class ImportBatchManager:
         return should_flush
 
     def _parse_page_info(self, metrics, bucket_key):
-        """解析页面页码和总页数"""
+        """解析页面页码和总页数
+        
+        注意：前端传来的 page_num 可能是 1-based（第1页=1），
+        但 PageResultStore 要求 0-based（第1页=0）。
+        这里统一转换为 0-based。
+        
+        检测逻辑（基于实际日志分析）：
+        - 日志显示 page_num=1, total_pages=2 → 说明是 1-based
+        - 我们转换逻辑：page_num 在 [1, total_pages] 范围时，都认为是 1-based
+          （只有 page_num=0 才能确定是 0-based）
+        """
         page_num_str = metrics.get('page_num', '')
         total_pages_str = metrics.get('total_pages', '')
         page_num = int(page_num_str) if page_num_str.isdigit() else 0
         total_pages = int(total_pages_str) if total_pages_str.isdigit() else 1
         
+        # 判断是否需要转换为 0-based
+        # 如果 page_num >= 1 且 page_num <= total_pages，则认为是 1-based
+        # （因为 0-based 的第1页应该是 0，而不是 1）
+        if 1 <= page_num <= total_pages:
+            page_num = page_num - 1
+            logger.info(
+                f"[ImportBatch] page_num 1-based → 0-based: "
+                f"original={page_num + 1}, converted={page_num}, total={total_pages}"
+            )
+        
         # 检查页码越界
-        if page_num > total_pages:
+        if page_num >= total_pages or page_num < 0:
             logger.warning(
-                "[IMPORT] page_num 超出 total_pages（疑似契约异常）: "
-                "page_num=%s total_pages=%s bucket=%s",
+                "[IMPORT] page_num 无效: page_num=%s total_pages=%s bucket=%s",
                 page_num, total_pages, bucket_key,
             )
         
