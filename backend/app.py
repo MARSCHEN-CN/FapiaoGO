@@ -87,14 +87,21 @@ _CORRECTED_ITEM_MAP = {
 }
 
 
+def _clean_amount_str(s) -> str:
+    """清理金额字符串中的格式化字符（货币符号$、¥、￥、千分位逗号、空白）"""
+    if s is None:
+        return ''
+    return str(s).replace('$', '').replace(',', '').replace('¥', '').replace('￥', '').replace(' ', '').strip()
+
+
 def _build_export_header(rec):
     """构建导出表头（发票级公共字段）。"""
     try:
-        total_amount = float(rec.get('amount', 0) or 0)
+        total_amount = float(_clean_amount_str(rec.get('amount', 0)) or 0)
     except (ValueError, TypeError):
         total_amount = 0
     try:
-        tax_amount = float(rec.get('tax_amount', 0) or 0)
+        tax_amount = float(_clean_amount_str(rec.get('tax_amount', 0)) or 0)
     except (ValueError, TypeError):
         tax_amount = 0
     row = {
