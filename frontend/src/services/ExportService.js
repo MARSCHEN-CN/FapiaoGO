@@ -32,6 +32,28 @@ import {
 } from '../models/ExportResult'
 
 // ═══════════════════════════════════════════════════════════
+// 文件名映射（导出选材）
+// ═══════════════════════════════════════════════════════════
+
+/**
+ * 从文件列表提取导出用的文件名集合。
+ *
+ * 这是「拆分页文件名端到端一致」不变式的导出侧保障：
+ *   - 优先 originalName（重命名场景下的原始文件名，如 "invoice_p1.pdf"）
+ *   - 回退 name / path / fileName（拆分页对象通常不设 originalName，走 name 兜底 = "invoice_pX.pdf"）
+ * 输出名与 DB 存储名（invoice_pX.pdf）精确匹配 → 多页拆分后 N 页全部可导出
+ * （不会因只传父名 "invoice.pdf" 而只捞回 1 页，详见 db._resolve_invoice_with_fallback 的 _p 回退）。
+ *
+ * @param {Array} files - 文件对象列表（含 name/originalName/path/fileName 任一）
+ * @returns {string[]} 非空文件名列表
+ */
+export function extractExportFileNames(files) {
+  return (files || [])
+    .map(f => f.originalName || f.name || f.path || f.fileName || '')
+    .filter(Boolean)
+}
+
+// ═══════════════════════════════════════════════════════════
 // 私有辅助
 // ═══════════════════════════════════════════════════════════
 
@@ -124,9 +146,7 @@ export async function exportExcel({
   // FIX: 使用 originalName（原始文件名）而非 name（显示用的还原后的文件名）
   // 原因：数据库中存储的是原始文件名（如 "invoice_p1.pdf"），
   // 而 name 是还原后的文件名（如 "invoice.pdf"），会导致查询失败
-  const fileNames = files
-    .map(f => f.originalName || f.name || f.path || f.fileName || '')
-    .filter(Boolean)
+  const fileNames = extractExportFileNames(files)
   
   console.log('[ExportService.exportExcel] 文件名列表:', {
     count: fileNames.length,

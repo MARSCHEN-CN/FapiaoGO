@@ -62,6 +62,25 @@ export function buildFileObj(file, name, path, previewImage = null, docId = null
 // stripIdentity 定义见 ./identity（零依赖，可独立单测）
 export { stripIdentity }
 
+/**
+ * 多页 PDF 拆页时，为每个分页项生成独立文件名（带页码后缀）。
+ *
+ * 这是「拆分页文件名端到端一致」不变式的核心：
+ *   - 前端拆分：每个分页项 name = "invoice_p{index}.pdf"（distinct）
+ *   - 后端存储：invoice_document_to_db_record 按各自页名落库（invoice_pX.pdf）
+ *   - 导出选材：ExportService.extractExportFileNames 用同名精确匹配后端
+ * 三者对齐 → 一个多页 PDF 拆出的 N 页在导出时全部可被检索到（不会互相覆盖/丢失）。
+ *
+ * 仅替换首个 ".pdf"（小写），保持与 processPdfFile 历史行为一致。
+ *
+ * @param {string} fileName - 源文件名（如 "invoice.pdf"）
+ * @param {number} pageIndex - 0-based 页码
+ * @returns {string} 如 "invoice_p0.pdf"
+ */
+export function buildSplitPageName(fileName, pageIndex) {
+  return fileName.replace('.pdf', `_p${pageIndex}.pdf`)
+}
+
 // 每批处理的页数上限，防止大 PDF 导致内存溢出
 const PDF_PAGES_BATCH_SIZE = 10
 
@@ -108,7 +127,7 @@ export async function processPdfFile(file, getPathFn) {
             bytes[j] = binaryStr.charCodeAt(j)
           }
           const blob = new Blob([bytes], { type: 'application/pdf' })
-          const pageName = file.name.replace('.pdf', `_p${page.page_index}.pdf`)
+          const pageName = buildSplitPageName(file.name, page.page_index)
           const pageFile = new File([blob], pageName, { type: 'application/pdf' })
 
           const fileObj = buildFileObj(pageFile, pageName, getPathFn(file), null, data.doc_id, page.page_index, null, instanceId)
