@@ -71,7 +71,7 @@ export const DocumentViewer = React.memo(function DocumentViewer({
     if (state.fitScale > 0) {
       onViewerController?.(controllerRef.current)
     }
-  }, [state.mode, state.zoomPercent, state.fitScale, onViewerController])
+  }, [state.mode, state.zoomPercent, state.fitScale, state.currentPage, totalPages, onViewerController])
   useEffect(() => () => onViewerController?.(null), [onViewerController])
 
   // Viewer 就绪检测
