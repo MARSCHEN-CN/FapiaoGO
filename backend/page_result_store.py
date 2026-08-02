@@ -79,7 +79,15 @@ class PageResultStore:
             entry['total_pages'] = total_pages
             if source_doc_id:
                 entry['source_doc_id'] = source_doc_id
-            entry['pages'][page_num] = parse_result
+            # B2 修复（Commit 4.2a）：在 store 边界把 0-based page_num 注入页面记录。
+            # 用 dict() 复制而非原地修改 parse_result —— parse_result 可能被其它消费者
+            # （DB upsert、前端直写、assemble 之外的调用方）引用，store 只拥有"暂存表示"，
+            # 不应反向污染原始对象。注入后 assemble 的 _page_num_key 才能拿到真实页码，
+            # 否则 production parse_result 不带 page_num/page_index，会退化到默认 0，
+            # 导致同文档多页被拆成单页发票。
+            page_record = dict(parse_result)
+            page_record['page_num'] = page_num
+            entry['pages'][page_num] = page_record
 
             received = len(entry['pages'])
             completed = received >= total_pages
