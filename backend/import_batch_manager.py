@@ -418,7 +418,9 @@ class ImportBatchManager:
                 'docId': result.get('doc_id', ''),
                 'invoiceType': result.get('invoice_type', ''),
                 'invoiceNumber': result.get('invoice_number', ''),
-                'amount': result.get('amount'),
+                # 优先使用 extra_fields.amountHj（经过 AmountExtractor 校验的真实价税合计）
+                # 避免 result.get('amount') 与 extra_fields.amountHj 不一致导致的金额错误
+                'amount': extra_fields.get('amountHj') or result.get('amount'),
                 'invoiceDate': result.get('invoice_date', ''),
                 'invoiceFields': invoice_fields,
                 'parseMethod': result.get('parse_method', ''),

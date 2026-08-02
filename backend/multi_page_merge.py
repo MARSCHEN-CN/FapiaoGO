@@ -88,16 +88,19 @@ def merge_page_results(page_results: List[Dict[str, Any]]) -> Dict[str, Any]:
     first = page_results[0]
     last = page_results[-1]
 
-    # ── 顶层字段合并 ──
-    merged = dict(first)  # 以第一页为基础
-
-    # 顶层：来自最后一页
-    merged['amount'] = last.get('amount')
-
-    # ── extra_fields 合并 ──
+    # ── extra_fields 提前提取（供顶层字段合并使用）──
     first_ef = first.get('extra_fields') or {}
     last_ef = last.get('extra_fields') or {}
 
+    # ── 顶层字段合并 ──
+    merged = dict(first)  # 以第一页为基础
+
+    # 顶层：来自最后一页的 amountHj（价税合计）
+    # 优先使用 extra_fields.amountHj，因为它是经过 AmountExtractor 校验的真实价税合计
+    # 避免 last.get('amount') 与 last_ef.get('amountHj') 不一致导致的金额错误
+    merged['amount'] = last_ef.get('amountHj') or last.get('amount')
+
+    # ── extra_fields 合并 ──
     merged_ef = {}
 
     # 第一页字段

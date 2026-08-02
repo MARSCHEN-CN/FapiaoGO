@@ -294,7 +294,7 @@ def invoice_document_to_db_record(
         'file_size': 0,
         'type': invoice_doc.get('invoice_type', ef.get('type', '')),
         'number': invoice_doc.get('invoice_number', ef.get('fphm', '')),
-        'amount': invoice_doc.get('amount', 0),
+        'amount': ef.get('amountHj') or invoice_doc.get('amount', 0),
         'date': invoice_doc.get('invoice_date', ef.get('kprq', '')),
         'buyer': ef.get('gmfmc', ''),
         'buyer_tax': ef.get('gmfsh', ''),

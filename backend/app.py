@@ -1248,6 +1248,30 @@ def parse_invoice():
                                 )
                             except Exception as e:
                                 logger.warning("合并发票入库失败: %s", e)
+
+                        # ── 关键修复：用合并结果更新 result 字段 ──
+                        # 确保返回给前端的响应使用合并后的价税合计，而不是单页的
+                        # 这是 fc-amount 与导出数据不一致的根因：
+                        #   - 导出数据从 DB 读取，使用的是合并后的价税合计（正确）
+                        #   - fc-amount 从 response 的 amount 字段读取，之前是单页的（错误）
+                        if invoice_docs:
+                            merged_doc = invoice_docs[0]
+                            merged_ef = merged_doc.get('extra_fields') or {}
+                            # 顶层 amount 优先使用 extra_fields.amountHj（经过 AmountExtractor 校验）
+                            result['amount'] = merged_ef.get('amountHj') or merged_doc.get('amount', '')
+                            result['extra_fields'] = merged_ef
+                            # 同步其他可能变化的顶层字段
+                            if merged_doc.get('invoice_number'):
+                                result['invoice_number'] = merged_doc['invoice_number']
+                            if merged_doc.get('invoice_type'):
+                                result['invoice_type'] = merged_doc['invoice_type']
+                            if merged_doc.get('invoice_date'):
+                                result['invoice_date'] = merged_doc['invoice_date']
+                            logger.info(
+                                "[Assembly] 已用合并结果更新响应: amount=%s, items=%d",
+                                result['amount'],
+                                len(merged_ef.get('line_items', []))
+                            )
                     # 从暂存中移除已处理的数据（无论组装是否成功）
                     store.remove(source_doc_id)
 
