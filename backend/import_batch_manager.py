@@ -373,7 +373,26 @@ class ImportBatchManager:
             if not batch:
                 return []
             job_ids = list(batch.job_ids)  # 复制，避免持锁遍历
-        
+            # ── 构建 clientKey → 合并后价税合计 的映射 ──
+            # get_batch_results 遍历 job_ids，每个 job 对应一页的解析结果。
+            # 多页发票的 amountHj 只在末尾页有意义，其他页可能是空或小计。
+            # 用 assembled_documents 中的合并后价税合计替换单页值，
+            # 确保 fc-amount 与导出数据使用同一数据源。
+            assembled_amount_map = {}
+            assembled_date_map = {}
+            for doc in (batch.assembled_documents or []):
+                amount = doc.get('amount')
+                invoice_date = doc.get('invoiceDate')
+                for page_key in (doc.get('pageClientKeys') or []):
+                    if not page_key:
+                        # 护栏：clientKey 在 scheduler 处可选，缺省为空串。
+                        # 空串不可作为 map 键，否则多篇文档以 "" 互相覆盖 → 跨文档金额错配。
+                        continue
+                    if amount:
+                        assembled_amount_map[page_key] = amount
+                    if invoice_date:
+                        assembled_date_map[page_key] = invoice_date
+
         jm = self._job_manager
         items = []
         
@@ -387,7 +406,14 @@ class ImportBatchManager:
             result = jm.get_job_result(job_id)
             if not result:
                 continue
-            
+
+            client_key = job_info.get('metrics', {}).get('client_key', '')
+
+            # 两层防御（对应上方 map 构建）：仅当 client_key 非空且确实命中 map 时才采用
+            # assembled 值，避免空串键泄漏，也避免合法空值（如 {"ck": ""}）被 truthy 误回退。
+            assembled_amount = assembled_amount_map[client_key] if (client_key and client_key in assembled_amount_map) else None
+            assembled_date = assembled_date_map[client_key] if (client_key and client_key in assembled_date_map) else None
+
             # 从 extra_fields 构建 invoiceFields（与 response_builder.py 保持一致）
             extra_fields = result.get('extra_fields') or {}
             invoice_fields = {
@@ -400,7 +426,8 @@ class ImportBatchManager:
                 "xsfsh": extra_fields.get("xsfsh", ""),
                 "amountJe": extra_fields.get("amountJe", ""),
                 "amountSe": extra_fields.get("amountSe", ""),
-                "amountHj": extra_fields.get("amountHj", "") or (result.get('amount') or ''),
+                # 多页发票使用合并后的价税合计，确保 invoiceFields.amountHj 与 fc-amount 一致
+                "amountHj": (assembled_amount if assembled_amount is not None else (extra_fields.get("amountHj", "") or (result.get('amount') or ''))),
                 "amountHjDx": extra_fields.get("amountHjDx", ""),
                 "note": extra_fields.get("note", ""),
                 "skr": extra_fields.get("skr", ""),
@@ -409,19 +436,22 @@ class ImportBatchManager:
                 "xmmc": extra_fields.get("xmmc", ""),
                 "line_items": extra_fields.get("line_items", []),
             }
-            
+
             items.append({
-                'clientKey': job_info.get('metrics', {}).get('client_key', ''),
+                'clientKey': client_key,
                 'jobId': job_id,
                 'fileName': job_info.get('file_name', ''),
                 'fileHash': job_info.get('file_hash', ''),
                 'docId': result.get('doc_id', ''),
                 'invoiceType': result.get('invoice_type', ''),
                 'invoiceNumber': result.get('invoice_number', ''),
-                # 优先使用 extra_fields.amountHj（经过 AmountExtractor 校验的真实价税合计）
-                # 避免 result.get('amount') 与 extra_fields.amountHj 不一致导致的金额错误
-                'amount': extra_fields.get('amountHj') or result.get('amount'),
-                'invoiceDate': result.get('invoice_date', ''),
+                # ── 统一金额数据源：优先使用合并后的价税合计 ──
+                # 多页发票的每一页在 JobStore 中存储的是单页解析结果，
+                # amountHj 可能是空（非末尾页）或小计。
+                # assembled_documents 中的 amount 是经过 merge_page_results
+                # 合并后的真实价税合计（来自末尾页的 amountHj）。
+                'amount': (assembled_amount if assembled_amount is not None else (extra_fields.get('amountHj') or result.get('amount'))),
+                'invoiceDate': (assembled_date if assembled_date is not None else result.get('invoice_date', '')),
                 'invoiceFields': invoice_fields,
                 'parseMethod': result.get('parse_method', ''),
                 'failedFields': result.get('failed_fields', []),
