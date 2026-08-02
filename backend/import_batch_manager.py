@@ -767,9 +767,12 @@ class ImportBatchManager:
         should_flush = False
         
         # 解析页面信息
+        # page_num 已由 _parse_page_info 解析为 0-based（与 /split_pdf 的 page_index、
+        # 前端的 pageNum、PageResultStore 的 0-based 契约一致）。Commit 4.1 之前这里曾做
+        # `page_num - 1` 归一化（误当作 1-based），导致批量多页导入首两页在 store 落同一
+        # key=0 互相覆盖、assembly 永不触发、首页数据丢失。现直接用 0-based page_num。
         page_num, total_pages = self._parse_page_info(metrics, bucket_key)
-        normalized_page_num = page_num - 1 if page_num > 0 else 0
-        
+
         # 加入 PageResultStore
         from page_result_store import get_page_result_store
         from invoice_assembly_pipeline import (
@@ -788,7 +791,7 @@ class ImportBatchManager:
 
         store = get_page_result_store()
         completed = store.put(
-            bucket_key, normalized_page_num, total_pages,
+            bucket_key, page_num, total_pages,
             full_result, source_doc_id=src_doc_id
         )
         
