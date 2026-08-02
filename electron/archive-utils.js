@@ -5,6 +5,7 @@ const path = require('path')
 const { execFile } = require('child_process')
 const { TEMP_DIR } = require('./temp-manager')
 const { formatCurrentDate } = require('./constants')
+const { resolveArchiveFileNames } = require('./archive-names')
 const { ZipArchive } = require('archiver')
 
 // 已压缩/本身就是容器的文件扩展名 → ZIP 打包时不压缩（STORE），避免二次压缩浪费 CPU
@@ -48,28 +49,7 @@ function generateArchiveName(prefix, dateFormat, archiveFormat, fieldOrder, sepa
   return parts.join(parts.length > 1 ? sep : '') + ext
 }
 
-/**
- * 处理压缩包内的文件名冲突（同步，无IO，纯内存计算）
- * @param {Array} files - [{ originalPath, targetName }]
- * @returns {Array} files with finalName
- */
-function resolveArchiveFileNames(files) {
-  const usedNames = new Set()
-  const resolved = []
-  for (const file of files) {
-    let finalName = file.targetName
-    let counter = 1
-    const ext = path.extname(finalName)
-    const baseName = path.basename(finalName, ext)
-    while (usedNames.has(finalName)) {
-      finalName = `${baseName}_${counter}${ext}`
-      counter++
-    }
-    usedNames.add(finalName)
-    resolved.push({ ...file, finalName })
-  }
-  return resolved
-}
+// 命名冲突策略见 ./archive-names.js（纯函数，独立于 electron runtime，可单测）
 
 /**
  * 创建 ZIP 压缩包
@@ -80,8 +60,14 @@ function resolveArchiveFileNames(files) {
  *   4. 双重完成判定：同时监听 archive finalize 和 output close，确保异常场景下也能正确完成
  * @param {Array} files - [{ originalPath, targetName }]
  * @param {string} archivePath - 输出路径
+ * @param {{strictNames?: boolean}} [options] - strictNames: 重名时抛错而非自动去重
+ * @returns {Promise<{collisions: Array}>}
  */
-async function createZipArchive(files, archivePath) {
+async function createZipArchive(files, archivePath, { strictNames = false } = {}) {
+  // 先解析文件名再建输出流：严格模式下的重名错误应在创建任何文件之前抛出，
+  // 避免留下半成品压缩包。
+  const { resolved, collisions } = resolveArchiveFileNames(files, { strict: strictNames })
+
   return new Promise((resolve, reject) => {
     let anyCompressible = false
     for (const f of files) {
@@ -93,7 +79,7 @@ async function createZipArchive(files, archivePath) {
       if (settled) return
       settled = true
       if (err) reject(err)
-      else resolve()
+      else resolve({ collisions })
     }
 
     const output = fs.createWriteStream(archivePath, { highWaterMark: 1024 * 1024 })
@@ -131,7 +117,6 @@ async function createZipArchive(files, archivePath) {
 
     archive.pipe(output)
 
-    const resolved = resolveArchiveFileNames(files)
     for (const file of resolved) {
       try {
         const st = fs.statSync(file.originalPath)
@@ -204,12 +189,14 @@ function linkOrCopy(src, dest) {
  *   3. -mmt=on 多线程
  *   4. -ms=off 关闭固实模式（加快速度，牺牲一点压缩率）
  */
-async function createArchiveWith7z(files, archivePath, sevenZipPath) {
+async function createArchiveWith7z(files, archivePath, sevenZipPath, { strictNames = false } = {}) {
+  // 先解析文件名：严格模式的重名错误应在创建临时目录之前抛出。
+  const { resolved, collisions } = resolveArchiveFileNames(files, { strict: strictNames })
+
   const tempDir = path.join(TEMP_DIR, `mars_pack_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`)
   fs.mkdirSync(tempDir, { recursive: true })
 
   try {
-    const resolved = resolveArchiveFileNames(files)
     for (const file of resolved) {
       const destPath = path.join(tempDir, file.finalName)
       const destDir = path.dirname(destPath)
@@ -234,6 +221,8 @@ async function createArchiveWith7z(files, archivePath, sevenZipPath) {
       })
       child.stderr && child.stderr.on('data', () => {})
     })
+
+    return { collisions }
   } finally {
     try { fs.rmSync(tempDir, { recursive: true, force: true }) } catch (e) {}
   }
@@ -304,12 +293,14 @@ async function initArchivePaths() {
  * 用 WinRAR 创建 RAR 压缩包
  * -m1 最快压缩
  */
-async function createRarWithWinRAR(files, archivePath, rarPath) {
+async function createRarWithWinRAR(files, archivePath, rarPath, { strictNames = false } = {}) {
+  // 先解析文件名：严格模式的重名错误应在创建临时目录之前抛出。
+  const { resolved, collisions } = resolveArchiveFileNames(files, { strict: strictNames })
+
   const tempDir = path.join(TEMP_DIR, `mars_pack_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`)
   fs.mkdirSync(tempDir, { recursive: true })
 
   try {
-    const resolved = resolveArchiveFileNames(files)
     for (const file of resolved) {
       const destPath = path.join(tempDir, file.finalName)
       const destDir = path.dirname(destPath)
@@ -333,6 +324,8 @@ async function createRarWithWinRAR(files, archivePath, rarPath) {
         }
       })
     })
+
+    return { collisions }
   } finally {
     try { fs.rmSync(tempDir, { recursive: true, force: true }) } catch (e) {}
   }
@@ -340,6 +333,7 @@ async function createRarWithWinRAR(files, archivePath, rarPath) {
 
 module.exports = {
   generateArchiveName,
+  resolveArchiveFileNames,   // 导出供单测直接验证命名冲突策略
   createZipArchive,
   find7zPath,
   createArchiveWith7z,

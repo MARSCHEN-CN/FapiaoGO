@@ -20,6 +20,10 @@ function registerPackHandlers(ctx) {
     const files = isLegacyFormat ? payload : (payload.files || [])
     const packSettings = isLegacyFormat ? {} : (payload.packSettings || {})
     const renameSettings = isLegacyFormat ? {} : (payload.renameSettings || {})
+    // namesResolved：渲染进程声明「targetName 已由 Document 域算好且保证唯一」。
+    // 置位后 archive 层进入严格模式，重名不再静默去重而是直接失败。
+    // 未置位（旧 payload / legacy 数组格式）时行为完全不变，向后兼容。
+    const namesResolved = isLegacyFormat ? false : (payload.namesResolved === true)
 
     try {
       const mainWindow = ctx.getMainWindow()
@@ -126,9 +130,11 @@ function registerPackHandlers(ctx) {
             continue
           }
 
-          const targetName = renameBeforeArchive
-            ? generateNewName(file.invoiceFields, file.name)
-            : file.name
+          // 文件名所有权（Commit 1b）：Document 域 > 主进程猜测。
+          // 渲染进程下发 targetName 时直接采用——它已包含页码后缀等业务语义，
+          // 而 generateNewName 只认 invoiceFields，无法区分同票的不同页。
+          const targetName = file.targetName
+            || (renameBeforeArchive ? generateNewName(file.invoiceFields, file.name) : file.name)
 
           preparedFiles.push({
             originalPath,
@@ -147,35 +153,46 @@ function registerPackHandlers(ctx) {
 
       // 6. 创建压缩包
       event.sender.send('pack-progress', { current: total, total: total + 1, stage: '创建压缩包' })
+      const archiveOptions = { strictNames: namesResolved }
+      let archiveInfo = null
       try {
         if (archiveFormat === 'ZIP') {
-          await createZipArchive(preparedFiles, finalArchivePath)
+          archiveInfo = await createZipArchive(preparedFiles, finalArchivePath, archiveOptions)
         } else if (archiveFormat === 'RAR') {
           const rarPath = findWinRarPath()
           if (rarPath) {
-            await createRarWithWinRAR(preparedFiles, finalArchivePath, rarPath)
+            archiveInfo = await createRarWithWinRAR(preparedFiles, finalArchivePath, rarPath, archiveOptions)
           } else {
             console.warn('[pack] 未找到 WinRAR，RAR 格式降级为 ZIP')
             const zipPath = finalArchivePath.replace(/\.rar$/i, '.zip')
-            await createZipArchive(preparedFiles, zipPath)
+            archiveInfo = await createZipArchive(preparedFiles, zipPath, archiveOptions)
             packResult.archivePath = zipPath
             packResult.fallbackToZip = true
           }
         } else {
           const sevenZipPath = find7zPath()
           if (sevenZipPath) {
-            await createArchiveWith7z(preparedFiles, finalArchivePath, sevenZipPath)
+            archiveInfo = await createArchiveWith7z(preparedFiles, finalArchivePath, sevenZipPath, archiveOptions)
           } else {
             console.warn('[pack] 未找到 7z 命令行工具，7Z 格式降级为 ZIP')
             const zipPath = finalArchivePath.replace(/\.7z$/i, '.zip')
-            await createZipArchive(preparedFiles, zipPath)
+            archiveInfo = await createZipArchive(preparedFiles, zipPath, archiveOptions)
             packResult.archivePath = zipPath
             packResult.fallbackToZip = true
           }
         }
       } catch (archiveError) {
+        // 注意：此处 return 发生在「清理原件」之前，原件必然保留。
+        // 严格模式下宁可打包失败也不产出语义错误的压缩包。
         console.error('[pack] 创建压缩包失败:', archiveError.message)
         return { success: false, error: `创建压缩包失败: ${archiveError.message}` }
+      }
+
+      // 宽松模式下若发生过自动去重，上报给前端而非静默吞掉——
+      // 静默去重会掩盖上游命名缺陷，用户也无从知晓压缩包内的名字被改过。
+      if (archiveInfo?.collisions?.length) {
+        packResult.nameCollisions = archiveInfo.collisions
+        console.warn('[pack] 压缩包内文件名冲突已自动去重:', archiveInfo.collisions)
       }
 
       // 7. 处理原件（不保留原件则并行删除；同步 unlink 在大量小文件时反而比 Promise.all 更快且无调度开销，
