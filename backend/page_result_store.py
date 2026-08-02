@@ -75,8 +75,17 @@ class PageResultStore:
                 }
 
             entry = self._store[bucket_key]
-            # total_pages 以最后一次写入为准（允许不同页的 total_pages 不一致）
-            entry['total_pages'] = total_pages
+            # B5（Commit 4.3）：total_pages 首次声明锁定，后续冲突仅告警、不覆盖、不取 max。
+            # 不取 max 的原因：首报 3、某页误报 2 时 max=3 反而掩盖了"该页 total 错误"的 producer bug；
+            # 正确原则是「第一次声明锁定 + 冲突可观测」，让上游错误暴露出来。
+            if entry['total_pages'] is None:
+                entry['total_pages'] = total_pages
+            elif total_pages is not None and entry['total_pages'] != total_pages:
+                logger.warning(
+                    "[PageResultStore] %s total_pages 冲突：已锁定=%s，本次收到=%s，"
+                    "保留首次声明（不覆盖）",
+                    bucket_key, entry['total_pages'], total_pages,
+                )
             if source_doc_id:
                 entry['source_doc_id'] = source_doc_id
             # B2 修复（Commit 4.2a）：在 store 边界把 0-based page_num 注入页面记录。
@@ -89,12 +98,14 @@ class PageResultStore:
             page_record['page_num'] = page_num
             entry['pages'][page_num] = page_record
 
-            received = len(entry['pages'])
-            completed = received >= total_pages
+            # B4（Commit 4.3）：完成判定从「数量 >= total」改为「所有期望页码都收到」。
+            # 旧逻辑 len(pages) >= total_pages 会让 page0/page1/page3（total=3）误判完整，
+            # 因数量够了但缺 page2。新逻辑要求 received 是 expected 的超集。
+            completed = self._is_complete(entry)
 
             logger.debug(
-                f"[PageResultStore] {bucket_key} 第{page_num + 1}/{total_pages}页已存入 "
-                f"({received}/{total_pages})"
+                f"[PageResultStore] {bucket_key} 第{page_num + 1}/"
+                f"{entry['total_pages'] or total_pages}页已存入"
             )
 
             return completed
@@ -115,13 +126,42 @@ class PageResultStore:
             pages = entry['pages']
             return [pages[i] for i in sorted(pages.keys())]
 
+    def _is_complete(self, entry: Dict[str, Any]) -> bool:
+        """B4（Commit 4.3）：完成 = 所有期望页码（0..total_pages-1）都已收到。
+
+        用集合包含 expected <= received 替代 len(pages) >= total_pages，
+        避免「数量够了但缺中间页」的伪完成（如 page0/page1/page3, total=3 缺 page2）。
+        """
+        total = entry.get('total_pages')
+        pages = entry.get('pages') or {}
+        if not total or not pages:
+            return False
+        expected = set(range(total))
+        received = set(pages.keys())
+        return expected <= received
+
+    def get_missing_pages(self, bucket_key: str) -> Optional[set]:
+        """返回指定 bucket_key 尚未收到的页码集合（可观测性 / 诊断）。
+
+        Returns:
+            缺失页码 set；桶不存在或 total_pages 未知时返回 None
+        """
+        with self._lock:
+            entry = self._store.get(bucket_key)
+            if not entry:
+                return None
+            total = entry.get('total_pages')
+            if not total:
+                return None
+            return set(range(total)) - set(entry['pages'].keys())
+
     def is_completed(self, bucket_key: str) -> bool:
         """判断指定 bucket_key 的所有页是否已收齐"""
         with self._lock:
             entry = self._store.get(bucket_key)
             if not entry:
                 return False
-            return len(entry['pages']) >= entry['total_pages']
+            return self._is_complete(entry)
 
     def remove(self, bucket_key: str) -> None:
         """移除指定 bucket_key 的暂存数据（组装完成后调用）"""
@@ -134,7 +174,7 @@ class PageResultStore:
         with self._lock:
             return [
                 key for key, entry in self._store.items()
-                if len(entry['pages']) >= entry['total_pages']
+                if self._is_complete(entry)
             ]
 
     def clear(self) -> None:
