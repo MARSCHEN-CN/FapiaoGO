@@ -46,6 +46,15 @@ def build_response(file_format, parse_method, invoice_type, invoice_number,
 
     clean_type = normalize_invoice_type(invoice_type)
     clean_number = invoice_number if invoice_number and invoice_number not in ('未知号码',) else None
+
+    # ── 统一金额数据源：优先使用 extra_fields.amountHj ──
+    # amountHj 是经过 AmountExtractor 校验的真实价税合计，
+    # 与导出数据使用同一数据源（DB record.amount 也来自 extra_fields.amountHj）。
+    # 这消除了 fc-amount 与导出数据不一致的风险。
+    if extra_fields and isinstance(extra_fields, dict):
+        amount_hj = extra_fields.get('amountHj')
+        if amount_hj:
+            amount = amount_hj
     clean_amount = normalize_amount(amount)
     clean_date = normalize_date(invoice_date)
 
