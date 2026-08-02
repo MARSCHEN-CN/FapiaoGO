@@ -85,6 +85,13 @@ export function invoiceDocumentToRow(invoiceDoc, allFiles, fileIndex) {
       _pages: sorted,
       _pageCount: sorted.length,
       _isDocumentGroup: true,
+      // Commit 2：Document 字段优先于 Page 字段（领域优先级）。
+      // rep 是首页 pageObj，其 amount/invoiceDate 只是首页解析值；
+      // 多页发票应以 assemble 合并结果（末页金额 / 首页开票日期）为准。
+      // invoiceDoc.amount/invoiceDate 来自后端 assembled_documents（可能为 null），
+      // 缺失时回退 rep 字段，保证旧数据/历史 session 不回归。
+      amount: invoiceDoc.amount ?? rep.amount,
+      invoiceDate: invoiceDoc.invoiceDate ?? rep.invoiceDate,
     }
   }
 

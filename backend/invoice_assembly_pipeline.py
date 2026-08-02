@@ -247,6 +247,13 @@ def assemble(pages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             'pages_assembled': len(sorted_group),
             'assembly_status': ag['status'],
             'assembly_warnings': ag['warnings'],
+            # Commit 2：声明该 InvoiceDocument 的精确页面成员（前端 clientKey 列表）。
+            # 使前端 hydrate 不再需要按 invoiceNumber 反推页身份，直接消费即可。
+            # 只读页面结果上已透传的 clientKey（见 import_batch_manager 注入点）。
+            'page_client_keys': [
+                p.get('clientKey') or p.get('client_key') or ''
+                for p in sorted_group
+            ],
         }
         results.append(merged)
 

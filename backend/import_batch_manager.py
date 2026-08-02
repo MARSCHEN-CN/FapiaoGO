@@ -774,7 +774,16 @@ class ImportBatchManager:
             assemble as _assemble_invoice,
             invoice_document_to_db_record,
         )
-        
+
+        # Commit 2：将前端 clientKey 透传到页面解析结果。
+        # assemble() 据此声明每个 InvoiceDocument 的精确页面成员（pageClientKeys），
+        # 前端 hydrate 不再需按 invoiceNumber 反推页身份。
+        # metrics.client_key 即前端 fileObj.key（见 create_batch 的 file_inputs）。
+        if metrics and not full_result.get('clientKey'):
+            ck = (metrics.get('client_key') or '').strip()
+            if ck:
+                full_result['clientKey'] = ck
+
         store = get_page_result_store()
         completed = store.put(
             bucket_key, normalized_page_num, total_pages,
@@ -804,6 +813,12 @@ class ImportBatchManager:
                         'invoiceNumber': inv_doc.get('invoice_number', ''),
                         'invoiceType': inv_doc.get('invoice_type', ''),
                         'pageCount': len(pages) if isinstance(pages, list) else 0,
+                        # Commit 2：补全业务字段，避免前端被迫用 rep=page1 取金额/日期
+                        # amount/invoiceDate 来自 assemble 合并结果（末页金额 / 首页开票日期）
+                        'amount': inv_doc.get('amount'),
+                        'invoiceDate': inv_doc.get('invoice_date', ''),
+                        # 精确页面成员（前端 clientKey 列表），hydrate 直接消费
+                        'pageClientKeys': inv_doc.get('_assembly', {}).get('page_client_keys', []),
                     })
             store.remove(bucket_key)
         

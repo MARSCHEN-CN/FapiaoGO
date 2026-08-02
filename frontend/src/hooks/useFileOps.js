@@ -832,7 +832,16 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
                 if (doc !== prev) docsTouched = true
                 // E-2.2: 记录 sourceDocId + 该发票的精确页面 fileKey 列表（按页码排序）
                 doc.sourceDocId = repFile.docId || assembled.sourceDocId || ''
-                doc._pageKeys = sortedFiles.map(f => f.key)
+                // Commit 2：优先用后端显式声明的 pageClientKeys（精确页面成员），
+                // 回退到本地按页码推导（历史 session / 老数据 / 后端未下发时）。
+                // 不再自行反推页身份——后端知道哪些页属于这个 InvoiceDocument。
+                doc._pageKeys = (Array.isArray(assembled.pageClientKeys) && assembled.pageClientKeys.length)
+                  ? assembled.pageClientKeys
+                  : sortedFiles.map(f => f.key)
+                // Commit 2：补全业务字段，使 invoiceDocumentViewModel 能用 Document 字段
+                // 覆盖 Page 字段（金额/日期）。null/undefined 时由 view model 回退 rep 字段。
+                doc.amount = assembled.amount
+                doc.invoiceDate = assembled.invoiceDate
                 if (session?.id) {
                   addDocument(session.id, doc, { silent: true })
                   sessionDocsTouched = true
