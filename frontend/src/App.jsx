@@ -22,7 +22,7 @@ import {
   getPreviousYearInfo,
 } from './utils'
 import { buildDocumentViewModel, documentPages } from './utils/documentViewModel'
-import { groupFilesByDocument } from './utils/groupDocuments'
+import { selectDocumentRows, selectParsedFiles } from './utils/documentSelector'
 import { buildFileObj } from './utils/fileHelpers'
 import { getForcedLandscape } from './utils/mergeMode'
 
@@ -114,11 +114,14 @@ function AppContent() {
   // ── Step 10.5+: displayFiles（与 Sidebar 逻辑一致） ──
   // 优先使用装配结果 documentView.documents（InvoiceDocument 聚合条目），
   // 让预览/翻页/GC 都在 document 级别工作，而非 page 级别。
+  // Commit 3: 收敛到 DocumentSelector，消除各消费者内联的装配优先/回退分支。
   const displayFiles = useMemo(() => {
-    if (!isSearching && documentView?.documents?.length) {
-      return documentView.documents
-    }
-    return groupFilesByDocument(isSearching ? filteredFiles : files)
+    return selectDocumentRows({
+      invoiceDocs: documentView?.documents,
+      files,
+      filteredFiles,
+      isSearching,
+    })
   }, [isSearching, filteredFiles, files, documentView])
 
   // ============================
@@ -616,7 +619,7 @@ function AppContent() {
 
   // 打开压缩包导出确认弹窗：无已解析文件时复用 handlePack 的无数据告警
   const openPackConfirm = useCallback(() => {
-    const parsed = files.filter((f) => f.status === 'parsed')
+    const parsed = selectParsedFiles(files)
     if (parsed.length === 0) {
       handlePack()
       return
@@ -627,7 +630,7 @@ function AppContent() {
   const { clearExportSession } = useExportSession()
 
   const handleSelectAll = useCallback(() => {
-    const parsed = files.filter(f => f.status === 'parsed')
+    const parsed = selectParsedFiles(files)
     if (parsed.length > 0) handlePreview(parsed[0])
   }, [files, handlePreview])
 
@@ -1213,7 +1216,7 @@ function AppContent() {
         />
         <PdfExportConfirmModal
           visible={showPdfExport}
-          files={files.filter(f => f.status === 'parsed')}
+          files={selectParsedFiles(files)}
           onConfirm={(config) => {
             setShowPdfExport(false)
             handleExportPdf(config)
@@ -1235,7 +1238,7 @@ function AppContent() {
           visible={showPackConfirm}
           settings={settings}
           saveSettings={saveSettings}
-          parsedFiles={files.filter(f => f.status === 'parsed')}
+          parsedFiles={selectParsedFiles(files)}
           onConfirm={(packSettings) => {
             setShowPackConfirm(false)
             // 先同步写 settings，确保 handlePack 读到最新值
