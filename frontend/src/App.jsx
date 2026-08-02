@@ -1107,6 +1107,7 @@ function AppContent() {
         </div>
 
         {/* 4. Status：状态指示器 + 页码导航 */}
+        {files.length > 0 && (
         <div className="status-bar">
           {viewerController && viewerController.totalPages > 1 && (
             <PageNavigator
@@ -1123,8 +1124,10 @@ function AppContent() {
             extraSpecial={settings.extraSpecial}
           />
         </div>
+        )}
 
         {/* 5. Footer：总金额+操作按钮 */}
+        {files.length > 0 && (
         <ActionBar
           handleRename={handleRename}
           handlePack={handlePack}
@@ -1138,6 +1141,7 @@ function AppContent() {
           onExportPdf={() => setShowPdfExport(true)}
           exporting={exporting}
         />
+        )}
       </main>
 
       {/* 弹窗组件 - 单一 Suspense 边界包裹所有懒加载弹窗，减少 fallback 重复渲染 */}
