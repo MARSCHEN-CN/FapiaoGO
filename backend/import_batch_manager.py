@@ -1016,42 +1016,19 @@ class ImportBatchManager:
                 for inv_doc in invoice_docs:
                     # FIX: 从 inv_doc 或其页面中提取对应的文件名，而不是使用统一的 fallback_filename
                     # 原因：当多页发票被拆分为多个单页文档时，每个文档需要使用各自页面的文件名
-                    
-                    # 调试日志：查看 inv_doc 结构
-                    logger.info(
-                        f'[ImportBatch] inv_doc 结构: '
-                        f'has_db_record={bool(inv_doc.get("db_record"))}, '
-                        f'has_pages={bool(inv_doc.get("pages"))}, '
-                        f'pages_count={len(inv_doc.get("pages", []))}, '
-                        f'invoice_number={inv_doc.get("invoice_number", "")}'
-                    )
-                    
+
                     # 1. 优先从 inv_doc.db_record 获取文件名（单页文档时有效）
                     inv_db_record = inv_doc.get('db_record', {}) or {}
                     inv_filename = inv_db_record.get('file_name', '')
                     inv_hash = inv_db_record.get('hash_sha256', '')
                     inv_raw_text = inv_db_record.get('raw_text', '')
-                    
-                    logger.info(
-                        f'[ImportBatch] inv_doc.db_record: '
-                        f'file_name={inv_filename}, '
-                        f'hash={inv_hash[:8] if inv_hash else ""}'
-                    )
-                    
+
                     # 2. 如果 inv_doc 有 pages 字段，从第一个页面获取文件名（多页文档或拆分后的单页）
                     if not inv_filename:
                         inv_pages = inv_doc.get('pages', [])
                         if inv_pages:
                             first_page = inv_pages[0] if isinstance(inv_pages, list) else inv_pages
                             if isinstance(first_page, dict):
-                                # 调试日志：查看页面结构
-                                logger.info(
-                                    f'[ImportBatch] first_page 结构: '
-                                    f'has_db_record={bool(first_page.get("db_record"))}, '
-                                    f'file_name={first_page.get("file_name", "")}, '
-                                    f'page_num={first_page.get("page_num", "")}'
-                                )
-                                
                                 # 从页面的 db_record 获取
                                 page_db_record = first_page.get('db_record', {}) or {}
                                 inv_filename = page_db_record.get('file_name', '')
@@ -1062,11 +1039,6 @@ class ImportBatchManager:
                                 # 或者从页面直接获取 file_name
                                 if not inv_filename:
                                     inv_filename = first_page.get('file_name', '')
-                        
-                        logger.info(
-                            f'[ImportBatch] 从 pages 获取: '
-                            f'file_name={inv_filename}'
-                        )
                     
                     # 3. 最后回退到传入的 db_record（仅用于日志，不应作为主路径）
                     if not inv_filename:
@@ -1078,7 +1050,7 @@ class ImportBatchManager:
                         )
                     
                     logger.info(
-                        f'[ImportBatch] 最终文件名: '
+                        f'[ImportBatch] inv_doc 文件名: '
                         f'invoice={inv_doc.get("invoice_number", "")}, '
                         f'file_name={inv_filename}, '
                         f'source_file={db_record.get("file_name", "")}'
