@@ -1827,10 +1827,36 @@ def import_batch_results(batch_id):
 
 
 if __name__ == '__main__':
-    logging.basicConfig(
-        level=logging.DEBUG,
-        format='%(asctime)s %(levelname)s %(name)s - %(message)s',
-    )
+    # ── 日志配置：控制台始终输出；.log 文件为可选项（打包后可能只读，失败不致命）──
+    _fmt = logging.Formatter('%(asctime)s %(levelname)s %(name)s - %(message)s')
+
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.DEBUG)
+    # 清除默认 handler（避免重复输出）；__main__ 仅进程启动执行一次，天然防止重复追加
+    root_logger.handlers.clear()
+
+    # 控制台 handler（始终生效，便于 Electron 终端 / 调试观察）
+    _console = logging.StreamHandler()
+    _console.setLevel(logging.DEBUG)
+    _console.setFormatter(_fmt)
+    root_logger.addHandler(_console)
+
+    # 文件 handler（RotatingFileHandler，单文件最大 10MB，保留 5 个备份）
+    # 路径基于 __file__ 解析，不依赖 cwd；打包安装目录(如 C:\Program Files\...) 只读时
+    # 降级为仅控制台输出，绝不因日志失败而阻断后端启动。
+    _log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'logs')
+    try:
+        os.makedirs(_log_dir, exist_ok=True)
+        _file_handler = RotatingFileHandler(
+            os.path.join(_log_dir, 'backend.log'),
+            maxBytes=10 * 1024 * 1024, backupCount=5, encoding='utf-8'
+        )
+        _file_handler.setLevel(logging.DEBUG)
+        _file_handler.setFormatter(_fmt)
+        root_logger.addHandler(_file_handler)
+        logger.info("[LOG] 日志输出到: %s", os.path.join(_log_dir, 'backend.log'))
+    except (OSError, PermissionError) as _e:
+        logger.warning("[LOG] 文件日志不可用，仅输出到控制台: %s", _e)
     # ── 冷启动诊断：确认运行时实际使用的数据库路径 ──
     # 注意：db.py 模块级 logger.info（DB_DIR/INVOICES_PATH）在 import 时执行，
     # 早于本 basicConfig，会被 lastResort(WARNING) 静默丢弃；此处补足可见输出。
