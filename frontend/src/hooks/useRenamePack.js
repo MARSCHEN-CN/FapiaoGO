@@ -1,5 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
-import { groupFilesByDocument } from '../utils/groupDocuments'
+// 显式 .js 扩展名：与 documentViewModel.js 等模块保持一致，
+// 并使本模块可被 node --test 原生 ESM 直接加载（无需 vite 解析）。
+import { groupFilesByDocument } from '../utils/groupDocuments.js'
 
 function buildInvoiceFields(f) {
   // 兼容两种命名：invoiceFields（驼峰）和 invoice_fields（下划线）
@@ -24,12 +26,38 @@ function buildInvoiceFields(f) {
   }
 }
 
-function collectDocumentLevelFiles(files) {
-  const documentFiles = groupFilesByDocument(files)
-  return documentFiles.filter(f => f.status === 'parsed')
+/**
+ * 选择重命名的作用单位 = InvoiceDocument（业务实体），而非 File/Page。
+ *
+ * 为什么不再由本域自行 group：
+ *   旧实现 collectDocumentLevelFiles 调 groupFilesByDocument(files)，按 f.docId 归组。
+ *   但 hydrateChunk 会把每页 docId 改写成各自的物理内容哈希（为修预览 URL 而加，
+ *   不应回滚），于是同票多页在 Rename 域裂成 N 条，且每条携带各自页的 amount
+ *   （首页 1000 / 末页 300）——这正是「文件列表 1 条、重命名预览 2 条且金额不同」
+ *   的直接成因。装配阶段产出的 InvoiceDocument 用 _pageKeys 记录页成员（强身份），
+ *   是唯一可信的文档边界来源。
+ *
+ * documentRows 来自 FileContext.documentView.documents，与侧栏 / 预览 / Excel 导出
+ * 同源，从结构上杜绝 Rename 域再次与展示域漂移。
+ *
+ * 为什么不用 App 的 displayFiles：displayFiles 在搜索态会退回 page-level
+ * filteredFiles。重命名的作用域是全量文档，不应被搜索框缩小或降级。
+ *
+ * fallback：仅当装配结果不可用（历史 session / 装配未完成）时退回旧分组，
+ * 使 groupFilesByDocument 从主流程降级为兼容路径。
+ *
+ * @param {Object[]|null} documentRows - document 级条目（documentView.documents）
+ * @param {Object[]} files - page-level fileObj 数组（仅 fallback 时使用）
+ * @returns {Object[]} 已解析的 document 级条目
+ */
+export function selectRenameDocuments(documentRows, files) {
+  const rows = Array.isArray(documentRows) && documentRows.length > 0
+    ? documentRows
+    : groupFilesByDocument(files || [])
+  return rows.filter(f => f?.status === 'parsed')
 }
 
-export function useRenamePack({ files, settings, setFiles, parseFiles, parseProgress, electronAPIRef }) {
+export function useRenamePack({ files, documentRows, settings, setFiles, parseFiles, parseProgress, electronAPIRef }) {
   const [packing, setPacking] = useState(false)
   const [packProgress, setPackProgress] = useState({ current: 0, total: 0 })
   const [packResult, setPackResult] = useState(null)
@@ -55,8 +83,12 @@ export function useRenamePack({ files, settings, setFiles, parseFiles, parseProg
 
   const latestFilesRef = useRef(files)
   const latestSettingsRef = useRef(settings)
+  // documentRows 与 files 一样走 ref：generatePreviewInner / handleRename 的
+  // useCallback 依赖列表刻意不含数据，靠 ref 读取最新值以避免回调身份频繁变化。
+  const latestDocumentRowsRef = useRef(documentRows)
   useEffect(() => { latestFilesRef.current = files }, [files])
   useEffect(() => { latestSettingsRef.current = settings }, [settings])
+  useEffect(() => { latestDocumentRowsRef.current = documentRows }, [documentRows])
 
   const buildPreviewFilesFromDocuments = useCallback((documentFiles, previews) => {
     const fileMap = new Map(documentFiles.map(f => [f.key, f]))
@@ -111,7 +143,7 @@ export function useRenamePack({ files, settings, setFiles, parseFiles, parseProg
     const curFiles = latestFilesRef.current
     const curSettings = latestSettingsRef.current
 
-    const documentFiles = collectDocumentLevelFiles(curFiles)
+    const documentFiles = selectRenameDocuments(latestDocumentRowsRef.current, curFiles)
     if (documentFiles.length === 0) return false
 
     const renameSettings = curSettings.renameSettings || {}
@@ -160,7 +192,7 @@ export function useRenamePack({ files, settings, setFiles, parseFiles, parseProg
 
     const curFiles = latestFilesRef.current
     const curSettings = latestSettingsRef.current
-    const documentFiles = collectDocumentLevelFiles(curFiles)
+    const documentFiles = selectRenameDocuments(latestDocumentRowsRef.current, curFiles)
 
     if (documentFiles.length === 0) {
       setAlertModal({

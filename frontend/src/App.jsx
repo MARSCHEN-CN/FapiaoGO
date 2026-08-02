@@ -270,6 +270,9 @@ function AppContent() {
   // ── 压缩包导出确认弹窗状态 ──
   const [showPackConfirm, setShowPackConfirm] = useState(false)
 
+  // Rename 域消费装配结果（InvoiceDocument → document 条目），与侧栏 / 预览 / 导出同源。
+  // 刻意传 documentView.documents 而非 displayFiles：后者在搜索态会退回 page-level，
+  // 而重命名的作用域是全量文档，不应被搜索框缩小。
   const {
     packing, packProgress, packResult, setPackResult, setPacking,
     reimporting,
@@ -280,7 +283,7 @@ function AppContent() {
     alertModal: renamePackAlert, closeAlert: closeRenamePackAlert,
     handleRename, handleRenameConfirm, handlePack,
     refreshRenamePreview,
-  } = useRenamePack({ files, settings, setFiles, parseFiles, parseProgress, electronAPIRef })
+  } = useRenamePack({ files, documentRows: documentView?.documents, settings, setFiles, parseFiles, parseProgress, electronAPIRef })
 
   const handleRenameCancel = useCallback(() => {
     setRenamePreviewVisible(false)
