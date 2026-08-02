@@ -57,8 +57,13 @@ _LAST_PAGE_KEYS = frozenset([
 ])
 
 # extra_fields 中需要所有页拼接的 key
+# line_items: InvoiceLineItem 列表（slv 键存税率）
+# line_items_excel_rows: grid_to_excel_rows 产出（中文键如 '税率/征收率'）
+#   多页发票若仅取第一页，下游 _db_record_to_export 会因 excel_rows 非空而
+#   跳过 line_items，导致后续页明细与税率（含免税）全部丢失。
 _APPEND_KEYS = frozenset([
-    'line_items',  # 项目明细
+    'line_items',              # 项目明细（传统提取器）
+    'line_items_excel_rows',   # 项目明细（字符级/OCR 通路，导出优先级更高）
 ])
 
 
