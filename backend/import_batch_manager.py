@@ -38,6 +38,11 @@ QUEUE_LOW_WATER = 20        # 队列低于此值时继续提交
 RESULT_BUFFER_SIZE = 50     # 结果缓冲达到此数量时触发 batch_upsert
 SCHEDULER_POLL_INTERVAL = 0.2  # 调度器轮询间隔（秒）
 
+# 5.1c-2 timeout 阈值（秒）：超过即视为 stale，由 _apply_job_timeouts 翻 failed(timeout)
+# 仅作默认兜底，具体数值后续可由配置覆盖；此处冻结初值不引入 heartbeat/retry 等扩展。
+JOB_RUNNING_TIMEOUT = 120    # running 状态超过 120s 无终态 → 视为卡死
+JOB_QUEUED_TIMEOUT = 300     # pending 状态超过 300s 未开始 → 视为排队卡死
+
 
 # ═══════════════════════════════════════════════════════════
 # 数据模型
@@ -728,7 +733,13 @@ class ImportBatchManager:
         }
 
     def _wait_for_completion(self, batch_id: str):
-        """轮询等待批次完成（所有 job 到达终态）"""
+        """轮询等待批次完成（所有 job 到达终态）。
+
+        5.1c-2：在轮询循环内嵌入 timeout watchdog（Batch assembly timeout owner，
+        见 TIMEOUT_CONTRACT_5_1c0.md §2.2）。仅委托 ParseJobManager 将 stale job 翻为
+        failed(timeout)，不直接写 batch 状态机——终态由 _collect_batch_page_health
+        （FAILED>MISSING）自然推导，保护 5.1b contract。
+        """
         while True:
             if self._cancel_flags.get(batch_id, False):
                 return
@@ -739,10 +750,22 @@ class ImportBatchManager:
                     return
                 if batch.status in ('completed', 'failed', 'cancelled'):
                     return
+
+            # 5.1c-2：检测 stale job 并翻 failed(timeout)（委托 Job 级 ownership，不直写 batch）
+            self._apply_job_timeouts(batch)
+
+            with self._batch_lock:
+                batch = self._batches.get(batch_id)
+                if not batch:
+                    return
+                if batch.status in ('completed', 'failed', 'cancelled'):
+                    return
                 finished = batch.finished
                 total = batch.total
 
-            if finished >= total:
+            # 完成判定：finished 计数 或 所有 job 已终态（测试 / timeout 场景用后者）
+            all_terminal = self._all_jobs_terminal(batch)
+            if finished >= total or all_terminal:
                 # 全部完成 → flush 剩余 buffer → 标记 completed
                 self._flush_result_buffer(batch_id)
                 with self._batch_lock:
@@ -762,6 +785,54 @@ class ImportBatchManager:
                 return
 
             time.sleep(SCHEDULER_POLL_INTERVAL)
+
+    # ─── 5.1c-2 timeout watchdog helpers ────────────────────
+
+    def _apply_job_timeouts(self, batch: 'ImportBatch'):
+        """将 batch 内 stale job 翻为 failed(timeout)。
+
+        仅负责「检测 + 委托」：调用 ParseJobManager.update_status 应用 Job 级 ownership
+        （set timed_out / failure_reason，并按 AC2 守卫阻止迟到 success 复活）。
+        不在此直接改 batch.status——终态由 _collect_batch_page_health 推导。
+        """
+        now_ts = time.time()
+        for job_id in batch.job_ids:
+            job = self._job_manager.get_job(job_id)
+            if not job:
+                continue
+            status = job.get('status')
+            # 已标记 timed_out 但状态未对齐（迟到 success 竞态，Case 2）→ 强制对齐为 failed
+            if job.get('timed_out') and status != 'failed':
+                self._job_manager.update_status(job_id, 'failed', error='timeout')
+                continue
+            if status in ('pending', 'running'):
+                ref = job.get('started_at') if status == 'running' else job.get('created_at')
+                elapsed = self._job_elapsed_seconds(ref, now_ts)
+                timeout = JOB_RUNNING_TIMEOUT if status == 'running' else JOB_QUEUED_TIMEOUT
+                if elapsed is not None and elapsed > timeout:
+                    self._job_manager.update_status(job_id, 'failed', error='timeout')
+
+    def _job_elapsed_seconds(self, ref, now_ts: float):
+        """兼容 float（测试）与 ISO 字符串（生产）两种时间戳，返回已耗时秒数。"""
+        if ref is None or ref == '':
+            return None
+        if isinstance(ref, (int, float)):
+            return now_ts - float(ref)
+        try:
+            from time_utils import from_isoformat, to_timestamp
+            return now_ts - to_timestamp(from_isoformat(ref))
+        except Exception:
+            return None
+
+    def _all_jobs_terminal(self, batch: 'ImportBatch') -> bool:
+        """所有 job 是否都到达终态（success/failed/cancelled）。"""
+        for job_id in batch.job_ids:
+            job = self._job_manager.get_job(job_id)
+            if not job:
+                continue
+            if job.get('status') not in ('success', 'failed', 'cancelled'):
+                return False
+        return True
 
     # ─── 完成回调 ───────────────────────────────────────────
 
@@ -943,11 +1014,81 @@ class ImportBatchManager:
                     f'pages_per_doc={[len(d.get("pages", [])) for d in invoice_docs]}'
                 )
                 for inv_doc in invoice_docs:
+                    # FIX: 从 inv_doc 或其页面中提取对应的文件名，而不是使用统一的 fallback_filename
+                    # 原因：当多页发票被拆分为多个单页文档时，每个文档需要使用各自页面的文件名
+                    
+                    # 调试日志：查看 inv_doc 结构
+                    logger.info(
+                        f'[ImportBatch] inv_doc 结构: '
+                        f'has_db_record={bool(inv_doc.get("db_record"))}, '
+                        f'has_pages={bool(inv_doc.get("pages"))}, '
+                        f'pages_count={len(inv_doc.get("pages", []))}, '
+                        f'invoice_number={inv_doc.get("invoice_number", "")}'
+                    )
+                    
+                    # 1. 优先从 inv_doc.db_record 获取文件名（单页文档时有效）
+                    inv_db_record = inv_doc.get('db_record', {}) or {}
+                    inv_filename = inv_db_record.get('file_name', '')
+                    inv_hash = inv_db_record.get('hash_sha256', '')
+                    inv_raw_text = inv_db_record.get('raw_text', '')
+                    
+                    logger.info(
+                        f'[ImportBatch] inv_doc.db_record: '
+                        f'file_name={inv_filename}, '
+                        f'hash={inv_hash[:8] if inv_hash else ""}'
+                    )
+                    
+                    # 2. 如果 inv_doc 有 pages 字段，从第一个页面获取文件名（多页文档或拆分后的单页）
+                    if not inv_filename:
+                        inv_pages = inv_doc.get('pages', [])
+                        if inv_pages:
+                            first_page = inv_pages[0] if isinstance(inv_pages, list) else inv_pages
+                            if isinstance(first_page, dict):
+                                # 调试日志：查看页面结构
+                                logger.info(
+                                    f'[ImportBatch] first_page 结构: '
+                                    f'has_db_record={bool(first_page.get("db_record"))}, '
+                                    f'file_name={first_page.get("file_name", "")}, '
+                                    f'page_num={first_page.get("page_num", "")}'
+                                )
+                                
+                                # 从页面的 db_record 获取
+                                page_db_record = first_page.get('db_record', {}) or {}
+                                inv_filename = page_db_record.get('file_name', '')
+                                if not inv_hash:
+                                    inv_hash = page_db_record.get('hash_sha256', '')
+                                if not inv_raw_text:
+                                    inv_raw_text = page_db_record.get('raw_text', '')
+                                # 或者从页面直接获取 file_name
+                                if not inv_filename:
+                                    inv_filename = first_page.get('file_name', '')
+                        
+                        logger.info(
+                            f'[ImportBatch] 从 pages 获取: '
+                            f'file_name={inv_filename}'
+                        )
+                    
+                    # 3. 最后回退到传入的 db_record（仅用于日志，不应作为主路径）
+                    if not inv_filename:
+                        inv_filename = db_record.get('file_name', '')
+                        logger.warning(
+                            f'[ImportBatch] 无法从 inv_doc 提取文件名，回退到传入的 db_record: '
+                            f'invoice={inv_doc.get("invoice_number", "")}, '
+                            f'file_name={inv_filename}'
+                        )
+                    
+                    logger.info(
+                        f'[ImportBatch] 最终文件名: '
+                        f'invoice={inv_doc.get("invoice_number", "")}, '
+                        f'file_name={inv_filename}, '
+                        f'source_file={db_record.get("file_name", "")}'
+                    )
+                    
                     inv_db = invoice_document_to_db_record(
                         inv_doc,
-                        fallback_hash=db_record.get('hash_sha256', ''),
-                        fallback_filename=db_record.get('file_name', ''),
-                        fallback_raw_text=db_record.get('raw_text', ''),
+                        fallback_hash=inv_hash or db_record.get('hash_sha256', ''),
+                        fallback_filename=inv_filename,
+                        fallback_raw_text=inv_raw_text or db_record.get('raw_text', ''),
                     )
                     buf = self._result_buffers.get(batch_id)
                     if buf:

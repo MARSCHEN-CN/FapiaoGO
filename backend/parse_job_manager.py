@@ -44,6 +44,9 @@ class ParseJob:
     result_id: str = ''  # 解析结果在缓存中的 key
     created_at: str = ''
     updated_at: str = ''
+    started_at: str = ''  # 5.1c-2：running 起始时间（超时判定基准）；空 = 尚未开始
+    timed_out: bool = False  # 5.1c-2：是否因 timeout 失败（诊断 metadata，非业务状态机）
+    failure_reason: str = ''  # 5.1c-2：失败原因（如 'timeout'）
     batch_id: str = ''  # 所属批次 ID（空 = 独立任务，非批量导入）
     
     # 性能指标
@@ -71,18 +74,33 @@ class ParseJob:
             'result_id': self.result_id,
             'created_at': self.created_at,
             'updated_at': self.updated_at,
+            'started_at': self.started_at,
+            'timed_out': self.timed_out,
+            'failure_reason': self.failure_reason,
             'batch_id': self.batch_id,
             'metrics': dict(self.metrics),  # 浅拷贝，防调用方误改 job.metrics
         }
     
     def update_status(self, status: str, progress: Optional[int] = None, error: str = ''):
-        """更新任务状态"""
+        """更新任务状态。
+
+        5.1c-2 AC2：终态（failed/cancelled）不可被 success 覆盖，确保 timeout 优先级
+        （迟到 success 不复活已 timeout 的 failed）。running 首次进入时落 started_at。
+        """
+        # AC2：失败/取消后到店的 success 视为迟到结果，忽略（保护 timeout 生命周期优先级）
+        if self.status in ('failed', 'cancelled') and status == 'success':
+            return
         self.status = status
+        if status == 'running' and not self.started_at:
+            self.started_at = now().isoformat()
         self.updated_at = now().isoformat()
         if progress is not None:
             self.progress = progress
         if error:
             self.error = error
+        if status == 'failed' and error == 'timeout':
+            self.timed_out = True
+            self.failure_reason = 'timeout'
 
 
 # ═══════════════════════════════════════════════════════════
@@ -615,6 +633,20 @@ class ParseJobManager:
         if job:
             return job.to_dict()
         return None
+
+    def update_status(self, job_id: str, status: str, progress: Optional[int] = None, error: str = ''):
+        """Manager 级状态更新（5.1c-2）：供 timeout watchdog / 外部将 job 翻为终态。
+
+        复用于 ImportBatchManager._apply_job_timeouts 的 timeout 翻 failed(timeout)。
+        实际状态迁移、AC2 复活守卫、timed_out/failure_reason 写入统一由 ParseJob.update_status
+        处理（worker 路径与 watchdog 路径共用同一守卫，避免规则分叉）。
+        终态立即落盘（与 _execute_job 一致），避免 watchdog 翻的状态丢失。
+        """
+        job = self.store.get(job_id)
+        if not job:
+            return
+        job.update_status(status, progress, error)
+        self.store.update(job, force_save=(status in ('success', 'failed', 'cancelled')))
     
     def get_job_result(self, job_id: str) -> Optional[Dict[str, Any]]:
         """获取任务结果"""

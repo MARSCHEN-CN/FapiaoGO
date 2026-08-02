@@ -58,6 +58,7 @@ _BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _BACKEND_DIR)
 
 from import_batch_manager import ImportBatchManager, ImportBatch
+from parse_job_manager import ParseJob
 
 
 STALE_TS = time.time() - 99999  # 远过去，保证触发超时
@@ -75,9 +76,16 @@ class FakeJobManager:
         return self._jobs.get(job_id)
 
     def update_status(self, job_id, status, progress=None, error=''):
-        """镜像真实 ParseJob.update_status 的 manager 级接口（供 5.1c-2 watchdog 翻 failed 用）。"""
+        """忠实镜像真实 ParseJob.update_status 的 manager 级接口（含 AC2 复活守卫）。
+
+        5.1c-2 行为契约要求：failed/cancelled 不可被迟到 success 覆盖（timeout 优先级）。
+        测试桩必须代表同一契约行为，否则 Case 2 的「迟到 success 不复活」无从锁定。
+        """
         j = self._jobs.get(job_id)
         if j:
+            # AC2 守卫（与 ParseJob.update_status 一致）：终态 failed/cancelled 不被 success 覆盖
+            if j['status'] in ('failed', 'cancelled') and status == 'success':
+                return
             j['status'] = status
             if error:
                 j['error'] = error
@@ -142,8 +150,8 @@ class TestTimeoutJob(unittest.TestCase):
     # Case 1: running job 超时 → failed page（非 missing）
     def test_case1_running_job_timeout_to_failed_page(self):
         jobs = {
-            'j0': _job('j0', 'success', 0, 3),
-            'j1': _job('j1', 'running', 1, 3, started_at=STALE_TS),
+            'j0': _job('j0', 'success', 0, 2),
+            'j1': _job('j1', 'running', 1, 2, started_at=STALE_TS),
         }
         mgr, jm = _build(jobs, 'b1', ['j0', 'j1'])
         state = _resolve(mgr, 'b1')
@@ -152,17 +160,26 @@ class TestTimeoutJob(unittest.TestCase):
         self.assertEqual(_pages_for(state['missingPages'], 'docA'), [])
         self.assertEqual(jm.get_job('j1')['status'], 'failed')
 
-    # Case 2: timeout 后晚到 success 不复活（timed_out 优先）
+    # Case 2: timeout 后晚到 success 不复活（AC2 守卫：failed(timeout) 优先于迟到 success）
+    # 真实时间线：T0 running → T1 watchdog 翻 failed(timeout) → T2 迟到 worker 返回 success
     def test_case2_late_success_does_not_resurrect(self):
         jobs = {
             'j0': _job('j0', 'success', 0, 2),
-            'j1': _job('j1', 'success', 1, 2, timed_out=True),
+            # T0: j1 仍在 running 且已超时（started_at 已是 STALE_TS），未预先标 timed_out
+            'j1': _job('j1', 'running', 1, 2, started_at=STALE_TS),
         }
         mgr, jm = _build(jobs, 'b2', ['j0', 'j1'])
+        # T1: watchdog 翻 j1 → failed(timeout)，batch → completed_with_errors
         state = _resolve(mgr, 'b2')
         self.assertEqual(state['status'], 'completed_with_errors')
         self.assertEqual(_pages_for(state['failedPages'], 'docA'), [1])
         self.assertEqual(_pages_for(state['missingPages'], 'docA'), [])
+        self.assertEqual(jm.get_job('j1')['status'], 'failed')
+        # T2: 迟到 worker 返回 success，必须被 AC2 守卫忽略，不得复活
+        jm.update_status('j1', 'success')
+        self.assertEqual(jm.get_job('j1')['status'], 'failed')
+        # batch 终态不变（timeout 优先级不可被覆盖）
+        self.assertEqual(mgr.get_batch_dict('b2')['status'], 'completed_with_errors')
 
     # Case 3: queued(pending) job 超排队时间 → failed
     def test_case3_queued_job_queue_timeout_to_failed(self):
@@ -228,8 +245,44 @@ class TestTimeoutJob(unittest.TestCase):
         mgr, jm = _build(jobs, 'b7', ['j0', 'j1', 'j2'])
         state = _resolve(mgr, 'b7')
         self.assertEqual(state['status'], 'completed')
-        self.assertEqual(_pages_for(state['missingPages'], 'docA'), [])
-        self.assertEqual(_pages_for(state['failedPages'], 'docA'), [])
+        # 5.1b-3a 契约：completed 保持旧 payload，不注入 missingPages/failedPages
+        self.assertEqual(_pages_for(state.get('missingPages', []), 'docA'), [])
+        self.assertEqual(_pages_for(state.get('failedPages', []), 'docA'), [])
+
+
+class TestParseJobAC2(unittest.TestCase):
+    """直接锁生产代码 ParseJob.update_status 的 AC2 复活守卫（5.1c-2 实现细节，非仅 fake）。
+
+    集成测试的 FakeJobManager 忠实镜像同一契约，但真实守卫在 ParseJob.update_status，
+    此处直接压生产代码，避免守卫被误删时无测试报警。
+    """
+    def test_failed_cannot_be_overridden_by_late_success(self):
+        job = ParseJob(id='j1', file_name='f.pdf', file_hash='h1', status='failed', failure_reason='timeout')
+        job.update_status('success')
+        self.assertEqual(job.status, 'failed')
+
+    def test_cancelled_cannot_be_overridden_by_late_success(self):
+        job = ParseJob(id='j1', file_name='f.pdf', file_hash='h1', status='cancelled')
+        job.update_status('success')
+        self.assertEqual(job.status, 'cancelled')
+
+    def test_running_can_become_success(self):
+        job = ParseJob(id='j1', file_name='f.pdf', file_hash='h1', status='running')
+        job.update_status('success')
+        self.assertEqual(job.status, 'success')
+
+    def test_running_timeout_records_diagnostics(self):
+        job = ParseJob(id='j1', file_name='f.pdf', file_hash='h1', status='running')
+        job.update_status('failed', error='timeout')
+        self.assertEqual(job.status, 'failed')
+        self.assertTrue(job.timed_out)
+        self.assertEqual(job.failure_reason, 'timeout')
+
+    def test_running_first_entry_sets_started_at(self):
+        job = ParseJob(id='j1', file_name='f.pdf', file_hash='h1', status='pending')
+        self.assertEqual(job.started_at, '')
+        job.update_status('running')
+        self.assertNotEqual(job.started_at, '')
 
 
 if __name__ == '__main__':
