@@ -95,6 +95,7 @@ class ImportBatch:
             'queued': 'pending',
             'running': 'running',
             'completed': 'completed',
+            'completed_with_errors': 'completed_with_errors',  # 5.1b：缺页/失败页终态（import SSE 须识别）
             'failed': 'failed',
             'cancelled': 'cancelled',
         }
@@ -631,6 +632,86 @@ class ImportBatchManager:
                     batch.error = str(e)
                     batch.touch()
 
+    def _collect_batch_page_health(self, batch: 'ImportBatch', job_manager) -> Dict[str, Any]:
+        """汇总批次内每页终态健康度，推导终态 status（5.1b 生命周期契约 §4/§5）。
+
+        数据权威源 = JobStore（非 PageResultStore）：assemble 完成后 store.remove(bucket_key)，
+        已完成文档的成功页已从 store 移除，不能据此判定 SUCCESS（§4.1 注记：数据 ownership 澄清）。
+
+        分类（§4.1）：
+          SUCCESS = job.status == 'success'
+          FAILED  = job.status == 'failed'
+          MISSING = expected - success - failed
+          expected = set(range(total_pages))，按 source_doc_id 分组
+        优先级 FAILED > MISSING（failed 页绝不进 missingPages，否则违反冻结契约）。
+
+        终态（§5）：cancelled(外部) > failed(allFailed) > completed_with_errors(hasErrors) > completed
+          failed 唯一条件：failed_pages == 全部 expected 页（!= success_count == 0，
+          避免污染未来 retry/timeout 语义）。
+        """
+        doc_expected: Dict[str, set] = {}
+        doc_success: Dict[str, set] = {}
+        doc_failed: Dict[str, set] = {}
+
+        for job_id in batch.job_ids:
+            job = job_manager.get_job(job_id)
+            if not job:
+                continue
+            metrics = job.get('metrics') or {}
+            try:
+                page_num = int(metrics.get('page_num', 0))
+            except (TypeError, ValueError):
+                page_num = 0
+            try:
+                total_pages = int(metrics.get('total_pages', 1))
+            except (TypeError, ValueError):
+                total_pages = 1
+            source_doc_id = metrics.get('source_doc_id') or 'unknown'
+
+            doc_expected.setdefault(source_doc_id, set()).update(range(total_pages))
+            if job.get('status') == 'success':
+                doc_success.setdefault(source_doc_id, set()).add(page_num)
+            elif job.get('status') == 'failed':
+                doc_failed.setdefault(source_doc_id, set()).add(page_num)
+
+        missing_pages: List[Dict] = []
+        failed_pages: List[Dict] = []
+        total_expected = 0
+        total_success = 0
+        total_failed = 0
+        for source_doc_id, expected in doc_expected.items():
+            success = doc_success.get(source_doc_id, set())
+            failed = doc_failed.get(source_doc_id, set())
+            missing = expected - success - failed
+            total_expected += len(expected)
+            total_success += len(success)
+            total_failed += len(failed)
+            if missing:
+                missing_pages.append({'sourceDocId': source_doc_id, 'pages': sorted(missing)})
+            if failed:
+                failed_pages.append({'sourceDocId': source_doc_id, 'pages': sorted(failed)})
+
+        missing_pages.sort(key=lambda x: x['sourceDocId'])
+        failed_pages.sort(key=lambda x: x['sourceDocId'])
+
+        has_errors = bool(missing_pages) or bool(failed_pages)
+        all_failed = (total_expected > 0) and (total_failed == total_expected)
+
+        if all_failed:
+            status = 'failed'
+        elif has_errors:
+            status = 'completed_with_errors'
+        else:
+            status = 'completed'
+
+        return {
+            'status': status,
+            'missingPages': missing_pages,
+            'failedPages': failed_pages,
+            'hasErrors': has_errors,
+            'allFailed': all_failed,
+        }
+
     def _wait_for_completion(self, batch_id: str):
         """轮询等待批次完成（所有 job 到达终态）"""
         while True:
@@ -652,11 +733,12 @@ class ImportBatchManager:
                 with self._batch_lock:
                     batch = self._batches.get(batch_id)
                     if batch and batch.status == 'running':
-                        if batch.failed > 0 and batch.success == 0:
-                            batch.status = 'failed'
+                        health = self._collect_batch_page_health(batch, self._job_manager)
+                        batch.status = health['status']
+                        if health['allFailed']:
                             batch.error = '全部解析失败'
-                        else:
-                            batch.status = 'completed'
+                        elif health['hasErrors']:
+                            batch.error = '部分页面解析失败或缺失'
                         batch.touch()
                 logger.info(
                     f"[ImportBatch] 批次完成: {batch_id} "
