@@ -341,33 +341,39 @@ class ImportBatchManager:
             return self._batches.get(batch_id)
 
     def get_batch_dict(self, batch_id: str) -> Optional[Dict[str, Any]]:
-        """获取批次状态（dict 形式，供 SSE 使用）"""
-        batch = self.get_batch(batch_id)
-        if batch:
-            with self._batch_lock:
-                return batch.to_dict()
-        return None
+        """获取批次状态（dict 形式，供 SSE 使用）
 
-    def get_batch_results(self, batch_id: str) -> List[Dict[str, Any]]:
-        """获取批次所有成功任务的解析结果
-        
-        用于前端 hydration：batch completed 后拉取字段数据。
+        5.1b-3a：终态暴露缺页/失败页。completed 保持旧 payload（不强行新增空字段，
+        向后兼容旧 SSE 消费者）；completed_with_errors / failed / cancelled 携带
+        missingPages / failedPages（由 _collect_batch_page_health 从 JobStore 推导）。
+        在批次锁外计算 health，避免持锁调用 job_manager。
+        """
+        batch = self.get_batch(batch_id)
+        if not batch:
+            return None
+        with self._batch_lock:
+            state = batch.to_dict()
+        if batch.status != 'completed':
+            health = self._collect_batch_page_health(batch, self._job_manager)
+            state['missingPages'] = health['missingPages']
+            state['failedPages'] = health['failedPages']
+        return state
+
+    def get_batch_results(self, batch_id: str) -> Dict[str, Any]:
+        """获取批次解析结果（batch-level 聚合，供前端 hydration 与生命周期消费）
+
         使用 batch.job_ids 索引，避免 JobStore 全表扫描。
-        
-        Returns:
-            [{
-                'clientKey': 'frontend_file_key',
-                'jobId': 'job_id',
-                'fileName': 'xxx.pdf',
-                'fileHash': 'sha256...',
-                'invoiceType': '专票',
-                'invoiceNumber': 'xxx',
-                'amount': 100.0,
-                'invoiceDate': '2026-01-01',
-                'invoiceFields': {...},
-                'parseMethod': 'ocr',
-                'failedFields': [],
-            }, ...]
+
+        返回（5.1b-3a batch-level 契约，见 LIFECYCLE_STATE_CONTRACT_5_1b0.md §3）：
+            {
+                'items':       [ per-page 解析结果（clientKey/jobId/amount/...）],
+                'documents':   [ 组装后的 InvoiceDocument 元信息 ],
+                'status':      batch 终态（completed / completed_with_errors / failed / ...）,
+                'missingPages':[ {'sourceDocId': str, 'pages': [int, ...]} ],  # 从未到达的页
+                'failedPages': [ {'sourceDocId': str, 'pages': [int, ...]} ],  # worker 抛错的页
+            }
+        missingPages / failedPages 由 _collect_batch_page_health 从 JobStore 推导，
+        按 source_doc_id 归组；缺页与失败页互斥（优先级 FAILED > MISSING）。
         """
         with self._batch_lock:
             batch = self._batches.get(batch_id)
@@ -458,8 +464,17 @@ class ImportBatchManager:
                 'failedFields': result.get('failed_fields', []),
                 'newName': result.get('new_name', ''),
             })  # 13-B.5 C2: 删除 previewImage 字段（import 表面停产，Render Contract 取代）
-        
-        return items
+
+        # 5.1b-3a：batch-level 健康（缺页/失败页）从 JobStore 推导，归组到缺失/失败集合，
+        # 不塞进每个 invoice item（per-page 数据在 items 中）。
+        health = self._collect_batch_page_health(batch, self._job_manager)
+        return {
+            'items': items,
+            'documents': batch.assembled_documents or [],
+            'status': batch.status,
+            'missingPages': health['missingPages'],
+            'failedPages': health['failedPages'],
+        }
 
     def cancel_batch(self, batch_id: str) -> bool:
         """取消批次（停止调度 + 取消所有未完成 job）"""

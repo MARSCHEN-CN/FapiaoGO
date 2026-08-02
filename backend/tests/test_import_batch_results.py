@@ -98,7 +98,7 @@ class TestBatchResultsAmountMerge(unittest.TestCase):
             {'amount': 100, 'invoiceDate': '', 'pageClientKeys': ['']},
             {'amount': 200, 'invoiceDate': '', 'pageClientKeys': ['']},
         ])
-        items = mgr.get_batch_results('b-empty')
+        items = mgr.get_batch_results('b-empty')['items']
         self.assertEqual(len(items), 1)
         # client_key='' 必须被跳过：item.amount 应保持 legacy 'old'，而非被 200 覆盖
         self.assertEqual(
@@ -118,7 +118,7 @@ class TestBatchResultsAmountMerge(unittest.TestCase):
         _batch(mgr, 'b-normal', ['j1'], [
             {'amount': 100, 'invoiceDate': '', 'pageClientKeys': ['ckA']},
         ])
-        items = mgr.get_batch_results('b-normal')
+        items = mgr.get_batch_results('b-normal')['items']
         self.assertEqual(items[0]['amount'], 100)
 
     def test_different_keys_no_cross_override(self):
@@ -134,7 +134,7 @@ class TestBatchResultsAmountMerge(unittest.TestCase):
             {'amount': 100, 'invoiceDate': '', 'pageClientKeys': ['ckA']},
             {'amount': 200, 'invoiceDate': '', 'pageClientKeys': ['ckB']},
         ])
-        items = {it['clientKey']: it for it in mgr.get_batch_results('b-multi')}
+        items = {it['clientKey']: it for it in mgr.get_batch_results('b-multi')['items']}
         self.assertEqual(items['ckA']['amount'], 100)
         self.assertEqual(items['ckB']['amount'], 200)
 
@@ -145,7 +145,7 @@ class TestBatchResultsAmountMerge(unittest.TestCase):
         )
         mgr = ImportBatchManager(jm)
         _batch(mgr, 'b-legacy', ['j1'], [])  # 空 assembled_documents
-        items = mgr.get_batch_results('b-legacy')
+        items = mgr.get_batch_results('b-legacy')['items']
         self.assertEqual(items[0]['amount'], 'legacy')
 
 

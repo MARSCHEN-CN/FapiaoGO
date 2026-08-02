@@ -1809,7 +1809,7 @@ def import_batch_events(batch_id):
                 if state is None:
                     break
                 yield f"data: {_json.dumps(state, ensure_ascii=False)}\n\n"
-                if state['status'] in ('completed', 'failed', 'cancelled'):
+                if state['status'] in ('completed', 'completed_with_errors', 'failed', 'cancelled'):
                     logger.info(f"[SSE] batch={batch_id} 终态={state['status']}，generator 正常退出")
                     break
                 time.sleep(0.5)
@@ -1839,22 +1839,18 @@ def import_batch_cancel():
 
 @app.route('/import/batch/<batch_id>/results', methods=['GET'])
 def import_batch_results(batch_id):
-    """获取批量导入的解析结果（用于前端 hydration）
-    
-    batch completed 后，前端调用此接口拉取字段数据。
-    返回 clientKey 用于精确匹配前端 fileObj。
+    """获取批量导入的解析结果（用于前端 hydration + 生命周期消费）
+
+    batch completed 后，前端调用此接口拉取字段数据与 batch-level 健康
+    （status / missingPages / failedPages，5.1b-3a 契约）。
     """
     mgr = get_import_batch_manager()
     batch = mgr.get_batch(batch_id)
     if batch is None:
         return jsonify({"success": False, "error": "批次不存在"}), 404
-    
+
     result = mgr.get_batch_results(batch_id)
-    return jsonify({
-        "success": True,
-        "items": result,
-        "documents": batch.assembled_documents or [],
-    })
+    return jsonify({"success": True, **result})
 
 
 if __name__ == '__main__':
