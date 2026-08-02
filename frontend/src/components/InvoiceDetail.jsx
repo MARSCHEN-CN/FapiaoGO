@@ -65,7 +65,9 @@ export default function InvoiceDetail({ fileObj, onClose }) {
   const loadedNameRef = useRef('')
 
   useEffect(() => {
-    const fileName = fileObj.name || fileObj.fileName || fileObj.originalFilename || ''
+    // FIX: 使用 originalName（原始文件名）查询后端，而不是 name（还原后的文件名）
+    // 原因：数据库中存储的是原始文件名（如 "invoice_p1.pdf"），而不是还原后的文件名（如 "invoice.pdf"）
+    const fileName = fileObj.originalName || fileObj.name || fileObj.fileName || fileObj.originalFilename || ''
     if (!fileName) {
       setLoadError('无法获取文件名')
       setLoading(false)

@@ -77,9 +77,12 @@ export function invoiceDocumentToRow(invoiceDoc, allFiles, fileIndex) {
       (a, b) => (a.pageNum ?? 0) - (b.pageNum ?? 0)
     )
     const rep = sorted[0]
+    const originalName = rep.name
+    const displayName = restoreOriginalName(originalName)
     return {
       ...rep,
-      name: restoreOriginalName(rep.name),
+      name: displayName,          // 显示用：还原后的文件名（如 "invoice.pdf"）
+      originalName: originalName, // 查询用：原始文件名（如 "invoice_p1.pdf"）
       // identity bridge：让 DisplayAdapter 通过业务 documentId 找到 InvoiceDocument
       documentId: invoiceDoc.docId,
       _pages: sorted,
@@ -95,8 +98,22 @@ export function invoiceDocumentToRow(invoiceDoc, allFiles, fileIndex) {
     }
   }
 
-  // 单页 → 直接返回匹配到的 fileObj（非 group）
-  return pageFiles[0]
+  // 单页 → 返回匹配到的 fileObj（非 group），保留原始文件名用于查询
+  const singlePage = pageFiles[0]
+  const originalName = singlePage.name
+  const displayName = restoreOriginalName(originalName)
+  console.log('[invoiceDocumentToRow] 单页文档:', {
+    docId: invoiceDoc.docId,
+    pageKeys: invoiceDoc._pageKeys,
+    originalName: originalName,
+    displayName: displayName,
+    status: singlePage.status,
+  })
+  return {
+    ...singlePage,
+    name: displayName,           // 显示用：还原后的文件名（如 "invoice.pdf"）
+    originalName: originalName,  // 查询用：原始文件名（如 "invoice_p1.pdf"）
+  }
 }
 
 /**

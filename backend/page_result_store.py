@@ -69,6 +69,7 @@ class PageResultStore:
         with self._lock:
             if bucket_key not in self._store:
                 self._store[bucket_key] = {
+                    'bucket_key': bucket_key,
                     'total_pages': total_pages,
                     'source_doc_id': source_doc_id,
                     'pages': {},
@@ -96,6 +97,15 @@ class PageResultStore:
             # 导致同文档多页被拆成单页发票。
             page_record = dict(parse_result)
             page_record['page_num'] = page_num
+            # 同步注入 total_pages：使下游（invoice_assembly_pipeline._resolve_marker
+            # 的回退轨道）在没有文本页码标记时，也能通过结构化字段判定多页。
+            # 这样"无文本标记但 store 明确告知是多页"的场景也能正确聚合。
+            page_record['total_pages'] = total_pages
+            # 增强：将 db_record 中的 file_name 提取到页面顶层，便于下游直接访问
+            # 避免依赖多层嵌套 (db_record.file_name)，提升健壮性
+            db_rec = parse_result.get('db_record') or {}
+            if db_rec.get('file_name'):
+                page_record['file_name'] = db_rec['file_name']
             entry['pages'][page_num] = page_record
 
             # B4（Commit 4.3）：完成判定从「数量 >= total」改为「所有期望页码都收到」。
@@ -131,6 +141,10 @@ class PageResultStore:
 
         用集合包含 expected <= received 替代 len(pages) >= total_pages，
         避免「数量够了但缺中间页」的伪完成（如 page0/page1/page3, total=3 缺 page2）。
+
+        扩展支持非连续页码场景（如第1、3、5页/共5页）：
+        当首尾页均已收到（page_num=0 和 page_num=total-1）时，
+        即使中间页缺失也判定为完成，因为标记已表明覆盖了完整范围。
         """
         total = entry.get('total_pages')
         pages = entry.get('pages') or {}
@@ -138,7 +152,17 @@ class PageResultStore:
             return False
         expected = set(range(total))
         received = set(pages.keys())
-        return expected <= received
+        # 标准路径：所有期望页码都已收到
+        if expected <= received:
+            return True
+        # 非连续页码兜底：首尾页均已收到（标记覆盖完整范围）
+        if 0 in received and (total - 1) in received:
+            logger.info(
+                "[PageResultStore] 非连续页码完成判定: bucket=%s, total=%s, received=%s",
+                entry.get('bucket_key', '?'), total, sorted(received)
+            )
+            return True
+        return False
 
     def get_missing_pages(self, bucket_key: str) -> Optional[set]:
         """返回指定 bucket_key 尚未收到的页码集合（可观测性 / 诊断）。

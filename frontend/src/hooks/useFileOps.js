@@ -757,16 +757,30 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
               // 闸门拒绝的页按 per-file 独立展示
               const fallbackFiles = []
               for (const assembled of documents) {
-                // 找到属于该组装结果的 fileObj（按 invoiceNumber 匹配）
-                const matchingItems = items.filter(i =>
-                  i.invoiceNumber === assembled.invoiceNumber
-                )
-                const matchingKeys = new Set(
-                  matchingItems.map(i => i.clientKey).filter(Boolean)
-                )
-                // FIX: 从 readyFiles（全局文件池）查找所有匹配文件，而非仅当前 chunk
-                // 原因：同票多页可能跨 chunk（chunkSize=100），仅查 chunk 会丢失页面
-                const matchingFiles = readyFiles.filter(f => matchingKeys.has(f.key))
+                // FIX: 优先使用 assembled.pageClientKeys 精确匹配文件（而非通过 invoiceNumber 宽泛匹配）
+                // 原因：当多个 assembled 共享相同 invoiceNumber 时，invoiceNumber 匹配会返回所有相关文件，
+                // 导致单个 InvoiceDocument 包含不属于该 assembled 的页面。
+                // pageClientKeys 是后端显式声明的精确页面成员，能够唯一标识每个 assembled 对应的页面。
+                let matchingFiles
+                if (Array.isArray(assembled.pageClientKeys) && assembled.pageClientKeys.length > 0) {
+                  // 过滤掉空字符串，使用 pageClientKeys 精确匹配
+                  const validClientKeys = assembled.pageClientKeys.filter(Boolean)
+                  if (validClientKeys.length > 0) {
+                    const keySet = new Set(validClientKeys)
+                    matchingFiles = readyFiles.filter(f => keySet.has(f.key))
+                  } else {
+                    matchingFiles = []
+                  }
+                } else {
+                  // 回退：通过 invoiceNumber 匹配（兼容旧数据）
+                  const matchingItems = items.filter(i =>
+                    i.invoiceNumber === assembled.invoiceNumber
+                  )
+                  const matchingKeys = new Set(
+                    matchingItems.map(i => i.clientKey).filter(Boolean)
+                  )
+                  matchingFiles = readyFiles.filter(f => matchingKeys.has(f.key))
+                }
 
                 // ── 模型边界约束（冻结；IS-4.2 Step 4.3 升级为实例身份）──
                 // 一个 InvoiceDocument 的所有 pages 必须属于同一个文件实例。
@@ -834,9 +848,12 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
                 doc.sourceDocId = repFile.docId || assembled.sourceDocId || ''
                 // Commit 2：优先用后端显式声明的 pageClientKeys（精确页面成员），
                 // 回退到本地按页码推导（历史 session / 老数据 / 后端未下发时）。
-                // 不再自行反推页身份——后端知道哪些页属于这个 InvoiceDocument。
-                doc._pageKeys = (Array.isArray(assembled.pageClientKeys) && assembled.pageClientKeys.length)
-                  ? assembled.pageClientKeys
+                // FIX: 过滤掉空字符串，避免 _pageKeys 包含无效的空字符串导致 invoiceDocumentToRow 匹配失败
+                const validPageClientKeys = Array.isArray(assembled.pageClientKeys)
+                  ? assembled.pageClientKeys.filter(Boolean)
+                  : []
+                doc._pageKeys = validPageClientKeys.length > 0
+                  ? validPageClientKeys
                   : sortedFiles.map(f => f.key)
                 // Commit 2：补全业务字段，使 invoiceDocumentViewModel 能用 Document 字段
                 // 覆盖 Page 字段（金额/日期）。null/undefined 时由 view model 回退 rep 字段。

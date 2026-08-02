@@ -1350,7 +1350,10 @@ def _resolve_invoice_with_fallback(filename: str) -> Optional[Dict]:
     target = invoice_index_key(filename)
     found = _resolve_invoice_by_key(target)
     if found:
+        logger.info(f'[DB] 精确匹配成功: filename={filename}, target={target}')
         return found
+    else:
+        logger.info(f'[DB] 精确匹配失败: filename={filename}, target={target}')
 
     # Step 2: basename match
     basename = filename.split('/')[-1].split('\\')[-1]
@@ -1358,20 +1361,38 @@ def _resolve_invoice_with_fallback(filename: str) -> Optional[Dict]:
     if pure_name != target:
         found = _resolve_invoice_by_key(pure_name)
         if found:
+            logger.info(f'[DB] basename 匹配成功: filename={filename}, pure_name={pure_name}')
             return found
+        else:
+            logger.info(f'[DB] basename 匹配失败: filename={filename}, pure_name={pure_name}')
 
     # Step 3: legacy _p\d+ page suffix fallback
     # Query filename (e.g. 'xxx.pdf') does NOT carry _p suffix, but the DB key
     # (e.g. 'xxx_p1.pdf') might. Iterate index keys containing '_p' and check
     # if the stripped version matches the query. O(N) over _p-containing keys,
     # acceptable for rarely-triggered fallback.
-    for key, idx in _invoice_index_by_filename.items():
-        if '_p' not in key:
-            continue
-        stripped_key = invoice_index_key(_strip_page_suffix(key))
-        if stripped_key == target or stripped_key == pure_name:
-            if not _invoices[idx].get('deleted_at'):
-                return _invoices[idx].copy()
+    #
+    # 安全护栏：如果查询文件名本身已包含 _p 页后缀（如 'xxx_p1.pdf'），
+    # 说明查询方已明确携带页身份，此时若精确/basename 匹配均失败，
+    # 不应再通过第三级回退匹配其他 _p 记录，避免跨发票错误关联。
+    _query_has_page_suffix = bool(re.search(r'_p\d+\.', filename, re.IGNORECASE))
+    if not _query_has_page_suffix:
+        logger.info(f'[DB] 进入第三级回退: filename={filename}, target={target}, pure_name={pure_name}')
+        for key, idx in _invoice_index_by_filename.items():
+            if '_p' not in key:
+                continue
+            stripped_key = invoice_index_key(_strip_page_suffix(key))
+            if stripped_key == target or stripped_key == pure_name:
+                if not _invoices[idx].get('deleted_at'):
+                    logger.info(
+                        f'[DB] 第三级回退匹配成功: filename={filename}, '
+                        f'matched_key={key}, stripped_key={stripped_key}'
+                    )
+                    return _invoices[idx].copy()
+    else:
+        logger.info(f'[DB] 跳过第三级回退（查询已带 _p 页后缀）: filename={filename}')
+    
+    logger.warning(f'[DB] 所有回退匹配失败: filename={filename}')
     return None
 
 

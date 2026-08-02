@@ -121,9 +121,22 @@ export async function exportExcel({
   }
 
   // 只传文件名列表，后端从数据库读取完整数据
+  // FIX: 使用 originalName（原始文件名）而非 name（显示用的还原后的文件名）
+  // 原因：数据库中存储的是原始文件名（如 "invoice_p1.pdf"），
+  // 而 name 是还原后的文件名（如 "invoice.pdf"），会导致查询失败
   const fileNames = files
-    .map(f => f.name || f.path || f.fileName || '')
+    .map(f => f.originalName || f.name || f.path || f.fileName || '')
     .filter(Boolean)
+  
+  console.log('[ExportService.exportExcel] 文件名列表:', {
+    count: fileNames.length,
+    fileNames: fileNames,
+    fileDetails: files.map(f => ({
+      name: f.name,
+      originalName: f.originalName,
+      status: f.status,
+    })),
+  })
 
   if (fileNames.length === 0) {
     return createFailedExport({ taskId, error: '无法获取文件名' })

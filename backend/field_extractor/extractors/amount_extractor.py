@@ -32,6 +32,8 @@ _HEADER_TOTAL_COL = re.compile(r'价税合计|小计')
 
 # 金额/数字判定
 _AMOUNT_TOKEN_RE = re.compile(r'^-?[\d,]+(?:\.\d{1,4})?$')
+# 纯金额数字（2位小数），用于拆分¥合并
+_PURE_AMOUNT_RE = re.compile(r'^-?[\d,]+\.\d{2}$')
 
 # 合计行关键词
 _SUMMARY_KEYWORDS_RE = re.compile(r'合\s*计|价税合计|小计')
@@ -379,7 +381,61 @@ class AmountExtractor:
                 continue
             
             result.append((t, clean_val, num_val))
-        
+
+        # --- Pass 2: ¥和数字被拆分为独立token时合并（如 ¥ + 144.00） ---
+        standalone_yen = [
+            t for t in tokens
+            if getattr(t, 'text', '').strip() in ('¥', '￥')
+        ]
+        if standalone_yen:
+            # 收集纯数字token（2位小数）
+            pure_numbers = []
+            for t in tokens:
+                text = getattr(t, 'text', '').strip()
+                if not _PURE_AMOUNT_RE.match(text.replace(',', '')):
+                    continue
+                clean_val = text.replace(',', '').replace(' ', '')
+                try:
+                    num_val = float(clean_val)
+                except ValueError:
+                    continue
+                if len(clean_val.replace('-', '').split('.')[0]) >= 10:
+                    continue
+                pure_numbers.append((t, clean_val, num_val))
+
+            standalone_yen.sort(key=lambda t: t.x0)
+            pure_numbers.sort(key=lambda x: x[0].x0)
+            used_num_ids = set()
+
+            for yen_tok in standalone_yen:
+                avg_h = yen_tok.height
+                y_tol = max(avg_h * 0.5, 8)
+                x_limit = max(avg_h * 3, 20)
+
+                best = None
+                best_dist = float('inf')
+                for num_tok, clean_val, num_val in pure_numbers:
+                    if id(num_tok) in used_num_ids:
+                        continue
+                    # Y容差：同一行
+                    if abs(yen_tok.cy - num_tok.cy) > y_tol:
+                        continue
+                    # X约束：数字在¥右侧，且距离不超过x_limit
+                    x_dist = num_tok.x0 - yen_tok.x1
+                    if x_dist < 0 or x_dist > x_limit:
+                        continue
+                    if x_dist < best_dist:
+                        best_dist = x_dist
+                        best = (num_tok, clean_val, num_val)
+
+                if best:
+                    used_num_ids.add(id(best[0]))
+                    result.append((yen_tok, best[1], best[2]))
+                    logger.debug(
+                        "[DualYen] 拆分¥合并: ¥ + %s → %.2f (y=%.1f, x_gap=%.1f)",
+                        best[1], best[2], yen_tok.cy, best_dist,
+                    )
+
         # 按Y坐标排序，再按X坐标排序
         result.sort(key=lambda x: (x[0].cy, x[0].x0))
         return result

@@ -368,11 +368,14 @@ def api_export_excel_sse():
 
     # 优先从数据库读取（fileNames），兼容旧版 invoices 传参
     file_names = data.get('fileNames', [])
+    logger.info(f'[ExportExcel] 收到 fileNames: {file_names}')
     if file_names:
         invoices = []
         for rec in db_module.get_invoices_by_filenames(file_names):
             invoices.extend(_db_record_to_export(rec))
+        logger.info(f'[ExportExcel] 查询到 {len(invoices)} 条记录')
         if not invoices:
+            logger.warning(f'[ExportExcel] 数据库中没有找到匹配的发票记录: {file_names}')
             return jsonify({"success": False, "error": "数据库中没有找到匹配的发票记录"}), 404
     else:
         invoices = data.get('invoices', [])
@@ -1240,12 +1243,49 @@ def parse_invoice():
                     if all_pages:
                         invoice_docs = assemble_invoice(all_pages)
                         for inv_doc in invoice_docs:
+                            # FIX: 从 inv_doc 或其页面中提取对应的文件名
+                            # 原因：当多页发票被拆分为多个单页文档时，每个文档需要使用各自页面的文件名
+                            
+                            # 1. 优先从 inv_doc.db_record 获取文件名（单页文档时有效）
+                            inv_db_record = inv_doc.get('db_record', {}) or {}
+                            inv_filename = inv_db_record.get('file_name', '')
+                            inv_hash = inv_db_record.get('hash_sha256', '')
+                            inv_raw_text = inv_db_record.get('raw_text', '')
+                            
+                            # 2. 如果 inv_doc 有 pages 字段，从第一个页面获取文件名
+                            if not inv_filename:
+                                inv_pages = inv_doc.get('pages', [])
+                                if inv_pages:
+                                    first_page = inv_pages[0] if isinstance(inv_pages, list) else inv_pages
+                                    if isinstance(first_page, dict):
+                                        # 从页面的 db_record 获取
+                                        page_db_record = first_page.get('db_record', {}) or {}
+                                        inv_filename = page_db_record.get('file_name', '')
+                                        if not inv_hash:
+                                            inv_hash = page_db_record.get('hash_sha256', '')
+                                        if not inv_raw_text:
+                                            inv_raw_text = page_db_record.get('raw_text', '')
+                                        # 或者从页面直接获取 file_name
+                                        if not inv_filename:
+                                            inv_filename = first_page.get('file_name', '')
+                            
+                            # 3. 最后回退到传入的 db_record
+                            if not inv_filename:
+                                inv_filename = db_record.get('file_name', '')
+                            
+                            logger.info(
+                                f'[Assembly] inv_doc 文件名: '
+                                f'invoice={inv_doc.get("invoice_number", "")}, '
+                                f'file_name={inv_filename}, '
+                                f'source_file={db_record.get("file_name", "")}'
+                            )
+                            
                             # 使用契约化转换函数生成 db_record
                             inv_db = invoice_document_to_db_record(
                                 inv_doc,
-                                fallback_hash=db_record.get('hash_sha256', ''),
-                                fallback_filename=db_record.get('file_name', ''),
-                                fallback_raw_text=db_record.get('raw_text', ''),
+                                fallback_hash=inv_hash or db_record.get('hash_sha256', ''),
+                                fallback_filename=inv_filename,
+                                fallback_raw_text=inv_raw_text or db_record.get('raw_text', ''),
                             )
                             try:
                                 db_module.upsert_invoice(inv_db)

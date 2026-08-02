@@ -1091,19 +1091,33 @@ class ImportBatchManager:
         但 PageResultStore 要求 0-based（第1页=0）。
         这里统一转换为 0-based。
         
-        检测逻辑（基于实际日志分析）：
-        - 日志显示 page_num=1, total_pages=2 → 说明是 1-based
-        - 我们转换逻辑：page_num 在 [1, total_pages] 范围时，都认为是 1-based
-          （只有 page_num=0 才能确定是 0-based）
+        检测逻辑（基于实际日志分析，兼顾 0-based 直传场景）：
+        - 若同 bucket 已被判定为 0-based（由首个以 '0' 开头的 page_num
+          字符串触发），后续所有页一律不再做 -1 归一化
+        - 否则默认视为 1-based 做 -1 归一化（兼容历史批量导入路径）
         """
         page_num_str = metrics.get('page_num', '')
         total_pages_str = metrics.get('total_pages', '')
         page_num = int(page_num_str) if page_num_str.isdigit() else 0
         total_pages = int(total_pages_str) if total_pages_str.isdigit() else 1
-        
-        # 判断是否需要转换为 0-based
-        # 如果 page_num >= 1 且 page_num <= total_pages，则认为是 1-based
-        # （因为 0-based 的第1页应该是 0，而不是 1）
+
+        # 同 bucket 一旦被标记为 0-based，就持续使用 0-based（避免后续页被误 -1 碰撞）
+        if hasattr(self, '_zero_based_buckets') and bucket_key in self._zero_based_buckets:
+            if page_num >= total_pages:
+                logger.warning(
+                    "[IMPORT] page_num 越界(0-based): page_num=%s total_pages=%s bucket=%s",
+                    page_num, total_pages, bucket_key,
+                )
+            return page_num, total_pages
+
+        # 检测到明确 0-based 信号：page_num 字符串以 '0' 开头（如 '0'/'001'/'01'）
+        if page_num_str.startswith('0') and page_num_str:
+            if not hasattr(self, '_zero_based_buckets'):
+                self._zero_based_buckets = set()
+            self._zero_based_buckets.add(bucket_key)
+            return page_num, total_pages
+
+        # 默认视为 1-based：做 -1 归一化
         if 1 <= page_num <= total_pages:
             page_num = page_num - 1
             logger.info(
