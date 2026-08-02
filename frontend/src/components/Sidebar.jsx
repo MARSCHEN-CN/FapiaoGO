@@ -234,10 +234,10 @@ export default React.memo(function Sidebar({
             <img src={`${PUBLIC_BASE}icon/app-icon.png`} alt="Logo" />
           </div>
           <div className="sb-brand-info">
-            <div className="sb-brand-text">POPIC</div>
+            <div className="sb-brand-text">FapiaoGO</div>
             <div className="sb-brand-sub">发票管理助手</div>
           </div>
-          <span className="sb-brand-badge">MARS</span>
+          <span className="sb-brand-badge">V1.0.0</span>
         </div>
 
         <div className="sb-actions">
@@ -475,7 +475,7 @@ export default React.memo(function Sidebar({
                   {ICONS.file}
                 </div>
                 <span className={`sb-stat-val${poppingStats.count ? ' pop' : ''}`}>{documentView.documentCount}</span>
-                <span className="sb-stat-label">文件数</span>
+                <span className="sb-stat-label">发票数</span>
               </div>
               <div className="sb-stat">
                 <div className="sb-stat-icon green">

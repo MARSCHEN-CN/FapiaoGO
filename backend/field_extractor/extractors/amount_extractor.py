@@ -330,7 +330,17 @@ class AmountExtractor:
         if len(pairs) > 1:
             selected_pair = self._select_pair_by_heji_anchor(tokens, pairs)
             if selected_pair:
-                pairs = [selected_pair]
+                # ── 金额大小校验（多页发票场景）──
+                # 多页发票中"合计"金额必然大于"小计"金额。
+                # 如果锚点选中的金额明显小于其他候选（不到最大金额的50%），
+                # 说明锚点匹配到了小计行，回退到金额最大的候选。
+                max_je_pair = max(pairs, key=lambda p: p.je_value)
+                if selected_pair.je_value < max_je_pair.je_value * 0.5:
+                    logger.info("[DualYen] 锚点选中金额(%.2f)明显小于最大候选(%.2f)，回退到最大金额候选",
+                                selected_pair.je_value, max_je_pair.je_value)
+                    pairs = [max_je_pair]
+                else:
+                    pairs = [selected_pair]
                 logger.info("[DualYen] 合计锚点筛选后保留1组")
 
         # 取最佳候选

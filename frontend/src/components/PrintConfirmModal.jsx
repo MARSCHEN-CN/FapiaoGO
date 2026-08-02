@@ -46,7 +46,7 @@ const PrintConfirmModal = ({
               <rect x="6" y="14" width="12" height="8" />
             </svg>
             <h3 className="pcm-title">打印确认</h3>
-            <span className="pcm-count">{totalFiles} 个文件</span>
+            <span className="pcm-count">{totalFiles} 页文件</span>
           </div>
           <button className="modal-close-btn" onClick={onCancel} aria-label="关闭">
             <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -418,7 +418,7 @@ const PrintConfirmModal = ({
         {/* ── 底部 ── */}
         <div className="pcm-footer pcm-footer--new">
           <div className="pcm-footer-hint">
-            确认后将 {totalFiles} 个文件发送到打印机
+            确认后将 {totalFiles} 页发送到打印机
             {mergeMode && settings.mergeMode && settings.mergeMode !== 'none' && (
               <span className="pcm-badge pcm-badge-merge" style={{ marginLeft: '8px' }}>
                 {settings.mergeMode === 'merge2' ? '两票一页' :
