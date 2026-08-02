@@ -50,6 +50,19 @@ export async function runParseTask(job, { ipc, autoOrient }) {
     fd.append('autoOrient', autoOrient ? '1' : '0')
     fd.append('mode', 'batch')
 
+    // Commit 5.0 (B3)：单文件多页路径 transport 透传
+    // fileHelpers.processPdfFile 已为多页 PDF 的每个分页生成 per-page fileObj，
+    // 并设了 sourceDocId(父 PDF 物理身份) / pageNum(0-based，首页=0) / totalPages。
+    // 这里把它们转成 Phase C（app.py /parse_invoice 多页组装分支）要的 snake_case 字段，
+    // 使后端走 PageResultStore + InvoiceAssemblyPipeline，把同票多页聚成 1 个 InvoiceDocument。
+    // 仅当三者齐全才发送：单页文件不设 sourceDocId → 不进此分支 → 自然走 legacy（Phase C 条件 False）。
+    // pageNum=0 必须保留（String(0)==='0'）；绝不用 `if (f.pageNum)` 这类 truthy 判断，会丢首页。
+    if (f.sourceDocId && f.totalPages != null && f.pageNum != null) {
+      fd.append('source_doc_id', f.sourceDocId)
+      fd.append('page_num', String(f.pageNum))
+      fd.append('total_pages', String(f.totalPages))
+    }
+
     resp = await fetch(`${BACKEND_URL}/parse_invoice`, {
       method: 'POST', body: fd,
     })
@@ -60,6 +73,19 @@ export async function runParseTask(job, { ipc, autoOrient }) {
     fd.append('file', file)
     fd.append('autoOrient', autoOrient ? '1' : '0')
     fd.append('mode', 'batch')
+
+    // Commit 5.0 (B3)：单文件多页路径 transport 透传
+    // fileHelpers.processPdfFile 已为多页 PDF 的每个分页生成 per-page fileObj，
+    // 并设了 sourceDocId(父 PDF 物理身份) / pageNum(0-based，首页=0) / totalPages。
+    // 这里把它们转成 Phase C（app.py /parse_invoice 多页组装分支）要的 snake_case 字段，
+    // 使后端走 PageResultStore + InvoiceAssemblyPipeline，把同票多页聚成 1 个 InvoiceDocument。
+    // 仅当三者齐全才发送：单页文件不设 sourceDocId → 不进此分支 → 自然走 legacy（Phase C 条件 False）。
+    // pageNum=0 必须保留（String(0)==='0'）；绝不用 `if (f.pageNum)` 这类 truthy 判断，会丢首页。
+    if (f.sourceDocId && f.totalPages != null && f.pageNum != null) {
+      fd.append('source_doc_id', f.sourceDocId)
+      fd.append('page_num', String(f.pageNum))
+      fd.append('total_pages', String(f.totalPages))
+    }
 
     resp = await fetch(`${BACKEND_URL}/parse_invoice`, {
       method: 'POST', body: fd,
