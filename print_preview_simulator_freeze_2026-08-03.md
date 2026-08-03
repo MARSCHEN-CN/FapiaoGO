@@ -494,10 +494,18 @@ A3 切 Canvas 轨前必须解决「纸张语义统一」，候选：
 1. **A3 接线时传 `printPaperLayout`（含 usableRect）**——冻结 §11 头号风险落地，canvas 轨走 MultiTicketComposer+buildRenderCommand（renderers.js:1018 paperLayout 参数已就绪）
 2. 或 gateCases 改用 `customPaper`(230×160mm) 采集 canvas 做「同纸张下边距对齐」对照实验（A2 下一步）
 
-### 14.5 冻结状态
+### 14.5 G1-CANVAS-2 同纸张实验（2026-08-03 晚，commit `2478e660` case + `814f24ad` 附录 A）
+- **实验**：A1-customPaper（`paperSize='Custom'`+`customPaper{widthMM:230,heightMM:160}`）同纸张下验证 canvas≈source ±0.5mm。
+- **实测 FAIL 且更差**：canvas 内容被缩到 53.5%（1296×799px），边距 60.7/45.0/62.4/48.3mm。
+- **根因（源码实读 renderers.js:513-517 + layout.js:25）**：`renderPDFPageRaw` L515 `getPaperPixels(paperKey, dpi, isLandscape)` **未传 customPaper** → `paperKey='Custom'` 回退 A4（PAPER_SIZE_MAP 无 'Custom'）→ PDF 先渲染进 A4 画布 → 再被 createLayout fit 进 230×160 slot → **双重 fit scale=1890/3508=0.539**（实测 0.535 吻合）。
+- **结论升级**：G1-CANVAS-2 把问题从「纸张语义不同」推进到「渲染器缺陷：renderPDFPageRaw 不支持 customPaper 透传」。A3 除 `settings.paperSize→PrintExecutionPlan.paperLayout` 外，**还需修 renderPDFPageRaw**（传 customPaper 或单文件用 PDF 原生页尺寸——L518-524 `paperKey=null` 分支已存在）。
+- **解释未暴露原因**：生产 merge 轨全 A4（paperKey 有效），单文件 source 轨走 Sumatra 不经此路径 → 缺陷只在 Gate 的 customPaper 路径暴露。
+
+### 14.6 冻结状态
 ```
-A2-G1 source ✅ | canvas 采集链路 ✅ + 第一份报告 🔴 FAIL(预期)
+A2-G1 source ✅ | canvas 采集链路 ✅ + 第一份报告 🔴FAIL(预期)
+A2-G1-CANVAS-2 同纸张实验 🔴 FAIL（renderPDFPageRaw customPaper 缺陷，双重 fit）
 A2-G1 OFD (G1-B) ⏸ | A2-G2..G6 ⏸
-A3 ⏸（需先解决纸张语义统一）| Phase B ⏸
+A3 ⏸（需先解决纸张语义统一 + 修 renderPDFPageRaw）| Phase B ⏸
 ```
 
