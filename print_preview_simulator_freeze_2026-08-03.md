@@ -546,6 +546,14 @@ Phase B    ⏸
 - **红线守住**：未改 renderMultipleItemsToCanvas 算法 / pdfMargin / Sumatra / customPaper / 新 fit 逻辑。paperLayout 最小结构（computePaperLayout 输出）；coordinateSpace/sourceOrigin 预留 A3-3。
 - 下一步：A3-2（native single renderer，paperKey=null，验证 ratio≥0.99；完成后立即测 A1 0°/90° rotation）。
 
+### 14.12 A3-2 落地（2026-08-03 晚，Gate 工具 `171f850e` + 附录 D `55de9239`）
+- **双 Gate PASS**（用户实测 + analyzeNativeOutput）：
+  - A3-2-01 (rot0)：content ratio **w=1.0 / h=0.999**，bitmap 2480×1654（原生页）→ native renderer 复现 G1-3B ✅
+  - A3-2-02 (rot90)：bitmap 1654×2480（宽高互换）、content ratio (swapped) **w=0.999 / h=1.0**、bbox 无负坐标 → **R1 rotation 风险解除 ✅**
+- **结论**：native renderer 资源层正确（尺寸 + 方向），分层验证「先资源后放置」成立。
+- **A3-3 路线确定**：native bitmap + paperLayout coordinateSpace/sourceOrigin（contract 预留）+ 10mm expansion offset = source 等价输出；无需 RenderPlacementAdapter。
+- 状态：A3-1 ✅ → A3-2 ✅（R1 解除）→ **A3-3 ⏸ placement alignment（margin≤0.5mm）**。
+
 ### 14.6 冻结状态
 ```
 A2-G1 source ✅ | canvas 采集链路 ✅ + 第一份报告 🔴FAIL(预期)
