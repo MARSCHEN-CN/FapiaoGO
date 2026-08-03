@@ -691,6 +691,9 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
                       fileFormat: fileObj.fileFormat || '',
                       previewImage: item.previewImage || null,
                       failedFields: item.failedFields || [],
+                      // 字段级失败明细（dict 列表，含真实 reason），来自后端
+                      // invoice_fields.failed_fields（import_batch_manager 透传）或 item.failedFieldsDetail
+                      failedFieldsDetail: (invFields || {}).failed_fields || item.failedFieldsDetail || [],
                       invoiceFields: invFields,
                       issuer: (invFields || {}).kpr || '',
                       buyerName: (invFields || {}).gmfmc || '',
