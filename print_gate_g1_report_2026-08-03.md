@@ -123,3 +123,30 @@ DEV-only 临时 patch（验证后可能回滚）：`renderPDFPageRaw` 加第 6 �
 - **G1-CANVAS-3A 通过**（验证目标=画布尺寸恢复 ✅，达成）
 - 但同纸张边距仍不对齐（9.7mm），**证明「纸张语义统一」还不够，还需「内容放置语义统一」**——这比原预期更深一层
 - G1-CANVAS-3B（paperKey=null 原生渲染）是下一个验证点：若原生渲染+外扩能对齐 source，A3 的改造目标就完全清晰了
+
+# 附录 C：G1-CANVAS-3B 结果（2026-08-03 晚，DEV patch commit `4d1284b8`）
+
+## 实验
+native PDF page render（`renderPDFPageRaw(paperKey=null)`，renderers.js:558），单变量验证「尺寸恢复是 renderer 原生能力」。
+
+## 结果（用户实测，analyzeNativeOutput 判定）
+| 数据点 | native | source | 判定 |
+|---|---|---|---|
+| bitmap | **2480×1654**（PDF 原生页 210×140mm）| 2717×1890（+10mm 扩展）| 尺寸无扩展（预期）|
+| content bbox | (51, 71, 2424×1499) | (169, 189, 2423×1500) | **ratio w=1.0 / h=0.999 ✅** |
+| bbox offset | dx=-118, dy=-118px | — | **恰好 = 10mm 外扩（118.1px@300dpi）** |
+
+## 结论：G1-CANVAS-3B PASS ✅
+- **内容尺寸完美恢复**（ratio 1.0/0.999）→ 尺寸正确性是 renderer 原生能力，非 createLayout/customPaper 路径功劳。
+- **native 坐标系 = source 坐标系 - 118px（10mm 外扩）** → source 与 native 的唯一差异就是「纸面扩展」：source = native 画布 + 四边外扩 10mm，内容位置不变。
+- **决定性推论**：A3 不需要 RenderPlacementAdapter——source 语义 = 「native 渲染 + 纸面外扩」= add-pdf-margins 语义（扩展 MediaBox 内容不变）。canvas 轨只需：native 渲染（已有 L558 分支）+ 把外扩 10mm 作为画布偏移即可复刻 source。
+
+## 对 A3 的最终含义（3B 结果定稿）
+```
+3B PASS → A3 = 接线 native renderer：
+  单文件分支 → renderPDFPageRaw(paperKey=null) 原生渲染
+             → 画布 = 原生页 + 外扩边距（纸面扩展，内容不变）
+             → 与 source 的 add-pdf-margins 语义天然一致
+```
+- 不需要建 RenderPlacementAdapter / PrintRenderContract 新模型（3B FAIL 才需要）
+- 需要解决的接线点：PrintExecutionPlan.paperLayout 提供「原生页 + 边距」的纸面几何（renderers.js:1018 paperLayout 参数已就绪）
