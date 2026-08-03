@@ -12,13 +12,14 @@ import { printSingleSourceFile as printSingleSource, printMergedImages } from '.
 import { runMergedPrintTasks } from '../runners/printRunner'
 import { computePaperLayout } from '../previewState'
 import { fetchPrintRaster, buildPrintJobItem } from '../utils/printAdapter'
-// A1/A1.5：已证等价的 Plan 事实来源 + 影子比较 helper（Commit 2 source 分支消费）
-import { buildPrintExecutionPlan, SOURCE_FILE_FILTER } from '../print/buildPrintExecutionPlan'
+// A1/A1.5：已证等价的 Plan 事实来源 + 影子比较 helper（Commit 2 source / Commit 3 merge 分支消费）
+import { buildPrintExecutionPlan, SOURCE_FILE_FILTER, MERGE_FILE_FILTER } from '../print/buildPrintExecutionPlan'
 import {
   compareLegacyPlan,
   printPlanCompareEnabled,
 } from '../print/compareLegacyPlan'
 import { deriveSourcePrintJobs } from '../print/deriveSourcePrintJobs'
+import { deriveMergePrintJobs } from '../print/deriveMergePrintJobs'
 import { buildLegacyPrintPlan } from '../print/buildLegacyPrintPlan'
 
 // ✅ 懒加载 PDF 渲染模块，避免首屏加载 1.4 MB 的 pdfjs-dist + react-pdf
@@ -502,15 +503,18 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
     // ✅ 合并模式强制方向：merge4=横向，其他=竖向
     const forcedLandscape = isMerge ? getForcedLandscape(mergeMode, settings.landscape) : settings.landscape
     if (isMerge) {
-      // 合并模式：根据 mergeMode 动态分组
-      const groups = []
-      for (let i = 0; i < parsedFiles.length; i += groupSize) {
-        groups.push(assignTaskId(parsedFiles.slice(i, i + groupSize)))
+      // 合并模式：消费已证等价的 MERGE Plan（A1.5 投影性质）→ deriveMergePrintJobs
+      const plan = buildPrintExecutionPlan(files, { filter: MERGE_FILE_FILTER, settings, fileRotations })
+      const mergeJobs = deriveMergePrintJobs(plan, files)
+      // 开发期影子比对（DEV + localStorage 开关，绝不进 production）：新 plan vs Legacy Oracle
+      if (printPlanCompareEnabled()) {
+        compareLegacyPlan(plan, { files, settings, fileRotations })
       }
-      printQueueRef.current.pending = groups
-      setPrintFilesAndRef(groups.map(t => ({
-        key: t.data.map(f => f.key).join('+'),
-        name: t.data.map(f => f.name).join(' + '),
+      // 队列任务 = 每组文件对象数组（与旧 parsedFiles.slice 滑窗分组逐组等价）
+      printQueueRef.current.pending = mergeJobs.map((j) => assignTaskId(j.files))
+      setPrintFilesAndRef(mergeJobs.map((j) => ({
+        key: j.files.map((f) => f.key).join('+'),
+        name: j.files.map((f) => f.name).join(' + '),
       })))
     } else {
       // 普通模式：单文件
