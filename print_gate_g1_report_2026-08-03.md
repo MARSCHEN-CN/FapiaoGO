@@ -64,7 +64,41 @@ A3 切 Canvas 轨前必须解决「纸张语义统一」，候选方案：
 A2-G1
   source 轨      ✅ (79d102e2)
   canvas 轨       ✅ 采集链路打通 + 第一份对比报告（本报告）
-                  🔴 结论：纸张语义不同 → FAIL（预期，非 bug）
+                  🔴 结论1：纸张语义不同（A4 vs 专用纸）→ FAIL（预期，非 bug）
+                  🔴 结论2（G1-CANVAS-2）：renderPDFPageRaw customPaper 缺陷 → 双重 fit
   OFD (G1-B)     ⏸
 A2-G2..G6 ⏸ | A3 ⏸（需先解决纸张语义统一）| Phase B ⏸
 ```
+
+# 附录 A：G1-CANVAS-2 同纸张实验（2026-08-03 晚，commit `2478e660` case + 实测）
+
+## 实验
+新增 `A1-customPaper` case：`paperSize='Custom'` + `customPaper:{widthMM:230, heightMM:160}`（与 source 实测纸面 2717×1890px@300dpi 对齐），验证「同纸张下 canvas margin ≈ source margin ±0.5mm」。
+
+## 实测结果（用户 DevTools）
+| 项 | source | canvas (customPaper 230×160) |
+|---|---|---|
+| 纸张 | 2717×1890px（230×160mm） | 2717×1890px（230×160mm）✅ 同纸 |
+| 内容尺寸 | 2423×1500px | **1296×799px（缩小到 53.5%!）** |
+| 边距 mm (L/T/R/B) | 14.3/16.0/10.6/17.0 | **60.7/45.0/62.4/48.3** |
+
+**FAIL（且比 A4 实验更差）——但根因不是纸张，是 renderPDFPageRaw 的 customPaper 缺陷。**
+
+## 根因（源码实读 renderers.js:513-517 + layout.js:25）
+```
+renderPDFPageRaw(pdfData, dpi, fileKey, paperKey, isLandscape)
+  if (paperKey) {
+    const pixels = getPaperPixels(paperKey, dpi, isLandscape)   // ← L515 没传 customPaper!
+    canvasW = pixels.width; canvasH = pixels.height
+```
+- `paperKey='Custom'` 时 `getPaperPixels('Custom', dpi, isLandscape)` **customPaper 参数为 null** → `PAPER_SIZE_MAP['Custom']` 不存在 → **回退 A4（2480×3508）**（layout.js:25-28）
+- 于是：PDF 先渲染进 **A4 画布**（PDF 210×140mm 内容在 A4 内 1:1 居中）→ 该 A4 画布再被 createLayout fit 进 **230×160mm slot（2717×1890px）** → 双重 fit，`scale=1890/3508=0.539` → 内容缩到 53.5%（实测 0.535 吻合）
+
+## 结论（比预期更有价值）
+G1-CANVAS-2 把问题从「纸张语义不同（A4 vs 专用纸）」**推进到「渲染器缺陷：renderPDFPageRaw 不支持 customPaper 透传」**：
+- A3 不仅要把 `settings.paperSize → PrintExecutionPlan.paperLayout`，**还得修 `renderPDFPageRaw` 让它按真实纸张渲染 PDF**（传 customPaper 或改用 PDF 原生页尺寸 + 纸面外扩，与 source 的 add-pdf-margins 语义对齐）
+- 这也解释了为什么生产 merge 轨（A4 为主）没暴露：merge 都是 A4，paperKey 有效；单文件 source 轨走 Sumatra 不经此路径
+
+## 后续
+- 🟡 候选修复（A3 范畴，不在本 Gate）：`renderPDFPageRaw` L515 传 customPaper / 或单文件分支用 PDF 原生页尺寸（`paperKey=null` 分支，L518-524 已有）
+- ⏸ G1-CANVAS-2 待「修复 renderPDFPageRaw 后重跑」验证同纸张对齐
