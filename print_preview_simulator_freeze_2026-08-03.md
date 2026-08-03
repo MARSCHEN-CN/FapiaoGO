@@ -508,6 +508,27 @@ A3 切 Canvas 轨前必须解决「纸张语义统一」，候选：
 - **结论升级（冻结）**：A3 仅「纸张语义统一」不够，还需「内容放置语义统一」= 单文件分支用 PDF 原生页尺寸渲染（paperKey=null 分支已有 L518-524）+ 纸面外扩。G1-CANVAS-3B（paperKey=null 原生渲染）是下一验证点。
 - 注：此 patch 是验证用，**A3 决策后决定保留或回滚**（当前 DEV patch 已提交但标注临时）。
 
+### 14.8 G1-CANVAS-3B（2026-08-03 晚，DEV patch `4d1284b8` + 附录 C `0578dc6f`）
+- **实验**（用户定稿，最后一个纯验证实验）：`renderPDFPageRaw(paperKey=null)` native 渲染，单变量验证「尺寸恢复是 renderer 原生能力」；不做 +10mm 模拟/不建 source replica。
+- **结果：3B PASS ✅**（用户实测 + analyzeNativeOutput）：
+  - bitmap **2480×1654**（PDF 原生页 210×140mm，无扩展）
+  - content ratio **w=1.0 / h=0.999**（native 内容 = source 内容 2423×1500，尺寸完美恢复）
+  - bbox offset **dx=dy=-118px = 恰好 10mm 外扩（118.1px@300dpi）**
+- **决定性推论（冻结）**：source 语义 = 「native 渲染 + 纸面外扩（内容不变）」= add-pdf-margins 语义（扩展 MediaBox 内容位置不变）。**A3 = 接线 native renderer**（paperKey=null 分支已有 L558）+ paperLayout 提供「原生页+边距」纸面几何（renderers.js:1018 已就绪）——**无需 RenderPlacementAdapter/PrintRenderContract 新模型**（那是 3B FAIL 才需要）。
+- 架构收益（用户记录）：同一 ParseResource 两个 RenderResource 语义不同（source=扩页+原位 / canvas=纸画布+fit+居中）→ 正因如此 PrintRenderContract 原则必要，但 3B 证明 canvas 原生分支已满足 source 语义，A3 只接线不建新模型。
+
+### 14.9 A2 Gate 完整结论（G0-G1-CANVAS-3B 全部完成）
+```
+A2-G0      ✅ 框架+锚样本（8c6da15e）
+A2-G1      ✅ source 采集（79d102e2）+ canvas 采集链路 + 报告1（纸张语义 FAIL）
+A2-G1-CV2  ✅ 同纸张实验（2478e660）→ 发现 renderPDFPageRaw customPaper 缺陷
+A2-G1-CV3A ✅ patch 确认修复（5d899d18）→ 残余=内容放置语义
+A2-G1-CV3B ✅ native 渲染 PASS（4d1284b8 + 0578dc6f）→ A3=接线 native renderer
+A2-G2..G6  ⏸（QR/rotation/OFD/小字/多页——部分被 G1 系列覆盖，待 A3 后复验）
+A3         ⏸ 接线：单文件分支 → native render + paperLayout（目标明确）
+Phase B    ⏸
+```
+
 ### 14.6 冻结状态
 ```
 A2-G1 source ✅ | canvas 采集链路 ✅ + 第一份报告 🔴FAIL(预期)
