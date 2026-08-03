@@ -13,6 +13,32 @@ import assert from 'node:assert/strict'
 import { measureMarginsPx, pxToMm, mmToPx, marginsToMm, assertSafeMarginAlignment, findContentBBox } from './measureMargins.mjs'
 import { anchorManifest, validateAnchorManifest } from './anchorManifest.mjs'
 import { SAFE_MARGIN_TOLERANCE_MM, GATE_DPI, PAPER_SIZES_MM } from './gateConfig.mjs'
+import { normalizeReadFileData } from './ipcPayloadAdapter.mjs'
+
+// ── 0. IPC payload 适配（G1-CANVAS-1 真实契约）──────────────────
+test('normalizeReadFileData: Uint8Array 直通（形态 A）', () => {
+  const u8 = new Uint8Array([1, 2, 3])
+  assert.equal(normalizeReadFileData({ success: true, data: u8 }), u8)
+})
+
+test('normalizeReadFileData: ArrayBuffer 转换（形态 B）', () => {
+  const ab = new Uint8Array([4, 5, 6]).buffer
+  const out = normalizeReadFileData({ success: true, data: ab })
+  assert.ok(out instanceof Uint8Array)
+  assert.deepEqual([...out], [4, 5, 6])
+})
+
+test('normalizeReadFileData: Node Buffer 序列化对象（形态 C）', () => {
+  const payload = { success: true, data: { type: 'Buffer', data: [7, 8, 9] } }
+  const out = normalizeReadFileData(payload)
+  assert.ok(out instanceof Uint8Array)
+  assert.deepEqual([...out], [7, 8, 9])
+})
+
+test('normalizeReadFileData: 不支持的 payload 抛错', () => {
+  assert.throws(() => normalizeReadFileData({ success: true, data: { foo: 'bar' } }))
+  assert.throws(() => normalizeReadFileData({ success: true, data: 'string-not-bytes' }))
+})
 
 // ── 1. 测量纯函数 ──────────────────────────────────────────────
 test('findContentBBox: 白底上的黑块 → 精确 bbox', () => {

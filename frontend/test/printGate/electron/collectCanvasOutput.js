@@ -19,6 +19,7 @@
 import { GATE_CASES } from '../gateCases.mjs'
 import { GATE_DPI } from '../gateConfig.mjs'
 import { findContentBBox, measureMarginsPx, marginsToMm } from '../measureMargins.mjs'
+import { normalizeReadFileData } from '../ipcPayloadAdapter.mjs'
 import { renderMultipleItemsToCanvas } from '../../../src/renderers.js'
 import { buildPrintJobItem, fetchPrintRaster } from '../../../src/utils/printAdapter.js'
 
@@ -71,7 +72,7 @@ export async function makePrintItem(caseDef) {
     const ipc = resolveGateIPC()
     const fileData = await ipc.invoke('read-file', f.printPath)
     if (!fileData?.success) throw new Error(`read-file 失败: ${f.printPath}`)
-    f._pdfData = new Uint8Array(await fileData.data.arrayBuffer())
+    f._pdfData = normalizeReadFileData(fileData)
     return f
   }
 
@@ -100,7 +101,7 @@ export async function makePrintItem(caseDef) {
     const ipc = resolveGateIPC()
     const fileData = await ipc.invoke('read-file', f.printPath)
     if (fileData?.success) {
-      f._previewImageUrl = URL.createObjectURL(new Blob([fileData.data]))
+      f._previewImageUrl = URL.createObjectURL(new Blob([normalizeReadFileData(fileData)]))
       return f
     }
     if (f.previewImage) { f._previewImageUrl = URL.createObjectURL(b64toBlob(f.previewImage)); return f }
