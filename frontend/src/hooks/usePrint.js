@@ -12,6 +12,14 @@ import { printSingleSourceFile as printSingleSource, printMergedImages } from '.
 import { runMergedPrintTasks } from '../runners/printRunner'
 import { computePaperLayout } from '../previewState'
 import { fetchPrintRaster, buildPrintJobItem } from '../utils/printAdapter'
+// A1/A1.5：已证等价的 Plan 事实来源 + 影子比较 helper（Commit 2 source 分支消费）
+import { buildPrintExecutionPlan, SOURCE_FILE_FILTER } from '../print/buildPrintExecutionPlan'
+import {
+  compareLegacyPlan,
+  printPlanCompareEnabled,
+} from '../print/compareLegacyPlan'
+import { deriveSourcePrintJobs } from '../print/deriveSourcePrintJobs'
+import { buildLegacyPrintPlan } from '../print/buildLegacyPrintPlan'
 
 // ✅ 懒加载 PDF 渲染模块，避免首屏加载 1.4 MB 的 pdfjs-dist + react-pdf
 let _printRenderers = null
@@ -819,26 +827,40 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
 
     // ── Source 管线：批量打印所有已解析文件 ──
     if (PRINT_PIPELINE.mode === 'source') {
-      if (settings.extraSpecial) {
-        // 一普二专：合并两轮进度为一个连续序列，避免进度条重置
-        const specialFiles = allParsed.filter(f => f.invoiceType?.includes('专票'))
-        // 第二轮专票项使用独立 _jobKey（+ '_v2'），在进度列表中单独展示
-        const mergedJobs = [
-          ...allParsed.map(f => ({ ...f, _jobKey: f.key, _round: 1 })),
-          ...specialFiles.map(f => ({ ...f, _jobKey: f.key + '_v2', _round: 2 })),
-        ]
-        console.log('[PRINT] 一普二专: 合并 %d 个任务（第1轮%d + 第2轮%d）',
-          mergedJobs.length, allParsed.length, specialFiles.length)
+      // A1/A1.5：buildPrintExecutionPlan 已证与旧逻辑等价，作为本分支唯一事实来源。
+      // 旧 source 消费逻辑（allParsed / specialFiles / mergedJobs）已固化为
+      // buildLegacyPrintPlan（Legacy Oracle），不在此重复、不删除（待 Commit 3 + A2 Gate 前清理）。
+      const plan = buildPrintExecutionPlan(files, {
+        filter: SOURCE_FILE_FILTER,
+        settings,
+        fileRotations,
+      })
 
-        // printAllSourceFiles 内部使用 _jobKey 做进度追踪，
-        // 不再 mutate f.key——避免旋转角度丢失和异常时 key 无法恢复
-        const r = await printAllSourceFiles(mergedJobs, printSettings)
-        showPrintSummary(r.completed, r.failed)
-      } else {
-        console.log('[PRINT] Source → 批量打印 %d 个文件', allParsed.length)
-        const r = await printAllSourceFiles(allParsed, printSettings)
-        showPrintSummary(r.completed, r.failed)
+      // 影子比较（仅 DEV + 手动开关；绝不进 production）：
+      //  1) 模型等价：新 plan vs Legacy Oracle（buildLegacyPrintPlan）
+      //  2) 消费序列等价：plan 派生的 job _jobKey 序列 vs Legacy 派生序列
+      //     —— 防止 executor 漏消费 plan 字段（即使 plan 等价，映射成 job 仍可能错位）
+      if (printPlanCompareEnabled()) {
+        compareLegacyPlan(plan, { files, settings, fileRotations })
+        const legacyPlan = buildLegacyPrintPlan(files, { settings, fileRotations })
+        const planKeys = deriveSourcePrintJobs(plan, files).map(j => j._jobKey)
+        const legacyKeys = deriveSourcePrintJobs(legacyPlan, files).map(j => j._jobKey)
+        if (JSON.stringify(planKeys) !== JSON.stringify(legacyKeys)) {
+          console.warn('[PRINT PLAN COMPARE] executor job sequence mismatch',
+            '\nplan  :', planKeys, '\nlegacy:', legacyKeys)
+        }
       }
+
+      // 新消费路径：从 plan 派生真实执行 jobs（替代旧 mergedJobs / allParsed 直传）。
+      const planJobs = deriveSourcePrintJobs(plan, files)
+      if (settings.extraSpecial) {
+        console.log('[PRINT] 一普二专(plan): %d 个任务（第1轮%d + 第2轮%d）',
+          planJobs.length, plan.pages.length, plan.extraPages.length)
+      } else {
+        console.log('[PRINT] Source(plan) → 批量打印 %d 个文件', plan.pages.length)
+      }
+      const r = await printAllSourceFiles(planJobs, printSettings)
+      showPrintSummary(r.completed, r.failed)
       return
     }
 
