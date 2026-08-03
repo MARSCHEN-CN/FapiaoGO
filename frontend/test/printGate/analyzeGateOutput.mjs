@@ -80,6 +80,38 @@ export function analyzeGateOutput(cases = GATE_CASES) {
   return { cases: rows, summary: { total: rows.length, pass: passCount, fail: rows.length - passCount } }
 }
 
+/**
+ * G1-CANVAS-3B native 对比：读 native.json（paperKey=null 渲染），对比内容尺寸与 bbox offset vs source
+ * 判定（用户定稿）：
+ *   - 内容尺寸 ratio ≈ 1.0（native 内容 = source 内容 2423×1500）→ 尺寸恢复
+ *   - bbox offset 小（坐标系接近）→ native placement 接近 source
+ */
+export function analyzeNativeOutput(caseId = 'A1-native') {
+  const native = readJson(caseId, 'native.json')
+  const source = readJson(caseId, 'source.json')
+  if (!native || !source) {
+    return { case: caseId, verdict: 'INCOMPLETE（缺 native.json 或 source.json）', nativeAvailable: !!native }
+  }
+  const nb = native.bboxPx, sb = source.bbox
+  const sourceSize = { w: sb.right - sb.left, h: sb.bottom - sb.top }
+  const ratio = nb ? { w: Math.round(nb.w / sourceSize.w * 1000) / 1000, h: Math.round(nb.h / sourceSize.h * 1000) / 1000 } : null
+  const offset = native.bboxOffsetVsSourcePx
+  const sizeOk = ratio && Math.abs(ratio.w - 1) < 0.02 && Math.abs(ratio.h - 1) < 0.02
+  return {
+    case: caseId,
+    nativeBitmapPx: native.paperActualPx,
+    sourceBitmapPx: source.paperActualPx,
+    nativeBboxPx: nb,
+    sourceBboxPx: sb,
+    contentSizeRatio: ratio,
+    bboxOffsetVsSourcePx: offset,
+    sizeOk,
+    verdict: sizeOk
+      ? 'PASS（native 内容尺寸 = source 内容尺寸 ±2%）— 尺寸恢复'
+      : `FAIL（native 内容尺寸 ratio ${JSON.stringify(ratio)} ≠ 1）`,
+  }
+}
+
 // CLI 入口（Windows：argv[1] 是反斜杠路径，url pathname 是正斜杠；用 basename 比对）
 const _isCli = process.argv[1] && path.basename(process.argv[1]) === 'analyzeGateOutput.mjs'
 if (_isCli) {
@@ -93,6 +125,13 @@ if (_isCli) {
     if (r.expectedMarginsMm) console.log(`  expected(settings): L${r.expectedMarginsMm.left} T${r.expectedMarginsMm.top} R${r.expectedMarginsMm.right} B${r.expectedMarginsMm.bottom}`)
     console.log(`  verdict: ${r.verdict}`)
   }
+  // G1-CANVAS-3B native 对比（单独输出）
+  const native = analyzeNativeOutput()
+  console.log(`\n=== ${native.case} (3B native) ===`)
+  if (native.nativeBitmapPx) console.log(`  native bitmap: ${native.nativeBitmapPx.w}x${native.nativeBitmapPx.h}  source bitmap: ${native.sourceBitmapPx.w}x${native.sourceBitmapPx.h}`)
+  if (native.contentSizeRatio) console.log(`  content size ratio: w=${native.contentSizeRatio.w} h=${native.contentSizeRatio.h}`)
+  if (native.bboxOffsetVsSourcePx) console.log(`  bbox offset vs source: dx=${native.bboxOffsetVsSourcePx.dx} dy=${native.bboxOffsetVsSourcePx.dy}px`)
+  console.log(`  verdict: ${native.verdict}`)
   console.log(`\n===== SUMMARY: ${report.summary.pass}/${report.summary.total} PASS =====`)
 }
 

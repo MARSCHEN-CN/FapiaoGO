@@ -454,7 +454,8 @@ function setVersion(map, key, value, maxSize = 100) {
 // 用于版本过期时 cancel() 终止旧渲染，避免 GPU/Worker 浪费
 const _renderTasks = new Map()
 
-async function renderPDFPageRaw(pdfData, dpi, fileKey, paperKey = null, isLandscape = false, customPaper = null) {
+// G1-CANVAS-3B DEV patch：临时 export 供 Gate 采集器直接验证 native rendering（A3 决策后定保留/回滚）
+export async function renderPDFPageRaw(pdfData, dpi, fileKey, paperKey = null, isLandscape = false, customPaper = null) {
   // 按文件隔离队列
   const queueKey = _getRenderQueueKey(pdfData, fileKey)
   let queue = _renderQueues.get(queueKey)

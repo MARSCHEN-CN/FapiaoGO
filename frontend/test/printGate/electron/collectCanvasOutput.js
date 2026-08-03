@@ -20,7 +20,7 @@ import { GATE_CASES } from '../gateCases.mjs'
 import { GATE_DPI } from '../gateConfig.mjs'
 import { findContentBBox, measureMarginsPx, marginsToMm } from '../measureMargins.mjs'
 import { normalizeReadFileData } from '../ipcPayloadAdapter.mjs'
-import { renderMultipleItemsToCanvas } from '../../../src/renderers.js'
+import { renderMultipleItemsToCanvas, renderPDFPageRaw } from '../../../src/renderers.js'
 import { buildPrintJobItem, fetchPrintRaster } from '../../../src/utils/printAdapter.js'
 
 /** 渲染进程注入的 ipc（真实契约 = window.electronAPI.ipcRenderer，见 electron/preload.js:51,92） */
@@ -192,6 +192,51 @@ export async function collectCanvasCases(opts = {}) {
     results.push({ case: c.id, ok: r.ok, artifact: r.artifact, error: r.error, pngBytes: r.pngBytes })
   }
   return results
+}
+
+/**
+ * G1-CANVAS-3B：native PDF page render 采集器（单变量验证）
+ *
+ * 直接调 renderPDFPageRaw(paperKey=null)（renderers.js:558-566 native 分支）：
+ *   - 画布 = PDF 原生页尺寸（dpi/72 缩放）
+ *   - 无 slot-fit / 无居中 / 无 customPaper / 无外扩
+ * 记录三个数据点（用户定稿 §3B）：bitmap size / content bbox / bbox offset vs source。
+ *
+ * @param {object} caseDef GATE_CASES 项
+ * @returns {Promise<{ok:boolean, artifact:object, error?:string}>}
+ */
+export async function collectNativeCase(caseDef) {
+  try {
+    const item = await makePrintItem(caseDef)
+    const result = await renderPDFPageRaw(item._pdfData, GATE_DPI, item.key, null, false)
+    if (!result) return { ok: false, error: 'renderPDFPageRaw(native) 返回 null' }
+
+    const w = result.width, h = result.height
+    const img = result.canvas.getContext('2d').getImageData(0, 0, w, h)
+    const bbox = findContentBBox(img.data, w, h)
+
+    const artifact = {
+      anchor: caseDef.anchor,
+      case: caseDef.id,
+      purpose: 'G1-CANVAS-3B native render（paperKey=null，无 fit/居中/外扩）',
+      dpi: GATE_DPI,
+      paper: 'native（PDF 原生页尺寸）',
+      paperActualPx: { w, h },
+      rotation: caseDef.rotation,
+      format: caseDef.format,
+      source: 'renderPDFPageRaw(paperKey=null) native 分支（renderers.js:558）',
+      bbox: bbox ? { left: bbox.x, top: bbox.y, right: bbox.x + bbox.w, bottom: bbox.y + bbox.h } : null,
+      bboxPx: bbox ? { x: bbox.x, y: bbox.y, w: bbox.w, h: bbox.h } : null,
+      // offset 相对 source（source 内容 bbox 起点 169,189 @300dpi，见 artifacts/A1-rot0/source.json）
+      bboxOffsetVsSourcePx: bbox ? { dx: bbox.x - 169, dy: bbox.y - 189 } : null,
+      marginMm: null,  // native 无纸面外扩，不适用边距比较
+    }
+    console.log(`[GATE-CANVAS-3B] ${caseDef.id} OK  bitmap=${w}x${h} bbox=${JSON.stringify(artifact.bboxPx)} offsetVsSource=${JSON.stringify(artifact.bboxOffsetVsSourcePx)}`)
+    return { ok: true, artifact }
+  } catch (e) {
+    console.error(`[GATE-CANVAS-3B] ${caseDef.id} FAIL:`, e.message)
+    return { ok: false, error: e.message }
+  }
 }
 
 // 供 node 侧分析复用

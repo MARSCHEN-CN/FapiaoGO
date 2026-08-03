@@ -46,6 +46,15 @@ export const GATE_CASES = Object.freeze([
       customPaper: { widthMM: 230, heightMM: 160 },  // 与 source 实测纸面 2717×1890@300dpi(230×160mm) 对齐
     },
   },
+  {
+    id: 'A1-native',
+    anchor: 'A1',
+    purpose: 'G1-CANVAS-3B：native PDF page render（paperKey=null），验证原生内容尺寸与坐标系',
+    file: 'test_fixtures/25952000000127675627.pdf',
+    format: 'pdf',
+    rotation: 0,
+    settings: { landscape: false },  // paperKey=null → native 分支，忽略 paperSize/margin
+  },
 ])
 
 /** case 自检：id 唯一、文件存在（路径 gitignored 但物理存在） */
@@ -70,5 +79,6 @@ export function validateGateCases(cases = GATE_CASES, fs) {
  */
 export const CANVAS_G1_CASES = Object.freeze(['A1-rot0', 'A1-rot90'])
 export const CANVAS_G1_2_CASES = Object.freeze(['A1-customPaper'])
+export const NATIVE_G1_CASES = Object.freeze(['A1-native'])
 export const OFD_G1_CASES = Object.freeze(['A2-rot0'])
 
