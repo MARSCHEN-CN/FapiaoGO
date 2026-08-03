@@ -135,8 +135,17 @@ const FileCardRow = memo(({ index, style, files, previewFileKey, previewFileDocI
                 'amount': '金额为空',
                 'amountHj': '金额为空',
               }
+              // 后端字段级失败明细（dict 列表，含真实 reason）优先，兜底静态映射
+              const detailMap = new Map()
+              for (const d of (fileObj.failedFieldsDetail || [])) {
+                if (d?.field && d?.reason && !detailMap.has(d.field)) {
+                  detailMap.set(d.field, d.reason)
+                }
+              }
               const fields = fileObj.failedFields || []
-              const reasons = fields.map(f => FIELD_REASON_MAP[f] || f).filter(Boolean)
+              const reasons = fields
+                .map(f => detailMap.get(f) || FIELD_REASON_MAP[f] || f)
+                .filter(Boolean)
               if (reasons.length === 0) return '解析失败'
               const fphmMissing = fields.includes('fphm') || fields.includes('invoiceNumber')
               const kprqMissing = fields.includes('kprq') || fields.includes('invoiceDate')

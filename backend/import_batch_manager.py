@@ -448,6 +448,11 @@ class ImportBatchManager:
                 "xmmc": extra_fields.get("xmmc", ""),
                 "line_items": extra_fields.get("line_items", []),
             }
+            # 透出字段级失败/警告明细（dict 列表，含真实 reason），
+            # 供前端 failedFieldsDetail 显示准确失败原因（与 response_builder.py 同构）
+            for _key in ('failed_fields', 'warning_fields'):
+                if extra_fields.get(_key):
+                    invoice_fields[_key] = extra_fields[_key]
 
             items.append({
                 'clientKey': client_key,

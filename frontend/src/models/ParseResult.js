@@ -68,6 +68,9 @@ export function createParseResult(data, name) {
       fileFormat: data.file_format || data.fileFormat || '',
       previewImage: data.preview_image || data.previewImage || null,
       failedFields: data.failed_fields || data.failedFields || [],
+      // 字段级失败明细（dict 列表，含真实 reason）；response_builder 回传
+      // failed_fields_detail（顶层）+ invoice_fields.failed_fields（透传）
+      failedFieldsDetail: data.failed_fields_detail || data.failedFieldsDetail || fields?.failed_fields || [],
       invoiceFields: fields,
       issuer: fields?.kpr || '',
       buyerName: fields?.gmfmc || '',

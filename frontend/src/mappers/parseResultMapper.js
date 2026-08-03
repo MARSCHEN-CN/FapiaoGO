@@ -37,6 +37,7 @@ export function mapParseResultToFileUpdate(result, fileObj) {
     fileFormat: fields.fileFormat || raw.file_format || getFileFormat(fileObj.name),
     previewImage: fields.previewImage || null,
     failedFields: fields.failedFields || [],
+    failedFieldsDetail: fields.failedFieldsDetail || invFields.failed_fields || [],
     invoiceFields: fields.invoiceFields || null,
     issuer: fields.issuer || invFields.kpr || '',
     buyerName: fields.buyerName || invFields.gmfmc || '',

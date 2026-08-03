@@ -413,10 +413,11 @@ class InvoiceExtractor:
                 confidence=gmfmc_conf,
             ))
         elif fields.gmfmc == fields.xsfmc and fields.gmfmc:
-            failed_fields.append(FieldIssue(
+            # 同公司自开（买卖方同名）合法，不应判定解析失败；降级为 warning 提示人工确认
+            warning_fields.append(FieldIssue(
                 field='gmfmc',
                 label=self._FIELD_LABELS['gmfmc'],
-                severity='error',
+                severity='warning',
                 reason='购买方名称与销售方名称相同',
                 value=fields.gmfmc,
                 confidence=gmfmc_conf,
@@ -443,10 +444,11 @@ class InvoiceExtractor:
                 confidence=gmfsh_conf,
             ))
         elif fields.gmfsh == fields.xsfsh and fields.gmfsh:
-            failed_fields.append(FieldIssue(
+            # 同公司自开（买卖方税号相同）合法，不应判定解析失败；降级为 warning 提示人工确认
+            warning_fields.append(FieldIssue(
                 field='gmfsh',
                 label=self._FIELD_LABELS['gmfsh'],
-                severity='error',
+                severity='warning',
                 reason='购买方税号与销售方税号相同',
                 value=fields.gmfsh,
                 confidence=gmfsh_conf,
