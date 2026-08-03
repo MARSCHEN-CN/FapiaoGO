@@ -442,11 +442,33 @@ canvas/source 输出位图
 ```
 A1/A1.5/Commit2/Commit3  ✅（中间层落成）
 A2-G0     ✅ (8c6da15e)
-A2-G1     采集器 ✅ (79d102e2) — source 轨已跑通产出首批数据
-          canvas 轨 ⏸ 需 Electron 采集（README 指引）
-          A2 OFD bbox ⏸ 需后端 Render Contract 补采
+A2-G1     source 轨 ✅ (79d102e2) — 3 source artifact + 4 生产语义确认
+          canvas 轨 ✅ 采集器+分析器 (a76b11e6) — 待 Electron 环境执行产出真实 canvas artifact
+          OFD 补采 ⏸ G1-B（待后端 Render Contract）
 A2-G2..G6 ⏸ WAIT
 A3 Canvas ⏸ WAIT
 Phase B   ⏸ WAIT
 ```
+
+## 13. A2-G1-CANVAS-1 落地（2026-08-03 晚，commit `a76b11e6`）
+
+### 13.1 用户定稿边界（单变量纪律）
+- 只闭环 canvas 主链（A1 PDF rot0 / rot90），**OFD 不并行**（变量混入风险，G1-B 单独做）。
+- canvas 采集不做手动 DevTools 注入（参数漂移 + makeItem 隐藏风险），改为**固化 makeItem + 生产同款调用序列**的采集器。
+
+### 13.2 交付
+- `frontend/test/printGate/electron/collectCanvasOutput.js`：makePrintItem 固化 usePrint.js:180-278 三分支（PDF read-file→_pdfData / OFD buildPrintJobItem+fetchPrintRaster→_previewImageUrl / Image read-file→blob）；renderMultipleItemsToCanvas 8 参数调用序列与 usePrint.js:288-298 **逐字一致**（slotCount=1 / isPrint=false / showSafeMargin=false / layoutOptions）；产出 artifact(bbox+marginMm)+pngBytes；经 `globalThis.__GATE_REPO_ROOT__`（磁盘路径）+ `__GATE_WRITE__`（写盘）注入。
+- `frontend/test/printGate/analyzeGateOutput.mjs`：canvas vs source 对比报告。**双判定**：PDF=对齐 `|canvas-source|≤0.5mm`；OFD=补足语义 `canvas≈settings.margins±0.5mm`（§12.5）。mock 验证 2/3（PASS/FAIL 检测正确）。
+- 已确认：renderers.js 无 React 依赖、导出 renderMultipleItemsToCanvas 存在；printAdapter 导出 buildPrintJobItem/fetchPrintRaster 存在（ESM 交叉校验）。
+
+### 13.3 运行方式（Electron dev）
+1. `npm run dev`（vite:5173 + Electron）
+2. devtools console：`globalThis.__GATE_REPO_ROOT__ = 'E:/print706/'`
+3. `const { collectCanvasCases } = await import('/test/printGate/electron/collectCanvasOutput.js')`
+4. `await collectCanvasCases()` → console 输出 bbox+marginMm，pngBytes 手动/`__GATE_WRITE__` 落盘
+5. node 侧 `node analyzeGateOutput.mjs` 生成对比报告
+
+### 13.4 已知限制（记录在案）
+- `buildPrintJobItem` 依赖 DocumentStore（docId）→ OFD case 需应用内已解析该 OFD；纯文件流 OFD 无法走 canvas docId 分支（G1-B 处理）。
+- vite `?url` import（pdf.worker）→ 采集器必须在 vite/Electron 环境，纯 node 不可加载 renderers.js。
 
