@@ -102,3 +102,24 @@ G1-CANVAS-2 把问题从「纸张语义不同（A4 vs 专用纸）」**推进到
 ## 后续
 - 🟡 候选修复（A3 范畴，不在本 Gate）：`renderPDFPageRaw` L515 传 customPaper / 或单文件分支用 PDF 原生页尺寸（`paperKey=null` 分支，L518-524 已有）
 - ⏸ G1-CANVAS-2 待「修复 renderPDFPageRaw 后重跑」验证同纸张对齐
+
+# 附录 B：G1-CANVAS-3A 结果（2026-08-03 晚，DEV patch commit `5d899d18`）
+
+## 实验
+DEV-only 临时 patch（验证后可能回滚）：`renderPDFPageRaw` 加第 6 参 customPaper，`getPaperPixels` 透传（L516），两处调用点透传 `layoutOptions?.customPaper`。重跑 A1-customPaper。
+
+## 结果（用户实测）
+| 指标 | patch 前 | patch 后 | source | 判定 |
+|---|---|---|---|---|
+| 内容尺寸 | 1296×799（缩 53.5%）| **2623×1634（≈原生×1.08）** | 2423×1500 | ✅ 缩放缺陷修复 |
+| 边距 mm | 60.7/45.0/62.4/48.3 | **4.7/9.8/6.1/12.7** | 14.3/16.0/10.6/17.0 | ❌ 仍差 9.7mm |
+
+## 三层解读（全部实测验证）
+1. **patch 正确**：内容从 53.5% 恢复到 108%（≈原生×1.08），`scale=min(2717/2480, 1890/1654)=1.096` 与实测吻合 → **customPaper 透传修复确认**，G1-CANVAS-2 定位的双重 fit 缺陷已消除。
+2. **残余差异 = fit-填满-居中 vs 原位-外扩**：canvas 语义是「PDF contain-fit 填满 230×160 画布 + 居中」（L544-556），source 语义是「内容原位 + 外扩 10mm」（add-pdf-margins L189）。两者是**不同的布局哲学**，同纸张也无法对齐。
+3. **A3 真正要解决的**：canvas 单文件分支需要「PDF 原生页尺寸渲染（paperKey=null 已有分支）+ 纸面外扩」来复刻 source 语义——不是「塞进用户纸张再 fit」。
+
+## 结论
+- **G1-CANVAS-3A 通过**（验证目标=画布尺寸恢复 ✅，达成）
+- 但同纸张边距仍不对齐（9.7mm），**证明「纸张语义统一」还不够，还需「内容放置语义统一」**——这比原预期更深一层
+- G1-CANVAS-3B（paperKey=null 原生渲染）是下一个验证点：若原生渲染+外扩能对齐 source，A3 的改造目标就完全清晰了
