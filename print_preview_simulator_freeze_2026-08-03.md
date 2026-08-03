@@ -529,6 +529,17 @@ A3         ⏸ 接线：单文件分支 → native render + paperLayout（目标
 Phase B    ⏸
 ```
 
+### 14.10 A2-G1 FINAL 冻结（2026-08-03 晚）+ A3 设计 Spec（`a3_design_spec_2026-08-03.md`，commit `d0141fb9`）
+- **A2-G1 正式关闭**（用户定稿）：不是"测出来能跑"，而是把 source/canvas 两轨隐含 Render Contract 差异拆出并证明最小统一路径存在。
+- **冻结契约**：
+  - Source Contract = PDF native page + paper expansion（内容位置不变）
+  - Canvas Target Contract = PDF native render + paperLayout placement（offset = margins）
+  - 禁止：contain-fit PDF 到纸张 / renderer 内隐藏纸张转换 / 重复实现 margin expansion
+- **DEV patch 处置**：✅ 保留 renderPDFPageRaw export（A3-2 需 native branch）；✅ 回滚 customPaper 透传（G1-CV3B 证明非最终方案，防 native+customPaper 歧义路径）——已执行（renderers.js 恢复 5 参签名）。
+- **A3 Commit 拆分**：A3-1 接线层（usePrint 传 paperLayout，不改 renderer，snapshot 不变）→ A3-2 native single renderer（paperKey=null，验证 ratio≥0.99）→ A3-3 placement alignment（createLayout/compose，验证 margin≤0.5mm）。
+- **最大风险**：rotation + paperLayout 未验证（G1 只验了 native 无旋转）→ A1 rot90 进第一批 Gate。
+- **验收矩阵**：A1 0°（基线）/ A1 90°（rotation）/ A2 OFD（G1-B 后补）/ merge2 / merge4（不回归）。
+
 ### 14.6 冻结状态
 ```
 A2-G1 source ✅ | canvas 采集链路 ✅ + 第一份报告 🔴FAIL(预期)
