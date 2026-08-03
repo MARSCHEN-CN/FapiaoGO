@@ -11,6 +11,7 @@ import { detectDocumentOrientation } from '../utils/detectOrientation'
 import { printSingleSourceFile as printSingleSource, printMergedImages } from '../services/PrintService'
 import { runMergedPrintTasks } from '../runners/printRunner'
 import { computePaperLayout } from '../previewState'
+import { extendPaperLayoutContract } from '../print/paperLayoutContract'
 import { fetchPrintRaster, buildPrintJobItem } from '../utils/printAdapter'
 // A1/A1.5：已证等价的 Plan 事实来源 + 影子比较 helper（Commit 2 source / Commit 3 merge 分支消费）
 import { buildPrintExecutionPlan, SOURCE_FILE_FILTER, MERGE_FILE_FILTER } from '../print/buildPrintExecutionPlan'
@@ -311,13 +312,19 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
       // 目标：证明生产 canvas 单文件路径能构造 paperLayout（数据链路贯通），
       // 且不改变 bitmap（paperLayout 只附加到返回 job，不进渲染调用——渲染路径 A3-2/3 再接）。
       // 冻结（a3_design_spec §8）：A3-1 不允许改变最终 bitmap。
-      const paperLayout = computePaperLayout({
+      // A3-3-1：extendPaperLayoutContract 附加 coordinateSpace/sourceOrigin（声明性，不消费）。
+      const baseLayout = computePaperLayout({
         paperSize: settings.paperSize,
         customPaper: settings.customPaper,
         margins: {
           left: settings.marginLeft ?? 3, right: settings.marginRight ?? 3,
           top: settings.marginTop ?? 3, bottom: settings.marginBottom ?? 3,
         },
+      })
+      const paperLayout = extendPaperLayoutContract(baseLayout, {
+        // sourceOrigin = source 语义偏移（原始 PDF 内容相对扩展纸面的偏移），非 margin（布局约束）。
+        sourceOriginXMM: settings.marginLeft ?? 3,
+        sourceOriginYMM: settings.marginTop ?? 3,
       })
       return { key: f.key, name: f.name, data, printPath: f.printPath, paperLayout }
       

@@ -15,6 +15,7 @@ import { measureMarginsPx, pxToMm, mmToPx, marginsToMm, assertSafeMarginAlignmen
 import { anchorManifest, validateAnchorManifest } from './anchorManifest.mjs'
 import { SAFE_MARGIN_TOLERANCE_MM, GATE_DPI, PAPER_SIZES_MM } from './gateConfig.mjs'
 import { normalizeReadFileData } from './ipcPayloadAdapter.mjs'
+import { extendPaperLayoutContract, validatePaperLayoutContract } from '../../src/print/paperLayoutContract.js'
 
 // ── 0. IPC payload 适配（G1-CANVAS-1 真实契约）──────────────────
 test('normalizeReadFileData: Uint8Array 直通（形态 A）', () => {
@@ -197,11 +198,11 @@ test('A3-1-01: renderFileToPrintImage 构造并携带 paperLayout（数据链路
   // ③ 渲染调用（renderMultipleItemsToCanvas）未传 paperLayout 第 10 参（bitmap 不变）
   const src = readFileSync(new URL('../../src/hooks/usePrint.js', import.meta.url), 'utf8')
 
-  // ① 单文件分支含 computePaperLayout 构造
-  const hasCompute = src.includes('const paperLayout = computePaperLayout({')
+  // ① 单文件分支含 computePaperLayout 构造（A3-3-1 后 baseLayout + extendPaperLayoutContract）
+  const hasCompute = src.includes('const baseLayout = computePaperLayout({') || src.includes('const paperLayout = computePaperLayout({')
   // ② 返回 job 附加 paperLayout
   const hasAttach = src.includes("paperLayout }")
-  // ③ 单文件渲染调用未传 paperLayout（bitmap 不变红线）
+  // ③ 单文件渲染调用未传 paperLayout（renderFileToPrintImage 内 renderMultipleItemsToCanvas 调用，第 10 参为空）
   // renderFileToPrintImage 的调用特征：slotCount=1（第 6 参），且第 10 参位置无 printPaperLayout
   // （merge 轨 renderMergeGroupToPrintImage 传 printPaperLayout 且 slotCount=groupSize）
   const slot1Calls = src.match(/renderMultipleItemsToCanvas\([\s\S]*?\n\s*1,\s*\/\/ slotCount = 1[\s\S]*?\n\s*\)/g)
@@ -219,4 +220,45 @@ test('A3-1-03: 不引入新 paperKey/customPaper 分支（红线）', () => {
   // A3-1 禁止新增 paperKey/customPaper 分支——只允许沿用 settings.paperSize/customPaper 透传
   const paperKeyCount = (src.match(/paperKey/g) || []).length
   assert.equal(paperKeyCount, 0, 'A3-1 不应引入 paperKey 新分支')
+})
+
+// ── 6. A3-3-1 paperLayout Contract 扩展（a3_design_spec §A3-3）───────────
+test('A3-3-1-01: contract presence — coordinateSpace + sourceOrigin 存在且结构正确', () => {
+  const base = { paperRect: { w: 100, h: 100 }, usableRect: { x: 0, y: 0, w: 80, h: 80 } }
+  const layout = extendPaperLayoutContract(base, { sourceOriginXMM: 10, sourceOriginYMM: 10 })
+  const { valid, errors } = validatePaperLayoutContract(layout)
+  assert.equal(valid, true, errors.join('; '))
+  assert.deepEqual(layout.coordinateSpace, { name: 'paper', origin: 'top-left', unit: 'mm' })
+  assert.deepEqual(layout.sourceOrigin, { x: 10, y: 10, unit: 'mm' })
+  // baseLayout 原样保留（扩展不破坏 A3-1 产出的几何）
+  assert.deepEqual(layout.paperRect, base.paperRect)
+  assert.deepEqual(layout.usableRect, base.usableRect)
+})
+
+test('A3-3-1-02: bitmap invariant — 扩展不改变渲染路径（渲染调用仍无 paperLayout 第 10 参）', () => {
+  const src = readFileSync(new URL('../../src/hooks/usePrint.js', import.meta.url), 'utf8')
+  // 单文件渲染调用（slotCount=1）仍不传 printPaperLayout（A3-3-1 只扩 contract 不消费）
+  const slot1Calls = src.match(/renderMultipleItemsToCanvas\([\s\S]*?\n\s*1,\s*\/\/ slotCount = 1[\s\S]*?\n\s*\)/g)
+  const noPaperLayoutInSingle = slot1Calls
+    ? slot1Calls.every(call => !call.includes('printPaperLayout'))
+    : false
+  assert.equal(noPaperLayoutInSingle, true, 'A3-3-1 不应改变渲染调用（bitmap invariant）')
+})
+
+test('A3-3-1-03: source semantic declaration — sourceOrigin=10mm 且未消费（offset pending）', () => {
+  // sourceOrigin 由 contract 模块声明（extendPaperLayoutContract），usePrint 只传 sourceOriginXMM/YMM
+  const src = readFileSync(new URL('../../src/hooks/usePrint.js', import.meta.url), 'utf8')
+  const contractSrc = readFileSync(new URL('../../src/print/paperLayoutContract.js', import.meta.url), 'utf8')
+
+  // ① usePrint 传 sourceOriginXMM/YMM（10mm 场景：settings.marginLeft/Top）
+  assert.equal(src.includes('sourceOriginXMM: settings.marginLeft ?? 3'), true)
+  assert.equal(src.includes('sourceOriginYMM: settings.marginTop ?? 3'), true)
+  // ② contract 模块声明 sourceOrigin 字段（source 语义，非 margin）
+  assert.equal(contractSrc.includes('sourceOrigin: {'), true, 'contract 应声明 sourceOrigin')
+  assert.equal(contractSrc.includes('coordinateSpace: {'), true, 'contract 应声明 coordinateSpace')
+  // ③ 未消费：usePrint 内无 applyPlacement（A3-3-2 才引入），offset pending
+  const fnBlock = src.match(/const renderFileToPrintImage[\s\S]*?renderMergeGroupToPrintImage/m)
+  assert.ok(fnBlock, 'renderFileToPrintImage 函数块可定位')
+  const fnBody = fnBlock[0]
+  assert.equal(fnBody.includes('applyPlacement'), false, 'A3-3-1 不应消费 sourceOrigin（offset pending）')
 })
