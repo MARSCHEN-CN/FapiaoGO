@@ -23,7 +23,10 @@ const FileCardRow = memo(({ index, style, files, previewFileKey, previewFileDocI
   // 往年发票（derived flag，优先级低于失败、低于重复）
   const prevInfo = previousYearInfo?.get(fileObj.key)
   const isPrevYear = !!prevInfo?.isPreviousYear
-  const hasFailed = fileObj.failedFields?.length > 0
+  // 统一判定：失败文件 = 解析错误 / failedFields 非空 / parseMethod 含「缺失」
+  // （原先仅用 failedFields.length>0，导致 status==='error' 或「缺失」类解析失败
+  //   的空白图片能显示「解析失败」文字却拿不到 has-failed 类 → 左侧红条/状态圆点不红）
+  const hasFailed = isFailedFile(fileObj)
   const showDuplicate = !hasFailed && isDuplicate
   const showPrevYear = !hasFailed && !showDuplicate && isPrevYear
 
@@ -56,9 +59,11 @@ const FileCardRow = memo(({ index, style, files, previewFileKey, previewFileDocI
   }
 
   let statusDotClass = 'pending'
-  if (fileObj.status === 'parsed') {
-    if (hasFailed) statusDotClass = 'failed'
-    else if (showDuplicate) statusDotClass = 'duplicate'
+  // 失败优先：无论 status 是 'parsed' 还是 'error'，只要 isFailedFile 命中就标红点
+  if (hasFailed) {
+    statusDotClass = 'failed'
+  } else if (fileObj.status === 'parsed') {
+    if (showDuplicate) statusDotClass = 'duplicate'
     else if (showPrevYear) statusDotClass = 'prevyear'
     else statusDotClass = 'ready'
   }
@@ -77,7 +82,7 @@ const FileCardRow = memo(({ index, style, files, previewFileKey, previewFileDocI
   return (
     <div
       style={style}
-      className={`file-card ${isActive ? 'active' : ''} ${isGroupFirst ? 'merge-group-first' : ''} ${isGroupLast ? 'merge-group-last' : ''} ${fileObj.failedFields?.length > 0 ? 'has-failed' : ''} ${fileObj.status === 'parsing' ? 'parsing' : ''} ${showDuplicate ? 'duplicate' : ''} ${showPrevYear ? 'previous-year' : ''} ${isMultipage ? 'multipage' : ''}`}
+      className={`file-card ${isActive ? 'active' : ''} ${isGroupFirst ? 'merge-group-first' : ''} ${isGroupLast ? 'merge-group-last' : ''} ${hasFailed ? 'has-failed' : ''} ${fileObj.status === 'parsing' ? 'parsing' : ''} ${showDuplicate ? 'duplicate' : ''} ${showPrevYear ? 'previous-year' : ''} ${isMultipage ? 'multipage' : ''}`}
       onClick={handleClick}
       onMouseEnter={handleMouseEnter}
     >

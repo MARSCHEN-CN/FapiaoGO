@@ -24,11 +24,20 @@ def _make_page(
     line_items: list = None,
     total_amount: float = None,
 ) -> dict:
-    """构造模拟页面解析结果"""
+    """构造模拟页面解析结果
+
+    同时提供两条页码标记路径：
+    - raw_text 中的「共N页 第M页」字符串（贴近真实 OCR 路径）
+    - 顶层 page_num / total_pages（结构化回退）
+    page_num 为 0 基索引，raw_text 中的第M页为 1 基。
+    """
+    current_marker = page_num + 1
     result = {
         'invoice_number': invoice_number,
         'page_num': page_num,
         'total_pages': total_pages,
+        # 真实 OCR 场景 raw_text 中会出现「共N页 第M页」标记
+        'raw_text': f'购买方信息\n共{total_pages}页 第{current_marker}页\n销售方信息',
         'extra_fields': {
             'fphm': invoice_number,
         },
@@ -103,13 +112,15 @@ def test_three_pages_three_invoices():
 
 # ═══════════════════════════════════════════
 # Case D: 混合（2页同票 + 1页单票）→ 2 InvoiceDocuments
+#   - 001 有第 1、3 页标记（共 3 页，非连续但首尾证据齐全 → 合并）
+#   - 002 单页 → 拆分
 # ═══════════════════════════════════════════
 def test_mixed_pages():
-    print("[Case D] 混合（2页同票 + 1页单票）→ 2 InvoiceDocuments")
+    print("[Case D] 混合（非连续2页同票 + 1页单票）→ 2 InvoiceDocuments")
     pages = [
-        _make_page('001', 0, 3, ['A']),       # total=3 使全部分享统一总页数
-        _make_page('001', 1, 3, ['B'], 50.0),
-        _make_page('002', 2, 3, ['C'], 30.0), # page_num 连续但不同号 → 拆分
+        _make_page('001', 0, 3, ['A']),        # 第 1 页 (共 3 页)
+        _make_page('001', 2, 3, ['B'], 50.0),  # 第 3 页 (共 3 页) ← 末页证据
+        _make_page('002', 2, 3, ['C'], 30.0),  # 不同发票号 → 独立文档
     ]
     results = assemble(pages)
     assert len(results) == 2, f"期望 2 个发票文档，实际 {len(results)}"

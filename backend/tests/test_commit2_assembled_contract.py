@@ -22,11 +22,12 @@ from multi_page_merge import merge_page_results
 from invoice_assembly_pipeline import assemble
 
 
-def _page(num, amount, client_key, kprq='', fphm='A'):
+def _page(num, amount, client_key, total_pages=2, kprq='', fphm='A'):
     return {
         'invoice_number': fphm,
         'amount': amount,
         'page_num': num,
+        'total_pages': total_pages,
         'clientKey': client_key,
         'extra_fields': {'fphm': fphm, 'kprq': kprq, 'line_items': []},
     }

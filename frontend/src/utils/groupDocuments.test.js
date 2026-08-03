@@ -236,3 +236,72 @@ test('0-based pageNum: pageNum=0 与 pageNum=null 同时存在时视为同页（
   // 这是正确行为——null 视为 0，与现有实例冲突则创建新实例
   assert.ok(docs.length >= 1)
 })
+
+// ───────────────────────── 合并模式：InvoiceDocument 覆盖 + 剩余文件补全 ─────────────────────────
+// 场景：先前 session 留下的 page-level 文件仍在 FileContext.files 中，
+// 但当前 session.documents（InvoiceDocument）只覆盖最近一次导入的文件。
+// buildDocumentViewModel 必须合并两路来源，保证旧文件仍可见。
+function makeInvoiceDoc(docId, pageKeys, amount = '', invoiceDate = '') {
+  return {
+    docId,
+    instanceId: docId,
+    _pageKeys: pageKeys,
+    pages: pageKeys.map((_, i) => ({ index: i })),
+    amount,
+    invoiceDate,
+  }
+}
+
+test('合并模式：invoiceDocs 覆盖 A，files 中 B 被补全返回（单页）', () => {
+  // A 由 InvoiceDocument 覆盖；B 只有 page-level 记录（旧 session 遗留）
+  const fileA = single({ name: 'A.pdf', invoiceNumber: '001', amount: '100' })
+  const fileB = single({ name: 'B.pdf', invoiceNumber: '002', amount: '200' })
+  const files = [fileA, fileB]
+  const invoiceDocs = [makeInvoiceDoc('inv-A', [fileA.key], '100')]
+
+  const vm = buildDocumentViewModel(files, invoiceDocs)
+
+  assert.equal(vm.documents.length, 2, 'A 与 B 均应出现在列表中')
+  assert.equal(vm.documentCount, 2)
+  const names = vm.documents.map((d) => d.name)
+  assert.ok(names.includes('A.pdf'), 'A 应在列表中')
+  assert.ok(names.includes('B.pdf'), 'B 应在列表中（补全路径）')
+})
+
+test('合并模式：invoiceDocs 覆盖多页组，未覆盖的单页文件仍显示', () => {
+  const p1 = page('AAA', 1, { name: 'multi_p1.pdf', invoiceNumber: 'N1', amount: '300' })
+  const p2 = page('AAA', 2, { name: 'multi_p2.pdf', invoiceNumber: 'N1', amount: '300' })
+  const lone = single({ name: 'lone.pdf', invoiceNumber: 'N2', amount: '50' })
+  const files = [p1, p2, lone]
+  const invoiceDocs = [makeInvoiceDoc('inv-multi', [p1.key, p2.key], '300')]
+
+  const vm = buildDocumentViewModel(files, invoiceDocs)
+
+  assert.equal(vm.documents.length, 2)
+  const group = vm.documents.find((d) => d._isDocumentGroup)
+  assert.ok(group, '多页 InvoiceDocument 应为分组条目')
+  assert.equal(group._pageCount, 2)
+  assert.ok(vm.documents.some((d) => d.name === 'lone.pdf'), '未覆盖的 lone.pdf 应通过补全路径显示')
+})
+
+test('合并模式：无 invoiceDocs 时退回 groupFilesByDocument（向后兼容）', () => {
+  const files = [
+    page('AAA', 1), page('AAA', 2),
+    single({ name: 's.pdf' }),
+  ]
+  const vm = buildDocumentViewModel(files)
+
+  assert.equal(vm.documents.length, 2)
+  assert.ok(vm.documents.some((d) => d._isDocumentGroup))
+})
+
+test('合并模式：invoiceDocs 覆盖所有文件时，补全路径产出 0 条（无重复）', () => {
+  const p1 = page('AAA', 1, { name: 'p1.pdf' })
+  const p2 = page('AAA', 2, { name: 'p2.pdf' })
+  const files = [p1, p2]
+  const invoiceDocs = [makeInvoiceDoc('inv-A', [p1.key, p2.key], '100')]
+
+  const vm = buildDocumentViewModel(files, invoiceDocs)
+
+  assert.equal(vm.documents.length, 1, '全部被 InvoiceDocument 覆盖时不应出现重复条目')
+})
