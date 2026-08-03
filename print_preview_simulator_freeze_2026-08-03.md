@@ -182,7 +182,7 @@ A1 = 抽 buildPrintExecutionPlan()  +  [决策 §5]  +  单文件打印接线到
 - 流程：旧逻辑照常执行；新 Plan 只生成、不执行；compare 核对 pages 数量 / 文件顺序 / extraPages / orientation 全部一致后，再删旧。
 - 这样 Commit 2 风险最低。
 
-### 8.7 更新后的冻结状态
+### 8.7 更新后的冻结状态（A1.5 已落地 2026-08-03 commit `ef03951c`）
 ```
 Print Preview Simulator
 
@@ -194,8 +194,12 @@ A1 buildPrintExecutionPlan
   ✅ no routing change
 
 A1.5 equivalence hardening
-  ⬜ golden snapshot
-  ⬜ legacy/new compare
+  ✅ golden snapshot (legacy_executePrint_snapshot.json)
+  ✅ legacy/new compare (printExecutionEquivalence.test.mjs, 7 用例全过)
+  ✅ shadow compare helper (compareLegacyPlan + printPlanCompareEnabled 守卫)
+
+Commit 2  executePrint 替换为消费 Plan（shadow mode，待做）
+Commit 3  doPrint 替换为消费 Plan（待做）
 
 A2 Gate
   ⬜ safeMargin
@@ -210,6 +214,10 @@ A3
 Phase B
   ⬜ PrintPreviewModel
 ```
+
+### 8.9 A1.5 实测发现（非 blocker，记录待办）
+- **🟡 一普二专检测子串不匹配真实值（预存在 legacy 行为，A1 忠实镜像未引入）**：`executePrint` L824 与 `buildPrintExecutionPlan` L125 均用 `invoiceType?.includes('专票')` 判定专票。但系统规范判定值在 `FileList.jsx:68`/`utils.js:322` 为 `'专票'`，而 OCR/映射产物常为 `'增值税专用发票'`——`'增值税专用发票'.includes('专票')` 为 `false`（字序为「专用+发票」）。若生产 `invoiceType` 确为 `'增值税专用发票'`，则 **一普二专（round2）在产品里从不触发**，但代码/快照不会报错。A1/A1.5 仅证明「A1 == legacy」，不修此行为；若需修复，应归一化 `invoiceType` 或改用更稳判定（如 `includes('专用') || includes('专票')`）。已用规范值 `'专票'` 写样例使 round2 分支被测试覆盖。
+- **💭 样例数据纪律**：真实解析后的 OFD 必有 `printPath`（非仅 `docId`）。`SOURCE_FILE_FILTER`(`printPath||path`) 与 `MERGE_FILE_FILTER`(`printPath`) 都要求 `printPath`，故黄金快照样例给 B.ofd 补了 `printPath`，分组才得 `[A,B],[C,D],[E]`。
 
 ### 8.8 下一步顺序（用户定稿）
 1. 先补黄金快照 + legacy/new equivalence（A1.5）
