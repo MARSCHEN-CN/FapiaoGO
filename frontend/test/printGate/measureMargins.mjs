@@ -7,6 +7,47 @@
 import { GATE_DPI, SAFE_MARGIN_TOLERANCE_MM } from './gateConfig.mjs'
 
 /**
+ * 像素矩阵 → 内容 bbox（G1 核心纯函数）
+ *
+ * 输入为 RGBA 像素数组（length = width*height*4，Uint8ClampedArray 或普通数组）。
+ * 判定"内容像素"：alpha > alphaThreshold 且非纯白背景（G1 默认跳过白底）。
+ * 返回内容像素的最小包围盒 {x,y,w,h}；全空白返回 null。
+ *
+ * @param {ArrayLike<number>} pixels RGBA，length = w*h*4
+ * @param {number} width
+ * @param {number} height
+ * @param {object} [opts]
+ * @param {number} [opts.alphaThreshold=0]    alpha 低于此值视为透明
+ * @param {number} [opts.brightnessMax=250]   亮度 ≥ 此值视为白底（发票白底黑字场景）
+ * @returns {{x:number,y:number,w:number,h:number}|null}
+ */
+export function findContentBBox(pixels, width, height, opts = {}) {
+  if (!pixels || width <= 0 || height <= 0) throw new Error('findContentBBox: pixels/width/height required')
+  if (pixels.length !== width * height * 4) {
+    throw new Error(`findContentBBox: pixel length ${pixels.length} != ${width}x${height}x4`)
+  }
+  const alphaThreshold = opts.alphaThreshold ?? 0
+  const brightnessMax = opts.brightnessMax ?? 250
+  let minX = Infinity, minY = Infinity, maxX = -1, maxY = -1
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const i = (y * width + x) * 4
+      const a = pixels[i + 3]
+      if (a <= alphaThreshold) continue
+      const r = pixels[i], g = pixels[i + 1], b = pixels[i + 2]
+      const brightness = (r + g + b) / 3
+      if (brightness >= brightnessMax) continue
+      if (x < minX) minX = x
+      if (x > maxX) maxX = x
+      if (y < minY) minY = y
+      if (y > maxY) maxY = y
+    }
+  }
+  if (maxX < 0) return null
+  return { x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1 }
+}
+
+/**
  * 内容包围盒 → 四边边距（px）
  * @param {object} contentBox {x,y,w,h}（px，内容非透明像素的最小包围盒，相对纸张左上角）
  * @param {object} paperPx   {w,h}（纸张尺寸，px）

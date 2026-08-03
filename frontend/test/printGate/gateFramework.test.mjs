@@ -10,11 +10,53 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { measureMarginsPx, pxToMm, mmToPx, marginsToMm, assertSafeMarginAlignment } from './measureMargins.mjs'
+import { measureMarginsPx, pxToMm, mmToPx, marginsToMm, assertSafeMarginAlignment, findContentBBox } from './measureMargins.mjs'
 import { anchorManifest, validateAnchorManifest } from './anchorManifest.mjs'
 import { SAFE_MARGIN_TOLERANCE_MM, GATE_DPI, PAPER_SIZES_MM } from './gateConfig.mjs'
 
 // ── 1. 测量纯函数 ──────────────────────────────────────────────
+test('findContentBBox: 白底上的黑块 → 精确 bbox', () => {
+  // 10x10 全白，在 (2,3)-(6,7) 放黑块
+  const w = 10, h = 10
+  const px = new Uint8ClampedArray(w * h * 4).fill(255) // 白底不透明
+  for (let y = 3; y <= 7; y++) {
+    for (let x = 2; x <= 6; x++) {
+      const i = (y * w + x) * 4
+      px[i] = 0; px[i + 1] = 0; px[i + 2] = 0; px[i + 3] = 255
+    }
+  }
+  assert.deepEqual(findContentBBox(px, w, h), { x: 2, y: 3, w: 5, h: 5 })
+})
+
+test('findContentBBox: 透明背景 + 内容 → 按 alpha 判定', () => {
+  // 4x4 全透明，中间 (1,1) 一个不透明红点
+  const w = 4, h = 4
+  const px = new Uint8ClampedArray(w * h * 4) // alpha=0
+  const i = (1 * w + 1) * 4
+  px[i] = 255; px[i + 1] = 0; px[i + 2] = 0; px[i + 3] = 255
+  assert.deepEqual(findContentBBox(px, w, h), { x: 1, y: 1, w: 1, h: 1 })
+})
+
+test('findContentBBox: 全空白 → null', () => {
+  const px = new Uint8ClampedArray(16 * 16 * 4).fill(255) // 纯白
+  assert.equal(findContentBBox(px, 16, 16), null)
+})
+
+test('findContentBBox: 输入非法（长度不匹配/尺寸非法）抛错', () => {
+  assert.throws(() => findContentBBox(new Uint8ClampedArray(10), 3, 1))
+  assert.throws(() => findContentBBox(new Uint8ClampedArray(16), 0, 4))
+})
+
+test('findContentBBox → measureMarginsPx 端到端：bbox 到边距换算', () => {
+  // A4@300dpi ≈ 2480x3508，内容内缩 20mm ≈ 236px
+  const paperPx = { w: Math.round(PAPER_SIZES_MM.A4.width * GATE_DPI / 25.4), h: Math.round(PAPER_SIZES_MM.A4.height * GATE_DPI / 25.4) }
+  const m = mmToPx(20)
+  // 构造一个内容恰好占 (m,m)-(paperPx.w-m, paperPx.h-m) 的位图太大，改为直接验证换算链
+  const bbox = { x: Math.round(m), y: Math.round(m), w: paperPx.w - 2 * Math.round(m), h: paperPx.h - 2 * Math.round(m) }
+  const marginsPx = measureMarginsPx(bbox, paperPx)
+  const marginsMm = marginsToMm(marginsPx)
+  for (const e of ['left', 'top', 'right', 'bottom']) assert.ok(Math.abs(marginsMm[e] - 20) < 0.5)
+})
 test('measureMarginsPx: bbox 贴左边缘 → left=0', () => {
   const m = measureMarginsPx({ x: 0, y: 100, w: 500, h: 700 }, { w: 1000, h: 1400 })
   assert.deepEqual(m, { left: 0, top: 100, right: 500, bottom: 600 })
@@ -83,10 +125,12 @@ test('anchorManifest: A1-A6 齐全、无重复、derived 有引用', () => {
   assert.ok(a4.source.startsWith('derived:'))
 })
 
-test('anchorManifest: 至少 1 个 missing（A2 OFD 待用户提供）', () => {
-  const missing = anchorManifest.filter(a => a.status === 'missing')
-  assert.ok(missing.length >= 1, '应标记缺失样本（A2 OFD）')
-  assert.equal(missing[0].id, 'A2')
+test('anchorManifest: A2 OFD 已 available（用户提供样本），A5/A6 待标定', () => {
+  const a2 = anchorManifest.find(a => a.id === 'A2')
+  assert.equal(a2.status, 'available')
+  assert.ok(a2.source.endsWith('.ofd'), `A2 source 应为真实 .ofd 路径: ${a2.source}`)
+  const tbd = anchorManifest.filter(a => a.status === 'tbd')
+  assert.ok(tbd.length >= 2, 'A5/A6 应标记待标定')
 })
 
 // ── 4. 双执行器比较管线结构（从 Plan 出发，§11.5）──────────────

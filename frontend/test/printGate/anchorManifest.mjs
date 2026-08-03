@@ -23,9 +23,9 @@ export const anchorManifest = Object.freeze([
     id: 'A2',
     spec: 'OFD 单页',
     format: 'ofd',
-    source: null,
-    status: 'missing',
-    notes: '工作区无任何 .ofd 文件 → 需用户提供真实样本；OFD 在 source 模式无安全边距（main.js imgExts 不含 .ofd），Gate 须验证 Canvas 轨补边距',
+    source: 'test_fixtures/print-gate-anchors/26447000000943604784.ofd',
+    status: 'available',
+    notes: '真实 OFD 样本（2026-08-03 用户提供）；OFD 在 source 模式无安全边距（main.js imgExts 不含 .ofd），Gate 须验证 Canvas 轨补边距',
   },
   {
     id: 'A3',
