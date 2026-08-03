@@ -428,3 +428,25 @@ canvas/source 输出位图
 - ✅ G1 只新增：测量纯函数（已落地）+ 采集编排（需 Electron 环境，待执行）。
 - 采集方式待用户确认：一次性 dev 脚本（Electron 内跑双轨渲染导出位图）vs 手动导出 PNG 后跑测量。
 
+### 12.7 G1 采集器落地（commit `79d102e2`，2026-08-03 晚）
+- 方案 A（用户批准）：`frontend/test/printGate/` 新增 `gateCases.mjs`（3 组）+ `collectGateOutput.mjs`（source 轨纯 node 可跑 / canvas 轨需 Electron）+ `rasterize_pdf.py`（fitz→RGBA）+ `README.md`；`.gitignore` 忽略 `artifacts/`。
+- source 轨实现：**不 require 生产 pdf-margin-processor.js**（其依赖 temp-manager→electron app，纯 node 不可加载），改为**直接调 `scripts/add-pdf-margins.py`，execFile 参数与 pdf-margin-processor.js L237-245 逐字一致**（即与 main.js:536 生产调用等价），output 写 caseDir。
+- **实测产出 3 个 source artifact，4 个生产语义确认（冻结）**：
+  1. **A1 是专用发票纸** `paperActualPx=2717×1890@300dpi`（≈230×160mm，**非 A4**）——纸边必须用光栅化实际尺寸，不能假设 A4（初版假设 A4 导致 bbox 越界报错，已修正）。
+  2. **source 边距非对称**：A1 L14.3/T16.0/R10.6/B17.0mm（settings 10mm + 发票内容自身页内非居中留白）——`add-pdf-margins.py` 语义 = **扩展页面尺寸、内容位置不变**（L189），非 contain-fit。非对称是真实语义不是 bug。
+  3. **OFD source 轨无边距**（main.js:512 imgExts 不含 .ofd）+ fitz 不支持 OFD → A2 source bbox **需后端 Render Contract（fetchPrintRaster）补采**，node 侧仅语义基线。
+  4. **source 轨 rotation 由 Sumatra 原生处理**（不在 PDF 内容中）→ node 采集的 bbox 不体现旋转；**A1-rot90 旋转方向验证必须走 canvas 轨**（renderMultipleItemsToCanvas rotations 参数）。
+- 待办：canvas 轨采集需 Electron 环境注入（README 已写接入指引）；A2 source bbox 待后端补采。
+
+### 12.8 当前冻结状态（更新）
+```
+A1/A1.5/Commit2/Commit3  ✅（中间层落成）
+A2-G0     ✅ (8c6da15e)
+A2-G1     采集器 ✅ (79d102e2) — source 轨已跑通产出首批数据
+          canvas 轨 ⏸ 需 Electron 采集（README 指引）
+          A2 OFD bbox ⏸ 需后端 Render Contract 补采
+A2-G2..G6 ⏸ WAIT
+A3 Canvas ⏸ WAIT
+Phase B   ⏸ WAIT
+```
+
