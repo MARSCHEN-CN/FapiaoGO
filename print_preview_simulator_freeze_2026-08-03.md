@@ -569,6 +569,12 @@ Phase B    ⏸
 - **Gate**：A3-3-1-01 contract presence ✅ / A3-3-1-02 bitmap invariant（渲染调用仍无 paperLayout 第 10 参）✅ / A3-3-1-03 source semantic declaration + offset pending（未消费）✅。修复 A3-1-01 过时断言。
 - 回归 58/58。未消费 sourceOrigin（A3-3-2 PlacementAdapter 才消费）。
 
+### 14.15 A3-3-2 落地（2026-08-03 晚，commit `4f7d61ba`）
+- **① PlacementAdapter 纯层**（`frontend/src/print/placementAdapter.js`）：`applySourceOriginPlacement` 生成 drawRenderCommand 兼容的 PlacementCommand（`placement.offsetX/Y`=sourceOrigin 位移、`scale=1`、`rotatedBounds`=原生尺寸、`contentRotation`、`clip=null`）；`assertPlacementOffset` 校验 dx/dy≤0.5mm；`mmToPxPlacement`（命名避 measureMargins.mmToPx 冲突）。
+- **② usePrint 接入**：`renderFileToPrintImage` PDF 单文件分支改走 native（`renderPDFPageRaw(paperKey=null)`）+ PlacementAdapter → 扩展纸画布；**不进 renderMultipleItemsToCanvas**（不混 composer/slot 语义）；native 失败回退旧路径。
+- **③ Gate 全绿（61/61）**：A3-3-2-01 placement offset（native.x51+118=169 ✅ dx/dy=0）/ A3-3-2-02 margin compare（placement 后四边 vs source L14.3/T16/R10.6/B17，均 ≤0.5mm ✅）/ A3-3-2-03 bitmap invariant（scale=1、rotation=0、像素不变只移位置 ✅）。A3-3-1-03 断言演进（声明→A3-3-2 起消费）。
+- **红线守住**：未改 renderPDFPageRaw / rasterize / createLayout 通用 / MultiTicketComposer / 新 fit 算法；margin 未替代 sourceOrigin。rotation 未处理（A3-3-3）。
+
 ### 14.6 冻结状态
 ```
 A2-G1 source ✅ | canvas 采集链路 ✅ + 第一份报告 🔴FAIL(预期)
