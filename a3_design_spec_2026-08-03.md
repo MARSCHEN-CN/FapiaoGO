@@ -112,3 +112,69 @@ Output: native page bitmap + paperLayout placement（offset = margins）
 - ❌ 不复制 add-pdf-margins.py（native + offset 天然等价）
 - ❌ 不进 Phase B（PrintPreviewModel/Preview UI）
 - ❌ 不碰 OFD 单文件（G1-B 范畴）
+
+# A3-3 Design Spec — Placement Alignment（2026-08-03 晚用户定稿，追加）
+
+> A3-1（contract 携带）/ A3-2（native 资源验证）已冻结，A3-3 是首次改变「内容在纸面上的位置语义」，风险等级更高——先定义 Placement Contract → Gate → 再接生产路径。
+
+## 1. 已知坐标事实（冻结，G1-3B + A3-2 实测）
+```
+native bitmap: 2480×1654px ≈ 210×140mm @300dpi（内容 2424×1499）
+source paper:  2717×1890px ≈ 230×160mm（内容偏移 +118px,+118px）
+差异: 2717-2480≈237px / 1890-1654≈236px ≈ 10mm×2 @300dpi（左右/上下各 118px）
+结论: paper = native + 20mm；内容偏移 = sourceOrigin(10mm) = (118px,118px)
+```
+
+## 2. 目标
+```
+Canvas Output = PDF Native Bitmap + Paper Expansion Geometry + Source Origin Offset
+              = source 语义（native page + 10mm top/left expansion）
+验收: margin diff ≤ 0.5mm
+```
+
+## 3. 不做什么（红线，继续冻结）
+- ❌ 不改 PDF renderer / renderPDFPageRaw / PDF margin 生成逻辑
+- ❌ 不改 Sumatra source path / MultiTicketComposer 算法 / createLayout 通用行为
+- 原因：否则无法证明「placement 问题，而不是 renderer 问题」
+
+## 4. 改动目标：新增 PlacementAdapter 层
+```
+RenderResource (native bitmap)
+        ↓
+PlacementAdapter (paper coordinate space)
+        ↓
+draw command offset
+        ↓
+Canvas
+```
+原则：**resource ≠ placement**（A3-1/2 验证的架构原则延续）。单文件 branch 改为：
+```
+renderFileToPrintImage → native resource → applyPlacement(native, paperLayout) → canvas
+```
+
+## 5. paperLayout contract 扩展（A3-1 预留字段补全）
+```js
+paperLayout = {
+  paperRect, usableRect,
+  coordinateSpace: { name: "paper", origin: "top-left" },  // contract，不重新定义坐标系
+  sourceOrigin: { x: 10, y: 10, unit: "mm" },              // A3-3 第一阶段只消费这个
+}
+```
+
+## 6. Gate 设计
+| Gate | 输入 | 检查 | 预期 |
+|---|---|---|---|
+| A3-3-01 Placement Offset | A1-native + paperLayout 230×160 + sourceOrigin 10mm | native bbox + offset = source bbox | dx≈118px, dy≈118px |
+| A3-3-02 Margin | canvas vs source | 四边 margin | 均 ≤0.5mm |
+| A3-3-03 Rotation Regression | rot90 + placement | bbox rotation correct + offset correct | R1 已解除，复验 placement 后偏移 |
+
+## 7. 最大风险：rotation 后 offset 坐标系
+- rot0：offset = (+x, +y)，简单
+- rot90：sourceOrigin 可能需旋转变换（(x,y) → (y,-x)）→ **A3-3-03 必须保留**
+
+## 8. Commit 拆分（单变量）
+| Commit | 内容 | Gate |
+|---|---|---|
+| A3-3-1 | 只加 paperLayout.sourceOrigin 字段，不消费 | contract pass |
+| A3-3-2 | PlacementAdapter，只支持 rot0 | margin ≤0.5mm |
+| A3-3-3 | rotation transform | rot90 pass |
