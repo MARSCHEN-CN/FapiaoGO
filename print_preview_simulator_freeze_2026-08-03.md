@@ -312,3 +312,79 @@ Phase B   ⏸ WAIT
 ```
 > 到此 `executePrint` 与 `doPrint` 两条打印入口**都已消费同一个 PrintExecutionPlan**，中间层真正落成。下一步进 A2 Gate（验证 Canvas 接管条件：安全边距对齐 / QR / rotation / OFD / 小字可读），**不要提前碰 `renderFileToPrintImage` 路由**。
 
+## 11. A2 Gate 设计冻结（2026-08-03 晚，用户定稿）
+
+### 11.1 A2 定位（用户原话）
+> A2 不是"验证 Canvas 能不能打印"，而是"**证明 Canvas 可以替代 source 单文件轨，而不会改变用户看到的纸张结果**"。
+> Gate 先证明，A3 再切换。**先做 A2-G0：建立锚样本 + Gate 验收脚本框架，不改任何打印代码。**
+
+### 11.2 验收子项结构（用户定稿）
+```
+A2 Gate
+ |
+ +-- G0 环境冻结（锚样本 + 验收脚本框架）          ← 本阶段
+ +-- G1 safeMargin measurement（唯一架构风险，先测）
+ +-- G2 rotation
+ +-- G3 OFD
+ +-- G4 QR
+ +-- G5 small text
+ +-- G6 multi-page
+```
+- **G1 必须最先测 safeMargin**：内容边界到纸边四边（left/right/top/bottom，单位 mm），目标 `abs(canvasMargin - sourceMargin) <= 0.5mm`。不要先测清晰度/QR/肉眼——边距是唯一架构风险（source 轨 pdfMargin 烘焙 vs Canvas 轨 createPlacement 两套机制）。
+- 其余子项（清晰度/QR/肉眼）放 G1 之后，按矩阵顺序推进。
+
+### 11.3 锚样本集（用户定稿 A1–A6）
+| 锚 | 规格 | 来源盘点（2026-08-03 实测） |
+|---|---|---|
+| A1 | 普通 PDF 单页 | ✅ 现成：`test_fixtures/25952000000127675627.pdf` / `25312000000184209689.pdf` |
+| A2 | OFD 单页 | ❌ **缺失**：工作区无任何 .ofd 文件 → 需用户提供真实样本 |
+| A3 | PDF 多页 | ✅ 现成：`frontend/public/test.pdf` / `dist/test.pdf`（页数待 G1 标定） |
+| A4 | 旋转 90° | ✅ **不需要独立文件**：rotation 是打印参数（`slot.rotation`），非文件属性 → 用 A1 文件 + rotation=90 |
+| A5 | 二维码票 | ⚠️ 待标定：现有 4 个真实 PDF 中是否含二维码，G1 标定后确认；缺失则需用户提供 |
+| A6 | 小字体票 | ⚠️ 同上 |
+
+### 11.4 锚样本存放与入库策略（冻结）
+- **真实发票不入库**：`.gitignore:15` `test_fixtures/`、`.gitignore:16` `**/tests/*` 已忽略真实 PDF/OFD。
+- 锚样本留在 gitignored 目录（沿用 `test_fixtures/`），**Gate 框架引用路径，不复制文件**。
+- 入库的只有：框架代码（`frontend/test/printGate/*.mjs`）+ manifest（`.mjs` 格式，避免 `*.json` gitignore 坑）。
+
+### 11.5 Gate 从 Plan 出发（用户强调的关键架构点）
+```
+files
+ ↓
+buildPrintExecutionPlan        ← 唯一事实源（Commit 2/3 后已成）
+ ↓
+      ↙                 ↘
+legacy executor       canvas shadow executor
+      ↓                 ↓
+ Sumatra output      Canvas output
+      ↓                 ↓
+     └──── compare（tolerance）────┘
+```
+> A2 Gate 的 shadow render **不应从 files 开始**——否则 Gate 自己又复制一套打印语义。必须从 `PrintExecutionPlan` 开始，legacy 与 canvas 双执行器共享同一 Plan 事实。
+
+### 11.6 G0 交付物（本阶段，commit 后）
+1. 冻结文档 §11（本文件）
+2. `frontend/test/printGate/gateConfig.mjs` — 容差配置（`SAFE_MARGIN_TOLERANCE_MM=0.5`）+ 锚样本路径约定
+3. `frontend/test/printGate/measureMargins.mjs` — 纯函数：内容包围盒 + 纸张尺寸 + 分辨率 → 四边 margin(mm)（G1 直接复用）
+4. `frontend/test/printGate/anchorManifest.mjs` — 锚样本清单（A1-A6 规格/来源/缺失标记）
+5. `frontend/test/printGate/gateFramework.test.mjs` — 框架自检（测量纯函数单测 + manifest 结构校验 + 双执行器比较管线结构）
+
+### 11.7 边界（G0 红线）
+- ❌ 不改任何打印代码（renderFileToPrintImage / renderMultipleItemsToCanvas / createPlacement / safeMargin / PRINT_PIPELINE.mode / usePrint.js 全部不碰）。
+- ✅ G0 产出全部在 `frontend/test/printGate/`（测试目录，纯 node 可跑，不接 React/Electron）。
+- ⚠️ 真实双轨输出采集（Sumatra vs Canvas 实际打印/渲染对比）需要 Electron 环境，属 G1 执行阶段，G0 只交付框架与纯函数。
+
+### 11.8 当前冻结状态（更新）
+```
+A1        ✅ (7e176794)
+A1.5      ✅ (ef03951c)
+Commit 2  ✅ (5f92a4fc)
+Commit 3  ✅ (adb7759e)
+========= 中间层 PrintExecutionPlan 完成 =========
+A2-G0     🔒 APPROVED / IN PROGRESS（锚样本 + 框架）
+A2-G1..G6 ⏸ WAIT（G1 safeMargin 第一测量）
+A3 Canvas ⏸ WAIT
+Phase B   ⏸ WAIT
+```
+
