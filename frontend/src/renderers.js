@@ -454,8 +454,8 @@ function setVersion(map, key, value, maxSize = 100) {
 // 用于版本过期时 cancel() 终止旧渲染，避免 GPU/Worker 浪费
 const _renderTasks = new Map()
 
-// G1-CANVAS-3B DEV patch：临时 export 供 Gate 采集器直接验证 native rendering（A3 决策后定保留/回滚）
-export async function renderPDFPageRaw(pdfData, dpi, fileKey, paperKey = null, isLandscape = false, customPaper = null) {
+// G1-CANVAS-3B 后保留 export（A3 需要 native branch）；customPaper 透传已回滚（G1-CV3B 证明非最终方案，防 native+customPaper 歧义路径）
+export async function renderPDFPageRaw(pdfData, dpi, fileKey, paperKey = null, isLandscape = false) {
   // 按文件隔离队列
   const queueKey = _getRenderQueueKey(pdfData, fileKey)
   let queue = _renderQueues.get(queueKey)
@@ -513,8 +513,7 @@ export async function renderPDFPageRaw(pdfData, dpi, fileKey, paperKey = null, i
 
       if (paperKey) {
         // ✅ 有 paperKey：固定纸张尺寸，PDF 内容缩放适配
-        // G1-CANVAS-3A patch：透传 customPaper，否则 paperKey='Custom' 会回退 A4（layout.js:25）
-        const pixels = getPaperPixels(paperKey, dpi, isLandscape, customPaper)
+        const pixels = getPaperPixels(paperKey, dpi, isLandscape)
         canvasW = pixels.width
         canvasH = pixels.height
       } else {
@@ -828,7 +827,7 @@ async function _renderViaWorker(items, paperKey, dpi, isLandscape, rotations, sl
 
     try {
       if (item._pdfData) {
-        const result = await renderPDFPageRaw(item._pdfData, dpi, item.key, paperKey, isLandscape, layoutOptions?.customPaper)
+        const result = await renderPDFPageRaw(item._pdfData, dpi, item.key, paperKey, isLandscape)
         if (result) {
           const entry = { source: result.canvas, width: result.width, height: result.height }
           itemRenderCache.set(l1Key, entry)
@@ -1099,7 +1098,7 @@ async function _renderDirect(
     // L1 未命中：渲染并缓存
     try {
       if (item._pdfData) {
-        const result = await renderPDFPageRaw(item._pdfData, dpi, item.key, paperKey, isLandscape, layoutOptions?.customPaper)
+        const result = await renderPDFPageRaw(item._pdfData, dpi, item.key, paperKey, isLandscape)
         if (result) {
           const entry = { source: result.canvas, width: result.width, height: result.height }
           itemRenderCache.set(l1Key, entry)
