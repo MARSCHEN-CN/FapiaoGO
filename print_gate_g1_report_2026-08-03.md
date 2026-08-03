@@ -150,3 +150,34 @@ native PDF page render（`renderPDFPageRaw(paperKey=null)`，renderers.js:558）
 ```
 - 不需要建 RenderPlacementAdapter / PrintRenderContract 新模型（3B FAIL 才需要）
 - 需要解决的接线点：PrintExecutionPlan.paperLayout 提供「原生页 + 边距」的纸面几何（renderers.js:1018 paperLayout 参数已就绪）
+
+# 附录 D：A3-2 Native Renderer 验证（2026-08-03 晚，Gate 工具 commit `171f850e`）
+
+## 实验
+单变量验证 native renderer 作为单文件 canvas 轨底层能力（Gate-only，零生产修改）：
+- A3-2-01: rot0 复现 G1-3B（content ratio 1.0±1%）
+- A3-2-02: rot90 rotation gate（R1 最高风险——native 分支旋转坐标系）
+
+## 结果（用户实测 + analyzeNativeOutput）
+| 项 | A3-2-01 (rot0) | A3-2-02 (rot90) |
+|---|---|---|
+| bitmap | 2480×1654（原生页）| **1654×2480（宽高互换 ✅）** |
+| content bbox | x51,y71,w2424,h1499 | x84,y51,w1499,h2424 |
+| content ratio | **w=1.0 / h=0.999** | **w=0.999 / h=1.0（互换）** |
+| bbox 负坐标 | 无 | **无（x84,y51 均 ≥0）** |
+| 判定 | **PASS（尺寸恢复）** | **PASS（orientation correct）** |
+
+## 结论：A3-2 双 Gate PASS ✅
+- **native renderer 资源层正确**：rot0 内容尺寸 = source ±0.1%，rot90 宽高互换 + 无负坐标 + 内容完整。
+- **R1 rotation 风险解除**：native bitmap + rotation transform 坐标系稳定。
+- 分层验证成立：资源正确（A3-2）→ 放置正确（A3-3）——A3-1 的「先资源后放置」设计得到验证。
+
+## 对 A3-3 的含义
+A3-2 PASS → 进入 A3-3 placement alignment：
+```
+native bitmap（已验证）
++ paperLayout coordinateSpace/sourceOrigin（contract 已预留）
++ 10mm expansion offset（= source 的 add-pdf-margins 语义）
+= source 等价输出
+```
+路线确定：A3-3 = native bitmap + paperLayout offset，无需 RenderPlacementAdapter（G1-3B 已证明）。
