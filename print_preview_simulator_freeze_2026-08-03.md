@@ -554,6 +554,15 @@ Phase B    ⏸
 - **A3-3 路线确定**：native bitmap + paperLayout coordinateSpace/sourceOrigin（contract 预留）+ 10mm expansion offset = source 等价输出；无需 RenderPlacementAdapter。
 - 状态：A3-1 ✅ → A3-2 ✅（R1 解除）→ **A3-3 ⏸ placement alignment（margin≤0.5mm）**。
 
+### 14.13 A3-3 Design Spec 冻结（2026-08-03 晚，commit `cd937048` 追加 a3_design_spec §A3-3）
+- **用户定稿**：A3-3 是首次改变「内容在纸面位置语义」，先定义 Placement Contract → Gate → 再接生产路径，不直接改 renderMultipleItemsToCanvas。
+- **新增 PlacementAdapter 层**：`RenderResource(native bitmap) → PlacementAdapter(paper coordinate space) → draw command offset → Canvas`。原则 resource ≠ placement。
+- **paperLayout contract 扩展**：`coordinateSpace:{name:"paper",origin:"top-left"}`（不重新定义坐标系）+ `sourceOrigin:{x:10,y:10,unit:"mm"}`（第一阶段只消费 sourceOrigin）。
+- **坐标事实冻结**：paper = native + 20mm（10mm×2@300dpi=118px），内容偏移=(118,118)px。
+- **三 Gate**：A3-3-01 offset（dx≈118px）/ A3-3-02 margin（四边≤0.5mm）/ A3-3-03 rot90 offset 坐标系（最大风险：rotation 后 sourceOrigin 可能需 (x,y)→(y,-x) 变换）。
+- **三 Commit**：A3-3-1（只加 sourceOrigin 不消费）/ A3-3-2（PlacementAdapter rot0）/ A3-3-3（rotation transform）。
+- 红线：不改 PDF renderer / renderPDFPageRaw / margin 生成 / Sumatra / MultiTicketComposer / createLayout 通用行为。
+
 ### 14.6 冻结状态
 ```
 A2-G1 source ✅ | canvas 采集链路 ✅ + 第一份报告 🔴FAIL(预期)
