@@ -79,11 +79,13 @@ export const PRINT_PIPELINE = {
 - `pageType`: `single` | `multi-ticket`(n-up 由 slot 数量决定,不另立 `two-up` 类型)。
 - `rotation` 属于 **slot**,不属于 paper/page(符合「旋转发票内容,不旋转纸张」)。
 
-### 3.3 边界铁律(三个隔离)
+### 3.3 边界铁律（四层隔离，2026-08-03 补充第四层）
 ```
-ViewerRenderResource  ≠  PrintPreviewRenderResource  ≠  PrintExecution
+InvoiceIdentity  ≠  PrintExecution  ≠  PrintPreviewRenderResource  ≠  ViewerRenderResource
 ```
-三者**共享**:Document identity + content bytes/image + PrintConfig。
+- 前三层（Viewer / PrintPreview / PrintExecution）**共享**:Document identity + content bytes/image + PrintConfig。
+- **第四层 InvoiceIdentity ≠ PrintExecution**：`file.invoiceType` 等票种判定是 **FileList / InvoiceIdentity 层**职责，在流入 PrintExecutionPlan **之前**必须已是归一化稳定字段。PrintExecutionPlan / 打印确认页**只消费**已整理好的打印策略结果（如 `strategy.oneNormalTwoSpecial`），**不重新判定普票/专票**，也不关心 OCR 如何识别、FileList 如何归类。
+- 打印确认页只关心：打印哪些文件 / 顺序 / 分组 / slot / rotation / paper·orientation；不关心发票业务字段是否正确、票种如何判定。
 
 ### 3.4 safeMargin 不进模型
 - ❌ `PrintPreviewModel` 不保存 `{ safeMargin, usableRect }` 坐标。
@@ -216,7 +218,7 @@ Phase B
 ```
 
 ### 8.9 A1.5 实测发现（非 blocker，记录待办）
-- **🟡 一普二专检测子串不匹配真实值（预存在 legacy 行为，A1 忠实镜像未引入）**：`executePrint` L824 与 `buildPrintExecutionPlan` L125 均用 `invoiceType?.includes('专票')` 判定专票。但系统规范判定值在 `FileList.jsx:68`/`utils.js:322` 为 `'专票'`，而 OCR/映射产物常为 `'增值税专用发票'`——`'增值税专用发票'.includes('专票')` 为 `false`（字序为「专用+发票」）。若生产 `invoiceType` 确为 `'增值税专用发票'`，则 **一普二专（round2）在产品里从不触发**，但代码/快照不会报错。A1/A1.5 仅证明「A1 == legacy」，不修此行为；若需修复，应归一化 `invoiceType` 或改用更稳判定（如 `includes('专用') || includes('专票')`）。已用规范值 `'专票'` 写样例使 round2 分支被测试覆盖。
+- **📝 Observation（在 PrintPreview / PrintExecution 范畴之外）— 一普二专检测 `includes('专票')`**：`executePrint` L824 与 `buildPrintExecutionPlan` L125 均用 `invoiceType?.includes('专票')` 判定专票；`FileList.jsx:68`/`utils.js:322` 的规范判定值也是 `'专票'`，而 OCR/映射产物常为 `'增值税专用发票'`（字序「专用+发票」，`'增值税专用发票'.includes('专票')` 为 `false`）。**此问题归属 FileList / InvoiceIdentity 层的发票身份归一化，不属于 PrintExecutionPlan / 打印确认页范畴**——Plan 契约只要求 `file.invoiceType` 是已归一化稳定字段、输出 `strategy.oneNormalTwoSpecial`，不重新判定票种。A1.5 已用规范值 `'专票'` 写样例使 round2 分支被覆盖，**证明「现状==现状」即足够，无需在 A1/A2/A3 讨论该业务规则是否最优** → 已**移出当前 Gate**，单列 `PRINT-XXX: InvoiceType normalization audit`（FileList 层待办），不在打印确认页改造链路内。
 - **💭 样例数据纪律**：真实解析后的 OFD 必有 `printPath`（非仅 `docId`）。`SOURCE_FILE_FILTER`(`printPath||path`) 与 `MERGE_FILE_FILTER`(`printPath`) 都要求 `printPath`，故黄金快照样例给 B.ofd 补了 `printPath`，分组才得 `[A,B],[C,D],[E]`。
 
 ### 8.8 下一步顺序（用户定稿）
@@ -232,7 +234,7 @@ Phase B
 ### 9.1 审查结论采纳（用户 A1.5 review）
 - A1.5 通过 ✅，进入 Commit 2。
 - **Commit 2 目标严格收窄**：只替换 `executePrint` 的 source 分支消费路径。不碰 doPrint / Canvas routing / Sumatra 删除 / renderFileToPrintImage / safeMargin / Plan schema 调整 / invoiceType 修复。
-- 一普二专 `includes('专票')` 问题与 OFD `printPath` 问题：A1.5 已正确暴露且保持边界（证明现状、不修现状），单独挂待办，不混入 Commit 2。
+- 边界纪律重申：一普二专 `includes('专票')` 问题是 **FileList / InvoiceIdentity 层票种归一化**范畴（打印确认页只消费 `strategy.oneNormalTwoSpecial`，不重新判定票种），已**移出当前 Gate**；OFD `printPath` 是输入契约观察（过滤器要求 printPath）。两者均保持「证明现状、不修现状」，不混入 Commit 2。
 
 ### 9.2 实际改动
 - **新增 `frontend/src/print/deriveSourcePrintJobs.js`**（纯函数）：从 plan 派生真实执行 jobs。
