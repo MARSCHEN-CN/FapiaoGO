@@ -123,10 +123,10 @@ export async function collectCanvasCase(caseDef) {
     )
     if (!canvas) return { ok: false, error: 'renderMultipleItemsToCanvas 返回 null' }
 
-    const w = canvas.width, h = canvas.height
-    const img = canvas.getContext('2d').getImageData(0, 0, w, h)
-    const bbox = findContentBBox(img.data, w, h)
-    const paperPx = { w, h }
+    const cw = canvas.width, ch = canvas.height
+    const img = canvas.getContext('2d').getImageData(0, 0, cw, ch)
+    const bbox = findContentBBox(img.data, cw, ch)
+    const paperPx = { w: cw, h: ch }
     const marginsPx = bbox ? measureMarginsPx(bbox, paperPx) : null
     const marginMm = marginsPx ? marginsToMm(marginsPx, GATE_DPI) : null
 
@@ -149,10 +149,10 @@ export async function collectCanvasCase(caseDef) {
       .then(blob => blob.arrayBuffer())
 
     // 宿主写盘（可选）
-    const w = globalThis.__GATE_WRITE__
-    if (typeof w === 'function') {
-      w(`printGate/artifacts/${caseDef.id}`, 'canvas.json', JSON.stringify(artifact, null, 2))
-      w(`printGate/artifacts/${caseDef.id}`, 'canvas.png', new Uint8Array(pngBytes))
+    const writeFn = globalThis.__GATE_WRITE__
+    if (typeof writeFn === 'function') {
+      writeFn(`printGate/artifacts/${caseDef.id}`, 'canvas.json', JSON.stringify(artifact, null, 2))
+      writeFn(`printGate/artifacts/${caseDef.id}`, 'canvas.png', new Uint8Array(pngBytes))
     }
     console.log(`[GATE-CANVAS] ${caseDef.id} OK  bbox=${JSON.stringify(artifact.bbox)} marginMm=${JSON.stringify(artifact.marginMm)}`)
     return { ok: true, artifact, pngBytes }
