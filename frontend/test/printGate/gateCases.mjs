@@ -55,6 +55,15 @@ export const GATE_CASES = Object.freeze([
     rotation: 0,
     settings: { landscape: false },  // paperKey=null → native 分支，忽略 paperSize/margin
   },
+  {
+    id: 'A1-native-rot90',
+    anchor: 'A1',
+    purpose: 'A3-2-02 rotation gate：native render + rotation=90，验证旋转坐标系（R1 最高风险）',
+    file: 'test_fixtures/25952000000127675627.pdf',
+    format: 'pdf',
+    rotation: 90,
+    settings: { landscape: false },
+  },
 ])
 
 /** case 自检：id 唯一、文件存在（路径 gitignored 但物理存在） */
@@ -79,6 +88,6 @@ export function validateGateCases(cases = GATE_CASES, fs) {
  */
 export const CANVAS_G1_CASES = Object.freeze(['A1-rot0', 'A1-rot90'])
 export const CANVAS_G1_2_CASES = Object.freeze(['A1-customPaper'])
-export const NATIVE_G1_CASES = Object.freeze(['A1-native'])
+export const NATIVE_G1_CASES = Object.freeze(['A1-native', 'A1-native-rot90'])
 export const OFD_G1_CASES = Object.freeze(['A2-rot0'])
 

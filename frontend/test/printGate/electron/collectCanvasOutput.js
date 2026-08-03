@@ -211,23 +211,41 @@ export async function collectNativeCase(caseDef) {
     const result = await renderPDFPageRaw(item._pdfData, GATE_DPI, item.key, null, false)
     if (!result) return { ok: false, error: 'renderPDFPageRaw(native) 返回 null' }
 
-    const w = result.width, h = result.height
-    const img = result.canvas.getContext('2d').getImageData(0, 0, w, h)
+    let w = result.width, h = result.height
+    let canvas = result.canvas
+    const rotate = caseDef.rotation || 0
+
+    // A3-2 rotation gate：native 分支本身不旋转（renderers.js:558 无 rotate），
+    // 旋转由 renderMultipleItemsToCanvas 的 rotations 参数层处理（createPlacement）。
+    // 此处用 canvas 2D 旋转模拟「渲染后旋转」验证坐标系（验证性质，非生产路径）。
+    if (rotate !== 0 && rotate % 90 === 0) {
+      const tmp = document.createElement('canvas')
+      if (rotate === 90 || rotate === 270) { tmp.width = h; tmp.height = w } else { tmp.width = w; tmp.height = h }
+      const tctx = tmp.getContext('2d')
+      tctx.fillStyle = '#ffffff'
+      tctx.fillRect(0, 0, tmp.width, tmp.height)
+      tctx.translate(tmp.width / 2, tmp.height / 2)
+      tctx.rotate((rotate * Math.PI) / 180)
+      tctx.drawImage(canvas, -w / 2, -h / 2)
+      canvas = tmp
+      w = tmp.width; h = tmp.height
+    }
+
+    const img = canvas.getContext('2d').getImageData(0, 0, w, h)
     const bbox = findContentBBox(img.data, w, h)
 
     const artifact = {
       anchor: caseDef.anchor,
       case: caseDef.id,
-      purpose: 'G1-CANVAS-3B native render（paperKey=null，无 fit/居中/外扩）',
+      purpose: 'A3-2 native render（paperKey=null）' + (rotate ? ` + rotation=${rotate}（A3-2-02 rotation gate）` : '（复现 G1-3B）'),
       dpi: GATE_DPI,
       paper: 'native（PDF 原生页尺寸）',
       paperActualPx: { w, h },
-      rotation: caseDef.rotation,
+      rotation: rotate,
       format: caseDef.format,
-      source: 'renderPDFPageRaw(paperKey=null) native 分支（renderers.js:558）',
+      source: 'renderPDFPageRaw(paperKey=null) native 分支 + 采集器侧 canvas 旋转（验证性质）',
       bbox: bbox ? { left: bbox.x, top: bbox.y, right: bbox.x + bbox.w, bottom: bbox.y + bbox.h } : null,
       bboxPx: bbox ? { x: bbox.x, y: bbox.y, w: bbox.w, h: bbox.h } : null,
-      // offset 相对 source（source 内容 bbox 起点 169,189 @300dpi，见 artifacts/A1-rot0/source.json）
       bboxOffsetVsSourcePx: bbox ? { dx: bbox.x - 169, dy: bbox.y - 189 } : null,
       marginMm: null,  // native 无纸面外扩，不适用边距比较
     }

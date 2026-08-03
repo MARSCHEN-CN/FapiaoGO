@@ -94,6 +94,23 @@ export function analyzeNativeOutput(caseId = 'A1-native') {
   }
   const nb = native.bboxPx, sb = source.bbox
   const sourceSize = { w: sb.right - sb.left, h: sb.bottom - sb.top }
+  const rotate = native.rotation || 0
+
+  // rot90/270：期望内容宽高互换（orientation correct）
+  if (rotate === 90 || rotate === 270) {
+    const swapped = Math.abs(nb.w - sourceSize.h) / sourceSize.h < 0.02 && Math.abs(nb.h - sourceSize.w) / sourceSize.w < 0.02
+    return {
+      case: caseId, nativeBitmapPx: native.paperActualPx, sourceBitmapPx: source.paperActualPx,
+      nativeBboxPx: nb, sourceBboxPx: sb, rotation: rotate,
+      contentSizeRatio: { w: Math.round(nb.w / sourceSize.h * 1000) / 1000, h: Math.round(nb.h / sourceSize.w * 1000) / 1000 },
+      bboxOffsetVsSourcePx: native.bboxOffsetVsSourcePx,
+      sizeOk: swapped,
+      verdict: swapped
+        ? 'PASS（rot90：内容宽高互换正确，orientation correct）'
+        : `FAIL（rot90 内容尺寸 ${nb.w}x${nb.h} ≠ source 互换 ${sourceSize.h}x${sourceSize.w}）`,
+    }
+  }
+
   const ratio = nb ? { w: Math.round(nb.w / sourceSize.w * 1000) / 1000, h: Math.round(nb.h / sourceSize.h * 1000) / 1000 } : null
   const offset = native.bboxOffsetVsSourcePx
   const sizeOk = ratio && Math.abs(ratio.w - 1) < 0.02 && Math.abs(ratio.h - 1) < 0.02
@@ -132,6 +149,12 @@ if (_isCli) {
   if (native.contentSizeRatio) console.log(`  content size ratio: w=${native.contentSizeRatio.w} h=${native.contentSizeRatio.h}`)
   if (native.bboxOffsetVsSourcePx) console.log(`  bbox offset vs source: dx=${native.bboxOffsetVsSourcePx.dx} dy=${native.bboxOffsetVsSourcePx.dy}px`)
   console.log(`  verdict: ${native.verdict}`)
+  // A3-2-02 rotation gate（rot90）
+  const nativeRot90 = analyzeNativeOutput('A1-native-rot90')
+  console.log(`\n=== ${nativeRot90.case} (A3-2 rotation gate) ===`)
+  if (nativeRot90.nativeBitmapPx) console.log(`  native bitmap: ${nativeRot90.nativeBitmapPx.w}x${nativeRot90.nativeBitmapPx.h}`)
+  if (nativeRot90.contentSizeRatio) console.log(`  content size ratio (swapped): w=${nativeRot90.contentSizeRatio.w} h=${nativeRot90.contentSizeRatio.h}`)
+  console.log(`  verdict: ${nativeRot90.verdict}`)
   console.log(`\n===== SUMMARY: ${report.summary.pass}/${report.summary.total} PASS =====`)
 }
 
