@@ -540,6 +540,12 @@ Phase B    ⏸
 - **最大风险**：rotation + paperLayout 未验证（G1 只验了 native 无旋转）→ A1 rot90 进第一批 Gate。
 - **验收矩阵**：A1 0°（基线）/ A1 90°（rotation）/ A2 OFD（G1-B 后补）/ merge2 / merge4（不回归）。
 
+### 14.11 A3-1 落地（2026-08-03 晚，commit `a896f50c`）
+- **范围**（用户批准 + Spec §8）：`renderFileToPrintImage` 构造统一纸面几何（`computePaperLayout` 与 merge 轨 L382-389 同款），作为返回 job 的 `paperLayout` 携带——**数据链路贯通、bitmap 零变化**（未传 renderMultipleItemsToCanvas 第 10 参，渲染路径不动）。
+- **Gate 验收**：A3-1-01（静态断言：构造+携带+单文件调用无 printPaperLayout）✅、A3-1-02（回归 55/55）✅、A3-1-03（无新 paperKey/customPaper 分支）✅。
+- **红线守住**：未改 renderMultipleItemsToCanvas 算法 / pdfMargin / Sumatra / customPaper / 新 fit 逻辑。paperLayout 最小结构（computePaperLayout 输出）；coordinateSpace/sourceOrigin 预留 A3-3。
+- 下一步：A3-2（native single renderer，paperKey=null，验证 ratio≥0.99；完成后立即测 A1 0°/90° rotation）。
+
 ### 14.6 冻结状态
 ```
 A2-G1 source ✅ | canvas 采集链路 ✅ + 第一份报告 🔴FAIL(预期)
