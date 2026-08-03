@@ -7,7 +7,9 @@
 | 文件 | 作用 |
 |---|---|
 | `gateCases.mjs` | 第一批 3 组 case 定义（A1 PDF rot0 基准 / A2 OFD rot0 语义缺口 / A1 PDF rot90 旋转方向） |
-| `collectGateOutput.mjs` | 采集器：source 轨（node 可跑）+ canvas 轨（Electron 环境） |
+| `collectGateOutput.mjs` | source 轨采集器（node 可跑，已跑通） |
+| `electron/collectCanvasOutput.js` | **canvas 轨采集器**（G1-CANVAS-1，Electron 渲染进程执行） |
+| `analyzeGateOutput.mjs` | **分析器**：canvas vs source 对比报告（node 侧，已验证 OFD/PDF 双判定） |
 | `rasterize_pdf.py` | fitz 光栅化 helper（PDF 页 → RGBA raw bin） |
 | `measureMargins.mjs` / `gateConfig.mjs` | 测量纯函数（G0 产物，复用） |
 | `artifacts/` | **gitignored**，采集输出（PNG + JSON） |
@@ -25,18 +27,27 @@ node collectGateOutput.mjs  # 或 import collectAllSource() 编程调用
 - `bbox`：内容包围盒（px，纸边=光栅化后实际页面尺寸，非 A4 假设）
 - `marginMm`：四边边距（px→mm @300dpi）
 
-### canvas 轨（需 Electron 渲染进程）
+### canvas 轨（需 Electron 渲染进程，G1-CANVAS-1 已就绪）
 
-`renderMultipleItemsToCanvas` 依赖 DOM canvas（OffscreenCanvas），纯 node 不可跑。
-在 Electron 渲染进程（devtools console 或 dev-only harness）注入：
+`renderMultipleItemsToCanvas` 依赖 DOM canvas（OffscreenCanvas）+ vite `?url` import，纯 node 不可跑。
 
-```js
-const { collectCanvasCase } = await import('/src/../test/printGate/collectGateOutput.mjs')
-// ctx 由 Electron 环境提供：
-//   renderMultipleItemsToCanvas — 生产同款（renderers.js），调用序列与 usePrint.js:288-298 逐字一致
-//   makeItem(caseDef) — 构造 { key, fileFormat, _pdfData | _previewImageUrl }（usePrint.js:180-278 同款加载）
-await collectCanvasCase(case, { renderMultipleItemsToCanvas, makeItem })
-```
+**文件**：`electron/collectCanvasOutput.js`——makePrintItem 固化 usePrint.js:180-278 三分支（PDF read-file→_pdfData / OFD buildPrintJobItem+fetchPrintRaster→_previewImageUrl / Image read-file→blob），renderMultipleItemsToCanvas 调用序列与 usePrint.js:288-298 逐字一致（8 参数，已人工核对）。
+
+**运行步骤**（Electron dev，`npm run dev` 起 vite:5173 后）：
+1. 打开 devtools console（渲染进程）
+2. 注入仓库根（磁盘路径）：
+   ```js
+   globalThis.__GATE_REPO_ROOT__ = 'E:/print706/'
+   ```
+3. 执行采集：
+   ```js
+   const { collectCanvasCases } = await import('/test/printGate/electron/collectCanvasOutput.js')
+   const results = await collectCanvasCases()
+   ```
+4. 每个 case 的 `canvas.json`（含 bbox + marginMm）在 console 输出；`results[i].pngBytes` 可手动落盘 `artifacts/<case>/canvas.png`（或注入 `globalThis.__GATE_WRITE__` 自动写盘）
+5. node 侧跑分析：`node analyzeGateOutput.mjs` 生成 canvas vs source 对比报告
+
+> 说明：`buildPrintJobItem` 依赖 DocumentStore（docId），OFD case（A2）需在应用内已解析该 OFD。纯文件流（未导入应用）的 OFD 无法走 canvas 轨 docId 分支——G1-B 阶段处理。
 
 ## 已确认的生产语义（采集实测，2026-08-03）
 
