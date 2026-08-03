@@ -382,9 +382,49 @@ A1.5      ✅ (ef03951c)
 Commit 2  ✅ (5f92a4fc)
 Commit 3  ✅ (adb7759e)
 ========= 中间层 PrintExecutionPlan 完成 =========
-A2-G0     🔒 APPROVED / IN PROGRESS（锚样本 + 框架）
-A2-G1..G6 ⏸ WAIT（G1 safeMargin 第一测量）
+A2-G0     ✅ (8c6da15e) 锚样本盘点 + Gate 框架（A2 OFD 已补样本）
+A2-G1     🔒 APPROVED / IN PROGRESS（safeMargin 第一测量）
+A2-G2..G6 ⏸ WAIT
 A3 Canvas ⏸ WAIT
 Phase B   ⏸ WAIT
 ```
+
+## 12. A2-G1 设计冻结（2026-08-03 晚，用户批准进入 G1）
+
+### 12.1 目标（用户定稿）
+> 验证：同一个 PrintExecutionPlan → source executor / canvas shadow executor → Sumatra 输出 / Canvas 输出 → 四边内容边界距离纸边 `|margin_canvas - margin_source| <= 0.5mm`。
+> **只比较 content bbox（px→mm），不比像素。** 不改打印链，只增加 Gate 测量能力。
+
+### 12.2 实测确认的采集落点（源码实读 2026-08-03）
+| 侧 | 调用点 | 产出 |
+|---|---|---|
+| source | `electron/main.js:522-538` `pdfMargin.process(target.filePath, margins, isImage, orient)`（`imgExts` 含 pdf/png/jpg/bmp/tiff，**不含 .ofd**）| 烘焙边距后的 PDF（`marginResult.path`）→ 光栅化 → bbox |
+| canvas | `usePrint.js:174` `renderFileToPrintImage`：PDF `ipc.invoke('read-file')`→`renderMultipleItemsToCanvas`（不传 paperLayout→createLayout 用 settings.margins）；OFD `fetchPrintRaster(docId, pageIndex)`+同款 canvas 渲染 | canvas → 像素 → bbox |
+
+### 12.3 测量链路（纯函数，已实现+测试）
+```
+canvas/source 输出位图
+  → findContentBBox(pixels, w, h)    像素矩阵→内容 bbox（新增，G1 核心）
+  → measureMarginsPx(bbox, paperPx)  bbox→四边边距 px
+  → marginsToMm(marginsPx, GATE_DPI) px→mm（GATE_DPI=300 与 Canvas 轨 PREVIEW_DPI 一致）
+  → assertSafeMarginAlignment(canvasMm, sourceMm, 0.5)  四边 |diff| ≤ 0.5mm
+```
+
+### 12.4 第一批验收表（用户定稿，3 组）
+| # | 文件 | 类型 | rotation | 目标 |
+|---|---|---|---|---|
+| 1 | A1 | PDF | 0 | 基准 |
+| 2 | A2 | OFD | 0 | **OFD Canvas 路径验证**（两边不同源的关键项） |
+| 3 | A1 | PDF | 90 | 旋转边距方向 |
+
+### 12.5 OFD 样本的特殊意义（用户强调，记录在案）
+- source：Sumatra + pdfMargin（**imgExts 不含 .ofd → source 轨 OFD 无安全边距，边距=0**）
+- canvas：fetchPrintRaster(docId) + createPlacement（createLayout 用 settings.margins → 有边距）
+- **A2 验证的不是"两边一致"，而是"Canvas 轨是否补足 source 轨没统一处理的 OFD 边距语义"**——它是能力验证，不是普通兼容测试。G1 预期：OFD 组可能 diff > 0.5mm 且这是**结构性预期**（source 0 vs canvas margins），结果解读须区分「对齐失败（真 bug）」与「OFD 语义补足（预期差异）」。
+- 具体判定规则：OFD 组记录实测边距值并对比 settings.margins 设定值；若 canvas OFD 边距 ≈ settings.margins（±0.5mm）则视为 **补足成功**（A2 通过），而非与 source 对齐。
+
+### 12.6 G1 执行约束（冻结）
+- ❌ 不改任何打印代码（renderFileToPrintImage / renderMultipleItemsToCanvas / createPlacement / main.js / PRINT_PIPELINE.mode / usePrint.js 全部不碰）。
+- ✅ G1 只新增：测量纯函数（已落地）+ 采集编排（需 Electron 环境，待执行）。
+- 采集方式待用户确认：一次性 dev 脚本（Electron 内跑双轨渲染导出位图）vs 手动导出 PNG 后跑测量。
 
