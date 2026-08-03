@@ -563,6 +563,12 @@ Phase B    ⏸
 - **三 Commit**：A3-3-1（只加 sourceOrigin 不消费）/ A3-3-2（PlacementAdapter rot0）/ A3-3-3（rotation transform）。
 - 红线：不改 PDF renderer / renderPDFPageRaw / margin 生成 / Sumatra / MultiTicketComposer / createLayout 通用行为。
 
+### 14.14 A3-3-1 落地（2026-08-03 晚，commit `a7cad7fc`）
+- **范围**（用户批准，contract-only）：新增 `frontend/src/print/paperLayoutContract.js`（`extendPaperLayoutContract` 附加 `coordinateSpace{name:'paper',origin:'top-left',unit:'mm'}` + `sourceOrigin{x,y,unit:'mm'}`；`validatePaperLayoutContract` 自检）。usePrint 的 A3-1 构造点改经 contract 扩展（sourceOriginXMM/YMM 由 settings.marginLeft/Top 派生）。
+- **⚠️ 语义区分冻结**：sourceOrigin = source 语义（原始 PDF 内容相对扩展纸面偏移）**非 margin**（布局约束）——数值可能相同（10mm）但语义不同，混淆会导致 A5/自定义票据/非对称扩边/裁切区域回归。
+- **Gate**：A3-3-1-01 contract presence ✅ / A3-3-1-02 bitmap invariant（渲染调用仍无 paperLayout 第 10 参）✅ / A3-3-1-03 source semantic declaration + offset pending（未消费）✅。修复 A3-1-01 过时断言。
+- 回归 58/58。未消费 sourceOrigin（A3-3-2 PlacementAdapter 才消费）。
+
 ### 14.6 冻结状态
 ```
 A2-G1 source ✅ | canvas 采集链路 ✅ + 第一份报告 🔴FAIL(预期)
