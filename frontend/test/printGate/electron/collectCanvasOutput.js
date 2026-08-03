@@ -22,11 +22,24 @@ import { findContentBBox, measureMarginsPx, marginsToMm } from '../measureMargin
 import { renderMultipleItemsToCanvas } from '../../../src/renderers.js'
 import { buildPrintJobItem, fetchPrintRaster } from '../../../src/utils/printAdapter.js'
 
-/** 渲染进程注入的 ipc（Electron window.api / preload 暴露）。若缺失，PDF/Image 分支会明确报错 */
-const getIpc = () => {
-  const ipc = window?.api?.ipc || window?.ipcRenderer
-  if (!ipc) throw new Error('未找到 ipc（window.api.ipc / window.ipcRenderer），PDF/Image 分支需要 read-file')
-  return ipc
+/** 渲染进程注入的 ipc（真实契约 = window.electronAPI.ipcRenderer，见 electron/preload.js:51,92） */
+function resolveGateIPC() {
+  // 优先真实 preload 契约：contextBridge.exposeInMainWorld('electronAPI', ...)
+  if (window.electronAPI?.ipcRenderer?.invoke) {
+    return window.electronAPI.ipcRenderer
+  }
+  // 兜底：直接暴露的 ipcRenderer（部分测试环境）
+  if (window.ipcRenderer?.invoke) {
+    return window.ipcRenderer
+  }
+  // 兜底：window.api.ipc（历史假设，保留兼容）
+  if (window.api?.ipc?.invoke) {
+    return window.api.ipc
+  }
+  throw new Error(
+    'Gate canvas collector requires Electron IPC bridge: ' +
+    'window.electronAPI.ipcRenderer.invoke 不存在（preload.js 未暴露？）'
+  )
 }
 
 /** b64 → Blob（OFD/Image previewImage 兜底） */
@@ -55,7 +68,7 @@ export async function makePrintItem(caseDef) {
 
   // PDF 分支（usePrint.js:182-190）
   if (f.fileFormat === 'pdf' || (!f.fileFormat && !f.previewImage)) {
-    const ipc = getIpc()
+    const ipc = resolveGateIPC()
     const fileData = await ipc.invoke('read-file', f.printPath)
     if (!fileData?.success) throw new Error(`read-file 失败: ${f.printPath}`)
     f._pdfData = new Uint8Array(await fileData.data.arrayBuffer())
@@ -84,7 +97,7 @@ export async function makePrintItem(caseDef) {
 
   // Image 分支（usePrint.js:259-274）
   if (f.fileFormat === 'image') {
-    const ipc = getIpc()
+    const ipc = resolveGateIPC()
     const fileData = await ipc.invoke('read-file', f.printPath)
     if (fileData?.success) {
       f._previewImageUrl = URL.createObjectURL(new Blob([fileData.data]))
@@ -162,8 +175,16 @@ export async function collectCanvasCase(caseDef) {
   }
 }
 
-/** 批量采集（默认 GATE_CASES 全部） */
-export async function collectCanvasCases(cases = GATE_CASES) {
+/**
+ * 批量采集（支持 {names} 过滤——G1-CANVAS-1 只跑 PDF case，OFD 留 G1-B）
+ * @param {object} [opts]
+ * @param {string[]} [opts.names] 要采集的 case id 列表（如 ['A1-rot0','A1-rot90']）
+ * @param {Array} [opts.cases] 自定义 case 数组（默认 GATE_CASES）
+ */
+export async function collectCanvasCases(opts = {}) {
+  const all = opts.cases ?? GATE_CASES
+  const names = opts.names ?? all.map(c => c.id)
+  const cases = all.filter(c => names.includes(c.id))
   const results = []
   for (const c of cases) {
     const r = await collectCanvasCase(c)

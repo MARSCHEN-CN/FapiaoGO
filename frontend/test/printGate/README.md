@@ -39,15 +39,17 @@ node collectGateOutput.mjs  # 或 import collectAllSource() 编程调用
    ```js
    globalThis.__GATE_REPO_ROOT__ = 'E:/print706/'
    ```
-3. 执行采集：
+3. 执行采集（**G1-CANVAS-1 只跑 PDF case，OFD 留 G1-B**）：
    ```js
-   const { collectCanvasCases } = await import('/test/printGate/electron/collectCanvasOutput.js')
-   const results = await collectCanvasCases()
+   const { collectCanvasCases, CANVAS_G1_CASES } = await import('/@fs/E:/print706/frontend/test/printGate/electron/collectCanvasOutput.js')
+   const results = await collectCanvasCases({ names: CANVAS_G1_CASES })  // ['A1-rot0','A1-rot90']
    ```
 4. 每个 case 的 `canvas.json`（含 bbox + marginMm）在 console 输出；`results[i].pngBytes` 可手动落盘 `artifacts/<case>/canvas.png`（或注入 `globalThis.__GATE_WRITE__` 自动写盘）
 5. node 侧跑分析：`node analyzeGateOutput.mjs` 生成 canvas vs source 对比报告
 
-> 说明：`buildPrintJobItem` 依赖 DocumentStore（docId），OFD case（A2）需在应用内已解析该 OFD。纯文件流（未导入应用）的 OFD 无法走 canvas 轨 docId 分支——G1-B 阶段处理。
+> **IPC 契约（已实测确认）**：真实暴露名 = `window.electronAPI.ipcRenderer.invoke('read-file', path)`（`electron/preload.js:51,92`），`read-file` 经 `'read-'` 前缀白名单放行（L29）。采集器 `resolveGateIPC()` 按 electronAPI → ipcRenderer → api.ipc 顺序探测，缺失时明确报错。
+>
+> **case scope**：`gateCases.mjs` 导出 `CANVAS_G1_CASES=['A1-rot0','A1-rot90']`（G1-CANVAS-1 PDF 主链）与 `OFD_G1_CASES=['A2-rot0']`（G1-B 单独做）。OFD 依赖 DocumentStore(docId)，需应用内已解析该 OFD。
 
 ## 已确认的生产语义（采集实测，2026-08-03）
 

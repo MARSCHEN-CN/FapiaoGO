@@ -47,3 +47,12 @@ export function validateGateCases(cases = GATE_CASES, fs) {
   }
   return { valid: errors.length === 0, errors }
 }
+
+/**
+ * case scope（变量隔离，冻结 §13.1）：
+ * - CANVAS_G1_CASES：G1-CANVAS-1 只跑 PDF 主链（A1 rot0 / rot90），OFD 不并行
+ * - OFD_G1_CASES：G1-B 单独做（OFD 语义补足，需 DocumentStore docId 运行时上下文）
+ */
+export const CANVAS_G1_CASES = Object.freeze(['A1-rot0', 'A1-rot90'])
+export const OFD_G1_CASES = Object.freeze(['A2-rot0'])
+
