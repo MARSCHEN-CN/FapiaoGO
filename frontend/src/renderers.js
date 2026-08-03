@@ -454,7 +454,7 @@ function setVersion(map, key, value, maxSize = 100) {
 // 用于版本过期时 cancel() 终止旧渲染，避免 GPU/Worker 浪费
 const _renderTasks = new Map()
 
-async function renderPDFPageRaw(pdfData, dpi, fileKey, paperKey = null, isLandscape = false) {
+async function renderPDFPageRaw(pdfData, dpi, fileKey, paperKey = null, isLandscape = false, customPaper = null) {
   // 按文件隔离队列
   const queueKey = _getRenderQueueKey(pdfData, fileKey)
   let queue = _renderQueues.get(queueKey)
@@ -512,7 +512,8 @@ async function renderPDFPageRaw(pdfData, dpi, fileKey, paperKey = null, isLandsc
 
       if (paperKey) {
         // ✅ 有 paperKey：固定纸张尺寸，PDF 内容缩放适配
-        const pixels = getPaperPixels(paperKey, dpi, isLandscape)
+        // G1-CANVAS-3A patch：透传 customPaper，否则 paperKey='Custom' 会回退 A4（layout.js:25）
+        const pixels = getPaperPixels(paperKey, dpi, isLandscape, customPaper)
         canvasW = pixels.width
         canvasH = pixels.height
       } else {
@@ -826,7 +827,7 @@ async function _renderViaWorker(items, paperKey, dpi, isLandscape, rotations, sl
 
     try {
       if (item._pdfData) {
-        const result = await renderPDFPageRaw(item._pdfData, dpi, item.key, paperKey, isLandscape)
+        const result = await renderPDFPageRaw(item._pdfData, dpi, item.key, paperKey, isLandscape, layoutOptions?.customPaper)
         if (result) {
           const entry = { source: result.canvas, width: result.width, height: result.height }
           itemRenderCache.set(l1Key, entry)
@@ -1097,7 +1098,7 @@ async function _renderDirect(
     // L1 未命中：渲染并缓存
     try {
       if (item._pdfData) {
-        const result = await renderPDFPageRaw(item._pdfData, dpi, item.key, paperKey, isLandscape)
+        const result = await renderPDFPageRaw(item._pdfData, dpi, item.key, paperKey, isLandscape, layoutOptions?.customPaper)
         if (result) {
           const entry = { source: result.canvas, width: result.width, height: result.height }
           itemRenderCache.set(l1Key, entry)
