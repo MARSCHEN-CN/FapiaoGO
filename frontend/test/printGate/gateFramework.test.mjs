@@ -10,6 +10,7 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { measureMarginsPx, pxToMm, mmToPx, marginsToMm, assertSafeMarginAlignment, findContentBBox } from './measureMargins.mjs'
 import { anchorManifest, validateAnchorManifest } from './anchorManifest.mjs'
 import { SAFE_MARGIN_TOLERANCE_MM, GATE_DPI, PAPER_SIZES_MM } from './gateConfig.mjs'
@@ -186,4 +187,36 @@ test('gate pipeline: Plan → legacy/canvas 双输出 → compare（mock 演示�
   assert.equal(r.pass, true)
   assert.ok(r.maxDiffMm <= SAFE_MARGIN_TOLERANCE_MM)
   assert.ok(r.maxDiffMm > 0, '应测出 ~0.2mm 的真实差异')
+})
+
+// ── 5. A3-1 Render Contract 接线（a3_design_spec_2026-08-03.md §8）────────
+test('A3-1-01: renderFileToPrintImage 构造并携带 paperLayout（数据链路贯通，bitmap 不变）', () => {
+  // usePrint.js 是 React hook（node 不可加载），静态断言源码接线点：
+  // ① computePaperLayout 构造（与 merge 轨同款）
+  // ② paperLayout 附加到返回 job（携带不生效）
+  // ③ 渲染调用（renderMultipleItemsToCanvas）未传 paperLayout 第 10 参（bitmap 不变）
+  const src = readFileSync(new URL('../../src/hooks/usePrint.js', import.meta.url), 'utf8')
+
+  // ① 单文件分支含 computePaperLayout 构造
+  const hasCompute = src.includes('const paperLayout = computePaperLayout({')
+  // ② 返回 job 附加 paperLayout
+  const hasAttach = src.includes("paperLayout }")
+  // ③ 单文件渲染调用未传 paperLayout（bitmap 不变红线）
+  // renderFileToPrintImage 的调用特征：slotCount=1（第 6 参），且第 10 参位置无 printPaperLayout
+  // （merge 轨 renderMergeGroupToPrintImage 传 printPaperLayout 且 slotCount=groupSize）
+  const slot1Calls = src.match(/renderMultipleItemsToCanvas\([\s\S]*?\n\s*1,\s*\/\/ slotCount = 1[\s\S]*?\n\s*\)/g)
+  const noPaperLayoutInSingle = slot1Calls
+    ? slot1Calls.every(call => !call.includes('printPaperLayout'))
+    : false
+
+  assert.equal(hasCompute, true, 'renderFileToPrintImage 应构造 paperLayout')
+  assert.equal(hasAttach, true, '返回 job 应携带 paperLayout')
+  assert.equal(noPaperLayoutInSingle, true, '单文件渲染调用不应传 paperLayout（A3-1 bitmap 不变红线）')
+})
+
+test('A3-1-03: 不引入新 paperKey/customPaper 分支（红线）', () => {
+  const src = readFileSync(new URL('../../src/hooks/usePrint.js', import.meta.url), 'utf8')
+  // A3-1 禁止新增 paperKey/customPaper 分支——只允许沿用 settings.paperSize/customPaper 透传
+  const paperKeyCount = (src.match(/paperKey/g) || []).length
+  assert.equal(paperKeyCount, 0, 'A3-1 不应引入 paperKey 新分支')
 })

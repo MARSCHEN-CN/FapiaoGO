@@ -304,7 +304,22 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
 
       // ✅ 返回 Uint8Array
       const data = await canvasToUint8Array(canvas)
-      return data ? { key: f.key, name: f.name, data, printPath: f.printPath } : null
+      if (!data) return null
+
+      // ── A3-1 (Render Contract 接线层)：构造统一纸面几何，携带不生效 ──
+      // 与 merge 轨 renderMergeGroupToPrintImage 同款 computePaperLayout（L382-389）。
+      // 目标：证明生产 canvas 单文件路径能构造 paperLayout（数据链路贯通），
+      // 且不改变 bitmap（paperLayout 只附加到返回 job，不进渲染调用——渲染路径 A3-2/3 再接）。
+      // 冻结（a3_design_spec §8）：A3-1 不允许改变最终 bitmap。
+      const paperLayout = computePaperLayout({
+        paperSize: settings.paperSize,
+        customPaper: settings.customPaper,
+        margins: {
+          left: settings.marginLeft ?? 3, right: settings.marginRight ?? 3,
+          top: settings.marginTop ?? 3, bottom: settings.marginBottom ?? 3,
+        },
+      })
+      return { key: f.key, name: f.name, data, printPath: f.printPath, paperLayout }
       
     } catch (error) {
       console.error('[usePrint] renderFileToPrintImage 异常:', error)
