@@ -260,9 +260,55 @@ A1        ✅ DONE (7e176794)
 A1 review ✅ DONE
 A1.5      ✅ DONE (ef03951c)
 Commit 2  ✅ DONE (5f92a4fc) — executePrint source 分支消费 plan + deriveSourcePrintJobs + 影子比较
-Commit 3  ⏸ 待做（doPrint 消费 MERGE Plan）
+Commit 3  ✅ DONE (adb7759e) — doPrint merge 分支消费 plan + deriveMergePrintJobs + 影子比较
 A2 Gate   ⏸ WAIT
 A3 Canvas ⏸ WAIT
 Phase B   ⏸ WAIT
 ```
+
+---
+
+## 10. Commit 3 落地（2026-08-03 晚，commit `adb7759e`）
+
+### 10.1 用户定稿边界（沿用 Commit 2 纪律）
+- 只替换 `doPrint` 的 **merge 分支**消费路径；让 `doPrint` 使用已证等价的 MERGE Plan。
+- **❌ 红线（全部属 A2/A3）**：不碰 `renderMergeGroupToPrintImage` / `renderMultipleItemsToCanvas` / `MultiTicketComposer` / `createPlacement`；不修 safeMargin；不切 `PRINT_PIPELINE.mode`='source'；不删除旧 merge 变量（固化为 Oracle 文件）。
+
+### 10.2 实际改动
+- **新增 `frontend/src/print/deriveMergePrintJobs.js`**（纯函数）：`deriveMergePrintJobs(plan, files)` → 对 `plan.pages` 每页按 `slots[*].fileId` 反查文件对象，输出 `[{ files:[A,B], groupIndex:0, orientation }, ...]`。分组顺序/成员/方向完全由 plan 决定（plan 已证与 doPrint L493-502 `parsedFiles.slice` 滑窗分组等价）。
+- **`frontend/src/hooks/usePrint.js` merge 分支改写**：
+  - `plan = buildPrintExecutionPlan(files, { filter: MERGE_FILE_FILTER, settings, fileRotations })`
+  - `mergeJobs = deriveMergePrintJobs(plan, files)` → `printQueueRef.current.pending = mergeJobs.map(j => assignTaskId(j.files))`（仍 Canvas 轨；`renderFn` 用旧 `groupSize` 调用的 `renderMergeGroupToPrintImage(task.data, ipc, groupSize)` **未变**）。
+  - `parsedFiles` 守卫 / `groupSize` / `forcedLandscape` 保留作不变量（分别用于状态更新、renderFn 调用参数、mergedPrintFn 方向）；旧 `parsedFiles.slice` 滑窗逻辑已固化在 `buildLegacyPrintPlan`（Oracle 文件），不在 doPrint 重复、不删除。
+  - DEV 守卫（`import.meta.env.DEV && localStorage.DEBUG_PRINT_PLAN_COMPARE==='1'`）下复用 `compareLegacyPlan` 影子比较（merge 模式 `match=true`，只 warn 不 throw，绝不进 production）。
+- **新增 `frontend/test/mergePrintJobs.test.mjs`**（10 用例全过）。
+
+### 10.3 最关键等价测试（用户定稿）
+> legacy doPrint executor input == new plan executor input
+
+即旧 `parsedFiles.slice(i, i+groupSize)` 产生的分组参数序列，必须等于 `deriveMergePrintJobs(plan, files)` 产生的分组序列。测试以 `buildLegacyPrintPlan`（A1.5 Oracle）为唯一 legacy 基线（**不在测试里重写第二份旧逻辑**），断言两者 `fileIds`/`orientation`/`rotation` 归一化后逐组相等。
+
+### 10.4 Merge Execution Snapshot（用户要求）
+- `[A,B,C,D,E] merge2` → `[["A","B"],["C","D"],["E"]]` ✅
+- `[A,B,C,D,E] merge4` → `[["A","B","C","D"],["E"]]` ✅
+- 另覆盖 merge3、error 文件参与、OFD 需 docId、orientation(merge4→landscape)、groupIndex 连续、rotation 透传、compareLegacyPlan merge match。
+
+### 10.5 未改事项（守住边界）
+- 渲染/CANVAS 全链路未触碰；`PRINT_PIPELINE.mode` 未动；`renderFileToPrintImage` 未接线到 source（仍 Sumatra 轨）；生产构建无 debug 分支。
+- 测试全过：merge 10 + 等价 7 + source 4 = **22/22**；ESM 交叉校验 8 个 import 符号全解析、`deriveMergePrintJobs` 与 `compareLegacyPlan` 正确分离。
+
+### 10.6 当前冻结状态
+```
+A1        ✅ (7e176794)
+A1.5      ✅ (ef03951c)
+Commit 2  ✅ (5f92a4fc)
+Commit 3  ✅ (adb7759e)
+
+========= 中间层 PrintExecutionPlan 完成 =========
+
+A2 Gate   ⏸ WAIT
+A3 Canvas ⏸ WAIT
+Phase B   ⏸ WAIT
+```
+> 到此 `executePrint` 与 `doPrint` 两条打印入口**都已消费同一个 PrintExecutionPlan**，中间层真正落成。下一步进 A2 Gate（验证 Canvas 接管条件：安全边距对齐 / QR / rotation / OFD / 小字可读），**不要提前碰 `renderFileToPrintImage` 路由**。
 
