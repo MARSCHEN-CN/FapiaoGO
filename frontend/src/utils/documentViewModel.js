@@ -1,5 +1,5 @@
 /**
- * documentViewModel — Document 视图模型统一出口
+ * buildDocumentViewModel — Document 视图模型统一出口
  *
  * 职责（单一）：
  *   将 page-level files[] 聚合为 document-level 视图模型。
@@ -30,6 +30,22 @@
 import { groupFilesByDocument } from './groupDocuments.js'
 import { invoiceDocumentsToRows } from './invoiceDocumentViewModel.js'
 import { detectDuplicateInvoices, isFailedFile, isPreviousYearFile } from '../utils.js'
+
+/**
+ * 收集 document 条目覆盖的所有 page-level file key。
+ * 单页条目 → 自身 key；多页分组条目 → _pages 所有 key。
+ * 用于合并模式下判断哪些 page-level 文件已被 InvoiceDocument 覆盖。
+ *
+ * @param {Object} row - FileCardRow 兼容条目
+ * @returns {Set<string>} 该条目覆盖的 file key 集合
+ */
+function collectCoveredKeys(row) {
+  if (!row) return new Set()
+  if (row._isDocumentGroup && Array.isArray(row._pages)) {
+    return new Set(row._pages.map((p) => p.key).filter(Boolean))
+  }
+  return row.key ? new Set([row.key]) : new Set()
+}
 
 /**
  * document 条目包含的页数组。
@@ -73,8 +89,16 @@ function parseAmount(amountStr) {
 /**
  * 构建 Document 视图模型（纯函数，派生自 page-level files，不修改入参）。
  *
- * E-2.2：新增可选 invoiceDocs 参数。当传入 InvoiceDocument[] 时，
- * 优先使用 invoiceDocumentsToRows 替代 groupFilesByDocument。
+ * E-2.2 合并模式：当传入 InvoiceDocument[] 时，采用「覆盖 + 补全」双源合并策略，
+ * 不再二选一：
+ *   1) 先用 invoiceDocumentsToRows 得到 InvoiceDocument 条目（当前 session 的权威业务视图）
+ *   2) 再用 groupFilesByDocument 对剩余未覆盖的 page-level 文件做补全
+ *      （这些文件可能来自先前 session / 已被 clearActiveSession 清理的旧会话，
+ *      但仍保留在 FileContext.files 中——必须确保列表只能追加、不能因 session 切换而丢失）。
+ *
+ * 覆盖判定：按 file key 去重（单页条目的自身 key / 分组条目的 _pages 所有 key）。
+ * invoiceDocumentsToRows 的条目优先级高于 groupFilesByDocument，
+ * 因为它携带更丰富的业务信息（amount/invoiceDate 等来自后端 assembly）。
  *
  * @param {Object[]} files - page-level fileObj 数组（来自 FileContext）
  * @param {Object[]} [invoiceDocs] - InvoiceDocument[]（来自 ImportSessionStore.documents）
@@ -88,10 +112,23 @@ function parseAmount(amountStr) {
  * }}
  */
 export function buildDocumentViewModel(files, invoiceDocs = null) {
-  const USE_INVOICE_DOCUMENT_ROWS = Array.isArray(invoiceDocs) && invoiceDocs.length > 0
-  const documents = USE_INVOICE_DOCUMENT_ROWS
-    ? invoiceDocumentsToRows(invoiceDocs, files)
-    : groupFilesByDocument(files)
+  const hasInvoiceDocs = Array.isArray(invoiceDocs) && invoiceDocs.length > 0
+  let documents
+  if (hasInvoiceDocs) {
+    const invoiceRows = invoiceDocumentsToRows(invoiceDocs, files)
+    const coveredKeys = new Set()
+    for (const row of invoiceRows) {
+      for (const k of collectCoveredKeys(row)) coveredKeys.add(k)
+    }
+    const remainingFiles = (Array.isArray(files) ? files : []).filter(
+      (f) => f && f.key && !coveredKeys.has(f.key),
+    )
+    const remainingRows = remainingFiles.length > 0 ? groupFilesByDocument(remainingFiles) : []
+    // 保持 InvoiceDocument 条目在前，补全条目在后；并按 pageIndex 稳定排序
+    documents = [...invoiceRows, ...remainingRows]
+  } else {
+    documents = groupFilesByDocument(files)
+  }
 
   // 重复检测：函数体不变（按 invoiceNumber 分组），输入升级为 document 条目
   const duplicateGroups = detectDuplicateInvoices(documents)

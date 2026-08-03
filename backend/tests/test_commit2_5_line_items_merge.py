@@ -45,11 +45,12 @@ def _item(name, qty, amount, tax_rate, tax):
     }
 
 
-def _page(num, fphm, kprq, line_items, excel_rows, amount, client_key):
+def _page(num, fphm, kprq, line_items, excel_rows, amount, client_key, total_pages=2):
     return {
         'invoice_number': fphm,
         'amount': amount,
         'page_num': num,
+        'total_pages': total_pages,
         'clientKey': client_key,
         'extra_fields': {
             'fphm': fphm,
