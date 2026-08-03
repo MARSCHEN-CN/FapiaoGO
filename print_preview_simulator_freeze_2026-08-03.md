@@ -198,7 +198,7 @@ A1.5 equivalence hardening
   ✅ legacy/new compare (printExecutionEquivalence.test.mjs, 7 用例全过)
   ✅ shadow compare helper (compareLegacyPlan + printPlanCompareEnabled 守卫)
 
-Commit 2  executePrint 替换为消费 Plan（shadow mode，待做）
+Commit 2  executePrint 替换为消费 Plan（✅ commit 5f92a4fc，shadow mode 守卫）
 Commit 3  doPrint 替换为消费 Plan（待做）
 
 A2 Gate
@@ -224,3 +224,43 @@ Phase B
 2. 再 Commit 2（executePrint shadow 接线）
 3. 再 Commit 3（doPrint）
 > 保持「每一步都可证明」的节奏。
+
+---
+
+## 9. Commit 2 落地（2026-08-03 commit `5f92a4fc`）
+
+### 9.1 审查结论采纳（用户 A1.5 review）
+- A1.5 通过 ✅，进入 Commit 2。
+- **Commit 2 目标严格收窄**：只替换 `executePrint` 的 source 分支消费路径。不碰 doPrint / Canvas routing / Sumatra 删除 / renderFileToPrintImage / safeMargin / Plan schema 调整 / invoiceType 修复。
+- 一普二专 `includes('专票')` 问题与 OFD `printPath` 问题：A1.5 已正确暴露且保持边界（证明现状、不修现状），单独挂待办，不混入 Commit 2。
+
+### 9.2 实际改动
+- **新增 `frontend/src/print/deriveSourcePrintJobs.js`**（纯函数）：从 plan 派生真实执行 jobs。
+  - `deriveSourcePrintJobs(plan, files)`：`round1 = plan.pages`、`round2 = plan.extraPages`，每个 page → `{ ...f, _jobKey: round===2 ? f.key+'_v2' : f.key, _round: round }`。
+  - 与旧 `executePrint` L826-829 `mergedJobs` 的 `_jobKey`/`_round` 编码逐字一致（round1=f.key，round2=f.key+'_v2'）。
+- **`frontend/src/hooks/usePrint.js` source 分支改写**：
+  - `plan = buildPrintExecutionPlan(files, { filter: SOURCE_FILE_FILTER, settings, fileRotations })`
+  - 经 `deriveSourcePrintJobs(plan, files)` → `printAllSourceFiles(planJobs)`，仍走 Sumatra 轨（`PRINT_PIPELINE.mode==='source'` 未动）。
+  - `allParsed` 守卫保留；旧 `mergedJobs`/`specialFiles` 内联逻辑已固化在 `buildLegacyPrintPlan`（Oracle 文件），不在 executePrint 重复、不删除（待 Commit 3 + A2 Gate 前清理）。
+  - DEV 守卫（`import.meta.env.DEV && localStorage.DEBUG_PRINT_PLAN_COMPARE==='1'`）下双重影子比较：① 模型级 `compareLegacyPlan`；② 消费序列级 `_jobKey` 比对（防 executor 漏消费 plan 字段）。
+- **新增 `frontend/test/sourcePrintJobs.test.mjs`**（4 用例全过）：锁定源执行序列 `[A,B,D]`（非 extraSpecial）/ `[A,B,D,D_v2]`（extraSpecial）与 legacy 一致，验证 `_round`/字段透传/顺序。
+
+### 9.3 ESM 纪律发现并修正
+- 交叉校验抓到 import 路径 bug：初版把 `deriveSourcePrintJobs` 误从 `compareLegacyPlan` 导入（实际在 `deriveSourcePrintJobs.js`），Node ESM 会在加载时报 `does not provide an export named 'deriveSourcePrintJobs'`。因 node 测试不加载 React hook `usePrint.js` 而漏检，已修正并写一次性脚本验证 4 个 print 模块导出符号全部解析、`deriveSourcePrintJobs` 与 `compareLegacyPlan` 正确分离。
+
+### 9.4 未改事项（守住边界）
+- 打印路由（source/Sumatra）未变；`buildPrintExecutionPlan` 未动；`renderFileToPrintImage`、`safeMargin`、`invoiceType` 判定、Plan schema 均未触碰。
+- 生产构建无 debug 分支（`printPlanCompareEnabled` 在 production 不可达）。
+
+### 9.5 当前冻结状态
+```
+A1        ✅ DONE (7e176794)
+A1 review ✅ DONE
+A1.5      ✅ DONE (ef03951c)
+Commit 2  ✅ DONE (5f92a4fc) — executePrint source 分支消费 plan + deriveSourcePrintJobs + 影子比较
+Commit 3  ⏸ 待做（doPrint 消费 MERGE Plan）
+A2 Gate   ⏸ WAIT
+A3 Canvas ⏸ WAIT
+Phase B   ⏸ WAIT
+```
+
