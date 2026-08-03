@@ -501,6 +501,13 @@ A3 切 Canvas 轨前必须解决「纸张语义统一」，候选：
 - **结论升级**：G1-CANVAS-2 把问题从「纸张语义不同」推进到「渲染器缺陷：renderPDFPageRaw 不支持 customPaper 透传」。A3 除 `settings.paperSize→PrintExecutionPlan.paperLayout` 外，**还需修 renderPDFPageRaw**（传 customPaper 或单文件用 PDF 原生页尺寸——L518-524 `paperKey=null` 分支已存在）。
 - **解释未暴露原因**：生产 merge 轨全 A4（paperKey 有效），单文件 source 轨走 Sumatra 不经此路径 → 缺陷只在 Gate 的 customPaper 路径暴露。
 
+### 14.7 G1-CANVAS-3A（2026-08-03 晚，DEV patch `5d899d18` + 附录 B `abfbe4ff`）
+- **实验**：DEV-only 临时 patch renderPDFPageRaw 透传 customPaper（加第 6 参 + getPaperPixels 透传 L516 + 两调用点），重跑 A1-customPaper。
+- **结果**：内容 53.5%→108%（`scale=min(2717/2480,1890/1654)=1.096` 与实测吻合）→ **customPaper 透传修复确认 ✅（3A 通过=画布尺寸恢复）**；但同纸张边距仍差 9.7mm（canvas L4.7/T9.8/R6.1/B12.7 vs source L14.3/T16/R10.6/B17）。
+- **残余差异=内容放置语义**：canvas 是「PDF contain-fit 填满画布+居中」（renderers.js:544-556），source 是「内容原位+外扩 10mm」（add-pdf-margins L189）——**两种布局哲学，同纸张也无法对齐**。
+- **结论升级（冻结）**：A3 仅「纸张语义统一」不够，还需「内容放置语义统一」= 单文件分支用 PDF 原生页尺寸渲染（paperKey=null 分支已有 L518-524）+ 纸面外扩。G1-CANVAS-3B（paperKey=null 原生渲染）是下一验证点。
+- 注：此 patch 是验证用，**A3 决策后决定保留或回滚**（当前 DEV patch 已提交但标注临时）。
+
 ### 14.6 冻结状态
 ```
 A2-G1 source ✅ | canvas 采集链路 ✅ + 第一份报告 🔴FAIL(预期)
