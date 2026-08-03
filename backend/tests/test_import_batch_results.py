@@ -71,6 +71,8 @@ def _mk_job(client_key, status='success'):
 
 
 def _mk_result(amount='', extra_fields=None):
+    # 注意：与 invoice_service 真实返回对齐——result **无顶层 failed_fields 键**，
+    # 失败字段只嵌在 extra_fields 内（字段提取器 to_dict 产物：list[dict{field,...}]）。
     return {
         'extra_fields': extra_fields or {},
         'doc_id': 'd',
@@ -79,7 +81,6 @@ def _mk_result(amount='', extra_fields=None):
         'invoice_date': '',
         'amount': amount,
         'parse_method': 'ocr',
-        'failed_fields': [],
         'new_name': '',
     }
 
@@ -147,6 +148,43 @@ class TestBatchResultsAmountMerge(unittest.TestCase):
         _batch(mgr, 'b-legacy', ['j1'], [])  # 空 assembled_documents
         items = mgr.get_batch_results('b-legacy')['items']
         self.assertEqual(items[0]['amount'], 'legacy')
+
+    # ───────────────────────────────────────────────────────────
+    # failedFields 契约：必须从 extra_fields 读取（invoice_service 返回
+    # 的 result 无顶层 failed_fields 键），dict 列表 → 字段名字符串列表。
+    # 修复前 `result.get('failed_fields', [])` 恒为 [] → 前端 isFailedFile
+    # 永不为真，缺失购买方名称等发票不被判定为解析失败。
+    # ───────────────────────────────────────────────────────────
+    def test_failed_fields_read_from_extra_fields(self):
+        jm = FakeJobManager(
+            jobs={'j1': _mk_job('ckA')},
+            results={'j1': _mk_result(extra_fields={
+                'failed_fields': [
+                    {'field': 'gmfmc', 'label': '购买方名称', 'severity': 'error',
+                     'reason': '购买方名称为空', 'value': '', 'confidence': 0.0},
+                    {'field': 'gmfsh', 'label': '购买方税号', 'severity': 'error',
+                     'reason': '购买方税号为空', 'value': '', 'confidence': 0.0},
+                ],
+            })},
+        )
+        mgr = ImportBatchManager(jm)
+        _batch(mgr, 'b-failed', ['j1'], [
+            {'amount': 100, 'invoiceDate': '', 'pageClientKeys': ['ckA']},
+        ])
+        items = mgr.get_batch_results('b-failed')['items']
+        self.assertEqual(items[0]['failedFields'], ['gmfmc', 'gmfsh'])
+
+    def test_failed_fields_empty_when_no_extra_fields(self):
+        jm = FakeJobManager(
+            jobs={'j1': _mk_job('ckA')},
+            results={'j1': _mk_result(extra_fields=None)},
+        )
+        mgr = ImportBatchManager(jm)
+        _batch(mgr, 'b-noff', ['j1'], [
+            {'amount': 100, 'invoiceDate': '', 'pageClientKeys': ['ckA']},
+        ])
+        items = mgr.get_batch_results('b-noff')['items']
+        self.assertEqual(items[0]['failedFields'], [])
 
 
 if __name__ == '__main__':
