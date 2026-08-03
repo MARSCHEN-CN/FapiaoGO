@@ -16,6 +16,7 @@ import { anchorManifest, validateAnchorManifest } from './anchorManifest.mjs'
 import { SAFE_MARGIN_TOLERANCE_MM, GATE_DPI, PAPER_SIZES_MM } from './gateConfig.mjs'
 import { normalizeReadFileData } from './ipcPayloadAdapter.mjs'
 import { extendPaperLayoutContract, validatePaperLayoutContract } from '../../src/print/paperLayoutContract.js'
+import { applySourceOriginPlacement, assertPlacementOffset, mmToPxPlacement } from '../../src/print/placementAdapter.js'
 
 // ── 0. IPC payload 适配（G1-CANVAS-1 真实契约）──────────────────
 test('normalizeReadFileData: Uint8Array 直通（形态 A）', () => {
@@ -245,7 +246,7 @@ test('A3-3-1-02: bitmap invariant — 扩展不改变渲染路径（渲染调用
   assert.equal(noPaperLayoutInSingle, true, 'A3-3-1 不应改变渲染调用（bitmap invariant）')
 })
 
-test('A3-3-1-03: source semantic declaration — sourceOrigin=10mm 且未消费（offset pending）', () => {
+test('A3-3-1-03: source semantic declaration — sourceOrigin=10mm（A3-3-1 声明，A3-3-2 起消费）', () => {
   // sourceOrigin 由 contract 模块声明（extendPaperLayoutContract），usePrint 只传 sourceOriginXMM/YMM
   const src = readFileSync(new URL('../../src/hooks/usePrint.js', import.meta.url), 'utf8')
   const contractSrc = readFileSync(new URL('../../src/print/paperLayoutContract.js', import.meta.url), 'utf8')
@@ -256,9 +257,60 @@ test('A3-3-1-03: source semantic declaration — sourceOrigin=10mm 且未消费�
   // ② contract 模块声明 sourceOrigin 字段（source 语义，非 margin）
   assert.equal(contractSrc.includes('sourceOrigin: {'), true, 'contract 应声明 sourceOrigin')
   assert.equal(contractSrc.includes('coordinateSpace: {'), true, 'contract 应声明 coordinateSpace')
-  // ③ 未消费：usePrint 内无 applyPlacement（A3-3-2 才引入），offset pending
+  // ③ A3-3-1 冻结时未消费；A3-3-2 起由 applySourceOriginPlacement 消费（演进验证）
   const fnBlock = src.match(/const renderFileToPrintImage[\s\S]*?renderMergeGroupToPrintImage/m)
   assert.ok(fnBlock, 'renderFileToPrintImage 函数块可定位')
   const fnBody = fnBlock[0]
-  assert.equal(fnBody.includes('applyPlacement'), false, 'A3-3-1 不应消费 sourceOrigin（offset pending）')
+  // A3-3-2 起：PDF 单文件分支调用 applySourceOriginPlacement（消费 sourceOrigin）
+  assert.equal(fnBody.includes('applySourceOriginPlacement'), true, 'A3-3-2 应消费 sourceOrigin（PlacementAdapter）')
+})
+
+// ── 7. A3-3-2 PlacementAdapter（a3_design_spec §A3-3-2）──────────────────
+test('A3-3-2-01: placement offset — native bbox + sourceOrigin(10mm) = source bbox（dx/dy ≤0.5mm）', () => {
+  // G1-3B / A3-2 实测：native 内容 bbox (51,71,2424×1499)，source 内容 bbox (169,189,2423×1500)
+  const nativeBbox = { x: 51, y: 71, w: 2424, h: 1499 }
+  const sourceBbox = { x: 169, y: 189, w: 2423, h: 1500 }
+  const paperLayout = { sourceOrigin: { x: 10, y: 10, unit: 'mm' } }
+  const r = assertPlacementOffset(nativeBbox, paperLayout, sourceBbox)
+  assert.equal(r.pass, true, r.errors.join('; '))
+  assert.equal(r.dxPx, 0, `dxPx=${r.dxPx}（native.x 51 + 118 = 169）`)
+  assert.equal(r.dyPx, 0, `dyPx=${r.dyPx}（native.y 71 + 118 = 189）`)
+})
+
+test('A3-3-2-02: margin compare — placement 后 canvas 边距 vs source 四边 ≤0.5mm', () => {
+  // source 边距（实测）：L14.3 / T16.0 / R10.6 / B17.0mm
+  // placement 后：native 内容位移 (118,118)px 到 230×160mm 纸（2717×1890px）
+  const dpi = 300
+  const paperPx = { w: Math.round(230 * dpi / 25.4), h: Math.round(160 * dpi / 25.4) }  // 2717×1890
+  // native 内容 (51,71,2424×1499) + offset(118,118) → 内容 bbox (169,189,2424×1499)
+  const placedBbox = { x: 169, y: 189, w: 2424, h: 1499 }
+  const marginsPx = {
+    left: placedBbox.x, top: placedBbox.y,
+    right: paperPx.w - (placedBbox.x + placedBbox.w),
+    bottom: paperPx.h - (placedBbox.y + placedBbox.h),
+  }
+  const marginsMm = {
+    left: marginsPx.left * 25.4 / dpi, top: marginsPx.top * 25.4 / dpi,
+    right: marginsPx.right * 25.4 / dpi, bottom: marginsPx.bottom * 25.4 / dpi,
+  }
+  const sourceMm = { left: 14.309, top: 16.002, right: 10.583, bottom: 17.018 }
+  for (const e of ['left', 'top', 'right', 'bottom']) {
+    const diff = Math.abs(marginsMm[e] - sourceMm[e])
+    assert.ok(diff <= 0.5, `${e} diff=${diff.toFixed(3)}mm > 0.5mm（placed=${marginsMm[e].toFixed(3)} source=${sourceMm[e]}）`)
+  }
+})
+
+test('A3-3-2-03: bitmap invariant — PlacementCommand 不改 scale/rotation/pixel，只改 position', () => {
+  // applySourceOriginPlacement 产出：scale=1（不缩放）、contentRotation=0（不旋转）、offset=sourceOrigin
+  const renderResource = { width: 2480, height: 1654 }
+  const paperLayout = { sourceOrigin: { x: 10, y: 10, unit: 'mm' } }
+  const cmd = applySourceOriginPlacement({ renderResource, paperLayout, rotation: 0 })
+  assert.equal(cmd.placement.scale, 1, 'scale 应=1（A3-3-2 不缩放）')
+  assert.equal(cmd.contentRotation, 0, 'rotation 应=0（A3-3-2 仅 rot0）')
+  assert.equal(cmd.placement.offsetX, 118, 'offsetX 应=118px（10mm@300dpi）')
+  assert.equal(cmd.placement.offsetY, 118, 'offsetY 应=118px')
+  assert.deepEqual(cmd.rotatedBounds, { width: 2480, height: 1654 }, 'rotatedBounds=原生尺寸（像素不变）')
+  assert.equal(cmd.clip, null, '单文件不裁剪')
+  // mmToPx 换算
+  assert.equal(mmToPxPlacement(10), 118)
 })

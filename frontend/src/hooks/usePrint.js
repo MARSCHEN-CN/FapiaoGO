@@ -12,6 +12,7 @@ import { printSingleSourceFile as printSingleSource, printMergedImages } from '.
 import { runMergedPrintTasks } from '../runners/printRunner'
 import { computePaperLayout } from '../previewState'
 import { extendPaperLayoutContract } from '../print/paperLayoutContract'
+import { applySourceOriginPlacement } from '../print/placementAdapter'
 import { fetchPrintRaster, buildPrintJobItem } from '../utils/printAdapter'
 // A1/A1.5：已证等价的 Plan 事实来源 + 影子比较 helper（Commit 2 source / Commit 3 merge 分支消费）
 import { buildPrintExecutionPlan, SOURCE_FILE_FILTER, MERGE_FILE_FILTER } from '../print/buildPrintExecutionPlan'
@@ -189,8 +190,7 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
           console.error('[usePrint] 读取 PDF 文件失败:', f.printPath)
           return null
         }
-      } else if (f.fileFormat === 'ofd') {
-        // OFD：无前端可读字节，必须走 Render Contract（docId → /print 逐页）。
+      } else if (f.fileFormat === 'ofd') {        // OFD：无前端可读字节，必须走 Render Contract（docId → /print 逐页）。
         // 多页 OFD 逐页 fetchPrintRaster(docId, page.index + 1) → 每页一 canvas → 一物理页。
         const job = buildPrintJobItem(f)
         const pages = job.pages || []
@@ -284,19 +284,67 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
       }
       
       // ✅ 使用 renderMultipleItemsToCanvas 渲染（支持安全边距）
-      const { renderMultipleItemsToCanvas } = await getPrintRenderers()
-      
-      const canvas = await renderMultipleItemsToCanvas(
-        items,
-        settings.paperSize || 'A4',
-        PREVIEW_DPI,
-        settings.landscape,
-        { [f.key]: rotation },  // rotations
-        1,  // slotCount = 1（单个文件）
-        false,  // ✅ isPrint = false（与预览保持一致）
-        false,  // showSafeMargin
-        { strategy: 'vertical', customPaper: settings.customPaper }
-      )
+      const { renderMultipleItemsToCanvas, renderPDFPageRaw } = await getPrintRenderers()
+
+      // ── A3-3-2：PDF 单文件走 native + PlacementAdapter（不进 renderMultipleItemsToCanvas）──
+      // 冻结（a3_design_spec §A3-3）：验证「native resource + placement」，不混 composer/slot 语义。
+      // 唯一变量：native bitmap + sourceOrigin 位移（rot0；rotation 属 A3-3-3）。
+      // 前提：paperLayout 已构造（下方 A3-1/3-1 段），此处先渲染 native + 生成 PlacementCommand。
+      const pdfItem = items.find(i => i._pdfData)
+      const isSinglePdfNative = items.length === 1 && !!pdfItem && (f.fileFormat === 'pdf' || (!f.fileFormat && !f.previewImage))
+      let nativePlacedCanvas = null
+      let nativeCmd = null
+      if (isSinglePdfNative) {
+        const baseLayout0 = computePaperLayout({
+          paperSize: settings.paperSize,
+          customPaper: settings.customPaper,
+          margins: {
+            left: settings.marginLeft ?? 3, right: settings.marginRight ?? 3,
+            top: settings.marginTop ?? 3, bottom: settings.marginBottom ?? 3,
+          },
+        })
+        const paperLayout0 = extendPaperLayoutContract(baseLayout0, {
+          sourceOriginXMM: settings.marginLeft ?? 3,
+          sourceOriginYMM: settings.marginTop ?? 3,
+        })
+        const nativeRes = await renderPDFPageRaw(pdfItem._pdfData, PREVIEW_DPI, pdfItem.key, null, false)
+        if (nativeRes) {
+          nativeCmd = applySourceOriginPlacement({
+            renderResource: nativeRes,
+            paperLayout: paperLayout0,
+            rotation: 0,  // A3-3-2 仅 rot0
+          })
+          // 扩展纸画布 = paperLayout paperRect（px）+ 白底
+          const pw = paperLayout0.paperRect?.w || nativeRes.width
+          const ph = paperLayout0.paperRect?.h || nativeRes.height
+          nativePlacedCanvas = document.createElement('canvas')
+          nativePlacedCanvas.width = pw
+          nativePlacedCanvas.height = ph
+          const nctx = nativePlacedCanvas.getContext('2d')
+          nctx.fillStyle = '#ffffff'
+          nctx.fillRect(0, 0, pw, ph)
+          // 绘制：native bitmap 位移到 (offsetX, offsetY)，scale=1（drawRenderCommand 同款几何）
+          const { drawRenderCommand } = await import('../layout/renderDraw.js')
+          drawRenderCommand(nctx, nativeCmd, nativeRes.canvas, nativeRes.width, nativeRes.height)
+        } else {
+          console.warn('[usePrint] native render 返回 null，回退 renderMultipleItemsToCanvas')
+        }
+      }
+
+      let canvas = nativePlacedCanvas
+      if (!canvas) {
+        canvas = await renderMultipleItemsToCanvas(
+          items,
+          settings.paperSize || 'A4',
+          PREVIEW_DPI,
+          settings.landscape,
+          { [f.key]: rotation },  // rotations
+          1,  // slotCount = 1（单个文件）
+          false,  // ✅ isPrint = false（与预览保持一致）
+          false,  // showSafeMargin
+          { strategy: 'vertical', customPaper: settings.customPaper }
+        )
+      }
       
       if (!canvas) {
         console.warn('[usePrint] renderMultipleItemsToCanvas 返回 null')
