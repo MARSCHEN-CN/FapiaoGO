@@ -466,7 +466,14 @@ class ImportBatchManager:
                 'invoiceDate': (assembled_date if assembled_date is not None else result.get('invoice_date', '')),
                 'invoiceFields': invoice_fields,
                 'parseMethod': result.get('parse_method', ''),
-                'failedFields': result.get('failed_fields', []),
+                # failed_fields 只嵌在 extra_fields 内（invoice_service 返回 dict 无顶层键），
+                # 顶层 result.get('failed_fields') 恒为 [] → 失败字段静默丢失、
+                # 前端 isFailedFile 永不为真（缺失购买方名称等不判失败）。
+                # 与 app.py parse_batch（:1478-1480）同构：dict 列表 → 字段名列表。
+                'failedFields': [
+                    f.get('field', '') for f in (extra_fields.get('failed_fields') or [])
+                    if isinstance(f, dict) and f.get('field')
+                ],
                 'newName': result.get('new_name', ''),
             })  # 13-B.5 C2: 删除 previewImage 字段（import 表面停产，Render Contract 取代）
 
