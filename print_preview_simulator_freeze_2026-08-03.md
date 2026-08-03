@@ -472,3 +472,32 @@ Phase B   ⏸ WAIT
 - `buildPrintJobItem` 依赖 DocumentStore（docId）→ OFD case 需应用内已解析该 OFD；纯文件流 OFD 无法走 canvas docId 分支（G1-B 处理）。
 - vite `?url` import（pdf.worker）→ 采集器必须在 vite/Electron 环境，纯 node 不可加载 renderers.js。
 
+## 14. A2-G1 第一份对比报告（2026-08-03 晚，`print_gate_g1_report_2026-08-03.md`）
+
+### 14.1 结论（冻结）
+**Canvas 轨 vs source 轨边距严重不对齐（0/2 PASS，最大差 74.5mm），根因=纸张语义不同，非渲染 bug。** 这正是 G1 要暴露的核心架构风险。
+
+### 14.2 实测数据
+| Case | source mm (L/T/R/B) | canvas mm (L/T/R/B) | 最大差 | 判定 |
+|---|---|---|---|---|
+| A1-rot0 | 14.3/16.0/10.6/17.0 | 4.2/83.5/3.9/91.5 | 74.5 | 🔴 FAIL |
+| A1-rot90 | 14.3/16.0/10.6/17.0 | 74.8/47.8/74.2/49.3 | 63.6 | 🔴 FAIL |
+| A2-rot0 | 语义基线 | 未采集（G1-B） | — | ⏸ |
+
+### 14.3 根因三层（实测+源码实读）
+1. **纸张不同**：source=`add-pdf-margins.py` 扩展页面尺寸（L189 内容位置不变）→ 专用发票纸 230×160mm+10mm；canvas=`createLayout`（renderers.js:1183）按 paperKey='A4' → 210×297mm。
+2. **内容不缩放**：canvas 内容 2404×1483px ≈ source 原 2423×1500px（比率≈1.0）——createLayout 按真实尺寸贴入 A4 垂直居中（canvas T=83.5/B=91.5mm = A4 高余量的一半）。
+3. **旋转位置不同**：source=Sumatra 原生（node 采不到）；canvas=rotations 参数 → **A1-rot90 canvas 方向正确 ✅（利好：A3 切轨后旋转语义更明确）**。
+
+### 14.4 对 A3 的含义
+A3 切 Canvas 轨前必须解决「纸张语义统一」，候选：
+1. **A3 接线时传 `printPaperLayout`（含 usableRect）**——冻结 §11 头号风险落地，canvas 轨走 MultiTicketComposer+buildRenderCommand（renderers.js:1018 paperLayout 参数已就绪）
+2. 或 gateCases 改用 `customPaper`(230×160mm) 采集 canvas 做「同纸张下边距对齐」对照实验（A2 下一步）
+
+### 14.5 冻结状态
+```
+A2-G1 source ✅ | canvas 采集链路 ✅ + 第一份报告 🔴 FAIL(预期)
+A2-G1 OFD (G1-B) ⏸ | A2-G2..G6 ⏸
+A3 ⏸（需先解决纸张语义统一）| Phase B ⏸
+```
+
