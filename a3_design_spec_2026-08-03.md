@@ -178,3 +178,58 @@ paperLayout = {
 | A3-3-1 | 只加 paperLayout.sourceOrigin 字段，不消费 | contract pass |
 | A3-3-2 | PlacementAdapter，只支持 rot0 | margin ≤0.5mm |
 | A3-3-3 | rotation transform | rot90 pass |
+
+# §7.1 Rotation Coordinate Contract（2026-08-04 用户定稿前置冻结，spec-only）
+
+> A3-3-3 动代码前先冻结旋转坐标语义。基于源码实读（2026-08-04），非猜测。
+
+## 1. 事实链（源码实读）
+
+| # | 事实 | 证据 |
+|---|---|---|
+| F1 | `renderPDFPageRaw` 本身**不做旋转**（native 分支 L558-566 无 rotate） | renderers.js:558 |
+| F2 | 旋转发生在 **placement 层**：`createPlacement({rotation})` 算 rotatedBounds（90/270 时宽高互换，composePlacement.js:68-69）+ `drawRenderCommand` **以落盘包围盒中心为支点旋转**（offset 是旋转后内容左上角） | composePlacement.js:65-101 / renderDraw.js:52-56 |
+| F3 | **source 轨旋转语义 = 纸面方向跟随内容**：Sumatra 经 `contentOrientation`（portrait/landscape）表达，add-pdf-margins 只扩展 MediaBox（内容位置不变），Sumatra 打印时按 orientation 调纸张方向 | main.js:525,544-547 / add-pdf-margins.py:62-74 |
+| F4 | **canvas 现有 createPlacement 路径 = 纸固定、内容在纸内旋转**（A1-rot90 实测：A4 画布 2480×3508 不变，内容 bbox 741×2404 在画布内旋转） | G1-CANVAS-1 A1-rot90 artifact |
+| F5 | **A3-2 采集器模型 = 画布旋转（Policy A）**：canvas 2D 旋转整个画布 → bitmap 1654×2480（宽高互换），内容 bbox (84,51,1499×2424) 无负坐标 | collectCanvasOutput.js:221-232 + A3-2-02 实测 |
+
+## 2. Contract（冻结）
+
+### C1 Resource Rotation（内容旋转）
+- 作用于 native bitmap，宽高互换：2480×1654 → 1654×2480
+- 旋转中心 = 内容中心（drawRenderCommand 中心支点，与 A3-2 采集器一致）
+- 已由 A3-2-02 验证 ✅（content ratio 0.999/1.0）
+
+### C2 Paper Rotation Policy —— **冻结 Policy A（paper follows content）**
+- **纸面方向跟随内容旋转**：rot90 → 纸面 2717×1890 → 1890×2717
+- 依据：F3（source/Sumatra 语义）+ F5（A3-2 采集器模型，已验证）
+- **Policy B（纸固定内容旋转）仅限现有 A4/merge 路径，不是 source 复刻目标**——A3-3-3 单文件分支禁用
+
+### C3 Transform Order（变换顺序）
+```
+native resource → 施加 sourceOrigin（扩展纸面，内容 offset 好）
+               → 整体旋转（paper + content 一体，以扩展纸面中心为支点）
+```
+- **旋转的是「扩展纸面」而非「resource 单独」**——与 Sumatra 旋转扩展后 MediaBox 一致（F3）
+- **sourceOrigin 在旋转前施加，旋转时随画布整体变换，不单独重算**
+
+### C4 SourceOrigin Transform（数学锚点，canvas 坐标 y 向下，rotate(θ>0)=顺时针）
+- 变换公式：相对画布中心的偏移 `(dx,dy)`，rotate(90°) → `(-dy, dx)`（canvas 2D 实际行为，A3-2 实测验证：内容中心相对偏移 (23,-6.5) → (6.5,23)，新 bbox (84,51) 吻合）
+- **rot0**：offset=(118,118) 直接施加（A3-3-2 已验证 ✅）
+- **rot90**：offset 随画布旋转——实现 = 创建旋转后画布（1890×2717），把「扩展纸面 command」按中心支点旋转绘制（等价 A3-2 采集器 canvas 2D 旋转，**生产路径复刻同一数学**）
+
+### C5 预期 rot90 结果（数学推导，供 Gate 判定）
+```
+源（rot0）: 画布 2717×1890，内容 bbox (169,189,2423×1500)，边距 L14.3/T16/R10.6/B17 mm
+rot90    : 画布 1890×2717，内容 bbox (201,169,1500×2423)，边距 L17/T14.3/R16/B10.6 mm
+           （原边距顺时针轮换——四边 10mm 语义在旋转后交换位置）
+```
+
+### C6 禁止项
+- ❌ 单文件 source 语义下用 Policy B（纸固定内容旋转）
+- ❌ rotation 单独作用于 resource 后再重算 sourceOrigin（错误模型，会产生负坐标：`(x,y)→(y,-x)` 直接套用 offset 会得 (-344,400) 类结果）
+- ❌ 修改 renderPDFPageRaw / createPlacement 通用语义 / MultiTicketComposer
+
+## 3. 待验证项（标记，不阻塞 contract 冻结）
+- **Sumatra 真实打印的 rot90 纸面方向**：当前 node 采集不体现旋转（冻结事实「source rotation 由 Sumatra 原生处理」），Policy A 基于 contentOrientation 语义推断 + A3-2 采集器模型，**需真实打印对照确认**；若实测 Sumatra 为 Policy B，修订本 contract
+- A3-3-3 Gate 预告：A3-3-3-01 adapter rot90（画布 1890×2717 + rotatedBounds 互换 + offset 旋转）、A3-3-3-02 margin（四边 vs C5 ≤0.5mm）、A3-3-3-03 bitmap invariant（像素不变只旋转）
