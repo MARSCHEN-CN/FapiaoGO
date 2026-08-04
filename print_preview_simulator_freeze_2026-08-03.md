@@ -722,10 +722,10 @@ native 内容尺度差属 `renderPDFPageRaw` 栅格化保真度（pdf.js `getVie
 | A3-R1 Rotation risk | CLOSED | rot0 证明残差与 rotation 无关（非整体平移/四边错位） |
 | A3-RF-01 R2 CropBox hypothesis | ✅ CLOSED (FALSIFIED) | cropbox_eq_mediabox=true，两引擎同渲 MediaBox@300dpi |
 | A3-RF-02 Engine fidelity variance | ⚠️ RECORDED（非 blocker） | pdf.js vs fitz 同 box 同 dpi 保真度差 宽-1.5mm/高-3.5mm，不可约；移交 A2 渲染保真度专项 |
-| A3-C5 Geometry Closure | ✅ PASS (72/72) | canvas rot0↔rot90 自洽 round-trip（脱离 fitz） |
-| A3-C5 Source Semantic Alignment | ⏸ PENDING | 待 A3-V2 Sumatra 真机（唯一未证实点：sourceOrientation=Policy A?） |
+| A3-C5 Geometry Closure | ✅ PASS (74/74) | canvas rot0↔rot90↔rot180↔rot270 自洽 round-trip（脱离 fitz；A3-3-3-08/09 补齐 bbox+margin 断言，2026-08-04） |
+| A3-C5 Source Semantic Alignment | ⏸ ENV-BLOCKED | 虚拟 writer（Wondershare/PDF24/MS PDF）全部把 230×160 夹成 A4，A/B 无法裁决；**待真机 Sumatra 输出**（唯一未证实点：sourceOrientation=Policy A?） |
 
-⚠️ **C5-Geometry 收口待补**（非阻塞，记 Gate 待办）：rot180/rot270 目前仅 A3-3-3-04 验证 adapter 形态（canvasW/H + contentRotation + rotatedBounds），**缺 bbox 变换 + 四边 margin 轮换断言**。补 2 用例即真正闭环：rot180 bbox 不变/四边不变；rot270 bbox 宽高互换/四边逆时针轮换。
+✅ **C5-Geometry 收口已补**（2026-08-04，Gate 74/74）：A3-3-3-08 = rot180 bbox (125,201,2423×1500) + 边距 L↔R/T↔B 互换；A3-3-3-09 = rot270 bbox (189,125,1500×2423) + 边距 3×90°CW 轮换。均镜像 drawRenderCommand 支点数学，与 A3-3-3-06 同源。此前仅 A3-3-3-04 验证 adapter 形态（canvasW/H + contentRotation + rotatedBounds）。
 
 #### 14.22.2 新增 Gate：A3-RF-01（RenderResource Fidelity Gate）
 - **职责**：验证 `renderPDFPageRaw()` 生成的 resource 是否与 source renderer（fitz）一致。
@@ -798,15 +798,15 @@ A3-RF:
   Engine variance            RECORDED (A3-RF-02, 非 blocker)
 
 A3-C5:
-  Geometry closure           PASS (72/72, 脱离 fitz)
-  Source semantic alignment  PENDING Sumatra V2
+  Geometry closure           PASS (74/74, 脱离 fitz, rot0↔rot90↔rot180↔rot270 全闭环)
+  Source semantic alignment  ENV-BLOCKED Sumatra V2（虚拟 writer 夹纸，待真机）
 ```
 
 **A3-C5 处理决定（用户定稿，不再重写）**：
 - **不删 C5、不改成 rot0↔rot90 自洽**。拆三层：
-  - `A3-C5 Geometry Closure`（原 C5）：canvas rot0↔rot90↔rot180↔rot270 几何闭合，同 RenderResource，无需 fitz → **PASS (72/72)**。
+  - `A3-C5 Geometry Closure`（原 C5）：canvas rot0↔rot90↔rot180↔rot270 几何闭合，同 RenderResource，无需 fitz → **PASS (74/74)**（2026-08-04 补 A3-3-3-08/09 后，rot180/rot270 bbox+margin 断言齐）。
   - `A3-RF-02`：pdf.js bbox vs reference rasterizer bbox，记录 variance，**非 blocker**。
-  - `A3-C5 Source Semantic Alignment`：canvas vs **Sumatra/源打印输出**（用户真看到的是 Sumatra 打印，非 fitz）→ **PENDING A3-V2**。
+  - `A3-C5 Source Semantic Alignment`：canvas vs **Sumatra/源打印输出**（用户真看到的是 Sumatra 打印，非 fitz）→ **ENV-BLOCKED A3-V2**（2026-08-04 实测定：虚拟 writer 全部把 230×160 夹成 A4，A/B 无法裁决；待真机 Sumatra 输出）。
 - 红线（全程遵守）：A3-RF 期间禁 scale compensation / +3.5mm hack / bbox 拉伸。
 
 ### 14.24 A3 验收语义重新分层 + A3-V2 Sumatra 真机设计（2026-08-04）
@@ -880,6 +880,6 @@ Final canvas contract         ← A3-C5 Geometry Closure（自洽）+ Source Ali
 A2-G1 source ✅ | canvas 采集链路 ✅ + 第一份报告 🔴FAIL(预期)
 A2-G1-CANVAS-2 同纸张实验 🔴 FAIL（renderPDFPageRaw customPaper 缺陷，双重 fit）
 A2-G1 OFD (G1-B) ⏸ | A2-G2..G6 ⏸
-A3-3-1 ✅ | A3-3-2 Placement rot0 ✅ | A3-3-3 Rotation ✅(自洽 round-trip 脱离 fitz) | A3-R1 CLOSED | A3-RF-01 CropBox ✅CLOSED(FALSIFIED) | A3-RF-02 Engine variance ⚠️RECORDED(非 blocker) | A3-C5 Geometry ✅PASS(72/72) | A3-C5 Source Alignment ⏸PENDING(A3-V2 Sumatra) | Phase B ⏸
+A3-3-1 ✅ | A3-3-2 Placement rot0 ✅ | A3-3-3 Rotation ✅(自洽 round-trip 脱离 fitz) | A3-R1 CLOSED | A3-RF-01 CropBox ✅CLOSED(FALSIFIED) | A3-RF-02 Engine variance ⚠️RECORDED(非 blocker) | A3-C5 Geometry ✅PASS(74/74, rot0~270 全闭环) | A3-C5 Source Alignment ⏸ENV-BLOCKED(A3-V2 虚拟 writer 夹纸, 待真机) | Phase B ⏸
 ```
 

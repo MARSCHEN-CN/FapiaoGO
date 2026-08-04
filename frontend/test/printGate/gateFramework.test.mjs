@@ -452,6 +452,98 @@ test('A3-3-3-07: 旋转自洽验证 — 4×90°CW round-trip 无损回到原点 
   }
 })
 
+test('A3-3-3-08: rot180 bbox + margin — 内容 (125,201,2423×1500)，边距 L↔R/T↔B 互换（C5 闭环）', () => {
+  // 补齐 A3-C5 Geometry Closure 的 rot180 深断言（A3-3-3-04 仅验 adapter 形态，未验 bbox/margin）。
+  // 镜像 drawRenderCommand 数学（与 A3-3-3-06 同源）：pivot=(offsetX+drawW/2, offsetY+drawH/2)。
+  // rot180: nW=paperW=2717, nH=paperH=1890 ⇒ offset=(0,0)，支点=原纸面中心 (1358.5,945)。
+  const rot0 = applySourceOriginPlacement({ renderResource: A1_RESOURCE, paperLayout: A1_PAPER, rotation: 0 })
+  const r180 = transformPaperRotation(rot0, 180, A1_PAPER_PX.w, A1_PAPER_PX.h)
+  const cmd = r180.rotateCanvasCommand
+  const drawW = cmd.rotatedBounds.width, drawH = cmd.rotatedBounds.height
+  const pivotX = cmd.placement.offsetX + drawW / 2
+  const pivotY = cmd.placement.offsetY + drawH / 2
+  assert.equal(pivotX, 2717 / 2, `rot180 支点x=${pivotX} vs 1358.5（offset 必须=0，nW=paperW）`)
+  assert.equal(pivotY, 1890 / 2, `rot180 支点y=${pivotY} vs 945（offset 必须=0，nH=paperH）`)
+  const th = (cmd.contentRotation * Math.PI) / 180
+  const cos = Math.cos(th), sin = Math.sin(th)
+  const transformPt = (x, y) => {
+    const dx = x - drawW / 2, dy = y - drawH / 2
+    return [pivotX + dx * cos - dy * sin, pivotY + dx * sin + dy * cos]
+  }
+  // 内容 rot0 bbox（扩展纸面内，与 A3-3-3-02/06 同源）：(169,189,2423×1500)
+  const corners = [[169, 189], [169 + 2423, 189], [169 + 2423, 189 + 1500], [169, 189 + 1500]]
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+  for (const [x, y] of corners) {
+    const [tx, ty] = transformPt(x, y)
+    minX = Math.min(minX, tx); maxX = Math.max(maxX, tx)
+    minY = Math.min(minY, ty); maxY = Math.max(maxY, ty)
+  }
+  const bboxX = minX, bboxY = minY, bboxW = maxX - minX, bboxH = maxY - minY
+  // rot180 解析预期：(2717-169-2423, 1890-189-1500, 2423, 1500) = (125, 201, 2423, 1500)，宽高不互换
+  assert.ok(Math.abs(bboxX - 125) <= 1.5, `bboxX=${bboxX.toFixed(2)} vs 125`)
+  assert.ok(Math.abs(bboxY - 201) <= 1.5, `bboxY=${bboxY.toFixed(2)} vs 201`)
+  assert.ok(Math.abs(bboxW - 2423) <= 1, `bboxW=${bboxW.toFixed(2)} vs 2423（rot180 宽高不互换）`)
+  assert.ok(Math.abs(bboxH - 1500) <= 1, `bboxH=${bboxH.toFixed(2)} vs 1500`)
+  // 边距：rot0 L14.3/T16/R10.6/B17 → rot180 L↔R、T↔B = L10.6/T17/R14.3/B16
+  const dpi = 300
+  const marginsMm = {
+    left: bboxX * 25.4 / dpi,
+    top: bboxY * 25.4 / dpi,
+    right: (r180.canvasW - (bboxX + bboxW)) * 25.4 / dpi,
+    bottom: (r180.canvasH - (bboxY + bboxH)) * 25.4 / dpi,
+  }
+  const expected = { left: 10.6, top: 17, right: 14.3, bottom: 16 }
+  for (const e of ['left', 'top', 'right', 'bottom']) {
+    const diff = Math.abs(marginsMm[e] - expected[e])
+    assert.ok(diff <= 0.5, `rot180 ${e} diff=${diff.toFixed(3)}mm > 0.5mm（actual=${marginsMm[e].toFixed(2)} expected=${expected[e]}）`)
+  }
+})
+
+test('A3-3-3-09: rot270 bbox + margin — 内容 (189,125,1500×2423)，边距 3×90°CW 轮换（C5 闭环）', () => {
+  // 补齐 A3-C5 Geometry Closure 的 rot270 深断言。镜像 drawRenderCommand 数学。
+  // rot270: nW=1890,nH=2717，offset=(-413.5,+413.5)（同 rot90 的 swap），支点=目标画布中心 (945,1358.5)。
+  const rot0 = applySourceOriginPlacement({ renderResource: A1_RESOURCE, paperLayout: A1_PAPER, rotation: 0 })
+  const r270 = transformPaperRotation(rot0, 270, A1_PAPER_PX.w, A1_PAPER_PX.h)
+  const cmd = r270.rotateCanvasCommand
+  const drawW = cmd.rotatedBounds.width, drawH = cmd.rotatedBounds.height
+  const pivotX = cmd.placement.offsetX + drawW / 2
+  const pivotY = cmd.placement.offsetY + drawH / 2
+  assert.ok(Math.abs(pivotX - 945) <= 0.01, `rot270 支点x=${pivotX} vs 945（目标画布中心 1890/2）`)
+  assert.ok(Math.abs(pivotY - 1358.5) <= 0.01, `rot270 支点y=${pivotY} vs 1358.5（目标画布中心 2717/2）`)
+  const th = (cmd.contentRotation * Math.PI) / 180
+  const cos = Math.cos(th), sin = Math.sin(th)
+  const transformPt = (x, y) => {
+    const dx = x - drawW / 2, dy = y - drawH / 2
+    return [pivotX + dx * cos - dy * sin, pivotY + dx * sin + dy * cos]
+  }
+  const corners = [[169, 189], [169 + 2423, 189], [169 + 2423, 189 + 1500], [169, 189 + 1500]]
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+  for (const [x, y] of corners) {
+    const [tx, ty] = transformPt(x, y)
+    minX = Math.min(minX, tx); maxX = Math.max(maxX, tx)
+    minY = Math.min(minY, ty); maxY = Math.max(maxY, ty)
+  }
+  const bboxX = minX, bboxY = minY, bboxW = maxX - minX, bboxH = maxY - minY
+  // rot270 解析预期：(189, 125, 1500, 2423)（90°CW 公式 ×3；宽高互换同 rot90）
+  assert.ok(Math.abs(bboxX - 189) <= 1.5, `bboxX=${bboxX.toFixed(2)} vs 189`)
+  assert.ok(Math.abs(bboxY - 125) <= 1.5, `bboxY=${bboxY.toFixed(2)} vs 125`)
+  assert.ok(Math.abs(bboxW - 1500) <= 1, `bboxW=${bboxW.toFixed(2)} vs 1500（宽高互换）`)
+  assert.ok(Math.abs(bboxH - 2423) <= 1, `bboxH=${bboxH.toFixed(2)} vs 2423`)
+  // 边距：rot0 L14.3/T16/R10.6/B17 → 3×90°CW 轮换 (B,L,T,R)→(R,B,L,T)→(T,R,B,L) = L16/T10.6/R17/B14.3
+  const dpi = 300
+  const marginsMm = {
+    left: bboxX * 25.4 / dpi,
+    top: bboxY * 25.4 / dpi,
+    right: (r270.canvasW - (bboxX + bboxW)) * 25.4 / dpi,
+    bottom: (r270.canvasH - (bboxY + bboxH)) * 25.4 / dpi,
+  }
+  const expected = { left: 16, top: 10.6, right: 17, bottom: 14.3 }
+  for (const e of ['left', 'top', 'right', 'bottom']) {
+    const diff = Math.abs(marginsMm[e] - expected[e])
+    assert.ok(diff <= 0.5, `rot270 ${e} diff=${diff.toFixed(3)}mm > 0.5mm（actual=${marginsMm[e].toFixed(2)} expected=${expected[e]}）`)
+  }
+})
+
 test('A3-3-3-04: rot180/rot270 + rotation=0 + 非法角度（数学完整性）', () => {
   const rot0 = applySourceOriginPlacement({ renderResource: A1_RESOURCE, paperLayout: A1_PAPER, rotation: 0 })
   // 180：画布不变、旋转 command contentRotation=180
