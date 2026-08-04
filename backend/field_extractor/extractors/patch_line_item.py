@@ -5,8 +5,10 @@ Patch line_item_extractor.py:
 3. Add _normalize_line_item_text_fields call in output
 """
 import re
+import os
 
-with open(r'D:\marsprint\print609\backend\field_extractor\extractors\line_item_extractor.py', 'r', encoding='utf-8') as f:
+_target = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'line_item_extractor.py')
+with open(_target, 'r', encoding='utf-8') as f:
     content = f.read()
 
 # ── 1. Insert token classifier functions ──
@@ -222,7 +224,7 @@ else:
     print("[INFO] Could not find _assemble_multi_items logic (may use different structure)")
 
 # ── Write back ──
-with open(r'D:\marsprint\print609\backend\field_extractor\extractors\line_item_extractor.py', 'w', encoding='utf-8') as f:
+with open(_target, 'w', encoding='utf-8') as f:
     f.write(content)
 
 print("\n[OK] All patches applied successfully")

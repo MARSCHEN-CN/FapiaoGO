@@ -1,6 +1,6 @@
 """重复发票 identity 修复验证（fix duplicate invoice identity）。
 
-隔离策略：在 import db 之前设置 MARSPRINT_DB_PATH 指向临时目录，
+隔离策略：在 import db 之前设置 FAPIAOGO_DB_PATH 指向临时目录，
 避免污染真实 database/ 与 Electron userData。
 
 覆盖：
@@ -17,7 +17,7 @@ import shutil
 
 # 必须在 import db 之前设置，db 在模块加载时即解析 DB 路径
 _TMP_DB = tempfile.mkdtemp(prefix="dup_identity_db_")
-os.environ['MARSPRINT_DB_PATH'] = _TMP_DB
+os.environ['FAPIAOGO_DB_PATH'] = _TMP_DB
 # 保证 backend 目录在 sys.path（time_utils 等本地模块）
 _BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _BACKEND_DIR not in sys.path:

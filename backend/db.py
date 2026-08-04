@@ -124,7 +124,7 @@ def _resolve_invoice_by_key(key: str) -> Optional[Dict]:
 
 def _resolve_db_dir() -> str:
     """按优先级解析数据库目录"""
-    env_path = os.environ.get('MARSPRINT_DB_PATH', '').strip()
+    env_path = os.environ.get('FAPIAOGO_DB_PATH', '').strip()
     if env_path:
         try:
             normalized = os.path.normpath(env_path)
@@ -137,7 +137,7 @@ def _resolve_db_dir() -> str:
             if parent:
                 return parent
         except (OSError, ValueError):
-            logger.warning("环境变量 MARSPRINT_DB_PATH 路径无效，使用默认路径")
+            logger.warning("环境变量 FAPIAOGO_DB_PATH 路径无效，使用默认路径")
 
     dev_path = Path(__file__).resolve().parent.parent / 'database'
     if dev_path.exists():

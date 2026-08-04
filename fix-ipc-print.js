@@ -1,6 +1,7 @@
 // 修复 ipc-print.js：将 pngToPdf 中的 contain 逻辑恢复为原始填满模式
 const fs = require('fs')
-const filePath = 'D:\\marsprint\\print605\\electron\\ipc-print.js'
+const path = require('path')
+const filePath = path.join(__dirname, 'electron', 'ipc-print.js')
 let content = fs.readFileSync(filePath, 'utf8')
 
 // 方案：找到 pngToPdf 函数内 contain 逻辑的起始注释行，

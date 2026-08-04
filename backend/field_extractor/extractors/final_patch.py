@@ -2,8 +2,10 @@
 Final patch: add _normalize_line_item_text_fields calls to _assemble_multi_items
 """
 import re
+import os
 
-with open(r'D:\marsprint\print609\backend\field_extractor\extractors\line_item_extractor.py', 'r', encoding='utf-8') as f:
+_target = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'line_item_extractor.py')
+with open(_target, 'r', encoding='utf-8') as f:
     content = f.read()
 
 count = 0
@@ -73,7 +75,7 @@ else:
 
 # ── Write back ──
 if count > 0:
-    with open(r'D:\marsprint\print609\backend\field_extractor\extractors\line_item_extractor.py', 'w', encoding='utf-8') as f:
+    with open(_target, 'w', encoding='utf-8') as f:
         f.write(content)
     print(f"\n[OK] Wrote back with {count} changes")
 else:

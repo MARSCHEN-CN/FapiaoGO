@@ -1085,8 +1085,8 @@ import atexit
 import ocr_pool_task
 
 # OCR 并发度：默认 2。若需提高，请同步将 OCR 引擎 ONNX intra_op_num_threads 调小，
-# 否则多进程各自拉满 cpu_count//2 线程会导致整体超卖。可用 MARSPRINT_OCR_WORKERS 覆盖。
-OCR_WORKERS = int(_os.environ.get('MARSPRINT_OCR_WORKERS', max(1, min(_os.cpu_count() or 4, 2))))
+# 否则多进程各自拉满 cpu_count//2 线程会导致整体超卖。可用 FAPIAOGO_OCR_WORKERS 覆盖。
+OCR_WORKERS = int(_os.environ.get('FAPIAOGO_OCR_WORKERS', max(1, min(_os.cpu_count() or 4, 2))))
 _parse_semaphore = threading.Semaphore(OCR_WORKERS)
 
 # 执行器（懒加载，带锁）：优先进程池，回退线程池，再回退同步。
@@ -1930,7 +1930,7 @@ if __name__ == '__main__':
     logger.info("[DB-PATH] DB_DIR        = %s", db_module.DB_DIR)
     logger.info("[DB-PATH] INVOICES_PATH = %s", db_module.INVOICES_PATH)
     logger.info("[DB-PATH] OPLOG_PATH    = %s", db_module.OPLOG_PATH)
-    logger.info("[DB-PATH] MARSPRINT_DB_PATH env = %r", os.environ.get('MARSPRINT_DB_PATH', ''))
+    logger.info("[DB-PATH] FAPIAOGO_DB_PATH env = %r", os.environ.get('FAPIAOGO_DB_PATH', ''))
     from cache import _get_manager
     _cache_mgr = _get_manager()
     migrated = _cache_mgr.migrate_legacy()
