@@ -3,7 +3,7 @@ import { isMergeMode, getPreviousYearInfo, resolveStatsMode, getElectronAPI } fr
 import { buildDocumentDuplicateInfo } from '../utils/documentViewModel'
 import { groupFilesByDocument } from '../utils/groupDocuments'
 import { useFileContext } from '../contexts/FileContext'
-import { PUBLIC_BASE } from '../config'
+import { PUBLIC_BASE, APP_VERSION } from '../config'
 import FileList from './FileList'
 
 function isFailed(fileObj, fieldKey) {
@@ -106,9 +106,10 @@ export default React.memo(function Sidebar({
   // ── Step 10.5+：文件列表 document-level 聚合 ──
   // 优先消费装配结果 documentView.documents（InvoiceDocument 聚合条目），
   // 让 FileList 显示「一票一行」而非逐页拆分。
-  // 搜索态或无装配结果时回退 groupFilesByDocument，兼容单页 PDF / 老数据 / OCR 失败文件。
+  // 搜索态 / 无装配结果 / 覆盖不完整时回退 groupFilesByDocument，
+  // 防止 silent data loss（Document 聚合遗漏 page keys）。
   const displayFiles = useMemo(() => {
-    if (!isSearching && documentView?.documents?.length) {
+    if (!isSearching && documentView?.documents?.length && documentView?.coverage?.complete) {
       return documentView.documents
     }
     return groupFilesByDocument(isSearching ? filteredFiles : files)
@@ -237,7 +238,7 @@ export default React.memo(function Sidebar({
             <div className="sb-brand-text">FapiaoGO</div>
             <div className="sb-brand-sub">发票管理助手</div>
           </div>
-          <span className="sb-brand-badge">V1.0.0</span>
+          <span className="sb-brand-badge">V{APP_VERSION}</span>
         </div>
 
         <div className="sb-actions">

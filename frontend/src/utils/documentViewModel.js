@@ -109,6 +109,7 @@ function parseAmount(amountStr) {
  *   totalAmount: number,            总金额
  *   failedCount: number,            失败 document 数
  *   previousYearCount: number,      往年发票 document 数
+ *   coverage: { totalPages: number, coveredPages: number, complete: boolean },  覆盖度护栏
  * }}
  */
 export function buildDocumentViewModel(files, invoiceDocs = null) {
@@ -124,13 +125,28 @@ export function buildDocumentViewModel(files, invoiceDocs = null) {
       (f) => f && f.key && !coveredKeys.has(f.key),
     )
     const remainingRows = remainingFiles.length > 0 ? groupFilesByDocument(remainingFiles) : []
-    // 保持 InvoiceDocument 条目在前，补全条目在后；并按 pageIndex 稳定排序
     documents = [...invoiceRows, ...remainingRows]
   } else {
     documents = groupFilesByDocument(files)
   }
 
-  // 重复检测：函数体不变（按 invoiceNumber 分组），输入升级为 document 条目
+  // ── Coverage guard: 校验 document 聚合是否覆盖全部 page-level files ──
+  const allPageKeys = new Set(
+    (Array.isArray(files) ? files : [])
+      .filter((f) => f && f.key)
+      .map((f) => f.key),
+  )
+  const docCoveredKeys = new Set()
+  for (const doc of documents) {
+    for (const k of collectCoveredKeys(doc)) docCoveredKeys.add(k)
+  }
+  const coverage = {
+    totalPages: allPageKeys.size,
+    coveredPages: docCoveredKeys.size,
+    complete: allPageKeys.size === 0 || allPageKeys.size === docCoveredKeys.size,
+  }
+
+  // 重复检测
   const duplicateGroups = detectDuplicateInvoices(documents)
 
   let totalAmount = 0
@@ -149,6 +165,7 @@ export function buildDocumentViewModel(files, invoiceDocs = null) {
     totalAmount,
     failedCount,
     previousYearCount,
+    coverage,
   }
 }
 

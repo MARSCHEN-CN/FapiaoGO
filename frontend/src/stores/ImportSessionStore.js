@@ -173,6 +173,9 @@ export function getSession(id) {
 export function removeSession(id) {
   clearSessionCleanupTimer(id)
   sessions.delete(id)
+  if (activeSessionId === id) {
+    activeSessionId = null
+  }
   notify(id)
 }
 
