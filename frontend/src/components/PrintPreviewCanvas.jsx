@@ -258,34 +258,6 @@ const PrintPreviewCanvas = memo(({ preview, marginSettings }) => {
           />
         )}
 
-        {/* 边距标注 */}
-        {hasMargins && (
-          <>
-            {margins.top > 0 && (
-              <text x={widthMM / 2} y={(margins.top || 0) / 2 + 1} fontSize="2" fill="var(--text-3)" fillOpacity="0.6" textAnchor="middle">
-                ↑{margins.top}mm
-              </text>
-            )}
-            {margins.bottom > 0 && (
-              <text x={widthMM / 2} y={heightMM - (margins.bottom || 0) / 2} fontSize="2" fill="var(--text-3)" fillOpacity="0.6" textAnchor="middle">
-                ↓{margins.bottom}mm
-              </text>
-            )}
-            {margins.left > 0 && (
-              <text x={(margins.left || 0) / 2 + 1} y={heightMM / 2} fontSize="2" fill="var(--text-3)" fillOpacity="0.6" textAnchor="middle"
-                transform={`rotate(-90 ${(margins.left || 0) / 2 + 1} ${heightMM / 2})`}>
-                ←{margins.left}mm
-              </text>
-            )}
-            {margins.right > 0 && (
-              <text x={widthMM - (margins.right || 0) / 2} y={heightMM / 2} fontSize="2" fill="var(--text-3)" fillOpacity="0.6" textAnchor="middle"
-                transform={`rotate(90 ${widthMM - (margins.right || 0) / 2} ${heightMM / 2})`}>
-                {margins.right}mm→
-              </text>
-            )}
-          </>
-        )}
-
         {/* 发票缩略图槽位 */}
         {page.slots.map((slot, i) => (
           <SlotImage key={`${slot.fileId || 'slot'}-${slot.pageIndex}-${i}`} slot={slot} />
