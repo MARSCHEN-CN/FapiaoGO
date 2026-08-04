@@ -256,7 +256,12 @@ function main() {
   const t0 = Date.now()
   execFile(sumatra, args, { timeout: 120000 }, (err) => {
     const dur = Date.now() - t0
-    if (err) { console.error(`❌ SumatraPDF 调用失败 (${dur}ms): ${err.message}`); process.exit(1) }
+    if (err) {
+      console.error(`❌ SumatraPDF 调用失败 (${dur}ms): ${err.message}`)
+      if (err.stderr) console.error(`   stderr: ${String(err.stderr).trim()}`)
+      if (err.stdout) console.error(`   stdout: ${String(err.stdout).trim()}`)
+      process.exit(1)
+    }
     console.log(`✅ SumatraPDF 返回 (${dur}ms)`)
     setTimeout(() => {
       const rot90 = measure(out, python, rot0Out, printer, sumatra, printSettings, uniqDirs)
