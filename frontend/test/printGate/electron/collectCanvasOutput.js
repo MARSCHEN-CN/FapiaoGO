@@ -366,7 +366,7 @@ export async function collectProductionRotatedCase(caseDef) {
  * 镜像 collectProductionRotatedCase 的 native 渲染步，但只取 RenderResource 本身，
  * 不做 placement / rotation —— 纯粹对比 pdf.js 产出的 resource 与 fitz 侧（probe_render_resource_fitz.py）。
  *
- * 输出：nativeRes（pdf.js getViewport 默认 CropBox 渲染）尺寸 + content bbox（透明底，alpha>0 即内容）。
+ * 输出：nativeRes（pdf.js getViewport 渲染）尺寸 + content bbox（白底，亮度<250 即墨迹，与 fitz 对齐）。
  * 与 fitz 探针的 mediabox_px / cropbox_px 比对：
  *   - 若 nativeRes ≈ fitz cropbox_px 且 ≠ mediabox_px → 假设 R2 成立（pdf.js=CropBox, fitz=MediaBox）
  *   - 若 nativeRes ≈ fitz mediabox_px → 两引擎同 box，残差在 AA / glyph 层
@@ -383,12 +383,17 @@ export async function collectRenderResourceProbe(caseDef) {
     const ctx = canvas.getContext('2d')
     const img = ctx.getImageData(0, 0, width, height).data
 
-    // 仿 node findContentBBox：pdf.js 透明底 → alpha>0 即内容（alphaThreshold=0）
+    // ⚠️ 修正（2026-08-04）：pdf.js 在 renderers.js:535-536 填白底（#ffffff），
+    // alpha 通道恒为 1 → alpha>0 检测会命中整页（全白也算"内容"），content bbox 永远=整页。
+    // 改用与 fitz 探针一致的亮度阈值（brightnessMax=250，任一通道<250 即墨迹），
+    // 才能量到真实 inked content bbox，与 fitz content_bbox_px 可比。
+    const brightnessMax = 250
     let minX = width, minY = height, maxX = -1, maxY = -1
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
-        const a = img[(y * width + x) * 4 + 3]
-        if (a > 0) {
+        const i = (y * width + x) * 4
+        const r = img[i], g = img[i + 1], b = img[i + 2]
+        if (r < brightnessMax || g < brightnessMax || b < brightnessMax) {
           if (x < minX) minX = x
           if (x > maxX) maxX = x
           if (y < minY) minY = y
@@ -404,7 +409,7 @@ export async function collectRenderResourceProbe(caseDef) {
       dpi: GATE_DPI,
       nativeW: width,
       nativeH: height,
-      bbox_method: 'alpha>0 (transparent bg)',
+      bbox_method: 'brightness<250 (white bg)',
       content_bbox_px: bbox,
     }
     console.log(`[GATE-A3RF] ${caseDef.id} OK native=${width}x${height} contentBBox=${JSON.stringify(bbox)}`)
