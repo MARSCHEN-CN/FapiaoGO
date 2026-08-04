@@ -617,7 +617,7 @@ class MiscExtractor:
                 right_tokens = [
                     x for x in tokens
                     if abs(self._gcy(x) - tcy) < self._ROW_TOL
-                    and self._gattr(x, 'x0') > tx1 - 5
+                    and self._gattr(x, 'x0') > tx1 - 20
                 ]
                 if right_tokens:
                     right_tokens.sort(key=lambda x: self._gattr(x, 'x0'))
@@ -1243,6 +1243,11 @@ class MiscExtractor:
         name = raw.strip().replace(' ', '')
 
         if len(name) > 10:
+            for k in range(4, 1, -1):
+                tail = name[-k:]
+                if re.match(r'^[\u4e00-\u9fa5·]+$', tail):
+                    logger.debug("[Misc] 从长字符串末位提取人名: '%s' → '%s'", name[:30], tail)
+                    return tail
             logger.debug("[Misc] 人名过长，丢弃: '%s'", name[:20])
             return ''
 

@@ -17,7 +17,7 @@ function buildInvoiceFields(f) {
     xsfmc: inv.xsfmc || f.sellerName || '',
     xsfsh: inv.xsfsh || f.sellerTaxNo || '',
     amountJe: inv.amountJe || f.amountWithoutTax || '',
-    amountSe: inv.amountSe || f.taxAmount || '',
+    amountSe: inv.amountSe ?? f.taxAmount ?? '',
     amountHj: inv.amountHj || f.amount || f.totalAmount || '',
     amountHjDx: inv.amountHjDx || '',
     note: inv.note || '',

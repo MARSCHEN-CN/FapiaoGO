@@ -45,7 +45,7 @@ export function mapParseResultToFileUpdate(result, fileObj) {
     sellerName: fields.sellerName || invFields.xsfmc || '',
     sellerTaxNo: fields.sellerTaxNo || invFields.xsfsh || '',
     amountWithoutTax: fields.amountWithoutTax || invFields.amountJe || '',
-    taxAmount: fields.taxAmount || invFields.amountSe || '',
+    taxAmount: fields.taxAmount ?? invFields.amountSe ?? '',
     totalAmount: fields.totalAmount || invFields.amountHj || fields.amount || '',
     lineItems: fields.lineItems || invFields.line_items || [],
     rawText: fields.rawText || '',

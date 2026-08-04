@@ -701,7 +701,7 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
                       sellerName: (invFields || {}).xsfmc || '',
                       sellerTaxNo: (invFields || {}).xsfsh || '',
                       amountWithoutTax: (invFields || {}).amountJe || '',
-                      taxAmount: (invFields || {}).amountSe || '',
+                      taxAmount: (invFields || {}).amountSe ?? '',
                       totalAmount: (invFields || {}).amountHj || item.amount || '',
                       lineItems: (invFields || {}).line_items || [],
                       rawText: '',
