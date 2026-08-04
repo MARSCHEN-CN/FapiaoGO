@@ -297,6 +297,9 @@ function main() {
   const paper = get('--paper', 'custom')
   const customW = parseFloat(get('--custom-w', '230'))
   const customH = parseFloat(get('--custom-h', '160'))
+  // 是否为 A1 异形纸(230×160)：命名特种纸「PostScript」或显式 custom 尺寸，且尺寸确为 230×160。
+  // 该标志决定 V2-02 能否复用 A3-3-3 的 C5 rot0 边距参考。
+  const isA1Custom = (paper === 'custom' || /^postscript$/i.test(paper)) && Math.abs(customW - 230) < 1 && Math.abs(customH - 160) < 1
   // 仅当 paper=custom 时注入尺寸；命名特种纸（如 Wondershare「PostScript」）按名字发，不塞尺寸。
   const customPaper = paper === 'custom' ? { widthMM: customW, heightMM: customH } : undefined
   const ps = { rotation, paper, customPaper,
@@ -359,7 +362,7 @@ function main() {
   // 用法：先用 --printer 跑一次拿到 writer 输出文件，再以此模式 + --out <该文件> 复跑分析，无需重打。
   if (measureOnly) {
     console.log('（--measure-only：跳过 Sumatra 调用与 writer 捕获，直接对 --out 做 V2-01/02/03 分析）')
-    const r = measure(out, python, rot0Out, pol, oc.baseFlag, uniqDirs)
+    const r = measure(out, python, rot0Out, pol, oc.baseFlag, uniqDirs, isA1Custom)
     process.exit(r ? 0 : 1)
   }
 
@@ -380,13 +383,13 @@ function main() {
     }
     console.log(`✅ SumatraPDF 返回 (${dur}ms)`)
     setTimeout(() => {
-      const rot90 = measure(out, python, rot0Out, pol, oc.baseFlag, uniqDirs)
+      const rot90 = measure(out, python, rot0Out, pol, oc.baseFlag, uniqDirs, isA1Custom)
       if (!rot90) process.exit(1)
     }, 2500)
   })
 }
 
-function measure(outPdf, python, rot0Out, pol, baseFlag, searchDirs = []) {
+function measure(outPdf, python, rot0Out, pol, baseFlag, searchDirs = [], isA1Custom = false) {
   if (!fs.existsSync(outPdf)) {
     const grabbed = grabOutput(outPdf, searchDirs)
     if (!grabbed) {
@@ -439,7 +442,7 @@ function measure(outPdf, python, rot0Out, pol, baseFlag, searchDirs = []) {
 
   console.log(`\n── V2-02 Content Rotation ──`)
   // V2-02 边距参考：非 A1 自定义纸时，A1 的 C5 边距参考不适用，必须用同纸型 rot0 artifact。
-  const isA1Custom = Math.abs(customW - 230) < 1 && Math.abs(customH - 160) < 1
+  // isA1Custom 由 main() 计算后传入（命名纸「PostScript」或显式 230×160 即视为 A1 异形纸）。
   let refMargins = C5_ROT0_MARGINS_MM
   let refLabel = 'A3-3-3 C5 rot0 参考(A1)'
   let refUsable = isA1Custom

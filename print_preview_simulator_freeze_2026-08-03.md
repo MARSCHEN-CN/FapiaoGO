@@ -860,6 +860,8 @@ Final canvas contract         ← A3-C5 Geometry Closure（自洽）+ Source Ali
 - **结论：两轨互补、缺一不可**（这正是用户「A4/A5 先测 + 异形纸用万兴」策略的正确性依据）：
   - **轨一 · 常规纸（A4/A5，统一用 Wondershare PDFelement）**：验证「Sumatra 忠实执行生产命令」+ **旋转方向**（V2-02 边距 90°CW 置换）。页尺寸无判别力，但覆盖最常见场景。脚本已参数化 `--paper a4|a5|custom`，并自动从源 MediaBox 检测 contentOrient。
   - **轨二 · 异形纸（230×160，Wondershare PDF 自定义纸「PostScript」）**：**真正的 A/B 判别器**（transpose 检查）。Wondershare 已配置名为「PostScript」的 230×160 自定义纸型；生产 `buildPrintSettings` 对该命名纸（非 A 系列、不在应用注册表）按**名字**发 `paper=PostScript`（非 `paper=230mm x 160mm` 尺寸），由 Wondershare 驱动按名匹配其 230×160 纸型。⚠️ 故 A3-V2 轨二命令必须用 `--paper PostScript`（纸名），**不能用 `--paper custom --custom-w 230 --custom-h 160`**（那是尺寸形式，与生产命令不一致）。**Wondershare 虚拟打印机本机实测默认落盘到 `C:\Users\it01\Desktop`（随机数字名 PDF）**——脚本已自动扫描该目录；若改了输出目录请用 `--search-dir` 显式指定。完整命令：`--printer "Wondershare PDFelement" --paper PostScript --search-dir "C:/Users/it01/Desktop"`。
+  - ⚠️ **纸名大小写坑（本机 2026-08-04 实测）**：SumatraPDF 把 `paper=` 纸名**强制小写化**（`paper=postscript`），Windows 打印子系统按 DEVMODE 纸名**精确匹配**（大小写敏感）。若 Wondershare 注册的自定义纸型名为「**PostScript**」（混合大小写），则匹配失败 → **回退默认 A4（210×297mm）**，V2-01 报 INVALID（夹纸）。**本机已实测：用 `paper=PostScript` 跑出 A4 portrait = 印证此坑**。修复 = 在 Wondershare 把自定义纸型**重命名为全小写 `postscript`** 后重跑同一命令。
+  - 🔴 **生产代码同源风险**：`electron/print-service/print-settings.js:195`（`paperkind` 分支）同样 `paper=${paper.toLowerCase()}` → 生产发出 `paper=postscript`。真实发票打印机上的自定义纸型**也须命名为小写 `postscript`** 才能匹配，否则生产路径同样会回退默认纸（A4/驱动默认）。**此点须在真机验证**，属于潜在生产 bug，不等同于 A3-V2 验证阻塞。
 - **A3-C5 Source Alignment 收口条件**：轨二 artifact 裁决 Policy A → PASS；裁决 Policy B → 修订 contract（情况 B）。轨一只作必要支撑，不单独收口 A/B。
 
 #### 14.24.4 判定矩阵
