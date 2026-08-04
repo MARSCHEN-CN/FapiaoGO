@@ -137,8 +137,8 @@ const PrintPreviewCanvas = memo(({ preview, marginSettings }) => {
         role="img"
         aria-label={`打印预览：${page.paper} ${ORIENT_LABEL[page.orientation] || ''} ${slotCount} 票`}
       >
-        {/* 纸张轮廓（无底色：viewBox 透明，纯粹显示打印内容 + 安全边距线条） */}
-        <rect x="0" y="0" width={widthMM} height={heightMM} rx="1.5" fill="none" stroke="var(--border-light)" strokeWidth="0.6" />
+        {/* 纸张背景（白底模拟纸面；viewBox 画布本身透明） */}
+        <rect x="0" y="0" width={widthMM} height={heightMM} rx="1.5" fill="#fff" stroke="var(--border-light)" strokeWidth="0.6" />
 
         {/* 安全边距可视化 */}
         {hasMargins && (
