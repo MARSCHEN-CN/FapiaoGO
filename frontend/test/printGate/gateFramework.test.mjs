@@ -16,7 +16,7 @@ import { anchorManifest, validateAnchorManifest } from './anchorManifest.mjs'
 import { SAFE_MARGIN_TOLERANCE_MM, GATE_DPI, PAPER_SIZES_MM } from './gateConfig.mjs'
 import { normalizeReadFileData } from './ipcPayloadAdapter.mjs'
 import { extendPaperLayoutContract, validatePaperLayoutContract } from '../../src/print/paperLayoutContract.js'
-import { applySourceOriginPlacement, assertPlacementOffset, mmToPxPlacement } from '../../src/print/placementAdapter.js'
+import { applySourceOriginPlacement, assertPlacementOffset, mmToPxPlacement, transformPaperRotation } from '../../src/print/placementAdapter.js'
 
 // ── 0. IPC payload 适配（G1-CANVAS-1 真实契约）──────────────────
 test('normalizeReadFileData: Uint8Array 直通（形态 A）', () => {
@@ -313,4 +313,113 @@ test('A3-3-2-03: bitmap invariant — PlacementCommand 不改 scale/rotation/pix
   assert.equal(cmd.clip, null, '单文件不裁剪')
   // mmToPx 换算
   assert.equal(mmToPxPlacement(10), 118)
+})
+
+// ── 8. A3-3-3 Rotation Placement Transform（a3_design_spec §7.1）───────────
+// 冻结 C2 Policy A（paper+content 一体旋转）/ C3 变换顺序 / C4 sourceOrigin 不参与旋转
+// ⚠️ 实现模型（2026-08-04 修正）：drawRenderCommand 的 contentRotation 是 Policy B（内容在画布内旋转），
+//   Policy A = 画布级旋转：rot0 command 绘制扩展纸面 → rotateCanvasCommand 把扩展纸面画布作为 source
+//   旋转绘制到新画布（与 A3-2 采集器同一数学，C5 bbox (201,169) 吻合）。
+// A1 数据：扩展纸面 2717×1890px（230×160mm），native 2480×1654px，sourceOrigin 10mm→118px
+const A1_RESOURCE = { width: 2480, height: 1654 }
+const A1_PAPER = { sourceOrigin: { x: 10, y: 10, unit: 'mm' } }
+const A1_PAPER_PX = { w: 2717, h: 1890 }
+
+test('A3-3-3-01: rot90 canvas — 画布 1890×2717 + 画布旋转 command（Policy A 纸面跟随内容）', () => {
+  const rot0 = applySourceOriginPlacement({ renderResource: A1_RESOURCE, paperLayout: A1_PAPER, rotation: 0 })
+  const r90 = transformPaperRotation(rot0, 90, A1_PAPER_PX.w, A1_PAPER_PX.h)
+  // 画布尺寸（Policy A：纸面跟随内容旋转）
+  assert.equal(r90.canvasW, 1890, `canvasW=${r90.canvasW}（2717×1890 → 1890×2717）`)
+  assert.equal(r90.canvasH, 2717)
+  // 画布旋转 command：source = 扩展纸面画布（2717×1890），居中旋转 90°
+  assert.ok(r90.rotateCanvasCommand, 'rot90 应有 rotateCanvasCommand')
+  assert.equal(r90.rotateCanvasCommand.placement.offsetX, 0, '旋转 command offset=0（居中）')
+  assert.equal(r90.rotateCanvasCommand.placement.offsetY, 0)
+  assert.equal(r90.rotateCanvasCommand.placement.scale, 1, 'scale=1（像素不缩放）')
+  assert.deepEqual(r90.rotateCanvasCommand.rotatedBounds, { width: 2717, height: 1890 }, 'rotatedBounds=原画布尺寸（source 语义）')
+  assert.equal(r90.rotateCanvasCommand.contentRotation, 90, 'contentRotation=90')
+})
+
+test('A3-3-3-02: rot90 bbox — 内容宽高互换 1500×2423，无负坐标（C5 锚点）', () => {
+  // 画布旋转模型：内容 bbox (169,189,2423×1500) 在扩展纸面 2717×1890 内，
+  // 中心 (1380.5,939) vs 纸面中心 (1358.5,945) → rel (22,-6)；rotate90 → (6,22)；
+  // 新画布 1890×2717 中心 (945,1358.5) → 新内容中心 (951,1380.5) → bbox (201,169,1500×2423)
+  const contentCx = 169 + 2423 / 2  // 1380.5
+  const contentCy = 189 + 1500 / 2  // 939
+  const relX = contentCx - A1_PAPER_PX.w / 2  // 1380.5-1358.5 = 22
+  const relY = contentCy - A1_PAPER_PX.h / 2  // 939-945 = -6
+  const nrelX = -relY, nrelY = relX  // rotate90: (6,22)
+  const newCx = 1890 / 2 + nrelX  // 951
+  const newCy = 2717 / 2 + nrelY  // 1380.5
+  const bboxX = newCx - 1500 / 2   // 201
+  const bboxY = newCy - 2423 / 2   // 169
+  const bboxW = 1500, bboxH = 2423
+  // C5 预期：bbox (201,169,1500×2423)，无负坐标
+  assert.ok(bboxX >= 0 && bboxY >= 0, `无负坐标：bboxX=${bboxX} bboxY=${bboxY}`)
+  assert.ok(Math.abs(bboxX - 201) <= 1.5, `bboxX=${bboxX} vs 201`)
+  assert.ok(Math.abs(bboxY - 169) <= 1, `bboxY=${bboxY} vs 169`)
+  assert.ok(Math.abs(bboxW - 1500) <= 1, `bboxW=${bboxW} vs 1500（宽高互换）`)
+  assert.ok(Math.abs(bboxH - 2423) <= 1, `bboxH=${bboxH} vs 2423`)
+})
+
+test('A3-3-3-03: rot90 margin — 四边 vs 预期 L17/T14.3/R16/B10.6 ≤0.5mm（顺时针轮换）', () => {
+  // 同 A3-3-3-02 的 bbox 推算
+  const relX = (169 + 2423 / 2) - A1_PAPER_PX.w / 2
+  const relY = (189 + 1500 / 2) - A1_PAPER_PX.h / 2
+  const nrelX = -relY, nrelY = relX
+  const newCx = 1890 / 2 + nrelX
+  const newCy = 2717 / 2 + nrelY
+  const bboxX = newCx - 750
+  const bboxY = newCy - 1211.5
+  const bboxW = 1500, bboxH = 2423
+  const dpi = 300
+  const marginsMm = {
+    left: bboxX * 25.4 / dpi,
+    top: bboxY * 25.4 / dpi,
+    right: (1890 - (bboxX + bboxW)) * 25.4 / dpi,
+    bottom: (2717 - (bboxY + bboxH)) * 25.4 / dpi,
+  }
+  // C5 锚点：原 L14.3/T16/R10.6/B17 顺时针轮换 → L17/T14.3/R16/B10.6
+  const expected = { left: 17, top: 14.3, right: 16, bottom: 10.6 }
+  for (const e of ['left', 'top', 'right', 'bottom']) {
+    const diff = Math.abs(marginsMm[e] - expected[e])
+    assert.ok(diff <= 0.5, `${e} diff=${diff.toFixed(3)}mm > 0.5mm（actual=${marginsMm[e].toFixed(2)} expected=${expected[e]}）`)
+  }
+})
+
+test('A3-3-3-04: rot180/rot270 + rotation=0 + 非法角度（数学完整性）', () => {
+  const rot0 = applySourceOriginPlacement({ renderResource: A1_RESOURCE, paperLayout: A1_PAPER, rotation: 0 })
+  // 180：画布不变、旋转 command contentRotation=180
+  const r180 = transformPaperRotation(rot0, 180, A1_PAPER_PX.w, A1_PAPER_PX.h)
+  assert.equal(r180.canvasW, 2717)
+  assert.equal(r180.canvasH, 1890)
+  assert.equal(r180.rotateCanvasCommand.contentRotation, 180)
+  assert.deepEqual(r180.rotateCanvasCommand.rotatedBounds, { width: 2717, height: 1890 })
+  // 270：画布 1890×2717、contentRotation=270
+  const r270 = transformPaperRotation(rot0, 270, A1_PAPER_PX.w, A1_PAPER_PX.h)
+  assert.equal(r270.canvasW, 1890)
+  assert.equal(r270.canvasH, 2717)
+  assert.equal(r270.rotateCanvasCommand.contentRotation, 270)
+  // rotation=0：原画布尺寸 + 无旋转 command
+  const r0 = transformPaperRotation(rot0, 0, A1_PAPER_PX.w, A1_PAPER_PX.h)
+  assert.equal(r0.canvasW, 2717)
+  assert.equal(r0.canvasH, 1890)
+  assert.equal(r0.rotateCanvasCommand, null, 'rot0 无画布旋转 command')
+  // 非法角度 fail-loud
+  assert.throws(() => transformPaperRotation(rot0, 45, A1_PAPER_PX.w, A1_PAPER_PX.h), /非法 rotation=45/)
+})
+
+test('A3-3-3-05: usePrint 接线 — renderFileToPrintImage 消费 transformPaperRotation + 画布旋转分支（Policy A）', () => {
+  const src = readFileSync(new URL('../../src/hooks/usePrint.js', import.meta.url), 'utf8')
+  // ① import transformPaperRotation
+  assert.equal(src.includes("import { applySourceOriginPlacement, transformPaperRotation }"), true, '应 import transformPaperRotation')
+  // ② 调用点：rotInfo = transformPaperRotation(nativeCmd, rotation, pw, ph)
+  assert.ok(/transformPaperRotation\(nativeCmd, rotation, pw, ph\)/.test(src), '应消费 transformPaperRotation（rotation 变量传递）')
+  // ③ 画布旋转分支：rotateCanvasCommand 非空时两段式绘制（Policy A 画布级旋转）
+  const fnBlock = src.match(/const renderFileToPrintImage[\s\S]*?renderMergeGroupToPrintImage/m)
+  assert.ok(fnBlock, 'renderFileToPrintImage 函数块可定位')
+  const fnBody = fnBlock[0]
+  assert.equal(fnBody.includes('rotInfo.rotateCanvasCommand'), true, '应存在画布旋转分支（rotateCanvasCommand）')
+  // ④ 红线：rotation 仍由 fileRotations 派生（未引入新旋转模型）
+  assert.equal(src.includes('const rotation = fileRotations[f.key] || 0'), true, 'rotation 来源不变')
 })
