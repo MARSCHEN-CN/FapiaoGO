@@ -633,6 +633,29 @@ Phase B    ⏸
 - **📤 push 恢复**：积压 13 commit 已推 `origin/master`（HEAD `89decb65`）。
   git-lfs `locksverify` 缺凭据会让整个 push 失败 → 必须 `git -c lfs.locksverify=false push`。
   ⚠️ 与旧约定「push 由 UGit 接管」冲突，待用户裁决。
+
+### 14.20 A3-V1 复跑：抓到第二坑——画布旋转居中 offset 错（2026-08-04，commit `6ca58679` + README `16751d2a`）
+
+**契约修复后复跑，第一次采集从「全白」变成「画歪」——几何尺寸对，但内容偏右上角。**
+
+- **现象**：`bitmap=1890x2717`（Policy A 尺寸对！）但 `bbox=(657,0,1233x2160)`
+  ——**右/顶贴边被裁、左空 657px、底空 557px**。
+- **根因**：`transformPaperRotation.rotateCanvasCommand` 用 `placement.offset=(0,0)`，
+  而 `drawRenderCommand`（`renderDraw.js:53`）以 `(offset+drawW/2, offsetY+drawH/2)` 为旋转支点。
+  offset=0 ⇒ 支点 = `(paperW/2, paperH/2)` = **原纸面中心坐标**，却落在 1890×2717 目标画布里
+  （目标中心应是 `(nW/2, nH/2)`）。支点差 `(413.5, -413.5)` ⇒ 纸面溢出 2 边、留白 2 边。
+- **修复**：`offsetX=(nW-paperW)/2, offsetY=(nH-paperH)/2`（rot90: `-413.5/+413.5`；rot180 自然 `0/0`）。
+  **手算验证**：经 `drawRenderCommand` 同款 `(x,y)->(1890-y,x)` 变换，内容 rot0 bbox `(169,189,2423×1500)`
+  → 旋转后四角 `(201,169)/(1701,169)/(1701,2592)/(201,2592)` ⇒ **精确命中 C5 `(201,169,1500×2423)`**。
+- **🔴 测试本身也埋了 bug**：`A3-3-3-01` 原 `assert.equal(offsetX, 0)` 把 bug 冻结进测试（初版断言的就是错误值）。
+  改为断言居中偏移 `(nW-paperW)/2,(nH-paperH)/2` + 注释说明为何非 0；
+  新增 `A3-3-3-06`：**node 侧镜像 `drawRenderCommand` 支点+旋转数学**，给定 command + 已知内容 bbox
+  算旋转后 bbox 断言 == C5 —— offset 改回 0 立即红，**无需 Electron 即防 regression**。
+- **排查口诀 2（已入 README + MEMORY）**：bitmap 尺寸对 + bbox 右/顶贴边、左/底留白
+  ⇒ **旋转居中 offset 错，不是 rotation 角度错**（易误判成 CW/CCW 方向问题）。
+- 回归 **71/71**（原 70 + `A3-3-3-06`）。
+- **下一步**：用户在 Electron devtools 重跑 A3-V1，确认 bbox 命中 C5 `(201,169,1500×2423)` / `L17-T14.3-R16-B10.6`；
+  通过后冻结 A3 Rotation Contract FINAL，进 A3-V2（Sumatra 真机方向验证）。
 - **A3-V1 状态**：代码侧修复完成，**真实 bitmap 待用户在 Electron devtools 重跑判定**（C5 锚点）。
 
 ### 14.6 冻结状态
