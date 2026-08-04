@@ -48,9 +48,32 @@ import {
  * @returns {string[]} 非空文件名列表
  */
 export function extractExportFileNames(files) {
-  return (files || [])
+  const names = (files || [])
     .map(f => f.originalName || f.name || f.path || f.fileName || '')
     .filter(Boolean)
+
+  // Detect duplicate export identities — log warning but do NOT auto-deduplicate
+  // (auto-dedup would silently drop invoices, which is more dangerous than the duplicate issue itself)
+  const seen = new Map()
+  const duplicates = []
+  for (let i = 0; i < names.length; i++) {
+    const n = names[i]
+    if (seen.has(n)) {
+      duplicates.push({ name: n, firstIndex: seen.get(n), duplicateIndex: i })
+    } else {
+      seen.set(n, i)
+    }
+  }
+  if (duplicates.length > 0) {
+    console.error(
+      '[ExportService] duplicate export identity detected. '
+        + 'This indicates a ViewModel identity contract issue. '
+        + 'Check that originalName is properly set on document rows.',
+      { total: names.length, duplicates },
+    )
+  }
+
+  return names
 }
 
 // ═══════════════════════════════════════════════════════════

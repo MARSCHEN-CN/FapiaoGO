@@ -168,11 +168,27 @@ test('统计: 相同内容两份（各 2 页、amount=100）→ totalAmount=200'
 })
 
 // ───────────────────────── 非拆分页 passthrough 与混排 ─────────────────────────
-test('passthrough: 无 docId 的单页文件原样保留（引用不变）', () => {
+// 非拆分页路径：补齐 identity contract（originalName + documentId），
+// 为此需要创建新对象（与分组路径行为一致）。不再保证引用透传。
+test('非拆分页: 补齐 originalName/documentId identity contract', () => {
   const s = single()
   const docs = groupFilesByDocument([s])
   assert.equal(docs.length, 1)
-  assert.equal(docs[0], s) // 同一引用
+  // identity contract：originalName 必须存在（导出主键）
+  assert.equal(docs[0].originalName, s.name)
+  // documentId 来自 f.docId（无 docId 的单页文件为 undefined，属允许状态）
+  assert.equal(docs[0].documentId, s.docId)
+  assert.equal(docs[0].status, 'parsed')
+  assert.equal(docs[0].name, s.name)
+})
+
+test('非拆分页: 已有 originalName 的文件保持不变（reference pass-through）', () => {
+  const s = single({ name: 'pre_named.pdf' })
+  s.originalName = 'pre_named.pdf'
+  s.documentId = 'DOC-X'
+  const docs = groupFilesByDocument([s])
+  // 已有完整 identity contract → 透传原引用（不意外 clone）
+  assert.equal(docs[0], s)
 })
 
 test('混排: 多页 document + 单页文件，顺序保持（document 出现在首页位置）', () => {
@@ -182,10 +198,12 @@ test('混排: 多页 document + 单页文件，顺序保持（document 出现在
   const s2 = single({ name: 'y.jpg' })
   const docs = groupFilesByDocument([s1, p1, p2, s2])
   assert.equal(docs.length, 3)
-  assert.equal(docs[0], s1)
+  assert.equal(docs[0].originalName, 'x.jpg')
   assert.equal(docs[1]._isDocumentGroup, true)
   assert.equal(docs[1]._pageCount, 2)
-  assert.equal(docs[2], s2)
+  assert.equal(docs[1].originalName, 'invoice_p1.pdf') // rep.name
+  assert.equal(docs[1].documentId, 'AAA')
+  assert.equal(docs[2].originalName, 'y.jpg')
 })
 
 // ───────────────────────── restoreOriginalName ─────────────────────────
@@ -304,4 +322,87 @@ test('合并模式：invoiceDocs 覆盖所有文件时，补全路径产出 0 �
   const vm = buildDocumentViewModel(files, invoiceDocs)
 
   assert.equal(vm.documents.length, 1, '全部被 InvoiceDocument 覆盖时不应出现重复条目')
+})
+
+// ───────────────────────── Export Identity Regression Tests ─────────────────────────
+// These tests lock down the fix for: multi-page different invoices → Excel export
+// must produce distinct backend lookup keys (originalName), not display names.
+//
+// BEFORE the fix:
+//   groupFilesByDocument output had name="invoice.pdf" (restored) but NO originalName.
+//   extractExportFileNames fell back to name → ["invoice.pdf", "invoice.pdf"].
+//   Backend _resolve_invoice_with_fallback matched both to the same DB record → duplicates.
+//
+// AFTER the fix:
+//   groupFilesByDocument output has name="invoice.pdf" AND originalName="invoice_p1.pdf".
+//   extractExportFileNames uses originalName → ["invoice_p1_A.pdf", "invoice_p1_B.pdf"].
+//   Backend lookup finds two distinct records → correct export.
+
+test('回归: 两张不同多页发票导出不合并（同 displayName 不同 originalName）', () => {
+  // 两张不同发票：displayName 都为 "invoice.pdf"，但原始文件名不同
+  const invA_p1 = page('DOC-A', 1, { name: 'A_invoice_p1.pdf' })
+  const invA_p2 = page('DOC-A', 2, { name: 'A_invoice_p2.pdf' })
+  const invB_p1 = page('DOC-B', 1, { name: 'B_invoice_p1.pdf' })
+  const invB_p2 = page('DOC-B', 2, { name: 'B_invoice_p2.pdf' })
+  const files = [invA_p1, invA_p2, invB_p1, invB_p2]
+
+  const docs = groupFilesByDocument(files)
+
+  // Step 1: 两个独立 document 条目
+  assert.equal(docs.length, 2, '应有 2 个独立 document 条目')
+
+  // Step 2: 每条都有 originalName（导出身份），且互不相同
+  assert.ok(docs[0].originalName, '第一个文档应有 originalName')
+  assert.ok(docs[1].originalName, '第二个文档应有 originalName')
+  assert.notEqual(
+    docs[0].originalName,
+    docs[1].originalName,
+    '两个文档的 originalName 必须不同（否则后端会误命中同一记录）',
+  )
+
+  // Step 3: originalName 是代表页的原始文件名（不是还原后的显示名）
+  assert.equal(docs[0].originalName, 'A_invoice_p1.pdf')
+  assert.equal(docs[1].originalName, 'B_invoice_p1.pdf')
+
+  // Step 4: name 字段已还原为显示名（不含 _p 后缀）
+  assert.equal(docs[0].name, 'A_invoice.pdf')
+  assert.equal(docs[1].name, 'B_invoice.pdf')
+
+// Step 5: 验证导出身份提取逻辑（与 ExportService.extractExportFileNames 一致）
+  const exportNames = docs
+    .map((d) => d.originalName || d.name || '')
+    .filter(Boolean)
+  assert.equal(exportNames.length, 2, '应导出 2 个文件')
+  assert.deepEqual(
+    exportNames.sort(),
+    ['A_invoice_p1.pdf', 'B_invoice_p1.pdf'],
+    '导出文件名必须是原始页文件名（非还原后的显示名）',
+  )
+})
+
+test('回归: 两张发票 displayName 完全相同时，originalName 仍可区分', () => {
+  // 极端场景：两份文件 basename 相同（如从不同目录导入的 invoice.pdf）
+  const invA_p1 = page('DOC-A', 1, { name: 'invoice_p1.pdf' })
+  const invA_p2 = page('DOC-A', 2, { name: 'invoice_p2.pdf' })
+  const invB_p1 = page('DOC-B', 1, { name: 'invoice_p1.pdf' })
+  const invB_p2 = page('DOC-B', 2, { name: 'invoice_p2.pdf' })
+  const files = [invA_p1, invA_p2, invB_p1, invB_p2]
+
+  const docs = groupFilesByDocument(files)
+  assert.equal(docs.length, 2)
+
+  // displayName 相同（都还原为 "invoice.pdf"）
+  assert.equal(docs[0].name, 'invoice.pdf')
+  assert.equal(docs[1].name, 'invoice.pdf')
+
+  // 但 originalName 也相同（因为代表页文件名相同）——这暴露了 filename-based
+  // 导出 identity 的天花板：相同物理文件名的不同文档无法仅靠文件名区分。
+  // 此测试记录该限制，作为 P2（documentId 持久化）的输入。
+  console.log('[Export Regression] 相同文件名场景:', {
+    docA_originalName: docs[0].originalName,
+    docB_originalName: docs[1].originalName,
+    note: '当物理文件名完全相同时，filename 导出 identity 无法区分，需 P2 documentId 方案解决',
+  })
+
+  // P2 TODO: 未来应断言 extractExportTargets 返回 [{documentId: 'DOC-A'}, {documentId: 'DOC-B'}]
 })

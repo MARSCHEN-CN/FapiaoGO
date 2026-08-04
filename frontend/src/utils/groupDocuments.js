@@ -103,7 +103,15 @@ export function groupFilesByDocument(files) {
         const rep = pages[0] // pageNum 最小的页（representative）
         result.push({
           ...rep,
+          // display identity
           name: restoreOriginalName(rep.name),
+          // export identity — raw page-level filename (e.g. "invoice_p1.pdf"),
+          // must match DB file_name column for backend lookup
+          originalName: rep.name,
+          // source document identity (content hash) — NOT invoice business identity.
+          // Equivalent to InvoiceDocument.docId in the InvoiceDocument model.
+          // Future: should migrate export lookup from filename to documentId.
+          documentId: rep.docId,
           _pages: pages,
           _pageCount: pages.length,
           _isDocumentGroup: true,
@@ -111,8 +119,17 @@ export function groupFilesByDocument(files) {
       }
       // 已聚合进实例的页：跳过
     } else {
-      // 非拆分页：原样保留
-      result.push(f)
+      // 非拆分页：补齐 identity contract，与分组路径一致。
+      // 已有 originalName 的文件（如已迁移的新路径）透传原引用，不意外 clone。
+      if (f.originalName !== undefined) {
+        result.push(f)
+      } else {
+        result.push({
+          ...f,
+          originalName: f.name,
+          documentId: f.documentId || f.docId,
+        })
+      }
     }
   }
 
