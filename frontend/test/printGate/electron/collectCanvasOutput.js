@@ -22,6 +22,11 @@ import { findContentBBox, measureMarginsPx, marginsToMm } from '../measureMargin
 import { normalizeReadFileData } from '../ipcPayloadAdapter.mjs'
 import { renderMultipleItemsToCanvas, renderPDFPageRaw } from '../../../src/renderers.js'
 import { buildPrintJobItem, fetchPrintRaster } from '../../../src/utils/printAdapter.js'
+// A3-V1：生产路径采集（镜像 usePrint.js renderFileToPrintImage PDF 单文件分支 A3-3-2/3-3）
+import { computePaperLayout } from '../../../src/previewState.js'
+import { extendPaperLayoutContract } from '../../../src/print/paperLayoutContract.js'
+import { applySourceOriginPlacement, transformPaperRotation } from '../../../src/print/placementAdapter.js'
+import { drawRenderCommand } from '../../../src/layout/renderDraw.js'
 
 /** 渲染进程注入的 ipc（真实契约 = window.electronAPI.ipcRenderer，见 electron/preload.js:51,92） */
 function resolveGateIPC() {
@@ -253,6 +258,104 @@ export async function collectNativeCase(caseDef) {
     return { ok: true, artifact }
   } catch (e) {
     console.error(`[GATE-CANVAS-3B] ${caseDef.id} FAIL:`, e.message)
+    return { ok: false, error: e.message }
+  }
+}
+
+/**
+ * A3-V1 collectProductionRotatedCase：生产路径 rot90 采集（A3-3 Verification Closure）
+ *
+ * 目标：验证「实现路径 ≠ 纯函数路径」——renderPDFPageRaw + applySourceOriginPlacement +
+ * transformPaperRotation + 两段式 drawRenderCommand 实际产出的 bitmap 是否符合 C5 锚点
+ * （画布 1890×2717 / bbox (201,169,1500×2423) / 边距 L17/T14.3/R16/B10.6 / ratio≥0.99）。
+ * 防：transformPaperRotation 纯函数正确但 draw 顺序/translate/rotate/画布尺寸错误。
+ *
+ * 调用序列**逐字镜像 usePrint.js renderFileToPrintImage PDF 单文件分支**（A3-3-2 + A3-3-3 两段式）：
+ *   computePaperLayout + extendPaperLayoutContract → renderPDFPageRaw(paperKey=null) native
+ *   → applySourceOriginPlacement(rotation:0) → transformPaperRotation(rotation)
+ *   → rot0 绘制扩展纸面画布 → rotateCanvasCommand 旋转绘制到新画布
+ *
+ * 边界（与 Gate 纪律一致）：只调用生产函数 + 生产调用序列，采集器只编排；不复制渲染语义。
+ *
+ * @param {object} caseDef GATE_CASES 项（settings 需含 paperSize/customPaper/margin；rotation 来自 caseDef.rotation）
+ * @returns {Promise<{ok:boolean, artifact:object, error?:string}>}
+ */
+export async function collectProductionRotatedCase(caseDef) {
+  try {
+    const item = await makePrintItem(caseDef)
+    const s = caseDef.settings || {}
+
+    // ① paperLayout 构造（镜像 usePrint.js:298-309）
+    const baseLayout0 = computePaperLayout({
+      paperSize: s.paperSize,
+      customPaper: s.customPaper,
+      margins: {
+        left: s.marginLeft ?? 3, right: s.marginRight ?? 3,
+        top: s.marginTop ?? 3, bottom: s.marginBottom ?? 3,
+      },
+    })
+    const paperLayout0 = extendPaperLayoutContract(baseLayout0, {
+      sourceOriginXMM: s.marginLeft ?? 3,
+      sourceOriginYMM: s.marginTop ?? 3,
+    })
+
+    // ② native 渲染（镜像 usePrint.js:310）
+    const nativeRes = await renderPDFPageRaw(item._pdfData, GATE_DPI, item.key, null, false)
+    if (!nativeRes) return { ok: false, error: 'renderPDFPageRaw(native) 返回 null' }
+
+    // ③ rot0 placement + PaperTransform（镜像 usePrint.js:312-324）
+    const rot0Cmd = applySourceOriginPlacement({ renderResource: nativeRes, paperLayout: paperLayout0, rotation: 0 })
+    const pw = paperLayout0.paperRect?.w || nativeRes.width
+    const ph = paperLayout0.paperRect?.h || nativeRes.height
+    const rotInfo = transformPaperRotation(rot0Cmd, caseDef.rotation || 0, pw, ph)
+
+    // ④ 两段式绘制（镜像 usePrint.js:317-345）：rot0 绘制扩展纸面 → 画布级旋转到新画布
+    const finalCanvas = document.createElement('canvas')
+    finalCanvas.width = rotInfo.canvasW
+    finalCanvas.height = rotInfo.canvasH
+    const fctx = finalCanvas.getContext('2d')
+    fctx.fillStyle = '#ffffff'
+    fctx.fillRect(0, 0, rotInfo.canvasW, rotInfo.canvasH)
+    if (rotInfo.rotateCanvasCommand) {
+      const tmpCanvas = document.createElement('canvas')
+      tmpCanvas.width = pw
+      tmpCanvas.height = ph
+      const tctx = tmpCanvas.getContext('2d')
+      tctx.fillStyle = '#ffffff'
+      tctx.fillRect(0, 0, pw, ph)
+      drawRenderCommand(tctx, rot0Cmd, nativeRes.canvas, nativeRes.width, nativeRes.height)
+      drawRenderCommand(fctx, rotInfo.rotateCanvasCommand, tmpCanvas, pw, ph)
+    } else {
+      drawRenderCommand(fctx, rot0Cmd, nativeRes.canvas, nativeRes.width, nativeRes.height)
+    }
+
+    // ⑤ 测量（与 canvas 采集同链路）
+    const w = finalCanvas.width, h = finalCanvas.height
+    const img = finalCanvas.getContext('2d').getImageData(0, 0, w, h)
+    const bbox = findContentBBox(img.data, w, h)
+    const paperPx = { w, h }
+    const marginsPx = bbox ? measureMarginsPx(bbox, paperPx) : null
+    const marginMm = marginsPx ? marginsToMm(marginsPx, GATE_DPI) : null
+
+    const artifact = {
+      anchor: caseDef.anchor,
+      case: caseDef.id,
+      purpose: 'A3-V1 生产路径 rot' + (caseDef.rotation || 0) + '（renderPDFPageRaw + PlacementAdapter + PaperTransform 两段式）',
+      dpi: GATE_DPI,
+      paper: s.paperSize || 'Custom',
+      paperActualPx: { w, h },
+      rotation: caseDef.rotation || 0,
+      format: caseDef.format,
+      source: '生产调用序列镜像（usePrint.js renderFileToPrintImage PDF 单文件分支 A3-3-2/3-3）',
+      bbox: bbox ? { left: bbox.x, top: bbox.y, right: bbox.x + bbox.w, bottom: bbox.y + bbox.h } : null,
+      bboxPx: bbox ? { x: bbox.x, y: bbox.y, w: bbox.w, h: bbox.h } : null,
+      marginMm,
+      // C5 锚点对照（rot90 预期）：bitmap 1890×2717 / bbox (201,169,1500×2423) / L17/T14.3/R16/B10.6
+    }
+    console.log(`[GATE-A3V1] ${caseDef.id} OK  bitmap=${w}x${h} bbox=${JSON.stringify(artifact.bboxPx)} marginMm=${JSON.stringify(marginMm)}`)
+    return { ok: true, artifact }
+  } catch (e) {
+    console.error(`[GATE-A3V1] ${caseDef.id} FAIL:`, e.message)
     return { ok: false, error: e.message }
   }
 }

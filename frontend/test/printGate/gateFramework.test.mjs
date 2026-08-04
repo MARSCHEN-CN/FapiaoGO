@@ -15,6 +15,7 @@ import { measureMarginsPx, pxToMm, mmToPx, marginsToMm, assertSafeMarginAlignmen
 import { anchorManifest, validateAnchorManifest } from './anchorManifest.mjs'
 import { SAFE_MARGIN_TOLERANCE_MM, GATE_DPI, PAPER_SIZES_MM } from './gateConfig.mjs'
 import { normalizeReadFileData } from './ipcPayloadAdapter.mjs'
+import { GATE_CASES } from './gateCases.mjs'
 import { extendPaperLayoutContract, validatePaperLayoutContract } from '../../src/print/paperLayoutContract.js'
 import { applySourceOriginPlacement, assertPlacementOffset, mmToPxPlacement, transformPaperRotation } from '../../src/print/placementAdapter.js'
 
@@ -422,4 +423,35 @@ test('A3-3-3-05: usePrint 接线 — renderFileToPrintImage 消费 transformPape
   assert.equal(fnBody.includes('rotInfo.rotateCanvasCommand'), true, '应存在画布旋转分支（rotateCanvasCommand）')
   // ④ 红线：rotation 仍由 fileRotations 派生（未引入新旋转模型）
   assert.equal(src.includes('const rotation = fileRotations[f.key] || 0'), true, 'rotation 来源不变')
+})
+
+// ── 9. A3-V1 Production Path Capture（A3-3 Verification Closure）───────────
+// 目标：验证「实现路径 ≠ 纯函数路径」——生产函数组合 + 两段式 draw 的实际 bitmap。
+// 纯数学已由 A3-3-3-01..04 覆盖；此处固化：采集器镜像生产调用序列（静态）+ case 定义。
+// 真实 bitmap 需 Electron 采集（A1-prod-rot90），采集后按 C5 锚点判定（bitmap 1890×2717 /
+// bbox (201,169,1500×2423) / L17/T14.3/R16/B10.6 / ratio≥0.99）。
+
+test('A3-E2E-01: 生产路径采集器镜像 usePrint 两段式调用序列（静态断言）', () => {
+  const collectorSrc = readFileSync(new URL('./electron/collectCanvasOutput.js', import.meta.url), 'utf8')
+  // ① 采集器 import 生产函数（不是自己实现渲染语义）
+  assert.equal(collectorSrc.includes("import { computePaperLayout } from '../../../src/previewState.js'"), true, '应 import computePaperLayout（生产函数）')
+  assert.equal(collectorSrc.includes("import { extendPaperLayoutContract }"), true, '应 import extendPaperLayoutContract')
+  assert.equal(collectorSrc.includes("import { applySourceOriginPlacement, transformPaperRotation }"), true, '应 import placementAdapter 生产函数')
+  assert.equal(collectorSrc.includes("import { drawRenderCommand }"), true, '应 import drawRenderCommand')
+  // ② 两段式镜像：transformPaperRotation + rotateCanvasCommand 分支
+  assert.ok(/transformPaperRotation\(rot0Cmd, caseDef\.rotation/.test(collectorSrc), '应消费 transformPaperRotation（caseDef.rotation 传递）')
+  assert.equal(collectorSrc.includes('rotInfo.rotateCanvasCommand'), true, '应存在画布旋转分支')
+  // ③ 红线：不 import usePrint / 不改 renderer / 不复制渲染语义
+  assert.equal(collectorSrc.includes("from '../hooks/usePrint'"), false, '采集器不应 import usePrint')
+  assert.equal(collectorSrc.includes("renderMultipleItemsToCanvas(items,"), false, '生产路径采集不混 composer/slot')
+})
+
+test('A3-E2E-02: A1-prod-rot90 case 定义（Custom 230×160 + rotation 90 + margin 10）', () => {
+  const c = GATE_CASES.find(x => x.id === 'A1-prod-rot90')
+  assert.ok(c, 'A1-prod-rot90 case 应存在')
+  assert.equal(c.rotation, 90)
+  assert.equal(c.settings.paperSize, 'Custom')
+  assert.deepEqual(c.settings.customPaper, { widthMM: 230, heightMM: 160 })
+  assert.equal(c.settings.marginLeft, 10)
+  assert.equal(c.settings.marginTop, 10)
 })

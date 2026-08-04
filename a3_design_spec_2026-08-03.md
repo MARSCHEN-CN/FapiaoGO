@@ -242,3 +242,24 @@ rot90    : 画布 1890×2717，内容 bbox (201,169,1500×2423)，边距 L17/T14
 - **修正**：Policy A 的正确实现 = **画布级旋转**：rot0 command 先绘制扩展纸面画布（2717×1890）→ `transformPaperRotation` 产出 `rotateCanvasCommand`（把扩展纸面画布作为 source，居中旋转绘制到新画布 1890×2717）→ 与 A3-2 采集器（canvas 2D 旋转整个画布）**同一数学**。
 - **C4 修订表述**：sourceOrigin 是 paper-space 属性，**旋转阶段完全不参与**（rot0 阶段 offset 已施加；旋转作用于整个扩展纸面画布，offset 不随旋转变换）。
 - 数学锚点（画布旋转模型，已验证 C5）：内容 bbox (169,189,2423×1500) 中心 (1380.5,939) vs 纸面中心 (1358.5,945) → rel (22,-6)；rotate90 → (6,22)；新画布 1890×2717 中心 (945,1358.5) → 新内容中心 (951,1380.5) → bbox (201,169,1500×2423)，边距 L17.0/T14.3/R16.0/B10.5mm（C5 锚点 L17/T14.3/R16/B10.6 全 ≤0.5mm ✅）。
+
+### §7.1 最终版备注：sourceOrigin 不旋转（2026-08-04 A3-V1 定稿，用户原话冻结）
+
+> 高阶规则（A3-3-3 实现修正后提炼，防再次误解）：
+
+```
+sourceOrigin 不旋转；它先定义纸面上的内容位置，然后整个纸面进行旋转。
+```
+
+- 错误理解：`rotate(sourceOrigin vector)`——sourceOrigin 是 paper-space 属性，不参与旋转变换（C4 已修订）。
+- 正确模型：
+  ```
+  sourceOrigin participates in pre-transform paper construction
+  PaperTransform acts on the completed paper surface
+  ```
+  （sourceOrigin 参与旋转前的纸面构建；PaperTransform 作用于已完成构建的纸面）
+- 三层分离（A3 核心原则延伸）：
+  ```
+  RenderResource (native bitmap) ≠ Placement (sourceOrigin offset) ≠ PaperTransform (rotation/orientation)
+  ```
+  rotation 属于 **Paper Transform**，不属于 Placement Transform——这是 A3-3-3 实现修正（Gate 02/03 失败）提炼的最终结论。

@@ -64,6 +64,20 @@ export const GATE_CASES = Object.freeze([
     rotation: 90,
     settings: { landscape: false },
   },
+  {
+    id: 'A1-prod-rot90',
+    anchor: 'A1',
+    purpose: 'A3-V1 生产路径 rot90：renderPDFPageRaw + PlacementAdapter + PaperTransform 两段式，验证 C5 锚点（bitmap 1890×2717 / bbox (201,169,1500×2423) / L17/T14.3/R16/B10.6）',
+    file: 'test_fixtures/25952000000127675627.pdf',
+    format: 'pdf',
+    rotation: 90,
+    settings: {
+      paperSize: 'Custom',   // 与 source 实测纸面 2717×1890@300dpi(230×160mm) 对齐（computePaperLayout paperRect）
+      landscape: false,
+      marginLeft: 10, marginRight: 10, marginTop: 10, marginBottom: 10,
+      customPaper: { widthMM: 230, heightMM: 160 },
+    },
+  },
 ])
 
 /** case 自检：id 唯一、文件存在（路径 gitignored 但物理存在） */
@@ -90,4 +104,6 @@ export const CANVAS_G1_CASES = Object.freeze(['A1-rot0', 'A1-rot90'])
 export const CANVAS_G1_2_CASES = Object.freeze(['A1-customPaper'])
 export const NATIVE_G1_CASES = Object.freeze(['A1-native', 'A1-native-rot90'])
 export const OFD_G1_CASES = Object.freeze(['A2-rot0'])
+// A3-V1：生产路径 rot90 采集（A3-3 Verification Closure）
+export const PROD_ROT_G1_CASES = Object.freeze(['A1-prod-rot90'])
 
