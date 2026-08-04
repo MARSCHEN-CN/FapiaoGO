@@ -27,7 +27,7 @@
  * @module utils/documentViewModel
  */
 
-import { groupFilesByDocument } from './groupDocuments.js'
+import { groupFilesByDocument, groupFilesByInstance } from './groupDocuments.js'
 import { invoiceDocumentsToRows } from './invoiceDocumentViewModel.js'
 import { detectDuplicateInvoices, isFailedFile, isPreviousYearFile } from '../utils.js'
 
@@ -127,7 +127,14 @@ export function buildDocumentViewModel(files, invoiceDocs = null) {
     const remainingRows = remainingFiles.length > 0 ? groupFilesByDocument(remainingFiles) : []
     documents = [...invoiceRows, ...remainingRows]
   } else {
-    documents = groupFilesByDocument(files)
+    // 修复：降级路径优先使用 groupFilesByInstance（更强的分组依据：instanceId + sourceDocId），
+    // 再回退到 groupFilesByDocument（弱分组：仅 docId）。
+    // 防止主路径 session.documents 失效时，多页文档退化为独立单页。
+    documents = groupFilesByInstance(files)
+    // 如果 groupFilesByInstance 未能有效分组（所有文件都是单页），回退到原逻辑
+    if (!documents.some(d => d._isDocumentGroup)) {
+      documents = groupFilesByDocument(files)
+    }
   }
 
   // ── Coverage guard: 校验 document 聚合是否覆盖全部 page-level files ──

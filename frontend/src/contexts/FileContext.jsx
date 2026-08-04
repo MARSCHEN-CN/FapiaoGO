@@ -64,7 +64,10 @@ export function FileProvider({ children }) {
   const invoiceDocs = useMemo(() => {
     if (!sessionId) return null
     const session = getSession(sessionId)
-    return session?.documents?.length > 0 ? session.documents : null
+    // 修复：如果 session 不存在（被 TTL 回收或其他原因），必须返回 null
+    // 防止引用已删除的 session.documents 导致文档分组丢失
+    if (!session) return null
+    return session.documents?.length > 0 ? session.documents : null
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId, storeSnap])
 

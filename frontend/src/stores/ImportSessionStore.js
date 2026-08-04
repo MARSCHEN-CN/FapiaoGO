@@ -168,12 +168,20 @@ export function getSession(id) {
 
 /**
  * 删除会话。
+ *
+ * 修复：无论 activeSessionId 是否匹配，只要被删除的 session 是当前活跃会话
+ *       或 activeSessionId 指向了不存在的会话，都必须清理指针。
+ *       防止 FileContext 引用已删除的 session 导致文档分组丢失。
+ *
  * @param {string} id
  */
 export function removeSession(id) {
   clearSessionCleanupTimer(id)
   sessions.delete(id)
-  if (activeSessionId === id) {
+  // 必须清理 activeSessionId 指针：
+  // 1) 如果当前活跃会话就是被删除的会话 → 清理
+  // 2) 如果 activeSessionId 指向了不存在的会话（悬空指针） → 清理
+  if (activeSessionId === id || (activeSessionId && !sessions.has(activeSessionId))) {
     activeSessionId = null
   }
   notify(id)

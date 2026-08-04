@@ -135,3 +135,90 @@ export function groupFilesByDocument(files) {
 
   return result
 }
+
+/**
+ * 使用 instanceId + sourceDocId 进行更可靠的分组（增强降级路径）。
+ *
+ * 修复：当主路径 session.documents 失效（如 TTL 回收）时，
+ *       使用更强的身份字段（instanceId > sourceDocId > docId）进行分组，
+ *       确保多页文档不会退化为独立单页。
+ *
+ * @param {Object[]} files - page-level fileObj 数组
+ * @returns {Object[]} document-level 展示条目数组（结构与 groupFilesByDocument 一致）
+ */
+export function groupFilesByInstance(files) {
+  if (!Array.isArray(files) || files.length === 0) return files || []
+
+  // Pass 1: 收集拆分页，按 instanceId + sourceDocId 分区
+  // 优先级：instanceId > sourceDocId > docId
+  const instanceGroups = new Map()
+  const fileToGroup = new Map()
+
+  for (const f of files) {
+    if (!f) continue
+    // 获取分组键（优先级：instanceId > sourceDocId > docId）
+    const groupKey = f.instanceId || f.sourceDocId || f.docId
+    if (!groupKey) continue // 无任何可分组身份的文件跳过
+
+    // 同一 groupKey 下，按 pageNum 唯一性分区
+    let groups = instanceGroups.get(groupKey)
+    if (!groups) {
+      groups = []
+      instanceGroups.set(groupKey, groups)
+    }
+
+    const pageKey = f.pageNum ?? 0
+    let group = groups.find(g => !g.pageNums.has(pageKey))
+    if (!group) {
+      group = { pageNums: new Set(), pages: [] }
+      groups.push(group)
+    }
+    group.pageNums.add(pageKey)
+    group.pages.push(f)
+    fileToGroup.set(f, group)
+  }
+
+  // 实例内按 pageNum 升序排列
+  for (const groups of instanceGroups.values()) {
+    for (const group of groups) {
+      group.pages.sort((a, b) => (a.pageNum ?? 0) - (b.pageNum ?? 0))
+    }
+  }
+
+  // Pass 2: 构建结果
+  const result = []
+  const emitted = new Set()
+
+  for (const f of files) {
+    const group = fileToGroup.get(f)
+    if (group) {
+      if (!emitted.has(group)) {
+        emitted.add(group)
+        const pages = group.pages
+        const rep = pages[0]
+        result.push({
+          ...rep,
+          name: restoreOriginalName(rep.name),
+          originalName: rep.name,
+          documentId: rep.docId || rep.instanceId,
+          _pages: pages,
+          _pageCount: pages.length,
+          _isDocumentGroup: pages.length > 1,
+        })
+      }
+    } else {
+      // 无分组身份的文件保持原样
+      if (f.originalName !== undefined) {
+        result.push(f)
+      } else {
+        result.push({
+          ...f,
+          originalName: f.name,
+          documentId: f.documentId || f.docId,
+        })
+      }
+    }
+  }
+
+  return result
+}
