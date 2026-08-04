@@ -9,13 +9,12 @@
  *   - 纸张轮廓（SVG viewBox = mm，1:1 无换算误差）
  *   - 安全边距可视化（虚线框 + 边距值）
  *   - 发票缩略图（<image> 元素，支持旋转 transform）
- *   - 页码导航（复用展示区 PageNavigator：首页/上页/跳转/下页/末页）
+ *   - 页码控制（固定底部区域：上一页/页码指示器可输入跳转/下一页）
  *
  * @module components/PrintPreviewCanvas
  */
 
-import { memo, useState, useEffect } from 'react'
-import { PageNavigator } from './PageNavigator'
+import { memo, useState, useEffect, useRef } from 'react'
 
 const ORIENT_LABEL = { portrait: '纵向', landscape: '横向' }
 
@@ -86,6 +85,111 @@ const SlotImage = memo(({ slot }) => {
     </g>
   )
 })
+
+/**
+ * 预览底部页码控制（固定区域，只关心页；样式参考展示区 .page-navigator）。
+ *
+ * 固定性（用户要求）：
+ *   - 区域高度固定（.pcm-preview-nav-bar），单页/多页始终渲染，不塌陷不跳动；
+ *   - 按钮尺寸统一 28px（page-nav-btn，不用 first/last 的 24px 变体），
+ *     页码指示器 min-width 防抖（复用 page-nav-indicator 的 grid 布局）。
+ */
+const PreviewPageNav = ({ current, total, onPrev, onNext, onJump }) => {
+  const [editing, setEditing] = useState(false)
+  const [inputValue, setInputValue] = useState('')
+  const inputRef = useRef(null)
+
+  const hasPrev = current > 0
+  const hasNext = current < total - 1
+
+  const startEdit = () => {
+    setInputValue(String(current + 1))
+    setEditing(true)
+  }
+
+  const commitEdit = () => {
+    const page = parseInt(inputValue, 10)
+    if (!isNaN(page) && page >= 1 && page <= total) {
+      onJump?.(page - 1)
+    }
+    setEditing(false)
+  }
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      commitEdit()
+    } else if (e.key === 'Escape') {
+      e.preventDefault()
+      setEditing(false)
+    }
+  }
+
+  useEffect(() => {
+    if (editing && inputRef.current) {
+      inputRef.current.focus()
+      inputRef.current.select()
+    }
+  }, [editing])
+
+  return (
+    <div className="pcm-preview-nav-bar" role="navigation" aria-label="页面导航">
+      <button
+        type="button"
+        className="page-nav-btn"
+        onClick={onPrev}
+        disabled={!hasPrev}
+        aria-label="上一页"
+        title="上一页 (←)"
+      >
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+          <path d="M10 12L6 8L10 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+        </svg>
+      </button>
+
+      <span className="page-nav-indicator">
+        {editing ? (
+          <input
+            ref={inputRef}
+            className="page-nav-input"
+            type="text"
+            inputMode="numeric"
+            value={inputValue}
+            onChange={(e) => setInputValue(e.target.value.replace(/[^0-9]/g, ''))}
+            onKeyDown={handleKeyDown}
+            onBlur={commitEdit}
+            aria-label="输入页码"
+          />
+        ) : (
+          <span
+            className="page-nav-cur page-nav-clickable"
+            onClick={startEdit}
+            role="button"
+            tabIndex={0}
+            title="点击跳转页码"
+          >
+            {current + 1}
+          </span>
+        )}
+        <span className="page-nav-sep">/</span>
+        <span className="page-nav-total">{total}</span>
+      </span>
+
+      <button
+        type="button"
+        className="page-nav-btn"
+        onClick={onNext}
+        disabled={!hasNext}
+        aria-label="下一页"
+        title="下一页 (→)"
+      >
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+          <path d="M6 4L10 8L6 12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+        </svg>
+      </button>
+    </div>
+  )
+}
 
 /**
  * 主预览画布
@@ -188,17 +292,14 @@ const PrintPreviewCanvas = memo(({ preview, marginSettings }) => {
         ))}
       </svg>
 
-      {/* 页码导航（多页时显示；复用展示区 PageNavigator，0-based 接口一致） */}
-      {total > 1 && (
-        <PageNavigator
-          className="pcm-preview-navigator"
-          currentPage={idx}
-          totalPages={total}
-          onPrev={() => setCurrent(idx - 1)}
-          onNext={() => setCurrent(idx + 1)}
-          onJump={(p) => setCurrent(p)}
-        />
-      )}
+      {/* 页码控制（固定区域常驻：单页显示 1/1 禁用态，多页可翻页/输入跳转） */}
+      <PreviewPageNav
+        current={idx}
+        total={total}
+        onPrev={() => setCurrent(idx - 1)}
+        onNext={() => setCurrent(idx + 1)}
+        onJump={(p) => setCurrent(p)}
+      />
     </div>
   )
 })

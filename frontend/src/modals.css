@@ -1047,13 +1047,17 @@ button.pc-btn.outline,
   height: auto;
   flex-shrink: 0;
 }
-/* 页码导航（复用展示区 PageNavigator；覆盖 absolute 居中定位为流式布局） */
-.pcm-preview-navigator {
+/* 页码控制（固定区域：高度恒定、始终渲染——单页显示 1/1 禁用态，多页翻页/输入跳转。
+   按钮统一 28px（page-nav-btn），不抖动不塌陷） */
+.pcm-preview-nav-bar {
+  flex-shrink: 0;
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 12px;
+  height: 34px;
+  width: 100%;
   user-select: none;
-  flex-shrink: 0;
 }
 .pcm-preview-placeholder-text {
   text-align: center;
