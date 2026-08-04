@@ -575,6 +575,20 @@ Phase B    ⏸
 - **③ Gate 全绿（61/61）**：A3-3-2-01 placement offset（native.x51+118=169 ✅ dx/dy=0）/ A3-3-2-02 margin compare（placement 后四边 vs source L14.3/T16/R10.6/B17，均 ≤0.5mm ✅）/ A3-3-2-03 bitmap invariant（scale=1、rotation=0、像素不变只移位置 ✅）。A3-3-1-03 断言演进（声明→A3-3-2 起消费）。
 - **红线守住**：未改 renderPDFPageRaw / rasterize / createLayout 通用 / MultiTicketComposer / 新 fit 算法；margin 未替代 sourceOrigin。rotation 未处理（A3-3-3）。
 
+### 14.16 A3-3-3 Rotation Coordinate Contract 冻结（2026-08-04，spec-only，commit `53830dd6`）
+- **背景**：A3-3-3 动代码前用户要求先冻结旋转坐标语义（spec-only，零代码改动）。源码实读事实链：
+  - F1 `renderPDFPageRaw` 不旋转（native 分支 L558-566）——旋转在 placement 层（createPlacement rotatedBounds 宽高互换 + drawRenderCommand L53-55 中心支点）
+  - F2 source 轨旋转 = Sumatra `contentOrientation`（纸面方向跟随内容）；canvas 现有 createPlacement 路径 = 纸固定内容在纸内旋转（A1-rot90 实测 A4 画布不变）——**两套旋转哲学并存**
+  - F3 A3-2 采集器 = 画布旋转（Policy A 近似，canvas 2D 旋转整个画布，已验证数学吻合：rotate(90°) 变换 (dx,dy)→(-dy,dx)，实测 bbox (84,51) 验证通过）
+- **Contract 冻结**：
+  - **C2 Policy A（paper follows content）**：rot90 → 纸面 2717×1890 → **1890×2717**（回答用户隐藏坑：纸面跟随内容旋转，非固定）——依据 source/Sumatra 语义 + A3-2 采集器模型
+  - C3 变换顺序：native → 施加 sourceOrigin（扩展纸面）→ **整体旋转**（paper+content 一体）；sourceOrigin 旋转前施加、随画布整体变换、不单独重算
+  - C4 数学锚点：offset 随画布旋转（中心支点），非 `(x,y)→(y,-x)` 直接套用（会得负坐标 (-344,400) 类错误）
+  - C5 预期 rot90：画布 1890×2717，内容 bbox (201,169,1500×2423)，边距 (17,14.3,16,10.6)mm（原 L14.3/T16/R10.6/B17 顺时针轮换）
+  - C6 禁止：Policy B（纸固定）在单文件 source 语义 / rotation 单独作用于 resource 后重算 sourceOrigin / 改 renderPDFPageRaw、createPlacement 通用语义
+- **待验证项（标记不阻塞）**：Sumatra 真实打印 rot90 纸面方向需真实打印对照确认（node 采集不体现旋转，Policy A 为推断+采集器模型验证）；若实测 Policy B 修订 contract
+- **A3-3-3 Gate 预告**：A3-3-3-01 adapter rot90（画布 1890×2717 + rotatedBounds 互换 + offset 旋转）/ A3-3-3-02 margin vs C5 ≤0.5mm / A3-3-3-03 bitmap invariant（像素不变只旋转）
+
 ### 14.6 冻结状态
 ```
 A2-G1 source ✅ | canvas 采集链路 ✅ + 第一份报告 🔴FAIL(预期)
