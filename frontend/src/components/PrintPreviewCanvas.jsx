@@ -244,17 +244,17 @@ const PrintPreviewCanvas = memo(({ preview, marginSettings }) => {
         {/* 纸张背景（白底模拟纸面；viewBox 画布本身透明） */}
         <rect x="0" y="0" width={widthMM} height={heightMM} rx="1.5" fill="#fff" stroke="var(--border-light)" strokeWidth="0.6" />
 
-        {/* 安全边距可视化 */}
+        {/* 安全边距指示器（纯虚线边框，无底色填充） */}
         {hasMargins && (
           <rect
             x={margins.left || 0}
             y={margins.top || 0}
             width={Math.max(0, widthMM - (margins.left || 0) - (margins.right || 0))}
             height={Math.max(0, heightMM - (margins.top || 0) - (margins.bottom || 0))}
-            fill="var(--accent)" fillOpacity="0.03"
-            stroke="var(--accent)" strokeOpacity="0.25"
-            strokeWidth="0.2"
-            strokeDasharray="0.8 0.6"
+            fill="none"
+            stroke="var(--accent)" strokeOpacity="0.35"
+            strokeWidth="0.25"
+            strokeDasharray="1 0.6"
           />
         )}
 
