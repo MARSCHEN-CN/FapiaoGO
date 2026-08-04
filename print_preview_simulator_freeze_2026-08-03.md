@@ -823,32 +823,42 @@ Final canvas contract         ← A3-C5 Geometry Closure（自洽）+ Source Ali
 ```
 证据链已完整：残差 100% 落在 RenderResource 层，不向上污染 Placement/Rotation。
 
-#### 14.24.2 A3-V2 目标与唯一未证实点
-- **目标**：确认 **source/Sumatra 真实打印** 对「portrait 源 + 用户 rotation=90」遵循 **Policy A**（纸面跟随内容 → 1890×2717）还是 **Policy B**（内容在固定纸面内旋转 → 2717×1890）。
-- **为何是最后一关**：canvas 轨 Policy A 已自洽证明；但用户真看到的是 Sumatra 打印输出。若 Sumatra=Policy B，则 canvas≈source 目标未达，需修订 rotation contract（情况 B，概率低）。
-- **源码实读事实**（决定 V2 捕获方法）：
-  - 生产 source 路径：`main.js:489 print-source-file` → `pdfMargin.process`（扩展页边距）→ `SumatraBackend.print` → `buildPrintSettings`（`print-settings.js:151`）。
-  - `buildPrintSettings` 对 rotation 生成 Sumatra `-print-settings`：
-    - `resolveOrientationCommands(contentOrient, paperOrient, desiredRotation)`（print-settings.js:34）输出 `baseFlag`（`landscape` 或 `disable-auto-rotation`）+ `rotate=N`。
-    - 例：`{rotation:90, contentOrientation:'landscape', paperOrientation:'portrait'}` → `"disable-auto-rotation,rotate=90,fit,paper=a4"`。
-    - 关键：**Sumatra 用 `landscape` 旗标改纸面方向 + `rotate=N` 旋转内容**；`disable-auto-rotation` 禁止驱动自动旋正。
-  - **Policy A/B 判定完全取决于这条 `-print-settings` 字符串** → V2 必须复刻代码实际发出的那条（非推测）。
+#### 14.24.2 A3-V2 目标与唯一未证实点（2026-08-04 重新分层）
+- **目标（纠正后）**：用**已确定的生产参数**，确认 source/Sumatra 输出的**最终纸面几何语义**，是否与 A3-3-3 Canvas Policy A 一致。
+  - 这不是「重新验证哪个 Sumatra 参数正确」——参数选择（发什么 -print-settings）**已验证**（见下）。
+  - 这是「参数已定，几何结果待实测」。
+- **参数选择已验证（仓库事实）**：
+  - `print-settings.js:resolveOrientationCommands` 的 `ROTATE_LOOKUP`（line 45-50）= 每种 content/paper/rotation 组合该发什么 `rotate=N` 的映射表，经表格验证。
+  - `scripts/debug-sumatra.js` = `paper=A5/A4` + `landscape/portrait` + `noscale` 退出码 smoke（用 `-print-to-default`），确认 Sumatra 接受这些旗标。
+  - ⚠️ 但仓库**无** `rotate=90,disable-auto-rotation` 组合的 measurable 几何 artifact → 这正是 V2 要填的格（几何未知，非参数未知）。
+- **为何仍是最后一关**：canvas 轨 Policy A 已自洽证明；但用户真看到的是 Sumatra 打印输出。若 Sumatra 几何=Policy B，则 canvas≈source 目标未达，需修订 rotation contract（情况 B）。
+- **坐标层澄清（关键纠正）**：
+  - `paper=230mm x 160mm` 描述的是**打印介质设置（PrintSpec paper）**，不是最终输出 PDF 的 MediaBox。
+  - 存在坐标链：`PrintSpec paper → Sumatra layout engine → printer page coordinate → physical/virtual output orientation`。
+  - **不能**把 `paper=` 的宽高直接等同最终页面方向。因此之前「二者 transpose、极可能不一致」的推断**不成立**——只能说「存在坐标层转换，不足以从字符串推断 Policy B」。
+  - 最终 MediaBox 由 Sumatra layout engine + 虚拟 writer 行为决定 → **V2 直接量 artifact MediaBox 作裁决者**。
 
-#### 14.24.3 A3-V2 捕获方法（脚本脚手架 `scripts/verify_sumatra_rotation.py`）
-1. **V2-A（确定性，可 node 跑）**：1:1 复刻 `buildPrintSettings` 对 A1+rot90 的调用 → 输出确切 `-print-settings` 字符串。确认代码"想告诉 Sumatra 什么"。
-2. **V2-B（真机，需 SumatraPDF + 可静默 PDF 虚拟打印机）**：
-   - 调 `SumatraPDF.exe -print-to <PDF_PRINTER> -print-settings <V2-A字符串> <A1.pdf>`。
-   - 捕获输出 PDF → fitz 量：page rect（pt）+ content bbox（墨迹）+ 纸面方向。
-   - 判 Policy A（纸 1890×2717 landscape + 内容旋转填满）vs Policy B（纸 2717×1890 + 内容旋转在固定纸内）。
-3. **控制变量（防 driver 干扰）**：`-print-settings` 含 `disable-auto-rotation` + `fit`（或 `noscale`）；虚拟打印机"自动旋转适配"必须 OFF、缩放 100%。
-4. **环境依赖（用户机器）**：SumatraPDF.exe 路径 + 可静默输出 PDF 的虚拟打印机名（"Microsoft Print to PDF" 在 CLI 下弹保存框，不可静默；建议 Ghostscript PDF writer 或配置好的 PDF 打印机）。
+#### 14.24.3 A3-V2 捕获方法（脚本 `scripts/verify_sumatra_rotation.js`）
+- **V2-A（确定性，node 可跑，已验证）**：1:1 复刻 `buildPrintSettings` 对 A1+rot90 → 输出生产实际 `-print-settings` 字符串 `"disable-auto-rotation,rotate=90,fit,paper=230mm x 160mm"`。这是「代码想告诉 Sumatra 什么」的回归守卫，已 dry-run 验证。
+- **V2-B（验证已有命令，非探索）**：把**同一条生产 -print-settings** 路由到一个**虚拟 PDF writer**（非物理打印机）执行，拿到可分析的 artifact PDF，再用 fitz 量几何。
+  - 调用形态（与生产一致，仅目标打印机换成虚拟 writer）：
+    `SumatraPDF.exe -print-to <VIRTUAL_PDF_WRITER> -print-settings "<V2-A字符串>" -silent -exit-when-done <A1.pdf>`
+  - ⚠️ **虚拟 PDF writer 必须忠实遵循 `paper=230mm x 160mm` + `disable-auto-rotation`**（不自动回旋、不夹成标准纸），否则 artifact MediaBox 骗人。推荐 Ghostscript PDF / PDF24 / Bullzip；"Microsoft Print to PDF" 既弹框又不保自定义纸，不推荐。
+  - SumatraPDF 只能打印、不能直接吐 PDF → 虚拟 writer 是产出 artifact 的唯一途径（「虚拟 writer」与「物理打印机」的精确区别在此）。
+- **V2 Gate 分层**：
+  - **V2-01 Source Media Geometry**：量 artifact MediaBox（pt/mm）+ 方向。rot90 后纸面应为 160×230mm(**portrait**)=Policy A，或 230×160mm(**landscape**)=Policy B。→ **Policy 裁决者**。
+  - **V2-02 Content Rotation**：量 artifact content bbox → 算 L/T/R/B 边距；与源(rot0)边距做 90°CW 置换校验 `L'=B, T'=L, R'=T, B'=R`（用边距值 multiset 守恒判定，抗引擎绝对误差）。与 A3-3-3 C5 一致。
+  - **V2-03 Canvas ↔ Source**：canvas Policy A 预测（160×230 portrait） vs Sumatra artifact。二者吻合 → A3-C5 Source Alignment PASS。
+- **控制变量**：`-print-settings` 含 `disable-auto-rotation`+`fit`；虚拟 writer「自动旋转适配」OFF、缩放 100%。
 
 #### 14.24.4 判定矩阵
-| Sumatra 输出 | 纸面 | 内容 | 结论 |
-|---|---|---|---|
-| 1890×2717 + 内容旋转填满 | landscape | 旋转 | **Policy A ✅** → A3-C5 Source Alignment PASS |
-| 2717×1890 + 内容旋转在纸内 | portrait | 旋转 | **Policy B ⚠️** → 需修订 rotation contract（情况 B） |
-| 2717×1890 + 内容未旋转 | portrait | 原向 | 异常 → 查 `resolveOrientationCommands` 映射 |
+| Sumatra artifact MediaBox | 方向 | 内容旋转 | 边距置换 | 结论 |
+|---|---|---|---|---|
+| 160×230mm (1890×2717px) | portrait | 90°CW 填满 | L'=B,T'=L,R'=T,B'=R | **Policy A ✅** → A3-C5 Source Alignment PASS |
+| 230×160mm (2717×1890px) | landscape | 90°CW 在纸内 | L'=B,T'=L,R'=T,B'=R | **Policy B ⚠️** → 修订 rotation contract（情况 B），C5 Source Alignment 转「修订中」 |
+| 其他 | — | 内容未旋转/异常 | — | 异常 → 查 `resolveOrientationCommands` 映射或虚拟 writer 行为 |
+
+> 注：V2-01 的 MediaBox 方向是 Policy 裁决主信号；V2-02 边距置换是旋转方向一致性次信号（两者均吻合才 PASS）。a-priori 风险降级为「无法从字符串推断，需实测」。
 
 
 ### 14.6 冻结状态
