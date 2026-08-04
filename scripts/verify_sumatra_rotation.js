@@ -33,14 +33,21 @@
  * 用法：
  *   # V2-A：仅复刻 -print-settings 字符串（无需 Sumatra）
  *   node scripts/verify_sumatra_rotation.js --pdf test_fixtures/25952000000127675627.pdf --rotation 90 --dry-run
+ *   node scripts/verify_sumatra_rotation.js --pdf <A4.pdf> --paper a4 --rotation 90 --dry-run
  *
  *   # V2-B：路由到虚拟 PDF writer，产出 artifact 并自动测量
+ *   #   标准纸(a4/a5)：验证「生产命令忠实 + 旋转方向(V2-02)」，页尺寸无法区分 A/B
+ *   #   异形纸(custom 230×160 + Wondershare)：A/B 判别器
  *   node scripts/verify_sumatra_rotation.js \
  *     --pdf test_fixtures/25952000000127675627.pdf --rotation 90 \
- *     --printer "Ghostscript PDF" \
+ *     --printer "Wondershare PDFelement" --paper custom --custom-w 230 --custom-h 160 \
  *     --out artifacts/sumatra_a1_rot90.pdf \
  *     --rot0-out artifacts/sumatra_a1_rot0.pdf \
- *     --search-dir "C:/Users/it01/Documents/WPS PDF" \
+ *     --python "C:/Program Files/Python312/python.exe"
+ *   node scripts/verify_sumatra_rotation.js \
+ *     --pdf test_fixtures/a4_landscape_sample.pdf --paper a4 --rotation 90 \
+ *     --printer "PDF24 PDF" --out artifacts/sumatra_a4_rot90.pdf \
+ *     --rot0-out artifacts/sumatra_a4_rot0.pdf \
  *     --python "C:/Program Files/Python312/python.exe"
  *
  *   注意：SumatraPDF -print-to 不能指定输出路径，writer 落盘位置由驱动决定。
@@ -112,10 +119,33 @@ function buildPrintSettings(ps) {
   return parts.join(',')
 }
 
-// ─── 2. Policy A 预测（canvas 轨，A3-3-3 已证）───
-// A1 Custom 230×160mm + rotation 90 → Policy A 纸面跟随内容：
-//   2717×1890 → 1890×2717 px @300dpi = 160×230mm（portrait 方向纸面）。
-const POLICY_A = { wMm: 160, hMm: 230, wPx: 1890, hPx: 2717, orient: 'portrait' }
+// ─── 2. Policy A/B 预测（canvas 轨，A3-3-3 已证）───
+// Policy A = 纸面跟随内容旋转：输出纸面方向 = 内容旋转后方向，尺寸 = 请求纸在该方向下的尺寸。
+// Policy B = 内容在固定纸内旋转：输出纸面 = 请求纸原样（不随内容旋转交换方向）。
+// 关键：标准命名纸(a4/a5)下，生产 -print-settings 要么带 landscape/portrait 旗标(钉死页方向)，
+//   要么内容旋转后方向与请求纸方向恰巧一致 → 页尺寸无法区分 A/B。
+//   唯一干净的 A/B 判别器是「disable-auto-rotation + 显式 landscape-spec 自定义纸(如 230×160)」组合（A1 场景）。
+//   因此 A4/A5 验证的是「Sumatra 忠实执行生产命令 + 旋转方向(V2-02)」；230×160(Wondershare)才是 A/B 判别器。
+function computePolicy(opts) {
+  const DPI = 300, MM = 25.4
+  let pw, ph
+  if (opts.paper === 'a4') { pw = 210; ph = 297 }
+  else if (opts.paper === 'a5') { pw = 148; ph = 210 }
+  else { pw = opts.customW; ph = opts.customH }
+  const paperOrient = pw > ph ? 'landscape' : 'portrait'
+  const steps = ((Math.round(opts.rotation / 90) % 4) + 4) % 4
+  const contentLand = opts.contentOrient === 'landscape'
+  const contentPostLand = steps % 2 === 1 ? !contentLand : contentLand
+  const contentPostOrient = contentPostLand ? 'landscape' : 'portrait'
+  let paW, paH
+  if (contentPostOrient === paperOrient) { paW = pw; paH = ph }
+  else { paW = ph; paH = pw }
+  const px = (mm) => Math.round(mm * DPI / MM)
+  const policyA = { wMm: paW, hMm: paH, wPx: px(paW), hPx: px(paH), orient: paW > paH ? 'landscape' : 'portrait' }
+  const policyB = { wMm: pw, hMm: ph, wPx: px(pw), hPx: px(ph), orient: paperOrient }
+  const discriminant = (policyA.wMm !== policyB.wMm) || (policyA.hMm !== policyB.hMm)
+  return { policyA, policyB, discriminant, paperOrient }
+}
 
 // A3-3-3 C5 rot0 边距参考（A1 canvas 探针，已证与 source anchor <0.2mm 吻合）。
 // 90°CW 置换后预期：L'=B, T'=L, R'=T, B'=R。
@@ -142,6 +172,14 @@ function runProbe(pdf, python) {
     return null
   }
   try { return JSON.parse(out) } catch { console.error('⚠️ 测量输出非 JSON'); console.log(out); return null }
+}
+
+// 从源 PDF MediaBox 自动判定内容方向（避免手动传 --content-orientation）
+function detectContentOrient(pdf, python) {
+  const d = runProbe(pdf, python)
+  if (!d || !d.mediabox_px || !d.mediabox_px[0]) return null
+  const [w, h] = d.mediabox_px
+  return w > h ? 'landscape' : 'portrait'
 }
 
 // 从 probe 输出计算 MediaBox(方向) + 边距(mm)
@@ -205,25 +243,39 @@ function main() {
   const searchDir = get('--search-dir', '')
   const sumatra = get('--sumatra', path.resolve('resources/sumatra/SumatraPDF.exe'))
   const python = get('--python', 'python3')
-  const contentOrient = get('--content-orientation', 'landscape')
+  const contentOrientRaw = get('--content-orientation', '')
+  const detectedOrient = contentOrientRaw ? null : detectContentOrient(pdf, python)
+  let contentOrient = contentOrientRaw || detectedOrient || 'landscape'
   const paperOrient = get('--paper-orientation', 'portrait')
   const fit = get('--fit', 'contain')
 
   if (!fs.existsSync(pdf)) { console.error(`❌ PDF 不存在: ${pdf}`); process.exit(2) }
 
-  const ps = { rotation, paper: 'Custom', customPaper: { widthMM: 230, heightMM: 160 },
+  const paper = get('--paper', 'custom')
+  const customW = parseFloat(get('--custom-w', '230'))
+  const customH = parseFloat(get('--custom-h', '160'))
+  const ps = { rotation, paper, customPaper: { widthMM: customW, heightMM: customH },
     contentOrientation: contentOrient, paperOrientation: paperOrient, fit }
   const printSettings = buildPrintSettings(ps)
+  const oc = resolveOrientationCommands(contentOrient, paperOrient, rotation)
+  const pol = computePolicy({ paper, customW, customH, rotation, contentOrient })
+  const paperLabel = paper === 'custom' ? `Custom ${customW}×${customH}mm` : paper.toUpperCase()
 
   console.log('=== A3-V2 Sumatra 输出几何验证（验证已有生产命令）===')
   console.log(`输入 PDF      : ${pdf}`)
-  console.log(`contentOrient : ${contentOrient} (A1 MediaBox 595×397pt 实测 landscape)`)
+  console.log(`contentOrient : ${contentOrient}${contentOrientRaw ? '' : (detectedOrient ? ' (auto-detected)' : ' (detect failed, default landscape)')}`)
+
   console.log(`paperOrient   : ${paperOrient}`)
   console.log(`rotation      : ${rotation}`)
-  console.log(`纸张          : Custom 230×160mm`)
+  console.log(`纸张          : ${paperLabel}`)
+  console.log(`baseFlag      : ${oc.baseFlag}${oc.rotate ? `, rotate=${oc.rotate}` : ''}`)
   console.log('')
   console.log(`▶ 生产 -print-settings (V2-A): "${printSettings}"`)
-  console.log(`▶ Policy A 预测输出   : ${POLICY_A.wPx}×${POLICY_A.hPx}px (${POLICY_A.wMm}×${POLICY_A.hMm}mm, ${POLICY_A.orient})`)
+  console.log(`▶ Policy A 预测输出   : ${pol.policyA.wPx}×${pol.policyA.hPx}px (${pol.policyA.wMm}×${pol.policyA.hMm}mm, ${pol.policyA.orient})`)
+  if (!pol.discriminant) {
+    console.log(`   ⚠️ 此组合页尺寸无法区分 A/B（标准纸常见：方向被旗标钉死或恰巧一致）`)
+    console.log(`      真正的 A/B 判别器 = 230×160 + disable-auto-rotation（需 Wondershare 自定义纸）。旋转方向见 V2-02。`)
+  }
   console.log('')
 
   if (dryRun || !printer) {
@@ -264,13 +316,13 @@ function main() {
     }
     console.log(`✅ SumatraPDF 返回 (${dur}ms)`)
     setTimeout(() => {
-      const rot90 = measure(out, python, rot0Out, printer, sumatra, printSettings, uniqDirs)
+      const rot90 = measure(out, python, rot0Out, pol, oc.baseFlag, uniqDirs)
       if (!rot90) process.exit(1)
     }, 1500)
   })
 }
 
-function measure(outPdf, python, rot0Out, printer, sumatra, printSettings, searchDirs = []) {
+function measure(outPdf, python, rot0Out, pol, baseFlag, searchDirs = []) {
   if (!fs.existsSync(outPdf)) {
     const grabbed = grabOutput(outPdf, searchDirs)
     if (!grabbed) {
@@ -290,49 +342,59 @@ function measure(outPdf, python, rot0Out, printer, sumatra, printSettings, searc
 
   console.log(`\n── V2-01 Source Media Geometry ──`)
   console.log(`   MediaBox : ${m90.wPx}×${m90.hPx}px (${m90.wMm}×${m90.hMm}mm, ${m90.orient})`)
-  console.log(`   Policy A : ${POLICY_A.wPx}×${POLICY_A.hPx}px (${POLICY_A.wMm}×${POLICY_A.hMm}mm, ${POLICY_A.orient})`)
-  console.log(`   Policy B : 2717×1890px (230×160mm, landscape)`)
-  // 裁决必须校验「纸尺寸」而非仅「方向」：writer 可能把自定义纸夹成标准纸(A4)，
-  // 此时方向仍 portrait 但尺寸不符 Policy A，属无效 artifact（本机 MS Print to PDF 实测夹成 A4）。
+  const A = pol.policyA, B = pol.policyB
+  console.log(`   Policy A : ${A.wPx}×${A.hPx}px (${A.wMm}×${A.hMm}mm, ${A.orient}) [纸面跟随内容]`)
+  console.log(`   Policy B : ${B.wPx}×${B.hPx}px (${B.wMm}×${B.hMm}mm, ${B.orient}) [内容在固定纸内]`)
   const TOL_MM = 8
-  const nearA = Math.abs(m90.wMm - POLICY_A.wMm) <= TOL_MM && Math.abs(m90.hMm - POLICY_A.hMm) <= TOL_MM
-  const nearB = Math.abs(m90.wMm - 230) <= TOL_MM && Math.abs(m90.hMm - 160) <= TOL_MM
+  const nearA = Math.abs(m90.wMm - A.wMm) <= TOL_MM && Math.abs(m90.hMm - A.hMm) <= TOL_MM
+  const nearB = Math.abs(m90.wMm - B.wMm) <= TOL_MM && Math.abs(m90.hMm - B.hMm) <= TOL_MM
+  // 判别有效性：仅当「disable-auto-rotation + 页尺寸确有差异」时，V2-01 才能裁决 A/B。
+  // 标准纸常因 landscape/portrait 旗标钉死方向 → 页尺寸无法区分，此时 V2-01 只报告实测值。
+  const canDiscriminate = pol.discriminant && baseFlag === 'disable-auto-rotation'
   let paperVerdict = 'INVALID'
-  if (nearA) {
+  if (canDiscriminate && nearA) {
     paperVerdict = 'A'
-    console.log(`   → ✅ 尺寸+方向吻合 Policy A (160×230mm portrait)`)
-  } else if (nearB) {
+    console.log(`   → ✅ 尺寸+方向吻合 Policy A (${A.wMm}×${A.hMm}mm ${A.orient})`)
+  } else if (canDiscriminate && nearB) {
     paperVerdict = 'B'
-    console.log(`   → ⚠️ 吻合 Policy B (230×160mm landscape)，需修订 rotation contract`)
+    console.log(`   → ⚠️ 吻合 Policy B (${B.wMm}×${B.hMm}mm ${B.orient})，需修订 rotation contract`)
+  } else if (canDiscriminate) {
+    console.log(`   → 🔴 纸尺寸 ${m90.wMm}×${m90.hMm}mm 既非 Policy A 也非 Policy B`)
+    console.log(`      疑似虚拟 writer 把自定义纸夹成标准纸。该 artifact 对 Policy A/B 裁决无效。`)
+    console.log(`      解决: 换忠实自定义纸的 writer (Wondershare 配置 230×160 自定义纸)`)
   } else {
-    console.log(`   → 🔴 纸尺寸 ${m90.wMm}×${m90.hMm}mm 既非 Policy A(160×230) 也非 Policy B(230×160)`)
-    console.log(`      疑似虚拟 writer 把自定义纸夹成标准纸(实测≈A4?)。该 artifact 对 Policy A/B 裁决无效。`)
-    console.log(`      解决: 换忠实自定义纸的 writer (Ghostscript/Bullzip/PDF24)`)
+    console.log(`   → ℹ️ 此纸型/旗标组合页尺寸无法区分 A/B（实测 ${m90.wMm}×${m90.hMm}mm ${m90.orient}）`)
+    console.log(`      旋转方向正确性见 V2-02；A/B 判别需 230×160 + disable-auto-rotation(Wondershare)。`)
+    paperVerdict = 'NONDISCRIM'
   }
 
   console.log(`\n── V2-02 Content Rotation ──`)
-  if (paperVerdict === 'INVALID') {
-    console.log(`   ⏭️ 跳过: 纸面被 clamp，边距在错误几何上量，置换校验无意义`)
+  // V2-02 边距参考：非 A1 自定义纸时，A1 的 C5 边距参考不适用，必须用同纸型 rot0 artifact。
+  const isA1Custom = paper === 'custom' && Math.abs(customW - 230) < 1 && Math.abs(customH - 160) < 1
+  let refMargins = C5_ROT0_MARGINS_MM
+  let refLabel = 'A3-3-3 C5 rot0 参考(A1)'
+  let refUsable = isA1Custom
+  if (rot0Out && fs.existsSync(rot0Out)) {
+    console.log(`   测量 rot0 artifact: ${rot0Out}`)
+    const d0 = runProbe(rot0Out, python)
+    const m0 = d0 ? computeMetrics(d0) : null
+    if (m0 && m0.margins) { refMargins = m0.margins; refLabel = '同纸型 Sumatra rot0 artifact(自包含)'; refUsable = true }
+    else console.log(`   ⚠️ rot0 artifact 解析失败`)
+  } else if (!isA1Custom) {
+    console.log(`   ⚠️ 未提供 --rot0-out，且当前非 A1 自定义纸 → A1 的 C5 边距参考不适用，跳过边距校验`)
+    console.log(`      如需 V2-02，请先用同纸型 rot0 跑一次并传 --rot0-out`)
+  }
+  const expected = rotateMargins90CW(refMargins)
+  if (m90.margins && refUsable) {
+    console.log(`   rot90 边距 : L=${m90.margins.L} T=${m90.margins.T} R=${m90.margins.R} B=${m90.margins.B}`)
+    console.log(`   ${refLabel} rot0: L=${refMargins.L} T=${refMargins.T} R=${refMargins.R} B=${refMargins.B}`)
+    console.log(`   90°CW 预期 : L'=B=${expected.L} T'=L=${expected.T} R'=T=${expected.R} B'=R=${expected.B}`)
+    const permOk = marginMultisetMatch(m90.margins, expected, 5)
+    console.log(`   → 边距置换${permOk ? '✅ 守恒(L\'=B,T\'=L,R\'=T,B\'=R)' : '⚠️ 不守恒，查旋转方向/虚拟 writer'}`)
+  } else if (m90.margins) {
+    console.log(`   rot90 边距 : L=${m90.margins.L} T=${m90.margins.T} R=${m90.margins.R} B=${m90.margins.B}（参考缺失，未校验）`)
   } else {
-    let refMargins = C5_ROT0_MARGINS_MM
-    let refLabel = 'A3-3-3 C5 rot0 参考'
-    if (rot0Out && fs.existsSync(rot0Out)) {
-      console.log(`   测量 rot0 artifact: ${rot0Out}`)
-      const d0 = runProbe(rot0Out, python)
-      const m0 = d0 ? computeMetrics(d0) : null
-      if (m0 && m0.margins) { refMargins = m0.margins; refLabel = 'Sumatra rot0 artifact(自包含)' }
-      else console.log(`   ⚠️ rot0 artifact 解析失败，回退到 C5 参考`)
-    }
-    const expected = rotateMargins90CW(refMargins)
-    if (m90.margins) {
-      console.log(`   rot90 边距 : L=${m90.margins.L} T=${m90.margins.T} R=${m90.margins.R} B=${m90.margins.B}`)
-      console.log(`   ${refLabel} rot0: L=${refMargins.L} T=${refMargins.T} R=${refMargins.R} B=${refMargins.B}`)
-      console.log(`   90°CW 预期 : L'=B=${expected.L} T'=L=${expected.T} R'=T=${expected.R} B'=R=${expected.B}`)
-      const permOk = marginMultisetMatch(m90.margins, expected, 5)
-      console.log(`   → 边距置换${permOk ? '✅ 守恒(L\'=B,T\'=L,R\'=T,B\'=R)' : '⚠️ 不守恒，查旋转方向/虚拟 writer'}`)
-    } else {
-      console.log(`   ⚠️ rot90 artifact 无 content bbox（空白页？），跳过边距校验`)
-    }
+    console.log(`   ⚠️ rot90 artifact 无 content bbox（空白页？），跳过边距校验`)
   }
 
   console.log(`\n── V2-03 Canvas ↔ Source ──`)
@@ -340,8 +402,11 @@ function measure(outPdf, python, rot0Out, printer, sumatra, printSettings, searc
     console.log('✅ Policy A 吻合：source 几何=canvas 纸面跟随内容旋转')
     console.log('   → A3-C5 Source Semantic Alignment = PASS（待用户真机确认写入冻结状态）')
   } else if (paperVerdict === 'B') {
-    console.log('⚠️ Policy B 倾向：source 纸面 landscape + 内容旋转在固定纸内')
+    console.log('⚠️ Policy B 倾向：source 纸面固定 + 内容旋转在内')
     console.log('   → 需修订 rotation contract（冻结文档 §14.24.4 情况 B），A3-C5 Source Alignment 转「修订中」')
+  } else if (paperVerdict === 'NONDISCRIM') {
+    console.log('ℹ️ 非 A/B 判别组合：页尺寸已记录，旋转方向见 V2-02。')
+    console.log('   A3-C5 Source Alignment 的 A/B 判别仍依赖 230×160(Wondershare) artifact。')
   } else {
     console.log('🔴 无法裁决：artifact 纸面被 clamp，V2-01 无效。换忠实自定义纸的 writer 后重跑。')
   }
