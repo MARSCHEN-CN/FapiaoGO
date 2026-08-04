@@ -1,0 +1,152 @@
+/**
+ * PrintPreviewModel.js — 打印预览描述模型（Phase 3.5 Preview Skeleton）
+ *
+ * 职责：
+ *   buildPrintPreviewModel(plan, { files, settings })：把「打印执行计划」（buildPrintExecutionPlan 产物）
+ *   派生为「预览描述」——每物理页的纸张尺寸、方向、槽位几何（x/y/width/height，mm 单位）+ 来源文件名。
+ *   供 PrintConfirmModal 的 PrintPreviewCanvas 消费（Step 2 骨架：纸张比例 / 票据位置 / 页数 / 排版）。
+ *
+ * 冻结边界（对齐冻结文档 §4 Phase 2 + 用户定稿 Phase 3.5）：
+ *   - 只描述「预览怎么摆」：纸张 mm、方向、槽位几何、来源。不渲染像素、不涉 PDF 内容。
+ *   - Plan 冻结「不描述怎么画」（禁止 usableRect/slotRect）——本模型是 Plan 的**消费方**：
+ *     只读派生，绝不改写 plan 对象，绝不把几何反向写回 Plan。
+ *   - 与打印几何的关系：本模型用「与 computePaperLayout 同构的本地公式」算安全区（原因见下），
+ *     槽位等分复用生产函数 computeTicketSlots / slotToLandscape（node-safe）。
+ *     预览语义 = 打印语义（同一 Plan），但本模型**不裁决**打印几何——打印几何仍由打印 adapter 决定。
+ *
+ * ⚠️ 为什么 previewPaperLayout 不直接 import previewState.computePaperLayout：
+ *   previewState.js / config.js 依赖 vite import.meta.env（BACKEND_URL/BASE_URL），纯 node 测试无法加载。
+ *   本地实现与 previewState.js:178-220 公式完全同构（mm→px@300 + 边距内缩 + usableRect），
+ *   并以「内联纸张表（与 config.js PAPER_REGISTRY 同步）+ 数值锚点测试」锁定一致性（防漂移）。
+ *   ⚠️ 新增纸型 / 修改边距公式时，必须同时同步 previewState.js 与本文件，并由
+ *   printPreviewModel.test.mjs 的数值锚点断言把关。
+ *
+ * @module print/PrintPreviewModel
+ */
+
+import { computeTicketSlots, slotToLandscape } from '../layout/SlotLayout.js'
+
+const PREVIEW_DPI = 300
+const PX_TO_MM = 25.4 / PREVIEW_DPI
+
+const round2 = (v) => Math.round(v * 100) / 100
+
+// 与 config.js PAPER_REGISTRY（L102-109）同步的内联纸张表（mm）。
+// config.js 依赖 vite import.meta.env 不可在纯 node 加载；新增纸型须两处同步（守卫测试锁定）。
+const PAPER_MM = {
+  A4: { widthMM: 210, heightMM: 297 },
+  A5: { widthMM: 148, heightMM: 210 },
+  A3: { widthMM: 297, heightMM: 420 },
+  Letter: { widthMM: 215.9, heightMM: 279.4 },
+  Voucher240x140: { widthMM: 240, heightMM: 140 },
+}
+
+/**
+ * 预览纸面几何（与 computePaperLayout 同构的本地实现，纯 node）。
+ * 返回「自然空间」（未做方向 swap）的纸张 px + 安全区 usableRect（px@300，已内缩边距）。
+ *
+ * @param {string} [paperSize='A4']
+ * @param {{widthMM:number,heightMM:number}|null} [customPaper]
+ * @param {{left?:number,right?:number,top?:number,bottom?:number}} [margins] - mm
+ * @returns {{valid:boolean, reason?:string, paperRect:{w:number,h:number}|null, usableRect:{x:number,y:number,w:number,h:number}|null}}
+ */
+export function previewPaperLayout(paperSize = 'A4', customPaper = null, margins = {}) {
+  const paper = customPaper && customPaper.widthMM > 0 && customPaper.heightMM > 0
+    ? { widthMM: customPaper.widthMM, heightMM: customPaper.heightMM }
+    : PAPER_MM[paperSize]
+  if (!paper) return { valid: false, reason: `未知纸张: ${paperSize}`, paperRect: null, usableRect: null }
+
+  // ↓ 以下公式与 previewState.js computePaperLayout（L182-199）逐行同构，勿改 ↓
+  const paperW = Math.round(paper.widthMM / 25.4 * PREVIEW_DPI)
+  const paperH = Math.round(paper.heightMM / 25.4 * PREVIEW_DPI)
+  const toPx = (v) => {
+    const mm = (typeof v === 'number' && isFinite(v) && v >= 0) ? v : 3
+    return Math.round(mm / 25.4 * PREVIEW_DPI)
+  }
+  const mLeft = toPx(margins.left)
+  const mRight = toPx(margins.right)
+  const mTop = toPx(margins.top)
+  const mBottom = toPx(margins.bottom)
+  const innerW = paperW - mLeft - mRight
+  const innerH = paperH - mTop - mBottom
+  // ↑ 与 computePaperLayout 同构结束 ↑
+
+  if (innerW <= 0 || innerH <= 0) {
+    return { valid: false, reason: '边距超出纸张尺寸', paperRect: null, usableRect: null }
+  }
+  return {
+    valid: true,
+    paperRect: { w: paperW, h: paperH },
+    usableRect: { x: mLeft, y: mTop, w: innerW, h: innerH },
+  }
+}
+
+/**
+ * 从打印执行计划构建打印预览描述。
+ *
+ * @param {Object} plan - buildPrintExecutionPlan 产物（pages[] / extraPages[]）
+ * @param {Object} [options]
+ * @param {Array<Object>} [options.files] - 文件对象数组（key→name 映射用）
+ * @param {Object} [options.settings] - { paperSize, customPaper, marginLeft/Right/Top/Bottom }
+ * @returns {{valid:boolean, reason?:string, pages:Array<Object>}}
+ *   pages[].paperSizeMM = { widthMM, heightMM }（按方向交换后的显示尺寸）
+ *   pages[].slots[] = { x, y, width, height, source, rotation }（mm，相对纸张左上角）
+ */
+export function buildPrintPreviewModel(plan, { files = [], settings = {} } = {}) {
+  if (!plan || !Array.isArray(plan.pages)) {
+    return { valid: false, reason: 'plan 缺失或结构非法', pages: [] }
+  }
+  const layout = previewPaperLayout(
+    settings.paperSize || 'A4',
+    settings.customPaper || null,
+    {
+      left: settings.marginLeft,
+      right: settings.marginRight,
+      top: settings.marginTop,
+      bottom: settings.marginBottom,
+    },
+  )
+  if (!layout.valid) return { valid: false, reason: layout.reason, pages: [] }
+
+  const fileById = new Map(files.map((f) => [f.key, f]))
+  const mL = layout.usableRect.x  // 自然空间左内缩 px（slotToLandscape 用）
+  const mT = layout.usableRect.y
+
+  const pageToModel = (page) => {
+    const isLandscape = page.orientation === 'landscape'
+    let slots = computeTicketSlots(layout, page.slots.length)
+    if (isLandscape) slots = slots.map((s) => slotToLandscape(s, { mL, mT }))
+
+    // 纸张 mm：从 px 反推（与 layout 严格自洽——UI 按 mm 画 = 按 px 画，无换算误差）
+    const widthMM = (isLandscape ? layout.paperRect.h : layout.paperRect.w) * PX_TO_MM
+    const heightMM = (isLandscape ? layout.paperRect.w : layout.paperRect.h) * PX_TO_MM
+
+    return {
+      paper: page.paper?.size || settings.paperSize || 'A4',
+      orientation: page.orientation,
+      paperSizeMM: { widthMM: round2(widthMM), heightMM: round2(heightMM) },
+      slots: slots.map((s, i) => {
+        const slotDef = page.slots[i] || {}
+        const f = fileById.get(slotDef.fileId)
+        return {
+          x: round2(s.x * PX_TO_MM),
+          y: round2(s.y * PX_TO_MM),
+          width: round2(s.width * PX_TO_MM),
+          height: round2(s.height * PX_TO_MM),
+          source: f?.name || slotDef.fileId || `#${i + 1}`,
+          rotation: slotDef.rotation || 0,
+        }
+      }),
+    }
+  }
+
+  return {
+    valid: true,
+    pages: [
+      ...plan.pages.map(pageToModel),
+      ...(plan.extraPages || []).map(pageToModel),
+    ],
+  }
+}
+
+export default buildPrintPreviewModel

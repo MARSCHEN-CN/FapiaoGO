@@ -16,6 +16,8 @@ import { applySourceOriginPlacement, transformPaperRotation } from '../print/pla
 import { fetchPrintRaster, buildPrintJobItem } from '../utils/printAdapter'
 // A1/A1.5：已证等价的 Plan 事实来源 + 影子比较 helper（Commit 2 source / Commit 3 merge 分支消费）
 import { buildPrintExecutionPlan, SOURCE_FILE_FILTER, MERGE_FILE_FILTER } from '../print/buildPrintExecutionPlan'
+// Phase 3.5 Preview Skeleton：Plan → 打印预览描述（纯函数，供 PrintConfirmModal 消费）
+import { buildPrintPreviewModel } from '../print/PrintPreviewModel'
 import {
   compareLegacyPlan,
   printPlanCompareEnabled,
@@ -89,6 +91,8 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
   const [currentJobId, setCurrentJobId] = useState(null)
   // 打印确认弹窗
   const [printConfirmModal, setPrintConfirmModal] = useState(false)
+  // Phase 3.5：打印预览描述（打开弹窗时从 Plan 构建；null = 未构建）
+  const [printPreviewModel, setPrintPreviewModel] = useState(null)
   const [triggerPrint, setTriggerPrint] = useState(false)
   // 打印队列状态
   const [printQueueStatus, setPrintQueueStatus] = useState({
@@ -510,8 +514,17 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
 
   // ── 打印前确认弹窗 ──
   const handlePrintShowConfirm = useCallback(() => {
+    // Phase 3.5：构建打印预览描述（与 executePrint 同一 Plan 事实来源 + 同一 filter，
+    // 保证「预览显示什么 = 确认后打印什么」的语义对齐，仅不渲染像素）。
+    try {
+      const plan = buildPrintExecutionPlan(files, { filter: SOURCE_FILE_FILTER, settings, fileRotations })
+      setPrintPreviewModel(buildPrintPreviewModel(plan, { files, settings }))
+    } catch (err) {
+      console.error('[usePrint] 构建打印预览描述失败:', err)
+      setPrintPreviewModel(null)
+    }
     setPrintConfirmModal(true)
-  }, [])
+  }, [files, settings, fileRotations])
 
   const handlePrintConfirm = useCallback(() => {
     setPrintConfirmModal(false)
@@ -1168,6 +1181,7 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
     printQueueStatus,
     alertModal, closeAlert,
     printConfirmModal,
+    printPreviewModel,
     handlePrint: handlePrintShowConfirm, handlePrintConfirm, handlePrintCancel,
     handlePrintClose, clearPrintState,
     cancelPrint,

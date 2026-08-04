@@ -1,5 +1,6 @@
 import { memo, useCallback } from 'react'
 import Toggle from './Toggle'
+import PrintPreviewCanvas from './PrintPreviewCanvas'
 import { PAPER_REGISTRY, MARGIN_PRESETS } from '../config'
 import '../settings-printer.css'
 
@@ -8,7 +9,8 @@ import '../settings-printer.css'
  *
  * 布局：3:2 比例（900×600）
  *   - 左侧：打印机设置区（完整迁移自 SettingsWindow 打印机页）
- *   - 右侧：打印预览占位区（后续改造）
+ *   - 右侧：打印布局预览（Phase 3.5 Preview Skeleton — PrintPreviewModel 驱动的
+ *     纸张比例 / 槽位框 / 页导航；不渲染 PDF 像素，内容渲染待 Phase 4）
  *   - 底部：取消 / 确认打印
  */
 const PrintConfirmModal = ({
@@ -21,6 +23,7 @@ const PrintConfirmModal = ({
   isOneNormalTwoSpecial,
   paperOrientation,
   contentRotation,
+  previewModel,
   onConfirm,
   onCancel,
 }) => {
@@ -365,52 +368,14 @@ const PrintConfirmModal = ({
             </div>
           </div>
 
-          {/* ── 右侧：预览区（占位） ── */}
+          {/* ── 右侧：打印布局预览（Phase 3.5 数据驱动） ── */}
           <div className="pcm-preview">
             <div className="pcm-preview-header">
               <span className="pcm-preview-title">打印预览</span>
-              <span className="pcm-preview-subtitle">预览区域（后续改造）</span>
+              <span className="pcm-preview-subtitle">打印布局（随设置实时更新）</span>
             </div>
             <div className="pcm-preview-body">
-              <div className="pcm-preview-page">
-                <div className="pcm-preview-page-inner">
-                  <svg viewBox="0 0 210 297" width="100%" height="100%" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    {/* A4 轮廓 */}
-                    <rect x="10" y="10" width="190" height="277" rx="4" fill="#fff" stroke="var(--border-light)" strokeWidth="1.5"/>
-                    {/* 模拟发票内容线条 */}
-                    <rect x="25" y="25" width="160" height="14" rx="2" fill="var(--surface)"/>
-                    <rect x="25" y="50" width="100" height="8" rx="1.5" fill="var(--surface)"/>
-                    <rect x="25" y="66" width="140" height="6" rx="1" fill="var(--surface)"/>
-                    <rect x="25" y="80" width="120" height="6" rx="1" fill="var(--surface)"/>
-                    <rect x="25" y="94" width="150" height="6" rx="1" fill="var(--surface)"/>
-                    <line x1="25" y1="110" x2="185" y2="110" stroke="var(--border-light)" strokeWidth="0.8" strokeDasharray="3 2"/>
-                    <rect x="25" y="120" width="80" height="6" rx="1" fill="var(--surface)"/>
-                    <rect x="120" y="120" width="65" height="6" rx="1" fill="var(--surface)"/>
-                    <rect x="25" y="134" width="80" height="6" rx="1" fill="var(--surface)"/>
-                    <rect x="120" y="134" width="65" height="6" rx="1" fill="var(--surface)"/>
-                    <rect x="25" y="148" width="80" height="6" rx="1" fill="var(--surface)"/>
-                    <rect x="120" y="148" width="65" height="6" rx="1" fill="var(--surface)"/>
-                    <rect x="25" y="162" width="80" height="6" rx="1" fill="var(--surface)"/>
-                    <rect x="120" y="162" width="65" height="6" rx="1" fill="var(--surface)"/>
-                    <line x1="25" y1="178" x2="185" y2="178" stroke="var(--border-light)" strokeWidth="0.8" strokeDasharray="3 2"/>
-                    <rect x="25" y="190" width="160" height="8" rx="1.5" fill="var(--accent-soft)"/>
-                    <rect x="25" y="206" width="160" height="6" rx="1" fill="var(--surface)"/>
-                    <rect x="25" y="220" width="160" height="6" rx="1" fill="var(--surface)"/>
-                    <rect x="25" y="250" width="60" height="20" rx="3" fill="var(--accent)" opacity="0.15"/>
-                    <rect x="150" y="250" width="35" height="20" rx="3" fill="var(--surface)"/>
-                  </svg>
-                </div>
-                <div className="pcm-preview-page-tag">A4 · 第 1 页 / 共 {Math.max(1, totalFiles)} 页</div>
-              </div>
-              <div className="pcm-preview-placeholder-text">
-                <svg viewBox="0 0 24 24" width="36" height="36" fill="none" stroke="var(--text-4)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginBottom: '8px', opacity: 0.6 }}>
-                  <rect x="3" y="3" width="18" height="18" rx="2" />
-                  <circle cx="8.5" cy="8.5" r="1.5" />
-                  <path d="m21 15-5-5L5 21" />
-                </svg>
-                <p>预览区域占位</p>
-                <span>后续将接入真实 PDF 预览渲染</span>
-              </div>
+              <PrintPreviewCanvas preview={previewModel} />
             </div>
           </div>
         </div>

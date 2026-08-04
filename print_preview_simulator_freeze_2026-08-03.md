@@ -123,6 +123,23 @@ InvoiceIdentity  ≠  PrintExecution  ≠  PrintPreviewRenderResource  ≠  View
 - **Phase 3**:`PrintPreviewRenderer` 复用 `computePaperLayout` / `computeTicketSlots` / `createPlacement`。
 - **Phase 4**:接入 `PrintConfirmModal`,替换静态 SVG。
 
+**Phase 3.5 已落地(2026-08-04,用户定稿)**:Preview Skeleton 提前接入,替代 Phase 4 的完整预览:
+- `PrintPreviewModel.js`(src/print/):`buildPrintPreviewModel(plan, { files, settings })` — Plan → 预览描述
+  `{ valid, pages: [{ paper, orientation, paperSizeMM, slots: [{ x, y, width, height, source, rotation }] }] }`(mm 单位)。
+  - 槽位几何复用生产函数 `computeTicketSlots`/`slotToLandscape`(SlotLayout.js,node-safe);
+  - 纸面安全区用与 `computePaperLayout`(previewState.js:178) **同构的本地实现** `previewPaperLayout`
+    (previewState/config 依赖 vite import.meta.env,纯 node 不可加载;公式逐行同构 + 数值锚点守卫测试锁定);
+  - 内联纸张表与 config.js PAPER_REGISTRY 同步(新增纸型须两处同步)。
+- `PrintPreviewCanvas.jsx`:SVG 纸张比例 + 槽位框 + 页导航,消费 previewModel;**不渲染 PDF 像素、
+  不调 /thumbnail、不接 PDF.js**(内容渲染留给 Phase 4)。
+- `PrintConfirmModal` 右侧静态 SVG 占位 → `PrintPreviewCanvas`(无数据时简单占位)。
+- `usePrint.handlePrintShowConfirm` 构建 previewModel:**与 executePrint 同一 Plan 事实来源 + 同一
+  SOURCE_FILE_FILTER** → 「预览显示什么 = 确认后打印什么」的语义对齐(仅不渲染像素)。
+- 测试:`test/printPreviewModel.test.mjs` 8 用例(PM-01..08),Gate 套件 74→82。
+- ⚠️ 与 §4 原红线「不改 UI、不碰 PrintConfirmModal 视觉」的关系:该红线属 **Phase 1**(A1 范围,
+  buildPrintExecutionPlan 抽取期间禁动 UI);Phase 3.5 是用户后续拍板的新增范围,替换的是**占位视觉**,
+  不触碰打印语义/Plan 契约。
+
 ---
 
 ## 5. 需要你拍板的一个决策(门控项)

@@ -240,7 +240,7 @@ function AppContent() {
     printTimeoutRef, printFilesRef,
     handlePrint, handlePrintClose, clearPrintState, setPrinting, setPrintProgress,
     alertModal: printAlert, closeAlert: closePrintAlert,
-    printConfirmModal, handlePrintCancel,
+    printConfirmModal, printPreviewModel, handlePrintCancel,
     executePrint,  // Step 3.2: 唯一打印执行入口
   } = usePrint({ files, settings, fileRotations, setFiles, electronAPIRef, submitPrintIntent })
 
@@ -1214,6 +1214,7 @@ function AppContent() {
           isOneNormalTwoSpecial={settings.extraSpecial || false}
           paperOrientation={paperOrientation}
           contentRotation={previewRotation}
+          previewModel={printPreviewModel}
           onConfirm={onPrintConfirm}
           onCancel={handlePrintCancel}
           onSettingsChange={updateSettings}
