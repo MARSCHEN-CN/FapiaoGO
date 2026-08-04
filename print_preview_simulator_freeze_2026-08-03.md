@@ -605,6 +605,36 @@ Phase B    ⏸
 - **A3-V1 待采集**（Electron）：A1-prod-rot90 真实 bitmap——C5 锚点 bitmap 1890×2717 / bbox (201,169,1500×2423) / 边距 L17/T14.3/R16/B10.6 / ratio≥0.99
 - **A3-V2 待做**：Sumatra 真实打印验证（portrait source + rot90 → Sumatra 输出 → 扫描 bbox），一致则冻结 A3 Rotation Contract FINAL；不一致只修 SourcePrintAdapter 不动 PlacementAdapter/PaperTransform
 
+### 14.19 A3-V1 首次采集：抓到真实缺陷并修复（2026-08-04，commit `43078485` + README `89decb65`）
+
+**🔴 A3-V1 的价值当场兑现——第一次跑就抓到纯函数 Gate 完全覆盖不到的缺陷。**
+
+- **现象**：`[GATE-A3V1] A1-prod-rot90 OK bitmap=1890x2717 bbox=null marginMm=null`，
+  console 同时报 `[drawRenderCommand] RenderCommand 契约违例，跳过绘制: [RenderCommand] 不支持的 version=undefined`。
+  **画布尺寸 1890×2717 完全正确（Policy A 几何数学无误），但一笔都没画 = 全白。**
+- **根因**：`applySourceOriginPlacement` / `transformPaperRotation` 产出的 PlacementCommand
+  缺 `version:1` 与 `paper`，被 `validateRenderCommand`（`RenderLayoutFactory.js:73-99`，共 7 条校验）拒绝。
+  A3-3-3-01..05 五个纯函数 Gate 全绿，因为它们只断言几何字段，**从不校验契约字段**。
+- **这就是 A3-V1「实现路径 ≠ 纯函数路径」的设计目标**——若跳过 A3-V1 直接宣布 A3 关闭，
+  切轨后单文件打印会静默输出全白页，且几何测试全绿、无任何告警。用户坚持先做 Verification Closure 是对的。
+- **修复**：
+  ① `applySourceOriginPlacement` 补 `version:1` + `paper`（透传 paperLayout，不新造对象）
+  ② `transformPaperRotation.rotateCanvasCommand` 补 `version:1` + `paper.paperRect={w:nW,h:nH}`
+     （**旋转后**纸面尺寸，符合 Policy A「纸面跟随内容」；用旋转前尺寸会让下游拿到错误纸面上下文）
+- **回归守卫（两道）**：
+  - `A3-E2E-03`：两条 command 均满足 RenderCommand 契约，本地镜像 5 项断言
+    （`RenderLayoutFactory.js` 经 previewState → config.js → `import.meta.env`，纯 node 不可加载，只能镜像）
+  - `A3-E2E-04`：**源码守卫**——`validateRenderCommand` 仍为 7 条 `throw` + 5 个关键字段名未改。
+    契约改名/加校验会让 PlacementAdapter 静默失效（跳过绘制=全白），必须 fail-loud 而非静默漂移。
+- **排查口诀（已入 README + MEMORY）**：**bitmap 尺寸对 + bbox=null ⇒ 先查契约校验，不是几何问题。**
+- 🐛 实现守卫时踩坑：仓库为 CRLF，`src.indexOf('\n}\n')` 切片得空串（throws 计数 0）
+  → 源码守卫切片前必须 `.replace(/\r\n/g, '\n')`。
+- 回归 **70/70**。README 补 A3-V1 devtools 运行片段（`?t=` 破 vite 缓存）+ C5 锚点表 + 排查口诀。
+- **📤 push 恢复**：积压 13 commit 已推 `origin/master`（HEAD `89decb65`）。
+  git-lfs `locksverify` 缺凭据会让整个 push 失败 → 必须 `git -c lfs.locksverify=false push`。
+  ⚠️ 与旧约定「push 由 UGit 接管」冲突，待用户裁决。
+- **A3-V1 状态**：代码侧修复完成，**真实 bitmap 待用户在 Electron devtools 重跑判定**（C5 锚点）。
+
 ### 14.6 冻结状态
 ```
 A2-G1 source ✅ | canvas 采集链路 ✅ + 第一份报告 🔴FAIL(预期)
