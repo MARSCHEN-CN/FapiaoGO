@@ -27,7 +27,8 @@
  *   ✅ Wondershare PDFelement（推荐，A3-V2 唯一纳入的 capture writer）：
  *        - 用户已验证：可输出 PDF、可保存自定义纸、稳定静默落盘。
  *        - 230×160 异形纸：用户已在 Wondershare 里配置名为「PostScript」的 230×160 自定义纸型承接。
- *        - Sumatra 仍发生产命令 `paper=230mm x 160mm`（与生产一致），由 Wondershare 的 PostScript 纸型承接。
+ *        - Sumatra 发生产命令 `paper=PostScript`（按纸名，非 custom 尺寸），由 Wondershare 按名字匹配其 230×160 纸型。
+ *          这与生产线 buildPrintSettings 对非 A 系列、不在注册表的命名纸行为一致（paper=postscript）。
  *   ❌ PDF24（已证明不适合自动化）：把任务暂存为 .ps 到 %LOCALAPPDATA%\Temp\PDF24\ 并弹「保存助手」，
  *        -silent 下 Sumatra 返回但 PDF 不提交 → 必须手动启用静默自动保存，收益极低，已弃用。
  *   ❌ "Microsoft Print to PDF"：CLI 下弹保存框且不保自定义纸（自定义 230×160mm 实测被夹成 A4 210×297mm）。
@@ -47,16 +48,14 @@
  *   node scripts/verify_sumatra_rotation.js --pdf <A4.pdf> --paper a4 --rotation 90 --dry-run
  *
  *   # V2-B：路由到 Wondershare PDFelement（推荐 capture writer），产出 artifact 并自动测量
- *   #   轨二 · 异形纸 230×160（真正的 A/B 判别器；Wondershare 已配「PostScript」自定义纸型）
- *   #   Wondershare 虚拟打印机本机实测默认落盘到 C:\Users\it01\Desktop（随机数字名），
- *   #   脚本已自动扫描该目录；若你改了输出目录，用 --search-dir 显式指定。
- *   node scripts/verify_sumatra_rotation.js \
- *     --pdf test_fixtures/25952000000127675627.pdf --rotation 90 \
- *     --printer "Wondershare PDFelement" --paper custom --custom-w 230 --custom-h 160 \
- *     --out artifacts/sumatra_a1_rot90.pdf \
- *     --rot0-out artifacts/sumatra_a1_rot0.pdf \
- *     --search-dir "C:/Users/it01/Desktop" \
- *     --python "C:/Program Files/Python312/python.exe"
+ *   #   轨二 · 异形纸 230×160（真正的 A/B 判别器；Wondershare 已配名为「PostScript」的 230×160 纸型）
+ *   #   命令按纸名发 paper=PostScript（与生产一致），Wondershare 按名匹配其 230×160 纸型。
+ *   #   Wondershare 虚拟打印机本机实测默认落盘到 C:\Users\it01\Desktop（随机数字名），脚本已自动扫描；改了目录用 --search-dir。
+ *   #   单行命令（rot90，V2-01 判别 Policy A/B）：
+ *   node scripts/verify_sumatra_rotation.js --pdf test_fixtures/25952000000127675627.pdf --rotation 90 --printer "Wondershare PDFelement" --paper PostScript --out artifacts/sumatra_a1_rot90.pdf --search-dir "C:/Users/it01/Desktop" --python "C:/Program Files/Python312/python.exe"
+ *   #   再跑一次 rot0（供 V2-02 边距 90°CW 置换参考），然后带 --rot0-out 复跑 rot90：
+ *   node scripts/verify_sumatra_rotation.js --pdf test_fixtures/25952000000127675627.pdf --rotation 0 --printer "Wondershare PDFelement" --paper PostScript --out artifacts/sumatra_a1_rot0.pdf --search-dir "C:/Users/it01/Desktop" --python "C:/Program Files/Python312/python.exe"
+ *   node scripts/verify_sumatra_rotation.js --pdf test_fixtures/25952000000127675627.pdf --rotation 90 --printer "Wondershare PDFelement" --paper PostScript --out artifacts/sumatra_a1_rot90.pdf --rot0-out artifacts/sumatra_a1_rot0.pdf --search-dir "C:/Users/it01/Desktop" --python "C:/Program Files/Python312/python.exe"
  *
  *   # --measure-only：跳过 Sumatra + writer 捕获，直接分析已落盘的 artifact（writer/env 解耦）
  *   #   适合：writer 弹了保存框、或想对同一次捕获反复跑 V2-01/02/03 而不重打。
@@ -127,11 +126,15 @@ function buildPrintSettings(ps) {
     const A_SERIES = /^(A\d|Letter|Legal|Tabloid)$/i
     if (A_SERIES.test(paper)) {
       parts.push(`paper=${paper.toLowerCase()}`)
-    } else {
-      const cp = ps.customPaper || {}
-      const w = cp.widthMM || 0, h = cp.heightMM || 0
+    } else if (paper.toLowerCase() === 'custom' && ps.customPaper) {
+      // 显式 custom：直接发尺寸（WxHmm）
+      const w = ps.customPaper.widthMM || 0, h = ps.customPaper.heightMM || 0
       if (w > 0 && h > 0) parts.push(`paper=${w}mm x ${h}mm`)
-      else parts.push(`paper=${paper.toLowerCase()}`)
+      else parts.push(`paper=custom`)
+    } else {
+      // 命名特种纸（如 Wondershare「PostScript」230×160）：按名字发，由驱动按名匹配其尺寸。
+      // 与生产线 buildPrintSettings 对非 A 系列、不在注册表的命名纸行为一致（paper=postscript）。
+      parts.push(`paper=${paper.toLowerCase()}`)
     }
   }
   return parts.join(',')
@@ -294,7 +297,9 @@ function main() {
   const paper = get('--paper', 'custom')
   const customW = parseFloat(get('--custom-w', '230'))
   const customH = parseFloat(get('--custom-h', '160'))
-  const ps = { rotation, paper, customPaper: { widthMM: customW, heightMM: customH },
+  // 仅当 paper=custom 时注入尺寸；命名特种纸（如 Wondershare「PostScript」）按名字发，不塞尺寸。
+  const customPaper = paper === 'custom' ? { widthMM: customW, heightMM: customH } : undefined
+  const ps = { rotation, paper, customPaper,
     contentOrientation: contentOrient, paperOrientation: paperOrient, fit }
   const printSettings = buildPrintSettings(ps)
   const oc = resolveOrientationCommands(contentOrient, paperOrient, rotation)
@@ -434,7 +439,7 @@ function measure(outPdf, python, rot0Out, pol, baseFlag, searchDirs = []) {
 
   console.log(`\n── V2-02 Content Rotation ──`)
   // V2-02 边距参考：非 A1 自定义纸时，A1 的 C5 边距参考不适用，必须用同纸型 rot0 artifact。
-  const isA1Custom = paper === 'custom' && Math.abs(customW - 230) < 1 && Math.abs(customH - 160) < 1
+  const isA1Custom = Math.abs(customW - 230) < 1 && Math.abs(customH - 160) < 1
   let refMargins = C5_ROT0_MARGINS_MM
   let refLabel = 'A3-3-3 C5 rot0 参考(A1)'
   let refUsable = isA1Custom
