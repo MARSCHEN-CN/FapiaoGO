@@ -1866,15 +1866,17 @@ def import_batch_events(batch_id):
 
 @app.route('/import/batch/cancel', methods=['POST'])
 def import_batch_cancel():
-    """取消批量导入任务"""
+    """取消批量导入任务（幂等）"""
     data = request.get_json(silent=True) or {}
     batch_id = data.get('batchId', '')
     if not batch_id:
         return jsonify({"success": False, "error": "缺少 batchId"}), 400
     mgr = get_import_batch_manager()
-    if mgr.cancel_batch(batch_id):
-        return jsonify({"success": True})
-    return jsonify({"success": False, "error": "批次不存在或已完成"}), 404
+    result = mgr.cancel_batch(batch_id)
+    if result["success"]:
+        return jsonify({"success": True, "status": result["status"]})
+    logger.warning(f"[ImportBatch] 尝试取消不存在的批次: {batch_id}")
+    return jsonify({"success": False, "error": "批次不存在"}), 404
 
 
 @app.route('/import/batch/<batch_id>/results', methods=['GET'])

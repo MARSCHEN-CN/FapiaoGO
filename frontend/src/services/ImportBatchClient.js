@@ -176,7 +176,7 @@ export function subscribeBatchProgress(batchId, callbacks) {
  *
  * @param {string} batchId - 批次 ID
  * @param {AbortSignal} [signal] - 取消信号
- * @returns {Promise<boolean>} 是否成功取消
+ * @returns {Promise<{success: boolean, status?: string}>} 取消结果
  */
 export async function cancelImportBatch(batchId, signal) {
   try {
@@ -188,18 +188,17 @@ export async function cancelImportBatch(batchId, signal) {
     })
 
     if (!resp.ok) {
-      // 404 = 批次不存在或已完成，视为取消成功（幂等）
       if (resp.status === 404) {
-        return true
+        console.warn(`[ImportBatchClient] 批次不存在，无法取消: ${batchId}`)
       }
-      return false
+      return { success: false }
     }
 
     const data = await resp.json()
-    return data.success === true
+    return { success: data.success === true, status: data.status }
   } catch (err) {
     console.error('[ImportBatchClient] 取消批次失败:', err)
-    return false
+    return { success: false }
   }
 }
 

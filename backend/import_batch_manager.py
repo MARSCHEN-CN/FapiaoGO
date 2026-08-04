@@ -493,23 +493,29 @@ class ImportBatchManager:
             'failedPages': health['failedPages'],
         }
 
-    def cancel_batch(self, batch_id: str) -> bool:
-        """取消批次（停止调度 + 取消所有未完成 job）"""
+    def cancel_batch(self, batch_id: str):
+        """取消批次（幂等：终态批次视为取消成功，返回当前状态）
+
+        Returns:
+            dict: {"success": bool, "status": str}
+                - 未找到批次: {"success": False, "status": None}
+                - 已终态:     {"success": True,  "status": "completed|failed|cancelled"}
+                - 已取消:     {"success": True,  "status": "cancelled"}
+                - 新取消:     {"success": True,  "status": "cancelled"}
+        """
         with self._batch_lock:
             batch = self._batches.get(batch_id)
             if not batch:
-                return False
+                return {"success": False, "status": None}
             if batch.status in ('completed', 'failed', 'cancelled'):
-                return False
+                return {"success": True, "status": batch.status}
             self._cancel_flags[batch_id] = True
             batch.status = 'cancelled'
             batch.error = '用户取消'
             batch.touch()
 
         logger.info(f"[ImportBatch] 取消批次: {batch_id}")
-        # 注意：已提交的 job 会由 ParseJobManager 的 cancel 机制处理
-        # 调度器线程检测到 cancel_flag 后停止提交新 job
-        return True
+        return {"success": True, "status": "cancelled"}
 
     # ─── 调度器（Admission Control）─────────────────────────
 
