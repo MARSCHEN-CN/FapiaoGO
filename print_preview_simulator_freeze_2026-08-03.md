@@ -597,6 +597,14 @@ Phase B    ⏸
 - **红线守住**：未改 renderPDFPageRaw / createLayout 通用 / MultiTicketComposer / 新 fit 算法；未绕过 command 层（画布旋转仍走 drawRenderCommand）；sourceOrigin 未被重新定义
 - **待验证**（§14.16 延续）：Sumatra 真实打印 rot90 纸面方向需真实打印对照；canvas 轨 rot90 端到端 bitmap 需 Electron 采集验证（纯函数数学已验证，绘制路径接线待采集确认）
 
+### 14.18 A3-V1 生产路径采集器 + spec 最终版备注（2026-08-04，commit `85284c78`）
+- **A3-3 Verification Closure 阶段**（用户定稿：A3-3-3 代码闭环后不立即宣布 A3 关闭，先补齐两个采集层事实 A3-V1/A3-V2）
+- **架构结论确认**：三层分离 `RenderResource ≠ Placement ≠ PaperTransform`——rotation 属于 **Paper Transform** 不属于 Placement Transform（A3-3-3 实现修正提炼）
+- **spec §7.1 最终版备注**（用户原话冻结）：**sourceOrigin 不旋转**——它参与旋转前的纸面构建（pre-transform paper construction），PaperTransform 作用于已完成构建的纸面（completed paper surface）
+- **A3-V1 交付**：`collectProductionRotatedCase` 镜像 usePrint renderFileToPrintImage PDF 单文件分支调用序列（computePaperLayout+extendPaperLayoutContract → native → applySourceOriginPlacement → transformPaperRotation → 两段式 drawRenderCommand），只调生产函数不复制渲染语义；`A1-prod-rot90` case + `PROD_ROT_G1_CASES`；Gate A3-E2E-01（镜像静态断言）/ A3-E2E-02（case 定义）。回归 68/68
+- **A3-V1 待采集**（Electron）：A1-prod-rot90 真实 bitmap——C5 锚点 bitmap 1890×2717 / bbox (201,169,1500×2423) / 边距 L17/T14.3/R16/B10.6 / ratio≥0.99
+- **A3-V2 待做**：Sumatra 真实打印验证（portrait source + rot90 → Sumatra 输出 → 扫描 bbox），一致则冻结 A3 Rotation Contract FINAL；不一致只修 SourcePrintAdapter 不动 PlacementAdapter/PaperTransform
+
 ### 14.6 冻结状态
 ```
 A2-G1 source ✅ | canvas 采集链路 ✅ + 第一份报告 🔴FAIL(预期)
