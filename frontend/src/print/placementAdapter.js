@@ -55,6 +55,8 @@ export function applySourceOriginPlacement({ renderResource, paperLayout, rotati
   const scale = 1  // A3-3-2：不缩放（source = native + offset，G1-3B 已证 ratio 1.0）
 
   return {
+    version: 1,  // RenderCommand 契约版本（validateRenderCommand 要求，RenderLayoutFactory.js:77）
+    paper: paperLayout,  // PaperLayout 上下文（validateRenderCommand 要求非空；paperRect 供渲染上下文）
     placement: { offsetX, offsetY, scale },
     rotatedBounds: {
       width: renderResource.width,
@@ -109,6 +111,8 @@ export function transformPaperRotation(placement, rotation, paperW, paperH) {
     canvasW: nW,
     canvasH: nH,
     rotateCanvasCommand: {
+      version: 1,  // RenderCommand 契约版本（validateRenderCommand 要求）
+      paper: { paperRect: { w: nW, h: nH } },  // 旋转后纸面（validateRenderCommand 要求非空；渲染仅需上下文）
       placement: { offsetX: 0, offsetY: 0, scale: 1 },
       rotatedBounds: { width: paperW, height: paperH },  // source = 扩展纸面画布（整页）
       contentRotation: r,

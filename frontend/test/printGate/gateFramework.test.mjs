@@ -455,3 +455,54 @@ test('A3-E2E-02: A1-prod-rot90 case 定义（Custom 230×160 + rotation 90 + mar
   assert.equal(c.settings.marginLeft, 10)
   assert.equal(c.settings.marginTop, 10)
 })
+
+// A3-E2E-03 回归守卫：A3-V1 首次采集暴露的真实缺陷。
+//   现象：bitmap 1890×2717 正确但 bbox=null（全白），DevTools 报
+//        「RenderCommand 契约违例，跳过绘制: 不支持的 version=undefined」。
+//   根因：PlacementAdapter 产出的 command 缺 version/paper —— 纯函数几何全对，
+//        但 drawRenderCommand 的 validateRenderCommand 直接拒绝绘制。
+//   这正是「纯函数路径 ≠ 生产实现路径」的证据，故契约字段必须被测试锁死。
+// validateRenderCommand 契约镜像（RenderLayoutFactory.js:73-99）——本地复刻，
+// 因该模块 import config.js（vite import.meta.env）不可在纯 node 加载。
+function assertRenderCommandContract(cmd, label) {
+  assert.ok(cmd && typeof cmd === 'object', `${label}: 必须为对象`)
+  assert.equal(cmd.version, 1, `${label}: version 必须=1（validateRenderCommand:77）`)
+  assert.ok(cmd.placement && typeof cmd.placement === 'object', `${label}: placement 缺失`)
+  for (const k of ['scale', 'offsetX', 'offsetY']) {
+    assert.equal(Number.isFinite(cmd.placement[k]), true, `${label}: placement.${k} 必须为有限数`)
+  }
+  const rb = cmd.rotatedBounds
+  assert.ok(rb && rb.width > 0 && rb.height > 0, `${label}: rotatedBounds 必须为正数`)
+  assert.equal(typeof cmd.contentRotation, 'number', `${label}: contentRotation 必须为 number`)
+  assert.ok(cmd.paper, `${label}: paper 缺失（validateRenderCommand:96）`)
+}
+
+test('A3-E2E-03: PlacementAdapter 两条 command 均满足 RenderCommand 契约（version/paper 回归守卫）', () => {
+  const rot0 = applySourceOriginPlacement({ renderResource: A1_RESOURCE, paperLayout: A1_PAPER, rotation: 0 })
+  assertRenderCommandContract(rot0, 'applySourceOriginPlacement')
+  assert.equal(rot0.paper, A1_PAPER, 'rot0 command 的 paper 应透传 paperLayout（不新造对象）')
+
+  const r90 = transformPaperRotation(rot0, 90, A1_PAPER_PX.w, A1_PAPER_PX.h)
+  assertRenderCommandContract(r90.rotateCanvasCommand, 'transformPaperRotation.rotateCanvasCommand')
+  assert.deepEqual(
+    r90.rotateCanvasCommand.paper.paperRect,
+    { w: 1890, h: 2717 },
+    '旋转 command 的 paper 应是**旋转后**纸面（Policy A：纸面跟随内容）',
+  )
+})
+
+test('A3-E2E-04: 契约镜像未漂移 — validateRenderCommand 仍是 7 条校验（源码守卫）', () => {
+  // 归一化换行：仓库为 CRLF，直接按 '\n}\n' 切会截到空串（首版即踩此坑）
+  const src = readFileSync(new URL('../../src/layout/RenderLayoutFactory.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n')
+  const body = src.slice(src.indexOf('export function validateRenderCommand'))
+  const fnBody = body.slice(0, body.indexOf('\n}\n') + 2)
+  const throws = fnBody.match(/throw new Error\(/g) || []
+  assert.equal(
+    throws.length, 7,
+    `validateRenderCommand 校验条数变化（${throws.length}≠7）——请同步更新 assertRenderCommandContract 镜像`,
+  )
+  // 关键字段名硬断言：改名会让 PlacementAdapter 静默失效（跳过绘制=全白）
+  for (const field of ['cmd.version !== 1', 'cmd.placement', 'cmd.rotatedBounds', 'cmd.contentRotation', 'cmd.paper']) {
+    assert.ok(fnBody.includes(field), `validateRenderCommand 应仍校验 ${field}`)
+  }
+})
