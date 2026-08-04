@@ -658,11 +658,57 @@ Phase B    ⏸
   通过后冻结 A3 Rotation Contract FINAL，进 A3-V2（Sumatra 真机方向验证）。
 - **A3-V1 状态**：代码侧修复完成，**真实 bitmap 待用户在 Electron devtools 重跑判定**（C5 锚点）。
 
+### 14.21 A3-3-3 Rotation Contract = PASS；A3-C5 Final Alignment = BLOCKED（2026-08-04 复跑判定）
+
+**🔴 重要边界切分（用户定稿，禁止写 "A3-3-3 failed"）**：
+
+| 项 | 状态 |
+|---|---|
+| A3-3-3 Rotation Coordinate Contract | ✅ PASS |
+|   - Policy A 画布级旋转（paper 跟随 content） | ✅ |
+|   - rotation center pivot（居中 offset，A3-V1 第二坑修复） | ✅ |
+|   - sourceOrigin 不单独旋转（参与旋转前构造） | ✅ |
+|   - 旋转后 bitmap 尺寸 1890×2717 | ✅ 精确 = C5 |
+|   - 旋转方向 CW 90° / 四边旋转关系 | ✅ |
+|   - bbox 无裁切 / 无负坐标 | ✅ |
+| A3-C5 Full Fidelity Alignment | ⏸ BLOCKED |
+
+**判定证据（paper-space 反推法）**：把实测 rot90 边距反推 90°CW 回 paper-space，
+左上锚点与 source 吻合到 <0.2mm（Canvas L14.22/T15.83 vs Source L14.3/T16），
+右下角被「拉进」（R12.19 vs 10.6、B20.66 vs 17）。
+
+- 若 rotation transform / center pivot / canvas size 任一错，**四边会整体平移乱掉**；
+  实测仅右下收缩 ⇒ 旋转层精确，问题在**内容自身尺度**。
+- 残差模式 = `anchor 正确 + size 偏小`（非整体平移）：
+  source content 1500×2423 vs canvas 1459×2405（宽 -41px/-3.47mm、高 -18px/-1.52mm）。
+  最大残差 **3.66mm（底边距）**。
+
+**职责边界（架构判定）**：
+```
+A3-3-3 负责：放在哪里 / 怎么旋转 / 纸张尺寸   ← 已验证
+A3-3-3 不负责：native bitmap 内容边界是多少   ← RenderResource fidelity
+```
+native 内容尺度差属 `renderPDFPageRaw` 栅格化保真度（pdf.js `getViewport` 默认按 **CropBox**，
+而 add-pdf-margins 按 **MediaBox** 扩页 ⇒ 嫌疑最大），与 PlacementAdapter / PaperTransform 无关。
+
+**A3-C5 BLOCKED 根因**：RenderResource content scale mismatch（max 3.66mm）。
+**Owner**：RenderResource pipeline（renderers.js / renderPDFPageRaw），非 PlacementAdapter。
+
+**下一步 A3-R1（RenderResource Fidelity Investigation，只读调查，不改生产）**：
+1. `renderPDFPageRaw(paperKey=null)` 输出尺寸（已知 2480×1654 @300dpi）
+2. source PDF MediaBox / CropBox（pdf.js 默认 CropBox vs add-pdf-margins MediaBox 扩页）
+3. add-pdf-margins.py 后 PDF 实际 content box
+4. pdf.js / MuPDF 是否存在默认 fit / 默认白边
+5. native render 是否应用 PDF page rect 而非 viewport
+
+⚠️ **红线**：A3-R1 期间**禁止**引入 scale compensation / +3.5mm hack / bbox 拉伸 ——
+否则破坏刚建立的 `resource ≠ placement ≠ PaperTransform` 原则。
+
 ### 14.6 冻结状态
 ```
 A2-G1 source ✅ | canvas 采集链路 ✅ + 第一份报告 🔴FAIL(预期)
 A2-G1-CANVAS-2 同纸张实验 🔴 FAIL（renderPDFPageRaw customPaper 缺陷，双重 fit）
 A2-G1 OFD (G1-B) ⏸ | A2-G2..G6 ⏸
-A3 ⏸（需先解决纸张语义统一 + 修 renderPDFPageRaw）| Phase B ⏸
+A3-3-3 ✅（rotation+paper transform 验证）| A3-C5 ⏸ BLOCKED by RenderResource fidelity(max 3.66mm) | A3-R1 调查启动 | A3-V2 ⏸ | Phase B ⏸
 ```
 
