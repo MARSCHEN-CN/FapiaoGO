@@ -40,7 +40,13 @@
  *     --printer "Ghostscript PDF" \
  *     --out artifacts/sumatra_a1_rot90.pdf \
  *     --rot0-out artifacts/sumatra_a1_rot0.pdf \
+ *     --search-dir "C:/Users/it01/Documents/WPS PDF" \
  *     --python "C:/Program Files/Python312/python.exe"
+ *
+ *   注意：SumatraPDF -print-to 不能指定输出路径，writer 落盘位置由驱动决定。
+ *   若 writer 未保存到 --out，脚本会自动扫描 --search-dir（默认含输出目录/cwd/桌面/文档/下载）
+ *   抓取最近 60s 内生成的 .pdf 复制到 --out 再测量。
+ *   可脚本化 writer（Ghostscript/Bullzip/PDF24）可让 --out 直接生效。
  *
  *   # 仅测一个 rot90 artifact（用 A3-3-3 C5 rot0 边距作参考，权威性略低）
  *   node scripts/verify_sumatra_rotation.js --pdf ... --rotation 90 \
@@ -164,6 +170,28 @@ function marginMultisetMatch(a, b, tol = 5) {
   return av.every((v, i) => Math.abs(v - bv[i]) <= tol)
 }
 
+// ─── 3.5 抓取 writer 实际落盘的文件（writer-agnostic 安全网）───
+// SumatraPDF -print-to 不能指定输出路径，文件落在 writer 驱动自己决定的位置。
+// 若 --out 不存在，扫描 searchDirs 找最近 maxAgeMs 内生成的 .pdf，复制到 --out。
+function grabOutput(outPdf, searchDirs, maxAgeMs = 60000) {
+  const cutoff = Date.now() - maxAgeMs
+  let best = null
+  for (const dir of searchDirs) {
+    let names = []
+    try { names = fs.readdirSync(dir).filter(f => f.toLowerCase().endsWith('.pdf')) } catch { continue }
+    for (const f of names) {
+      const full = path.join(dir, f)
+      let st
+      try { st = fs.statSync(full) } catch { continue }
+      if (st.mtimeMs >= cutoff && (!best || st.mtimeMs > best.mtimeMs)) best = { full, mtimeMs: st.mtimeMs }
+    }
+  }
+  if (!best) return null
+  try { fs.copyFileSync(best.full, outPdf) } catch (e) { console.error(`⚠️ 抓取失败(复制 ${best.full} -> ${outPdf}): ${e.message}`); return null }
+  console.log(`▶ 抓取 writer 输出: ${best.full} -> ${outPdf}`)
+  return outPdf
+}
+
 // ─── 4. 主流程 ───
 function main() {
   const argv = process.argv.slice(2)
@@ -174,6 +202,7 @@ function main() {
   const printer = get('--printer', '')
   const out = get('--out', '')
   const rot0Out = get('--rot0-out', '')
+  const searchDir = get('--search-dir', '')
   const sumatra = get('--sumatra', path.resolve('resources/sumatra/SumatraPDF.exe'))
   const python = get('--python', 'python3')
   const contentOrient = get('--content-orientation', 'landscape')
@@ -204,12 +233,25 @@ function main() {
 
   // V2-B：把已有生产命令路由到虚拟 PDF writer
   if (!fs.existsSync(sumatra)) { console.error(`❌ SumatraPDF 不存在: ${sumatra}（用 --sumatra 指定）`); process.exit(2) }
-  if (!out) { console.error('❌ V2-B 需 --out <输出PDF路径>（虚拟 writer 静默保存位置）'); process.exit(2) }
+  if (!out) { console.error('❌ V2-B 需 --out <输出PDF路径>（脚本期望 writer 静默保存到此处；SumatraPDF -print-to 本身不能指定路径）'); process.exit(2) }
+
+  // 确保输出目录存在（writer 若配置保存到此处需要目录）
+  const outDir = path.dirname(path.resolve(out))
+  try { fs.mkdirSync(outDir, { recursive: true }) } catch {}
+
+  // 抓取目录：用户指定 + 输出目录 + cwd + 常见用户目录（writer 静默落盘位置未知时用）
+  const searchDirs = []
+  if (searchDir) searchDirs.push(path.resolve(searchDir))
+  searchDirs.push(outDir, process.cwd())
+  const userDir = process.env.USERPROFILE || process.env.HOME
+  if (userDir) searchDirs.push(path.join(userDir, 'Desktop'), path.join(userDir, 'Documents'), path.join(userDir, 'Downloads'))
+  const uniqDirs = [...new Set(searchDirs)].filter(d => fs.existsSync(d))
 
   const args = ['-print-to', printer, '-print-settings', printSettings, '-silent', '-exit-when-done', pdf]
   console.log(`▶ 调用 SumatraPDF（同生产 -print-settings，目标=虚拟 writer）: ${sumatra}`)
   console.log(`  args: ${args.join(' ')}`)
-  console.log(`  输出目标: ${out}`)
+  console.log(`  期望输出: ${out}（SumatraPDF -print-to 不能指定路径；writer 落到此或下方搜索目录）`)
+  console.log(`  搜索目录: ${uniqDirs.join(' | ')}`)
 
   const t0 = Date.now()
   execFile(sumatra, args, { timeout: 120000 }, (err) => {
@@ -217,17 +259,23 @@ function main() {
     if (err) { console.error(`❌ SumatraPDF 调用失败 (${dur}ms): ${err.message}`); process.exit(1) }
     console.log(`✅ SumatraPDF 返回 (${dur}ms)`)
     setTimeout(() => {
-      const rot90 = measure(out, python, rot0Out, printer, sumatra, printSettings)
+      const rot90 = measure(out, python, rot0Out, printer, sumatra, printSettings, uniqDirs)
       if (!rot90) process.exit(1)
     }, 1500)
   })
 }
 
-function measure(outPdf, python, rot0Out, printer, sumatra, printSettings) {
+function measure(outPdf, python, rot0Out, printer, sumatra, printSettings, searchDirs = []) {
   if (!fs.existsSync(outPdf)) {
-    console.error(`❌ 输出 PDF 未生成: ${outPdf}`)
-    console.error('   确认虚拟 PDF writer 已配置静默保存到 --out 路径，且忠实遵循 paper=230mm x 160mm + disable-auto-rotation。')
-    return null
+    const grabbed = grabOutput(outPdf, searchDirs)
+    if (!grabbed) {
+      console.error(`❌ 输出 PDF 未生成: ${outPdf}`)
+      console.error('   原因: SumatraPDF -print-to 不能指定输出路径，文件落在虚拟 writer 自己决定的位置。')
+      console.error('   解决: ① 配置该 writer 静默保存到某目录，用 --search-dir <该目录> 指定；或')
+      console.error('         ② 装可脚本化 writer（Ghostscript/Bullzip/PDF24），其输出路径可被脚本写入配置。')
+      return null
+    }
+    outPdf = grabbed
   }
   console.log(`\n▶ 测量 rot90 artifact: ${outPdf}`)
   const d90 = runProbe(outPdf, python)
