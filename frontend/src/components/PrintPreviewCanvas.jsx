@@ -232,39 +232,43 @@ const PrintPreviewCanvas = memo(({ preview, marginSettings }) => {
   const hasMargins = margins.left > 0 || margins.right > 0 || margins.top > 0 || margins.bottom > 0
 
   return (
-    <div className="pcm-preview-page">
-      {/* 纸面 SVG 直接渲染（无固定宽度内层；白纸/圆角/阴影由 .pcm-preview-page svg 提供，
-          宽度撑满容器、高度按 viewBox 比例自适应，纸面可贴近 body 边缘出血） */}
-      <svg
-        viewBox={`0 0 ${widthMM} ${heightMM}`}
-        width="100%"
-        role="img"
-        aria-label={`打印预览：${page.paper} ${ORIENT_LABEL[page.orientation] || ''} ${slotCount} 票`}
-      >
-        {/* 纸张背景（白底模拟纸面；viewBox 画布本身透明） */}
-        <rect x="0" y="0" width={widthMM} height={heightMM} rx="1.5" fill="#fff" stroke="var(--border-light)" strokeWidth="0.6" />
+    <div className="pcm-preview-stage">
+      {/* 纸面区：占满 stage 剩余空间并居中（超高可滚动），高度随纸张方向变化
+          但页码条在 stage 底部固定，不随纸面跳动 */}
+      <div className="pcm-preview-page">
+        {/* 纸面 SVG 直接渲染（无固定宽度内层；白纸/圆角/阴影由 .pcm-preview-page svg 提供，
+            宽度撑满容器、高度按 viewBox 比例自适应，纸面可贴近 body 边缘出血） */}
+        <svg
+          viewBox={`0 0 ${widthMM} ${heightMM}`}
+          width="100%"
+          role="img"
+          aria-label={`打印预览：${page.paper} ${ORIENT_LABEL[page.orientation] || ''} ${slotCount} 票`}
+        >
+          {/* 纸张背景（白底模拟纸面；viewBox 画布本身透明） */}
+          <rect x="0" y="0" width={widthMM} height={heightMM} rx="1.5" fill="#fff" stroke="var(--border-light)" strokeWidth="0.6" />
 
-        {/* 安全边距指示器（纯虚线边框，无底色填充） */}
-        {hasMargins && (
-          <rect
-            x={margins.left || 0}
-            y={margins.top || 0}
-            width={Math.max(0, widthMM - (margins.left || 0) - (margins.right || 0))}
-            height={Math.max(0, heightMM - (margins.top || 0) - (margins.bottom || 0))}
-            fill="none"
-            stroke="var(--accent)" strokeOpacity="0.35"
-            strokeWidth="0.25"
-            strokeDasharray="1 0.6"
-          />
-        )}
+          {/* 安全边距指示器（纯虚线边框，无底色填充） */}
+          {hasMargins && (
+            <rect
+              x={margins.left || 0}
+              y={margins.top || 0}
+              width={Math.max(0, widthMM - (margins.left || 0) - (margins.right || 0))}
+              height={Math.max(0, heightMM - (margins.top || 0) - (margins.bottom || 0))}
+              fill="none"
+              stroke="var(--accent)" strokeOpacity="0.35"
+              strokeWidth="0.25"
+              strokeDasharray="1 0.6"
+            />
+          )}
 
-        {/* 发票缩略图槽位 */}
-        {page.slots.map((slot, i) => (
-          <SlotImage key={`${slot.fileId || 'slot'}-${slot.pageIndex}-${i}`} slot={slot} />
-        ))}
-      </svg>
+          {/* 发票缩略图槽位 */}
+          {page.slots.map((slot, i) => (
+            <SlotImage key={`${slot.fileId || 'slot'}-${slot.pageIndex}-${i}`} slot={slot} />
+          ))}
+        </svg>
+      </div>
 
-      {/* 页码控制（固定区域常驻：单页显示 1/1 禁用态，多页可翻页/输入跳转） */}
+      {/* 页码控制（stage 底部固定：单页显示 1/1 禁用态，多页可翻页/输入跳转） */}
       <PreviewPageNav
         current={idx}
         total={total}

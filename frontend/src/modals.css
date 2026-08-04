@@ -1026,18 +1026,30 @@ button.pc-btn.outline,
   flex: 1;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
   padding: 20px 16px; /* 水平内缩收窄：纸面更贴近 body 边缘（出血感），不再受固定宽度限制 */
   gap: 16px;
-  overflow: auto;
+  overflow: hidden; /* 滚动交给纸面区（pcm-preview-page） */
   background:
     linear-gradient(var(--bg), var(--bg)) padding-box,
     repeating-linear-gradient(45deg, var(--border-light) 0, var(--border-light) 1px, transparent 1px, transparent 10px);
 }
+/* 预览舞台：占满 body，纵向 = 纸面区（弹性）+ 页码条（底部固定） */
+.pcm-preview-stage {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+/* 纸面区：占满 stage 剩余空间并居中（超高可滚动）。
+   纸张横竖切换只改变本区内容，不影响底部页码条位置 */
 .pcm-preview-page {
-  display: flex; flex-direction: column; align-items: center; gap: 8px;
-  width: 100%; /* 撑满 body 内容宽：纸面宽度随容器自适应（不再有 160px 固定框） */
+  flex: 1;
+  min-height: 0;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 8px;
+  overflow: auto;
+  width: 100%; /* 撑满容器宽：纸面宽度随容器自适应 */
 }
 /* 纸面 SVG：无底色无阴影（viewBox 透明，纯粹显示打印内容 + 安全边距线条）；
    宽度撑满容器、高度按 viewBox 比例自动（无固定宽度内层） */
@@ -1047,7 +1059,7 @@ button.pc-btn.outline,
   height: auto;
   flex-shrink: 0;
 }
-/* 页码控制（固定区域：高度恒定、始终渲染——单页显示 1/1 禁用态，多页翻页/输入跳转。
+/* 页码控制（stage 底部固定：高度恒定、始终渲染——单页显示 1/1 禁用态，多页翻页/输入跳转。
    按钮统一 28px（page-nav-btn），不抖动不塌陷） */
 .pcm-preview-nav-bar {
   flex-shrink: 0;
