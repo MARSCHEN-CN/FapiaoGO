@@ -18,6 +18,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
   buildPrintExecutionPlan,
+  createPrintPlanInput,
   SOURCE_FILE_FILTER,
   MERGE_FILE_FILTER,
 } from '../src/print/buildPrintExecutionPlan.js'
@@ -157,4 +158,36 @@ test('Case 10: 无 filter 时使用原始 files 副本（不污染入参）', ()
   const snapshot = files.map((f) => ({ ...f }))
   buildPrintExecutionPlan(files, { settings: {} })
   assert.deepEqual(files, snapshot) // 入参未被修改
+})
+
+// ── createPrintPlanInput 契约（Commit 1 后审计收尾）──
+// 目的：锁定「mergeMode → filter」唯一决策点——所有 plan 必须经同一 input
+// resolver 获得打印事实，防止未来 execute/preview 各自解释业务规则再次漂移。
+
+test('PPI-01: 非 merge（none/缺省）→ SOURCE_FILE_FILTER（普通打印）', () => {
+  assert.equal(createPrintPlanInput([], { mergeMode: 'none' }).options.filter, SOURCE_FILE_FILTER)
+  assert.equal(createPrintPlanInput([]).options.filter, SOURCE_FILE_FILTER, 'mergeMode 缺省 → SOURCE')
+  assert.equal(createPrintPlanInput([], {}).options.filter, SOURCE_FILE_FILTER, 'settings 空 → SOURCE')
+})
+
+test('PPI-02: merge 模式（merge2/merge3/merge4）→ MERGE_FILE_FILTER', () => {
+  for (const mergeMode of ['merge2', 'merge3', 'merge4']) {
+    assert.equal(
+      createPrintPlanInput([], { mergeMode }).options.filter,
+      MERGE_FILE_FILTER,
+      `mergeMode=${mergeMode} → MERGE_FILE_FILTER`,
+    )
+  }
+})
+
+test('PPI-03: 输入透传——files/settings/fileRotations 原样进入 plan options', () => {
+  const files = [mk('A', { status: 'error' })] // merge 口径下应被 MERGE filter 放行
+  const fileRotations = { A: 90 }
+  const { files: outFiles, options } = createPrintPlanInput(files, { mergeMode: 'merge2' }, fileRotations)
+  assert.equal(outFiles, files, 'files 引用透传（不复制）')
+  assert.equal(options.fileRotations, fileRotations)
+  // 端到端：MERGE filter 放行 error 态文件（与 doPrint 行为一致）
+  const plan = buildPrintExecutionPlan(outFiles, options)
+  assert.equal(plan.pages[0].slots[0].fileId, 'A')
+  assert.equal(plan.pages[0].slots[0].rotation, 90)
 })

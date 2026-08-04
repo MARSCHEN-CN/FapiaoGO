@@ -1203,7 +1203,6 @@ function AppContent() {
           previewModel={printPreviewModel}
           onConfirm={onPrintConfirm}
           onCancel={handlePrintCancel}
-          onSettingsChange={updateSettings}
         />
         <PdfExportConfirmModal
           visible={showPdfExport}
