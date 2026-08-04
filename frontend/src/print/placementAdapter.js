@@ -66,6 +66,58 @@ export function applySourceOriginPlacement({ renderResource, paperLayout, rotati
 }
 
 /**
+ * A3-3-3 transformPaperRotation：Policy A（paper + content 一体旋转）的画布级旋转命令
+ *
+ * 冻结（a3_design_spec §7.1）：
+ *   - C2 Policy A：纸面方向跟随内容旋转（rot90 → 纸面 W×H → H×W），非纸固定内容旋转（Policy B）
+ *   - C3 变换顺序：native → 施加 sourceOrigin（扩展纸面）→ 整体旋转（paper+content 一体，中心支点）
+ *   - C4 sourceOrigin 是 paper-space 属性：**不参与旋转变换**（rot0 阶段 offset 已施加，
+ *     旋转作用于整个扩展纸面画布）
+ *   - 输出仍是 PlacementCommand（drawRenderCommand 兼容），**绝不返回 bitmap**
+ *     （用户实现边界：PlacementAdapter → PlacementCommand → drawRenderCommand → Canvas）
+ *
+ * ⚠️ 实现要点（2026-08-04 修正，Gate 02/03 失败暴露）：
+ *   drawRenderCommand 的 contentRotation 语义 = 内容在**画布内**绕落盘中心旋转（Policy B），
+ *   直接改 command 的 offset/rotatedBounds 走 cr 旋转会让内容旋转后超出画布（Policy A 不满足）。
+ *   Policy A 的正确实现 = **画布级旋转**：rot0 command 先绘制扩展纸面画布（2717×1890），
+ *   再把该画布作为 source 用「画布旋转 command」（rotateCanvasCommand）旋转绘制到新画布（1890×2717）。
+ *   与 A3-2 采集器（canvas 2D 旋转整个画布）同一数学——已验证（C5 bbox (201,169) 吻合）。
+ *
+ * @param {object} placement  PlacementCommand（applySourceOriginPlacement 输出，rot0 版）
+ * @param {number} rotation   90 | 180 | 270（0 返回原画布尺寸 + 无旋转命令）
+ * @param {number} paperW     原扩展纸面宽（px）
+ * @param {number} paperH     原扩展纸面高（px）
+ * @returns {object} { canvasW, canvasH, rotateCanvasCommand|null }
+ *   - canvasW/canvasH：旋转后画布尺寸（90/270 → paperH×paperW；180 → 原尺寸）
+ *   - rotateCanvasCommand：把「扩展纸面画布」旋转绘制到新画布的 PlacementCommand
+ *     （placement.offset=0/0 居中、rotatedBounds=原画布尺寸、contentRotation=rotation、clip=null）
+ */
+export function transformPaperRotation(placement, rotation, paperW, paperH) {
+  const r = ((Math.round(rotation) % 360) + 360) % 360
+  if (!(paperW > 0) || !(paperH > 0)) {
+    throw new Error('transformPaperRotation: paperW/paperH 需为正数（扩展纸面 px）')
+  }
+  if (r === 0) return { canvasW: paperW, canvasH: paperH, rotateCanvasCommand: null }
+  if (r !== 90 && r !== 180 && r !== 270) {
+    // 非法角度（非 0/90/180/270）：fail-loud，不静默返回错误几何
+    throw new Error(`transformPaperRotation: 非法 rotation=${rotation}（仅支持 0/90/180/270）`)
+  }
+  const swap = r === 90 || r === 270
+  const nW = swap ? paperH : paperW
+  const nH = swap ? paperW : paperH
+  return {
+    canvasW: nW,
+    canvasH: nH,
+    rotateCanvasCommand: {
+      placement: { offsetX: 0, offsetY: 0, scale: 1 },
+      rotatedBounds: { width: paperW, height: paperH },  // source = 扩展纸面画布（整页）
+      contentRotation: r,
+      clip: null,
+    },
+  }
+}
+
+/**
  * A3-3-2-01 Gate：placement 后 bbox 是否 = native bbox + sourceOrigin（dx/dy ≤0.5mm）
  * @param {object} nativeBbox {x,y,w,h}（px，native 渲染内容 bbox）
  * @param {object} paperLayout 含 sourceOrigin（mm）
