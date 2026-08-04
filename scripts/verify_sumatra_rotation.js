@@ -23,6 +23,9 @@
  *         要拿到 fitz 能分析的 artifact，必须经由一个 PDF writer（从 Sumatra 视角就是「打印机」，
  *         但吐的是 PDF 文件而非纸张）。推荐 Ghostscript PDF / PDF24 / Bullzip；
  *         "Microsoft Print to PDF" 在 CLI 下弹保存框且不保自定义纸（本机实测：自定义 230×160mm 被夹成 A4 210×297mm，artifact 无效），不推荐。
+ *         ⚠️ PDF24 注意：它把打印任务暂存为 .ps 到 %LOCALAPPDATA%\Temp\PDF24\ 并弹出「保存助手」对话框，
+ *            仅当用户保存后才产出最终 PDF。-silent 下 Sumatra 返回但 PDF 不提交 → 必须先在 PDF24 设置里
+ *            启用「静默自动保存」到某目录（默认 C:\Users\<user>\PDF24，本脚本已自动搜索该目录）。
  *
  * V2 Gate：
  *   V2-01 Source Media Geometry：量 artifact MediaBox（pt/mm）+ 方向 → Policy A/B 裁决者。
@@ -230,6 +233,27 @@ function grabOutput(outPdf, searchDirs, maxAgeMs = 60000) {
   return outPdf
 }
 
+// 检测 PDF24 是否已接收任务但仅暂存为 .ps（未生成 PDF）——说明助手对话框在等用户保存。
+function detectPdf24Staging() {
+  const userDir = process.env.USERPROFILE || process.env.HOME
+  const cand = []
+  if (userDir) cand.push(path.join(userDir, 'AppData', 'Local', 'Temp', 'PDF24'))
+  cand.push(path.join(os.tmpdir(), 'PDF24'))
+  const cutoff = Date.now() - 120000
+  const found = []
+  for (const d of cand) {
+    let names = []
+    try { names = fs.readdirSync(d).filter(f => f.toLowerCase().endsWith('.ps')) } catch { continue }
+    for (const f of names) {
+      const full = path.join(d, f)
+      let st
+      try { st = fs.statSync(full) } catch { continue }
+      if (st.mtimeMs >= cutoff) found.push(full)
+    }
+  }
+  return found
+}
+
 // ─── 4. 主流程 ───
 function main() {
   const argv = process.argv.slice(2)
@@ -293,10 +317,16 @@ function main() {
 
   // 抓取目录：用户指定 + 输出目录 + cwd + 常见用户目录（writer 静默落盘位置未知时用）
   const searchDirs = []
-  if (searchDir) searchDirs.push(path.resolve(searchDir))
+  if (searchDir) searchDirs.push(...searchDir.split(',').map(s => s.trim()).filter(Boolean).map(s => path.resolve(s)))
   searchDirs.push(outDir, process.cwd())
   const userDir = process.env.USERPROFILE || process.env.HOME
-  if (userDir) searchDirs.push(path.join(userDir, 'Desktop'), path.join(userDir, 'Documents'), path.join(userDir, 'Downloads'))
+  if (userDir) searchDirs.push(
+    path.join(userDir, 'Desktop'),
+    path.join(userDir, 'Documents'),
+    path.join(userDir, 'Downloads'),
+    path.join(userDir, 'PDF24'),                                // PDF24 静默自动保存默认目录
+    path.join(userDir, 'AppData', 'Local', 'Temp', 'PDF24')    // PDF24 任务暂存(.ps)目录
+  )
   const uniqDirs = [...new Set(searchDirs)].filter(d => fs.existsSync(d))
 
   const args = ['-print-to', printer, '-print-settings', printSettings, '-silent', '-exit-when-done', pdf]
@@ -318,7 +348,7 @@ function main() {
     setTimeout(() => {
       const rot90 = measure(out, python, rot0Out, pol, oc.baseFlag, uniqDirs)
       if (!rot90) process.exit(1)
-    }, 1500)
+    }, 2500)
   })
 }
 
@@ -326,10 +356,20 @@ function measure(outPdf, python, rot0Out, pol, baseFlag, searchDirs = []) {
   if (!fs.existsSync(outPdf)) {
     const grabbed = grabOutput(outPdf, searchDirs)
     if (!grabbed) {
+      const staging = detectPdf24Staging()
       console.error(`❌ 输出 PDF 未生成: ${outPdf}`)
       console.error('   原因: SumatraPDF -print-to 不能指定输出路径，文件落在虚拟 writer 自己决定的位置。')
-      console.error('   解决: ① 配置该 writer 静默保存到某目录，用 --search-dir <该目录> 指定；或')
-      console.error('         ② 装可脚本化 writer（Ghostscript/Bullzip/PDF24），其输出路径可被脚本写入配置。')
+      if (staging.length) {
+        console.error(`   ⚠️ 检测到 PDF24 已把任务暂存为 .ps（${staging.join('; ')}）但未生成 PDF。`)
+        console.error('      PDF24 默认会打开「保存助手」对话框等待你点保存；-silent 下 Sumatra 已返回但 PDF 未提交。')
+        console.error('      解决 A（推荐）: 在 PDF24 设置中启用「静默自动保存」到某目录（默认 C:\\Users\\it01\\PDF24），')
+        console.error('                      该目录本脚本已自动纳入搜索；或显式 --search-dir 指向该目录。')
+        console.error('      解决 B        : 改用 Wondershare PDFelement（已验证可处理自定义纸，通常可静默保存），')
+        console.error('                      并 --search-dir 指向其输出目录。')
+      } else {
+        console.error('   解决: ① 用 --search-dir <writer实际输出目录> 指定；或')
+        console.error('         ② 配置 writer 静默自动保存（PDF24 静默自动保存 / Wondershare）。')
+      }
       return null
     }
     outPdf = grabbed
