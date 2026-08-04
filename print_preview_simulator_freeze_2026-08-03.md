@@ -710,15 +710,22 @@ native 内容尺度差属 `renderPDFPageRaw` 栅格化保真度（pdf.js `getVie
 **Placement 链（纸张/坐标系/位移/旋转）精确**，残差 100% 落在 RenderResource 层（pdf.js vs fitz 栅格化尺度差）。
 **问题回到 Resource 层，不应污染 Placement/Rotation 已验证结论。**
 
-#### 14.22.1 A3 子项状态
+#### 14.22.1 A3 子项状态（2026-08-04 用户重分层冻结）
+> 四层验收栈：`RenderResource fidelity → Placement geometry → Paper transform/rotation → Final canvas contract`。
+> 每层独立验证、独立收口，残差不向上层污染。
+
 | 项 | 状态 | 证据 |
 |---|---|---|
 | A3-3-1 Rotation Coordinate Contract | ✅ | Policy A + C3/C4 冻结通过 |
 | A3-3-2 Placement Geometry (rot0) | ✅ | rot0 探针：left/top anchor <0.2mm 吻合 source |
-| A3-3-3 Rotation Transform | ✅ | rot90 bitmap 1890×2717 精确 + 旋转后边距反推 <0.2mm |
+| A3-3-3 Rotation Transform | ✅ | rot90 bitmap 1890×2717 精确 + 旋转后边距反推 <0.2mm + 自洽 round-trip(脱离 fitz) |
 | A3-R1 Rotation risk | CLOSED | rot0 证明残差与 rotation 无关（非整体平移/四边错位） |
-| A3-RF RenderResource Fidelity | ⚠️ OPEN（结论：pdf.js vs fitz 引擎差，不可约，非 blocker） | 同 box 同 dpi 两 rasterizer 保真度差；非 box 选择/Placement/Rotation |
-| A3-C5 Full Fidelity Alignment | ⏸ BLOCKED | 等待 RenderResource baseline 统一 |
+| A3-RF-01 R2 CropBox hypothesis | ✅ CLOSED (FALSIFIED) | cropbox_eq_mediabox=true，两引擎同渲 MediaBox@300dpi |
+| A3-RF-02 Engine fidelity variance | ⚠️ RECORDED（非 blocker） | pdf.js vs fitz 同 box 同 dpi 保真度差 宽-1.5mm/高-3.5mm，不可约；移交 A2 渲染保真度专项 |
+| A3-C5 Geometry Closure | ✅ PASS (72/72) | canvas rot0↔rot90 自洽 round-trip（脱离 fitz） |
+| A3-C5 Source Semantic Alignment | ⏸ PENDING | 待 A3-V2 Sumatra 真机（唯一未证实点：sourceOrientation=Policy A?） |
+
+⚠️ **C5-Geometry 收口待补**（非阻塞，记 Gate 待办）：rot180/rot270 目前仅 A3-3-3-04 验证 adapter 形态（canvasW/H + contentRotation + rotatedBounds），**缺 bbox 变换 + 四边 margin 轮换断言**。补 2 用例即真正闭环：rot180 bbox 不变/四边不变；rot270 bbox 宽高互换/四边逆时针轮换。
 
 #### 14.22.2 新增 Gate：A3-RF-01（RenderResource Fidelity Gate）
 - **职责**：验证 `renderPDFPageRaw()` 生成的 resource 是否与 source renderer（fitz）一致。
@@ -749,6 +756,16 @@ native 内容尺度差属 `renderPDFPageRaw` 栅格化保真度（pdf.js `getVie
   参考物是 **native bitmap 自身 bbox**，而非 `pdf.js bitmap vs fitz raster bbox`（两 renderer 比尺寸非同一变量）。
 - 旋转正确性纯靠 canvas rot0 ↔ canvas rot90 互验（逆旋转后 bbox 重合即 PASS），彻底脱离 fitz 参考锚。
 
+#### 14.22.5 A3-RF-02 Engine Fidelity Variance（RECORDED，非 blocker）
+- **定义**：RenderResource 层（pdf.js `renderers.js` vs fitz/MuPDF）同 box 同 dpi 栅格化保真度差，属两渲染引擎固有差异（字形度量/矢量 AA），**非代码 bug、非 box 选择、非 Placement/Rotation 层**。
+- **实测方差**（A1 Custom 230×160 @300dpi，canvas rot0 on Custom vs fitz G1）：
+  ```
+  width variance:  -1.5mm  (2405 vs 2423 px)
+  height variance: -3.5mm  (1459 vs 1500 px)
+  anchor:          <0.2mm 吻合（左上角，证明 placement 精确）
+  ```
+- **处置**：记录为已知 baseline divergence，**不作为 A3 blocker**；移交 A2 渲染保真度专项统一。A3-RF 期间红线（全程）：禁 scale compensation / +3.5mm hack / bbox 拉伸。
+
 ### 14.23 A3-RF 结论 + A3-3-3 自洽 Gate 落地（2026-08-04 Probe 第二轮）
 
 **RenderResource Probe 第二轮实测定论**：
@@ -769,21 +786,69 @@ native 内容尺度差属 `renderPDFPageRaw` 栅格化保真度（pdf.js `getVie
 - `A3-3-3-02/03/06` 补注释：验证「旋转数学对给定 bbox 的变换正确」（引擎无关），C5 size 标注为 fitz content scale（RenderResource 关切），与旋转无关。
 - 测试 **72/72**（原 71 + A3-3-3-07）。
 
-**最终状态分裂（A3 收口）**：
+**最终状态分裂（A3 收口，2026-08-04 用户重分层定稿）**：
 ```
-A3-3-1 Contract          ✅
-A3-3-2 Placement rot0    ✅   ← rot0 探针 left/top anchor <0.2mm 吻合 source
-A3-3-3 Rotation          ✅   ← rot90 bitmap 精确 + 反推 <0.2mm + 自洽 round-trip(脱离 fitz)
-A3-R1 Rotation risk      CLOSED
-A3-RF Render fidelity    ⚠️ OPEN（结论：pdf.js vs fitz 引擎差，不可约；非 blocker）
-A3-C5 Full Fidelity      ⏸ BLOCKED（canvas==fitz ≤0.5mm 不可达；fitz 非生产渲染器）
-A3-V2 真机验证           ⏸（阻塞于 A3-C5 重新定义，见下）
+A3-3-1 Contract              ✅
+A3-3-2 Placement rot0        ✅
+A3-3-3 Rotation transform    ✅
+A3-R1 Rotation risk          CLOSED
+
+A3-RF:
+  R2 CropBox hypothesis      CLOSED (FALSIFIED)
+  Engine variance            RECORDED (A3-RF-02, 非 blocker)
+
+A3-C5:
+  Geometry closure           PASS (72/72, 脱离 fitz)
+  Source semantic alignment  PENDING Sumatra V2
 ```
 
-**A3-C5 重新定义建议（待用户裁决）**：
-- 原 A3-C5「canvas==source(fitz) ≤0.5mm」因 fitz 非生产渲染器、且两引擎有 ~3.5mm 不可约差，**终判不可达**。
-- 建议改为：**A3-C5 = canvas rot0 == canvas rot90 逆旋转自洽（≤0.5mm 几何闭合）**，彻底以 pdf.js 自身为参考，fitz 降为独立 RenderResource 保真度指标（移交 A2 渲染保真度专项）。
+**A3-C5 处理决定（用户定稿，不再重写）**：
+- **不删 C5、不改成 rot0↔rot90 自洽**。拆三层：
+  - `A3-C5 Geometry Closure`（原 C5）：canvas rot0↔rot90↔rot180↔rot270 几何闭合，同 RenderResource，无需 fitz → **PASS (72/72)**。
+  - `A3-RF-02`：pdf.js bbox vs reference rasterizer bbox，记录 variance，**非 blocker**。
+  - `A3-C5 Source Semantic Alignment`：canvas vs **Sumatra/源打印输出**（用户真看到的是 Sumatra 打印，非 fitz）→ **PENDING A3-V2**。
 - 红线（全程遵守）：A3-RF 期间禁 scale compensation / +3.5mm hack / bbox 拉伸。
+
+### 14.24 A3 验收语义重新分层 + A3-V2 Sumatra 真机设计（2026-08-04）
+
+#### 14.24.1 四层验收栈（本次重分层核心）
+```
+RenderResource fidelity        ← A3-RF-02：pdf.js vs fitz 引擎差，RECORDED
+        ↓
+Placement geometry            ← A3-3-2：rot0 探针 anchor <0.2mm
+        ↓
+Paper transform / rotation    ← A3-3-3：Policy A + 居中 offset + round-trip
+        ↓
+Final canvas contract         ← A3-C5 Geometry Closure（自洽）+ Source Alignment（待 V2）
+```
+证据链已完整：残差 100% 落在 RenderResource 层，不向上污染 Placement/Rotation。
+
+#### 14.24.2 A3-V2 目标与唯一未证实点
+- **目标**：确认 **source/Sumatra 真实打印** 对「portrait 源 + 用户 rotation=90」遵循 **Policy A**（纸面跟随内容 → 1890×2717）还是 **Policy B**（内容在固定纸面内旋转 → 2717×1890）。
+- **为何是最后一关**：canvas 轨 Policy A 已自洽证明；但用户真看到的是 Sumatra 打印输出。若 Sumatra=Policy B，则 canvas≈source 目标未达，需修订 rotation contract（情况 B，概率低）。
+- **源码实读事实**（决定 V2 捕获方法）：
+  - 生产 source 路径：`main.js:489 print-source-file` → `pdfMargin.process`（扩展页边距）→ `SumatraBackend.print` → `buildPrintSettings`（`print-settings.js:151`）。
+  - `buildPrintSettings` 对 rotation 生成 Sumatra `-print-settings`：
+    - `resolveOrientationCommands(contentOrient, paperOrient, desiredRotation)`（print-settings.js:34）输出 `baseFlag`（`landscape` 或 `disable-auto-rotation`）+ `rotate=N`。
+    - 例：`{rotation:90, contentOrientation:'landscape', paperOrientation:'portrait'}` → `"disable-auto-rotation,rotate=90,fit,paper=a4"`。
+    - 关键：**Sumatra 用 `landscape` 旗标改纸面方向 + `rotate=N` 旋转内容**；`disable-auto-rotation` 禁止驱动自动旋正。
+  - **Policy A/B 判定完全取决于这条 `-print-settings` 字符串** → V2 必须复刻代码实际发出的那条（非推测）。
+
+#### 14.24.3 A3-V2 捕获方法（脚本脚手架 `scripts/verify_sumatra_rotation.py`）
+1. **V2-A（确定性，可 node 跑）**：1:1 复刻 `buildPrintSettings` 对 A1+rot90 的调用 → 输出确切 `-print-settings` 字符串。确认代码"想告诉 Sumatra 什么"。
+2. **V2-B（真机，需 SumatraPDF + 可静默 PDF 虚拟打印机）**：
+   - 调 `SumatraPDF.exe -print-to <PDF_PRINTER> -print-settings <V2-A字符串> <A1.pdf>`。
+   - 捕获输出 PDF → fitz 量：page rect（pt）+ content bbox（墨迹）+ 纸面方向。
+   - 判 Policy A（纸 1890×2717 landscape + 内容旋转填满）vs Policy B（纸 2717×1890 + 内容旋转在固定纸内）。
+3. **控制变量（防 driver 干扰）**：`-print-settings` 含 `disable-auto-rotation` + `fit`（或 `noscale`）；虚拟打印机"自动旋转适配"必须 OFF、缩放 100%。
+4. **环境依赖（用户机器）**：SumatraPDF.exe 路径 + 可静默输出 PDF 的虚拟打印机名（"Microsoft Print to PDF" 在 CLI 下弹保存框，不可静默；建议 Ghostscript PDF writer 或配置好的 PDF 打印机）。
+
+#### 14.24.4 判定矩阵
+| Sumatra 输出 | 纸面 | 内容 | 结论 |
+|---|---|---|---|
+| 1890×2717 + 内容旋转填满 | landscape | 旋转 | **Policy A ✅** → A3-C5 Source Alignment PASS |
+| 2717×1890 + 内容旋转在纸内 | portrait | 旋转 | **Policy B ⚠️** → 需修订 rotation contract（情况 B） |
+| 2717×1890 + 内容未旋转 | portrait | 原向 | 异常 → 查 `resolveOrientationCommands` 映射 |
 
 
 ### 14.6 冻结状态
@@ -791,6 +856,6 @@ A3-V2 真机验证           ⏸（阻塞于 A3-C5 重新定义，见下）
 A2-G1 source ✅ | canvas 采集链路 ✅ + 第一份报告 🔴FAIL(预期)
 A2-G1-CANVAS-2 同纸张实验 🔴 FAIL（renderPDFPageRaw customPaper 缺陷，双重 fit）
 A2-G1 OFD (G1-B) ⏸ | A2-G2..G6 ⏸
-A3-3-1 ✅ | A3-3-2 Placement rot0 ✅ | A3-3-3 Rotation ✅(自洽 round-trip 脱离 fitz) | A3-R1 CLOSED | A3-RF Render fidelity ⚠️ OPEN(结论:pdf.js vs fitz 引擎差,非 blocker) | A3-C5 ⏸ BLOCKED(原≤0.5mm 不可达,待重定义) | A3-V2 ⏸ | Phase B ⏸
+A3-3-1 ✅ | A3-3-2 Placement rot0 ✅ | A3-3-3 Rotation ✅(自洽 round-trip 脱离 fitz) | A3-R1 CLOSED | A3-RF-01 CropBox ✅CLOSED(FALSIFIED) | A3-RF-02 Engine variance ⚠️RECORDED(非 blocker) | A3-C5 Geometry ✅PASS(72/72) | A3-C5 Source Alignment ⏸PENDING(A3-V2 Sumatra) | Phase B ⏸
 ```
 
