@@ -1199,13 +1199,8 @@ function AppContent() {
           saveSettings={saveSettings}
           printers={printers}
           totalFiles={printableCount}
-          mergeMode={isMergeMode(settings.mergeMode)}
           isOneNormalTwoSpecial={settings.extraSpecial || false}
-          paperOrientation={paperOrientation}
-          contentRotation={previewRotation}
           previewModel={printPreviewModel}
-          files={files}
-          previewFile={previewFile}
           onConfirm={onPrintConfirm}
           onCancel={handlePrintCancel}
           onSettingsChange={updateSettings}

@@ -41,6 +41,34 @@ export const MERGE_FILE_FILTER = (f) => {
 }
 
 /**
+ * 打印会话上下文 → Plan 输入（Preview 与 Execute 唯一共享入口）。
+ *
+ * 冻结边界（打印预览 = PrintExecutionPlan 的可视化，非第二个预览器）：
+ *   - Preview 不自行决定「打印哪些文件 / 用什么参数」——它只消费 Plan 的派生视图。
+ *   - 本函数把「用户点击打印时的会话上下文」（files + settings + fileRotations）
+ *     解析为 buildPrintExecutionPlan 的统一输入；Preview（derived previewModel）
+ *     与 Execute（doPrint / executePrint）都从这里取参，杜绝
+ *     「Print 用 A 参数、Preview 用 B 参数」的分叉（Commit 1 修复 P1/P2）。
+ *   - filter 对齐规则：merge 模式 → MERGE_FILE_FILTER（允许 error 态有 printPath
+ *     的文件参与），非 merge → SOURCE_FILE_FILTER（仅 parsed）。预览与执行同参
+ *     同 filter → 纯函数同参同果，plan 即唯一事实源。
+ *   - 未来新增参数分叉点（paper orientation / copies / extraSpecial / grayscale）
+ *     一律在此收敛，不散落到各消费方。
+ *
+ * @param {Array<Object>} files - 文件对象数组（同 buildPrintExecutionPlan）
+ * @param {Object} [settings] - 打印设置（mergeMode/paperSize/...）
+ * @param {Object} [fileRotations] - { [fileKey]: rotationDegrees }
+ * @returns {{files: Array<Object>, options: {filter: Function, settings: Object, fileRotations: Object}}}
+ *   可直接解构传给 buildPrintExecutionPlan。
+ */
+export function createPrintPlanInput(files, settings = {}, fileRotations = {}) {
+  const filter = isMergeMode(settings.mergeMode)
+    ? MERGE_FILE_FILTER
+    : SOURCE_FILE_FILTER
+  return { files, options: { filter, settings, fileRotations } }
+}
+
+/**
  * 从文件列表 + 打印配置提取打印执行计划。
  *
  * @param {Array<Object>} files - 前端文件对象数组（含 key/status/printPath/fileFormat/docId/previewImage/invoiceType）

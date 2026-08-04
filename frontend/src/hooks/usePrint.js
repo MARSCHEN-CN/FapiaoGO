@@ -1,5 +1,5 @@
-import { useState, useCallback, useRef, useEffect } from 'react'
-import { PREVIEW_DPI, PRINT_PIPELINE, PRINT_SETTINGS_DEFAULTS } from '../config'
+import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
+import { PREVIEW_DPI, PRINT_PIPELINE, PRINT_SETTINGS_DEFAULTS, BACKEND_URL } from '../config'
 import {
   isMergeMode, b64toBlob, getExtension,
 } from '../utils'
@@ -15,7 +15,7 @@ import { extendPaperLayoutContract } from '../print/paperLayoutContract'
 import { applySourceOriginPlacement, transformPaperRotation } from '../print/placementAdapter'
 import { fetchPrintRaster, buildPrintJobItem } from '../utils/printAdapter'
 // A1/A1.5：已证等价的 Plan 事实来源 + 影子比较 helper（Commit 2 source / Commit 3 merge 分支消费）
-import { buildPrintExecutionPlan, SOURCE_FILE_FILTER, MERGE_FILE_FILTER } from '../print/buildPrintExecutionPlan'
+import { buildPrintExecutionPlan, createPrintPlanInput } from '../print/buildPrintExecutionPlan'
 // Phase 3.5 Preview Skeleton：Plan → 打印预览描述（纯函数，供 PrintConfirmModal 消费）
 import { buildPrintPreviewModel } from '../print/PrintPreviewModel'
 import {
@@ -91,8 +91,6 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
   const [currentJobId, setCurrentJobId] = useState(null)
   // 打印确认弹窗
   const [printConfirmModal, setPrintConfirmModal] = useState(false)
-  // Phase 3.5：打印预览描述（打开弹窗时从 Plan 构建；null = 未构建）
-  const [printPreviewModel, setPrintPreviewModel] = useState(null)
   const [triggerPrint, setTriggerPrint] = useState(false)
   // 打印队列状态
   const [printQueueStatus, setPrintQueueStatus] = useState({
@@ -512,26 +510,40 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
     setFiles((prev) => prev.map((f) => f.status === 'printing' ? { ...f, status: 'parsed' } : f))
   }, [setFiles])
 
-  // ── 打印前确认弹窗 ──
-  const handlePrintShowConfirm = useCallback(() => {
-    // Phase 3.5：构建打印预览描述（与 executePrint 同一 Plan 事实来源 + 同一 filter，
-    // 保证「预览显示什么 = 确认后打印什么」的语义对齐，仅不渲染像素）。
+  // ── 打印会话上下文 → Plan 输入（Preview 与 Execute 唯一共享入口）──
+  // Commit 1（derived preview）：预览描述不再存 state 快照，而是从打印会话上下文
+  // 派生（useMemo）；settings/files/fileRotations 一变即重建，杜绝「打开时快照过期」。
+  // 与 doPrint/executePrint 共用 createPrintPlanInput → filter 同源，plan 即唯一事实源。
+  const printPlanInput = useMemo(
+    () => createPrintPlanInput(files, settings, fileRotations),
+    [files, settings, fileRotations],
+  )
+
+  // Phase 3.5：打印预览描述（derived state，非快照；null = 构建失败）
+  const printPreviewModel = useMemo(() => {
     try {
-      const plan = buildPrintExecutionPlan(files, { filter: SOURCE_FILE_FILTER, settings, fileRotations })
-
-      // 构建当前选中页的定位信息（用于预览从当前选中页开始）
-      const currentSelection = previewFile ? {
-        fileId: previewFile.key,
-        pageIndex: previewFile.pageNum ?? 0,
-      } : null
-
-      setPrintPreviewModel(buildPrintPreviewModel(plan, { files, settings, currentSelection }))
+      const plan = buildPrintExecutionPlan(printPlanInput.files, printPlanInput.options)
+      // 当前选中页定位（用于预览从当前选中页开始）
+      const currentSelection = previewFile
+        ? { fileId: previewFile.key, pageIndex: previewFile.pageNum ?? 0 }
+        : null
+      return buildPrintPreviewModel(plan, {
+        files: printPlanInput.files,
+        settings: printPlanInput.options.settings,
+        currentSelection,
+        backendUrl: BACKEND_URL,
+      })
     } catch (err) {
       console.error('[usePrint] 构建打印预览描述失败:', err)
-      setPrintPreviewModel(null)
+      return null
     }
+  }, [printPlanInput, previewFile])
+
+  // ── 打印前确认弹窗 ──
+  const handlePrintShowConfirm = useCallback(() => {
+    // PreviewModel 已是 derived state，打开弹窗只负责显隐；设置变化自动重建。
     setPrintConfirmModal(true)
-  }, [files, settings, fileRotations, previewFile])
+  }, [])
 
   const handlePrintConfirm = useCallback(() => {
     setPrintConfirmModal(false)
@@ -611,7 +623,10 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
     const forcedLandscape = isMerge ? getForcedLandscape(mergeMode, settings.landscape) : settings.landscape
     if (isMerge) {
       // 合并模式：消费已证等价的 MERGE Plan（A1.5 投影性质）→ deriveMergePrintJobs
-      const plan = buildPrintExecutionPlan(files, { filter: MERGE_FILE_FILTER, settings, fileRotations })
+      // Commit 1：与 Preview 共用 createPrintPlanInput（merge 模式 → MERGE_FILE_FILTER），
+      // 保证「预览显示什么 = 确认后打印什么」的文件集合一致。
+      const { files: planFiles, options: planOptions } = createPrintPlanInput(files, settings, fileRotations)
+      const plan = buildPrintExecutionPlan(planFiles, planOptions)
       const mergeJobs = deriveMergePrintJobs(plan, files)
       // 开发期影子比对（DEV + localStorage 开关，绝不进 production）：新 plan vs Legacy Oracle
       if (printPlanCompareEnabled()) {
@@ -941,11 +956,9 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
       // A1/A1.5：buildPrintExecutionPlan 已证与旧逻辑等价，作为本分支唯一事实来源。
       // 旧 source 消费逻辑（allParsed / specialFiles / mergedJobs）已固化为
       // buildLegacyPrintPlan（Legacy Oracle），不在此重复、不删除（待 Commit 3 + A2 Gate 前清理）。
-      const plan = buildPrintExecutionPlan(files, {
-        filter: SOURCE_FILE_FILTER,
-        settings,
-        fileRotations,
-      })
+      // Commit 1：与 Preview 共用 createPrintPlanInput（非 merge 模式 → SOURCE_FILE_FILTER）
+      const { files: planFiles, options: planOptions } = createPrintPlanInput(files, settings, fileRotations)
+      const plan = buildPrintExecutionPlan(planFiles, planOptions)
 
       // 影子比较（仅 DEV + 手动开关；绝不进 production）：
       //  1) 模型等价：新 plan vs Legacy Oracle（buildLegacyPrintPlan）

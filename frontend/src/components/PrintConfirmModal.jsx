@@ -7,6 +7,12 @@ import '../settings-printer.css'
 /**
  * 打印确认弹窗（新版）
  *
+ * 身份（冻结，Commit 1）：
+ *   打印确认页 = PrintExecutionPlan 的可视化消费者，不是展示区的第二个预览器。
+ *   因此不接收 contentRotation / paperOrientation / mergeMode / files / previewFile：
+ *   方向与旋转由 previewModel 派生（PrintPreviewModel 消费 plan），
+ *   「打印什么」由 plan 决定（usePrint derived previewModel），本组件只展示 + 收集设置。
+ *
  * 布局：3:2 比例（900×600）
  *   - 左侧：打印机设置区（完整迁移自 SettingsWindow 打印机页）
  *   - 右侧：打印布局预览（Phase 3.5 Preview Skeleton — PrintPreviewModel 驱动的
@@ -19,13 +25,8 @@ const PrintConfirmModal = ({
   saveSettings,
   printers,
   totalFiles,
-  mergeMode,
   isOneNormalTwoSpecial,
-  paperOrientation,
-  contentRotation,
   previewModel,
-  files,
-  previewFile,
   onConfirm,
   onCancel,
 }) => {
@@ -379,8 +380,6 @@ const PrintConfirmModal = ({
             <div className="pcm-preview-body">
               <PrintPreviewCanvas
                 preview={previewModel}
-                files={files}
-                previewFile={previewFile}
                 marginSettings={{
                   left: settings.marginLeft ?? 3,
                   right: settings.marginRight ?? 3,
@@ -396,7 +395,7 @@ const PrintConfirmModal = ({
         <div className="pcm-footer pcm-footer--new">
           <div className="pcm-footer-hint">
             确认后将 {totalFiles} 页发送到打印机
-            {mergeMode && settings.mergeMode && settings.mergeMode !== 'none' && (
+            {settings.mergeMode && settings.mergeMode !== 'none' && (
               <span className="pcm-badge pcm-badge-merge" style={{ marginLeft: '8px' }}>
                 {settings.mergeMode === 'merge2' ? '两票一页' :
                  settings.mergeMode === 'merge3' ? '三票一页' :

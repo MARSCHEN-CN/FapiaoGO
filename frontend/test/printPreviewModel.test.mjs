@@ -173,3 +173,31 @@ test('PM-08: 数值锚点守卫 — A4 3mm 边距 → usableRect(35,35,2410,3438
   assert.ok(Math.abs(toPx(s.width) - 2410) <= 1.5, `宽 px=${toPx(s.width)} vs 2410`)
   assert.ok(Math.abs(toPx(s.height) - 3438) <= 1.5, `高 px=${toPx(s.height)} vs 3438`)
 })
+
+test('PM-09: backendUrl 注入 + 多页展开 → thumbnailUrl 用 /thumbnail/{docId}?page=N（后端 1-based）', () => {
+  const files = [mk('A', { docId: 'docA', pageCount: 2 })]
+  const plan = buildPrintExecutionPlan(files, { filter: SOURCE_FILE_FILTER, settings: {} })
+  const m = buildPrintPreviewModel(plan, {
+    files,
+    settings: {},
+    backendUrl: 'http://localhost:5000',
+  })
+  assert.equal(m.pages.length, 2, '多页文档展开为 2 个预览页')
+  assert.equal(m.pages[0].slots[0].thumbnailUrl, 'http://localhost:5000/thumbnail/docA?page=1')
+  assert.equal(m.pages[1].slots[0].thumbnailUrl, 'http://localhost:5000/thumbnail/docA?page=2')
+  // pageIndex 0-based 透传（消费端 +1 展示，核心原则 3）
+  assert.equal(m.pages[0].slots[0].pageIndex, 0)
+  assert.equal(m.pages[1].slots[0].pageIndex, 1)
+})
+
+test('PM-10: currentSelection 定位 → currentPageIndex 指向选中文件页', () => {
+  const files = [mk('A', { docId: 'docA', pageCount: 2 }), mk('B')]
+  const plan = buildPrintExecutionPlan(files, { filter: SOURCE_FILE_FILTER, settings: {} })
+  const m = buildPrintPreviewModel(plan, {
+    files,
+    settings: {},
+    currentSelection: { fileId: 'B', pageIndex: 0 },
+  })
+  // pages = [A-0, A-1, B] → 选中 B → index 2
+  assert.equal(m.currentPageIndex, 2)
+})

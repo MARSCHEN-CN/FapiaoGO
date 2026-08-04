@@ -25,7 +25,6 @@
  */
 
 import { computeTicketSlots, slotToLandscape } from '../layout/SlotLayout.js'
-import { BACKEND_URL } from '../config.js'
 
 const PREVIEW_DPI = 300
 const PX_TO_MM = 25.4 / PREVIEW_DPI
@@ -90,11 +89,14 @@ export function previewPaperLayout(paperSize = 'A4', customPaper = null, margins
  * @param {Array<Object>} [options.files] - 文件对象数组（key→name 映射 + 缩略图 URL）
  * @param {Object} [options.settings] - { paperSize, customPaper, marginLeft/Right/Top/Bottom }
  * @param {Object} [options.currentSelection] - { fileId, pageIndex } 当前选中页，用于定位
+ * @param {string} [options.backendUrl] - 后端 Base URL（缩略图端点前缀；默认空=相对路径）。
+ *   ⚠️ 注入而非 import config.js：config 依赖 vite import.meta.env，纯 node 测试无法加载；
+ *   调用方（usePrint）在浏览器环境传 BACKEND_URL。
  * @returns {{valid:boolean, reason?:string, pages:Array<Object>, currentPageIndex:number}}
  *   pages[].paperSizeMM = { widthMM, heightMM }（按方向交换后的显示尺寸）
  *   pages[].slots[] = { x, y, width, height, source, rotation, thumbnailUrl, fileId, pageIndex }
  */
-export function buildPrintPreviewModel(plan, { files = [], settings = {}, currentSelection = null } = {}) {
+export function buildPrintPreviewModel(plan, { files = [], settings = {}, currentSelection = null, backendUrl = '' } = {}) {
   if (!plan || !Array.isArray(plan.pages)) {
     return { valid: false, reason: 'plan 缺失或结构非法', pages: [], currentPageIndex: 0 }
   }
@@ -116,12 +118,12 @@ export function buildPrintPreviewModel(plan, { files = [], settings = {}, curren
 
   /**
    * 获取文件指定页的缩略图 URL
-   * 优先使用 docId 从后端 /thumbnail 端点获取，fallback 到 previewImage
+   * 优先使用 docId 从后端 /thumbnail 端点获取（page 参数后端 1-based），fallback 到 previewImage
    */
   const getThumbnailUrl = (file, pageIndex = 0) => {
     if (!file) return null
     if (file.docId) {
-      return `${BACKEND_URL}/thumbnail/${file.docId}?page=${pageIndex + 1}`
+      return `${backendUrl}/thumbnail/${file.docId}?page=${pageIndex + 1}`
     }
     if (file.previewImage) {
       return file.previewImage
