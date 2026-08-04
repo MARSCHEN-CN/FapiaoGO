@@ -134,6 +134,21 @@ const PreviewPageNav = ({ current, total, onPrev, onNext, onJump }) => {
 
   return (
     <div className="pcm-preview-nav-bar" role="navigation" aria-label="页面导航">
+      {/* 首页按钮 */}
+      <button
+        type="button"
+        className="page-nav-btn page-nav-btn-first"
+        onClick={() => onJump?.(0)}
+        disabled={!hasPrev}
+        aria-label="首页"
+        title="首页"
+      >
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+          <path d="M4 12V4M12 12L8 8L12 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+        </svg>
+      </button>
+
+      {/* 上一页 */}
       <button
         type="button"
         className="page-nav-btn"
@@ -175,6 +190,7 @@ const PreviewPageNav = ({ current, total, onPrev, onNext, onJump }) => {
         <span className="page-nav-total">{total}</span>
       </span>
 
+      {/* 下一页 */}
       <button
         type="button"
         className="page-nav-btn"
@@ -185,6 +201,20 @@ const PreviewPageNav = ({ current, total, onPrev, onNext, onJump }) => {
       >
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
           <path d="M6 4L10 8L6 12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+        </svg>
+      </button>
+
+      {/* 末页按钮 */}
+      <button
+        type="button"
+        className="page-nav-btn page-nav-btn-last"
+        onClick={() => onJump?.(total - 1)}
+        disabled={!hasNext}
+        aria-label="末页"
+        title="末页"
+      >
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+          <path d="M12 12V4M4 4L8 8L4 12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
         </svg>
       </button>
     </div>
