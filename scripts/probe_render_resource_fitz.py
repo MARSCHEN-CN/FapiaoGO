@@ -81,10 +81,11 @@ def main():
         "cropbox_eq_mediabox": abs(cb[2] - mb[2]) < 0.5 and abs(cb[3] - mb[3]) < 0.5,
     }
 
-    # 栅格化（默认渲染 page.rect = MediaBox 区域）
-    pix = pg.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=True)
+    # 栅格化（默认渲染 page.rect = MediaBox 区域；白底无 alpha，与 pdf.js 强制白底 / G1 rasterize_pdf.py 一致）
+    # ⚠️ 勿用 alpha=True：透明背景像素 RGB=(0,0,0)，brightness<250 会把背景当内容 → 全页假阳性
+    pix = pg.get_pixmap(matrix=fitz.Matrix(zoom, zoom))
     out["pixmap_px"] = [pix.width, pix.height]
-    out["bbox_method"] = "brightness<250 (white bg)"
+    out["bbox_method"] = "brightness<250 (white bg, no alpha)"
     bbox = find_content_bbox(pix)
     out["content_bbox_px"] = bbox
 

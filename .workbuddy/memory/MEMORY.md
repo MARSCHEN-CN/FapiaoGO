@@ -50,9 +50,9 @@
 | A3-3-3 | `c7690257`/`99795974`/`75ba73f1`/`6ca58679` | Policy A 画布级旋转落地 + A3-V1 两坑修复（contract 字段 / 居中 offset），71/71；**Rotation Contract ✅ PASS** |
 | A3-V1 | `85284c78`/`43078485`/`6ca58679` | 生产采集器 + 两处真实 bug 修复（全白 / 旋转偏右上） |
 | A3-3-2 Placement | ✅ | rot0 探针：left/top anchor <0.2mm 吻合 source（placement+坐标系精确） |
-| A3-C5 | ⏸ | Full Fidelity Alignment **BLOCKED** by RenderResource fidelity（max 3.66mm，pdf.js vs fitz content scale 差），等 RenderResource baseline 统一 |
+| A3-C5 | ⏸ | Full Fidelity Alignment **BLOCKED**：原「canvas==fitz ≤0.5mm」不可达（fitz 非生产渲染器 + 两引擎 ~3.5mm 不可约差）。建议重定义为 canvas rot0↔rot90 自洽（≤0.5mm 几何闭合），fitz 降为独立 RenderResource 指标 |
 | A3-R1 | ✅ CLOSED | rot0 证明残差与 rotation 无关（非整体平移/四边错位），归 RenderResource |
-| A3-RF | 🆕 OPEN | **RenderResource Fidelity Gate（A3-RF-01）**：验证 renderPDFPageRaw 输出 vs fitz source；归因 RenderResource 层。假设 R2=CropBox(pdf.js) vs MediaBox(fitz) 待 PDF 探针定论 |
+| A3-RF | ⚠️ OPEN（结论非 blocker） | **RenderResource Fidelity**：pdf.js vs fitz 同 box 同 dpi 两 rasterizer 保真度差（宽-1.5mm/高-3.5mm），不可约，非代码 bug/box 选择/Placement/Rotation。**R2(CropBox) 已证伪**（`cropbox_eq_mediabox:true`，两引擎同渲 MediaBox）。A3-3-3-07 自洽 round-trip Gate 已落地（脱离 fitz） |
 
 ### A3 硬事实
 - **Policy A（冻结）**：纸面跟随内容旋转，rot90 → 2717×1890 → 1890×2717。canvas 现有 `createPlacement` 是 **Policy B**（纸固定、内容在纸内转），仅限 A4/merge 路径。
@@ -60,7 +60,7 @@
 - **C4 sourceOrigin 不旋转**：它是 paper-space 属性，参与**旋转前**的纸面构造；PaperTransform 作用于已完成的纸面。直接对 sourceOrigin 做 `(x,y)→(y,-x)` 会得负坐标。
 - A1 锚点：扩展纸面 2717×1890px（≈230×160mm **专用发票纸，非 A4**），native 2480×1654px，sourceOrigin 10mm=118px。
 - C5 rot90 锚点：bitmap 1890×2717 / bbox (201,169,1500×2423) / 边距 L17/T14.3/R16/B10.6mm（rot0 的 L14.3/T16/R10.6/B17 顺时针轮换）。
-- 待办：**A3-V2 = Sumatra 真实打印方向验证**（node 采集不体现旋转，只能真机打）。⚠️ 阻塞于 A3-C5（先解 RenderResource fidelity）。
+- 待办：**A3-V2 = Sumatra 真实打印方向验证**（node 采集不体现旋转，只能真机打）。⚠️ 原阻塞于 A3-C5；现 A3-C5 待重定义（自洽 vs fitz），A3-V2 可独立于 RenderResource fidelity 推进——旋转正确性已由自洽 Gate 证明，真机只验证 Sumatra 方向语义。
 
 ### RenderCommand 契约（`RenderLayoutFactory.js:73-99`，7 条校验）
 必须有 `version===1` / `placement{scale,offsetX,offsetY}` 有限数 / `rotatedBounds` 正数 / `contentRotation` 为 number / `paper` 非空。

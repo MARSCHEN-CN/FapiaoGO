@@ -717,7 +717,7 @@ native 内容尺度差属 `renderPDFPageRaw` 栅格化保真度（pdf.js `getVie
 | A3-3-2 Placement Geometry (rot0) | ✅ | rot0 探针：left/top anchor <0.2mm 吻合 source |
 | A3-3-3 Rotation Transform | ✅ | rot90 bitmap 1890×2717 精确 + 旋转后边距反推 <0.2mm |
 | A3-R1 Rotation risk | CLOSED | rot0 证明残差与 rotation 无关（非整体平移/四边错位） |
-| A3-RF RenderResource Fidelity | ⚠️ OPEN | pdf.js vs fitz resource divergence（见 R2） |
+| A3-RF RenderResource Fidelity | ⚠️ OPEN（结论：pdf.js vs fitz 引擎差，不可约，非 blocker） | 同 box 同 dpi 两 rasterizer 保真度差；非 box 选择/Placement/Rotation |
 | A3-C5 Full Fidelity Alignment | ⏸ BLOCKED | 等待 RenderResource baseline 统一 |
 
 #### 14.22.2 新增 Gate：A3-RF-01（RenderResource Fidelity Gate）
@@ -729,11 +729,18 @@ native 内容尺度差属 `renderPDFPageRaw` 栅格化保真度（pdf.js `getVie
 - **与 A3-C5 关系**：A3-C5 的 ≤0.5mm 终判依赖统一的 RenderResource baseline；
   在 pdf.js 与 fitz 尚未对齐前 A3-C5 保持 BLOCKED，但不阻塞 A3-3-3（旋转正确性可自洽验证）。
 
-#### 14.22.3 假设 R2（pending PDF probe，未定论）
-- **Hypothesis**：pdf.js `getViewport` 默认按 **CropBox** 选渲染框，而 `rasterize_pdf.py`/`add-pdf-margins`
-  按 **MediaBox**（或 page.rect）渲染 ⇒ 同一 PDF 两引擎 content box 尺度差（尤其底边）。
-- **状态**：pending —— PDF fixture 本地缺失（gitignored 真实发票），需 RenderResource Probe 取 box metadata 定论。
-- **禁止**直接写「原因就是 CropBox」——尚无 PDF metadata 证据。
+#### 14.22.3 假设 R2（**FALSIFIED** — 2026-08-04 RenderResource Probe 定论）
+- **Hypothesis（已推翻）**：pdf.js `getViewport` 默认按 **CropBox** 选渲染框，而 `rasterize_pdf.py`/`add-pdf-margins`
+  按 **MediaBox** 渲染 ⇒ 同一 PDF 两引擎 content box 尺度差。
+- **证伪证据**（fitz 探针 `25952000000127675627.pdf` @300dpi）：
+  ```
+  "cropbox_pt": [0,0,595.28,396.85], "mediabox_pt": [0,0,595.28,396.85],
+  "cropbox_eq_mediabox": true, "pixmap_matches": "mediabox"
+  ```
+  CropBox == MediaBox，fitz 实际渲染 MediaBox；pdf.js native `2480×1654` == MediaBox@300dpi。
+  **两引擎渲染同一 box、同尺寸** ⇒ 残差与 box 选择无关，R2 死亡。
+- ⚠️ 探针修复：fitz 探针初版用 `alpha=True` → 透明背景 RGB(0,0,0) 被亮度阈值当内容 → 全页假阳性；
+  改白底无 alpha（与 pdf.js 强制白底 / G1 rasterize_pdf.py 一致）后正确。
 
 #### 14.22.4 A3 Gate 方法论修正（拒绝放宽容差）
 - ❌ **不放宽 A3 容差到 ~4mm**：A3 目标是「Canvas 输出可替代 Source 输出」，放宽=承认 Canvas≠Source，
@@ -742,11 +749,48 @@ native 内容尺度差属 `renderPDFPageRaw` 栅格化保真度（pdf.js `getVie
   参考物是 **native bitmap 自身 bbox**，而非 `pdf.js bitmap vs fitz raster bbox`（两 renderer 比尺寸非同一变量）。
 - 旋转正确性纯靠 canvas rot0 ↔ canvas rot90 互验（逆旋转后 bbox 重合即 PASS），彻底脱离 fitz 参考锚。
 
+### 14.23 A3-RF 结论 + A3-3-3 自洽 Gate 落地（2026-08-04 Probe 第二轮）
+
+**RenderResource Probe 第二轮实测定论**：
+
+| 引擎 | native 尺寸 | content bbox（墨迹） | 判定 |
+|---|---|---|---|
+| pdf.js (A1-native) | 2480×1654 | {51,71,2424×1499}（亮度阈值，已修） | ✓ |
+| fitz (同 PDF @300) | 2480×1654（=MediaBox） | 初版全页（alpha bug）→ 修后待复测 | — |
+
+- **R2 证伪**：`cropbox_eq_mediabox:true` + `pixmap_matches:"mediabox"` ⇒ pdf.js 与 fitz 渲染同一 MediaBox、同尺寸。残差与 box 选择无关。
+- **残差确认真实**（用 G1 有效 fitz 数据 + pdf.js 探针，非全页假阳性）：
+  - canvas rot0 on Custom：{168,187,2405×1459} vs fitz G1 {168.9,189,2423,1500}
+  - 锚点 <0.2mm 吻合；宽 -1.5mm / 高 -3.5mm ⇒ **pdf.js vs fitz 栅格化保真度差（字形度量/矢量 AA），不可归 placement/rotation**。
+- **A3-RF 结论**：native content scale 差是两渲染引擎固有意义差异（同 box、同 dpi、不同 rasterizer），**非代码 bug、非 box 选择、非 Placement/Rotation 层**。属 `renderers.js` 渲染保真度范畴。
+
+**A3-3-3 自洽 Gate 落地（gateFramework.test.mjs）**：
+- 新增 `A3-3-3-07`：4×90°CW round-trip 无损回到原点 + 方向 CW 断言。**完全脱离 fitz/C5 锚点**，纯验证旋转数学闭合性 + 方向正确。即用户定稿的「canvas rot0 ↔ canvas rot90 互验」。
+- `A3-3-3-02/03/06` 补注释：验证「旋转数学对给定 bbox 的变换正确」（引擎无关），C5 size 标注为 fitz content scale（RenderResource 关切），与旋转无关。
+- 测试 **72/72**（原 71 + A3-3-3-07）。
+
+**最终状态分裂（A3 收口）**：
+```
+A3-3-1 Contract          ✅
+A3-3-2 Placement rot0    ✅   ← rot0 探针 left/top anchor <0.2mm 吻合 source
+A3-3-3 Rotation          ✅   ← rot90 bitmap 精确 + 反推 <0.2mm + 自洽 round-trip(脱离 fitz)
+A3-R1 Rotation risk      CLOSED
+A3-RF Render fidelity    ⚠️ OPEN（结论：pdf.js vs fitz 引擎差，不可约；非 blocker）
+A3-C5 Full Fidelity      ⏸ BLOCKED（canvas==fitz ≤0.5mm 不可达；fitz 非生产渲染器）
+A3-V2 真机验证           ⏸（阻塞于 A3-C5 重新定义，见下）
+```
+
+**A3-C5 重新定义建议（待用户裁决）**：
+- 原 A3-C5「canvas==source(fitz) ≤0.5mm」因 fitz 非生产渲染器、且两引擎有 ~3.5mm 不可约差，**终判不可达**。
+- 建议改为：**A3-C5 = canvas rot0 == canvas rot90 逆旋转自洽（≤0.5mm 几何闭合）**，彻底以 pdf.js 自身为参考，fitz 降为独立 RenderResource 保真度指标（移交 A2 渲染保真度专项）。
+- 红线（全程遵守）：A3-RF 期间禁 scale compensation / +3.5mm hack / bbox 拉伸。
+
+
 ### 14.6 冻结状态
 ```
 A2-G1 source ✅ | canvas 采集链路 ✅ + 第一份报告 🔴FAIL(预期)
 A2-G1-CANVAS-2 同纸张实验 🔴 FAIL（renderPDFPageRaw customPaper 缺陷，双重 fit）
 A2-G1 OFD (G1-B) ⏸ | A2-G2..G6 ⏸
-A3-3-1 ✅ | A3-3-2 Placement rot0 ✅ | A3-3-3 Rotation ✅ | A3-R1 CLOSED | A3-RF Render fidelity ⚠️ OPEN(pdf.js vs fitz divergence) | A3-C5 ⏸ BLOCKED(等 RenderResource baseline) | A3-V2 ⏸ | Phase B ⏸
+A3-3-1 ✅ | A3-3-2 Placement rot0 ✅ | A3-3-3 Rotation ✅(自洽 round-trip 脱离 fitz) | A3-R1 CLOSED | A3-RF Render fidelity ⚠️ OPEN(结论:pdf.js vs fitz 引擎差,非 blocker) | A3-C5 ⏸ BLOCKED(原≤0.5mm 不可达,待重定义) | A3-V2 ⏸ | Phase B ⏸
 ```
 

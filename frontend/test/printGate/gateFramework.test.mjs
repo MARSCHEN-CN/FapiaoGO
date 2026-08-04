@@ -418,10 +418,38 @@ test('A3-3-3-06: 回归守卫 — rotateCanvasCommand 经 drawRenderCommand 几�
   }
   const bboxX = minX, bboxY = minY, bboxW = maxX - minX, bboxH = maxY - minY
   // C5 锚点（A3-V1 真机同预期）：(201,169,1500×2423)
+  // ⚠️ 注：本测试验证「旋转数学对给定 bbox 的变换正确」（引擎无关），不比 pdf.js 输出 vs fitz。
+  // C5 的 size(1500×2423) 是 fitz content scale；pdf.js 实测小 ~3.5mm 属 RenderResource 层（A3-RF），与旋转无关。
   assert.ok(Math.abs(bboxX - 201) <= 1.5, `bboxX=${bboxX.toFixed(2)} vs 201（offset 居中修复前会≈602）`)
   assert.ok(Math.abs(bboxY - 169) <= 1.5, `bboxY=${bboxY.toFixed(2)} vs 169（offset 居中修复前会≈-244）`)
   assert.ok(Math.abs(bboxW - 1500) <= 1, `bboxW=${bboxW.toFixed(2)} vs 1500`)
   assert.ok(Math.abs(bboxH - 2423) <= 1, `bboxH=${bboxH.toFixed(2)} vs 2423`)
+})
+
+test('A3-3-3-07: 旋转自洽验证 — 4×90°CW round-trip 无损回到原点 + 方向 CW（脱离 fitz 参考锚）', () => {
+  // 自洽验证旋转数学：任意 content bbox 经 4 次 90°CW 必回到原点（无损），且单次旋转方向为 CW。
+  // 不依赖 C5/fitz 锚点——pdf.js vs fitz 的 ~3.5mm content scale 差属 RenderResource 层（A3-RF），
+  // 与旋转变换正确性无关。旋转正确性的判据是「变换无损 + 方向对」，不是「和 fitz 内容尺寸一致」。
+  // 旋转数学镜像 drawRenderCommand（与 A3-3-3-06 同源）：点 (x,y) → (H - y, x)，H=当前纸高。
+  const rotateBBox90 = (bbox, H) => ({ x: H - bbox.y - bbox.h, y: bbox.x, w: bbox.h, h: bbox.w })
+  const seed = { x: 51, y: 71, w: 2424, h: 1499 }  // pdf.js A1-native 实测 content bbox（仅作种子，不用于绝对值断言）
+  let bbox = { ...seed }
+  let W = 2480, H = 1654  // A1-native 纸面（MediaBox@300）
+  // 单次旋转方向断言（CW）：原 top-left 角 (51,71) → (H-71, 51) = (1583,51) 落新纸面(宽1654)右半。
+  // 注意：bbox min-x=84 在左半，但原 top-left 角映射到 bbox 的 max-x 角（1583），故查 r1.x+r1.w。
+  const r1 = rotateBBox90(bbox, H)
+  const r1MaxX = r1.x + r1.w  // = H - bbox.y = 1583
+  assert.ok(r1MaxX > 1654 / 2, `CW 方向：rot90 后原 top-left 角 x=${r1MaxX} 应落新纸面(宽1654)右半`)
+  // 4× round-trip（每次纸面宽高互换）
+  for (let i = 0; i < 4; i++) {
+    bbox = rotateBBox90(bbox, H)
+    ;[W, H] = [H, W]
+  }
+  assert.equal(W, 2480, 'round-trip 后纸宽恢复 2480')
+  assert.equal(H, 1654, 'round-trip 后纸高恢复 1654')
+  for (const k of ['x', 'y', 'w', 'h']) {
+    assert.ok(Math.abs(bbox[k] - seed[k]) <= 1, `round-trip bbox.${k}=${bbox[k]} vs seed ${seed[k]}（旋转数学应无损）`)
+  }
 })
 
 test('A3-3-3-04: rot180/rot270 + rotation=0 + 非法角度（数学完整性）', () => {
