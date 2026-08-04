@@ -575,3 +575,11 @@ rename-preview-redesign/pages/preview-settings.html
 rename-preview-redesign/rename-preview-redesign.design
 COMMIT2-REVIEW-2026-08-02.md
 .workbuddy/memory
+
+# electron 升级 43.2.0 临时文件（删除被安全层拦截，暂忽略，待手动清理）
+electron/.electron-download/
+electron/.el-verify/
+electron/.el-pkg/
+electron/.el-mini-main.js
+electron/.el-ver-check.js
+electron/.ver.txt
