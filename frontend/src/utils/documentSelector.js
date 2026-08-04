@@ -15,7 +15,7 @@
  * @module utils/documentSelector
  */
 
-import { groupFilesByDocument } from './groupDocuments.js'
+import { groupFilesByDocument, groupFilesByInstance } from './groupDocuments.js'
 
 /**
  * 选择 document-level 展示条目。
@@ -26,7 +26,7 @@ import { groupFilesByDocument } from './groupDocuments.js'
  *
  * 行为（刻意与既有实现保持一致）：
  *   - 非搜索态且有装配结果 → 直接返回 InvoiceDocument[]（不转 row，保持 document 身份）
- *   - 搜索态 / 无装配结果 → 退回 groupFilesByDocument（page-level 兼容）
+ *   - 搜索态 / 无装配结果 → 先用 groupFilesByInstance 增强分组，再回退到 groupFilesByDocument
  *
  * @param {Object} params
  * @param {Object[]} [params.invoiceDocs] - 装配结果 InvoiceDocument[]（documentView.documents）
@@ -40,6 +40,12 @@ export function selectDocumentRows({ invoiceDocs, files, filteredFiles, isSearch
     return invoiceDocs
   }
   const source = isSearching ? (filteredFiles || files) : files
+  // 修复：使用更强的分组逻辑（instanceId + sourceDocId）作为首选降级方案
+  const groupedByInstance = groupFilesByInstance(source)
+  // 如果增强分组成功（有文档组），使用它；否则回退到原逻辑
+  if (groupedByInstance.some(d => d._isDocumentGroup)) {
+    return groupedByInstance
+  }
   return groupFilesByDocument(source)
 }
 
