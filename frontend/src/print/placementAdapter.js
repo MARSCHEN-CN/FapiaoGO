@@ -92,7 +92,7 @@ export function applySourceOriginPlacement({ renderResource, paperLayout, rotati
  * @returns {object} { canvasW, canvasH, rotateCanvasCommand|null }
  *   - canvasW/canvasH：旋转后画布尺寸（90/270 → paperH×paperW；180 → 原尺寸）
  *   - rotateCanvasCommand：把「扩展纸面画布」旋转绘制到新画布的 PlacementCommand
- *     （placement.offset=0/0 居中、rotatedBounds=原画布尺寸、contentRotation=rotation、clip=null）
+ *     （⚠️ placement.offset 必须=(nW-paperW)/2,(nH-paperH)/2 居中，绝非 0！见下方实现的居中说明）
  */
 export function transformPaperRotation(placement, rotation, paperW, paperH) {
   const r = ((Math.round(rotation) % 360) + 360) % 360
@@ -107,13 +107,23 @@ export function transformPaperRotation(placement, rotation, paperW, paperH) {
   const swap = r === 90 || r === 270
   const nW = swap ? paperH : paperW
   const nH = swap ? paperW : paperH
+  // ⚠️ Policy A 居中偏移（A3-V1 实测 bug 修复，2026-08-04）：
+  //   drawRenderCommand(renderDraw.js:53) 以 (offsetX + drawW/2, offsetY + drawH/2) 为旋转支点。
+  //   drawW/2=paperW/2、drawH/2=paperH/2，故支点 = (offsetX + paperW/2, offsetY + paperH/2)。
+  //   旋转后纸面要填满目标画布（nW×nH），支点必须 = 目标画布中心 (nW/2, nH/2)
+  //   ⇒ offsetX=(nW-paperW)/2, offsetY=(nH-paperH)/2。
+  //   若 offset=0（初版），支点落在「原纸面中心坐标」(paperW/2,paperH/2) 而非目标中心，
+  //   旋转后纸面溢出 2 边、留白 2 边（实测 bbox 657,0 右/顶贴边即此）。
+  //   rot180 时 nW=paperW,nH=paperH ⇒ offset=(0,0)，本就正确。
+  const offsetX = (nW - paperW) / 2
+  const offsetY = (nH - paperH) / 2
   return {
     canvasW: nW,
     canvasH: nH,
     rotateCanvasCommand: {
       version: 1,  // RenderCommand 契约版本（validateRenderCommand 要求）
       paper: { paperRect: { w: nW, h: nH } },  // 旋转后纸面（validateRenderCommand 要求非空；渲染仅需上下文）
-      placement: { offsetX: 0, offsetY: 0, scale: 1 },
+      placement: { offsetX, offsetY, scale: 1 },
       rotatedBounds: { width: paperW, height: paperH },  // source = 扩展纸面画布（整页）
       contentRotation: r,
       clip: null,

@@ -334,8 +334,11 @@ test('A3-3-3-01: rot90 canvas — 画布 1890×2717 + 画布旋转 command（Pol
   assert.equal(r90.canvasH, 2717)
   // 画布旋转 command：source = 扩展纸面画布（2717×1890），居中旋转 90°
   assert.ok(r90.rotateCanvasCommand, 'rot90 应有 rotateCanvasCommand')
-  assert.equal(r90.rotateCanvasCommand.placement.offsetX, 0, '旋转 command offset=0（居中）')
-  assert.equal(r90.rotateCanvasCommand.placement.offsetY, 0)
+  // ⚠️ 居中偏移（非 0！）：drawRenderCommand 以 (offset+drawW/2) 为支点，offset 必须为
+  //   (nW-paperW)/2、(nH-paperH)/2，否则支点落在「原纸面中心坐标」→ 旋转后溢出 2 边、留白 2 边
+  //   （A3-V1 实测 bug：bbox 657,0 右/顶贴边）。初版曾断言 offset=0 反而把 bug 冻结进测试。
+  assert.equal(r90.rotateCanvasCommand.placement.offsetX, (1890 - 2717) / 2, 'offsetX=(nW-paperW)/2 = -413.5（居中）')
+  assert.equal(r90.rotateCanvasCommand.placement.offsetY, (2717 - 1890) / 2, 'offsetY=(nH-paperH)/2 = +413.5（居中）')
   assert.equal(r90.rotateCanvasCommand.placement.scale, 1, 'scale=1（像素不缩放）')
   assert.deepEqual(r90.rotateCanvasCommand.rotatedBounds, { width: 2717, height: 1890 }, 'rotatedBounds=原画布尺寸（source 语义）')
   assert.equal(r90.rotateCanvasCommand.contentRotation, 90, 'contentRotation=90')
@@ -386,6 +389,39 @@ test('A3-3-3-03: rot90 margin — 四边 vs 预期 L17/T14.3/R16/B10.6 ≤0.5mm�
     const diff = Math.abs(marginsMm[e] - expected[e])
     assert.ok(diff <= 0.5, `${e} diff=${diff.toFixed(3)}mm > 0.5mm（actual=${marginsMm[e].toFixed(2)} expected=${expected[e]}）`)
   }
+})
+
+test('A3-3-3-06: 回归守卫 — rotateCanvasCommand 经 drawRenderCommand 几何 → bbox 命中 C5（node 可测，防 A3-V1 居中偏移 regression）', () => {
+  // 镜像 renderDraw.js drawRenderCommand 的支点+旋转数学（只算 bbox，不重复渲染语义）：
+  //   pivot = (offsetX + drawW/2, offsetY + drawH/2)
+  //   点 (x,y) → pivot + R(θ)·(x-drawW/2, y-drawH/2)，θ=contentRotation（canvas 顺时针 (x,y)->(-y,x)）
+  // 若 offset 被改回 0，本测试立即红（bbox 会偏到 ~602,-244），无需等 Electron。
+  const rot0 = applySourceOriginPlacement({ renderResource: A1_RESOURCE, paperLayout: A1_PAPER, rotation: 0 })
+  const r90 = transformPaperRotation(rot0, 90, A1_PAPER_PX.w, A1_PAPER_PX.h)
+  const cmd = r90.rotateCanvasCommand
+  const drawW = cmd.rotatedBounds.width, drawH = cmd.rotatedBounds.height
+  const pivotX = cmd.placement.offsetX + drawW / 2
+  const pivotY = cmd.placement.offsetY + drawH / 2
+  const th = (cmd.contentRotation * Math.PI) / 180
+  const cos = Math.cos(th), sin = Math.sin(th)
+  const transformPt = (x, y) => {
+    const dx = x - drawW / 2, dy = y - drawH / 2
+    return [pivotX + dx * cos - dy * sin, pivotY + dx * sin + dy * cos]
+  }
+  // 内容 rot0 bbox（扩展纸面内，与 A3-3-3-02 同源）：(169,189)-(169+2423,189+1500)
+  const corners = [[169, 189], [169 + 2423, 189], [169 + 2423, 189 + 1500], [169, 189 + 1500]]
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+  for (const [x, y] of corners) {
+    const [tx, ty] = transformPt(x, y)
+    minX = Math.min(minX, tx); maxX = Math.max(maxX, tx)
+    minY = Math.min(minY, ty); maxY = Math.max(maxY, ty)
+  }
+  const bboxX = minX, bboxY = minY, bboxW = maxX - minX, bboxH = maxY - minY
+  // C5 锚点（A3-V1 真机同预期）：(201,169,1500×2423)
+  assert.ok(Math.abs(bboxX - 201) <= 1.5, `bboxX=${bboxX.toFixed(2)} vs 201（offset 居中修复前会≈602）`)
+  assert.ok(Math.abs(bboxY - 169) <= 1.5, `bboxY=${bboxY.toFixed(2)} vs 169（offset 居中修复前会≈-244）`)
+  assert.ok(Math.abs(bboxW - 1500) <= 1, `bboxW=${bboxW.toFixed(2)} vs 1500`)
+  assert.ok(Math.abs(bboxH - 2423) <= 1, `bboxH=${bboxH.toFixed(2)} vs 2423`)
 })
 
 test('A3-3-3-04: rot180/rot270 + rotation=0 + 非法角度（数学完整性）', () => {
