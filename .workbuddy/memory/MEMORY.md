@@ -49,8 +49,10 @@
 | A3-3-2 | `4f7d61ba` | placementAdapter 纯层，native + 位移 = source 语义，三 Gate 全绿 |
 | A3-3-3 | `c7690257`/`99795974`/`75ba73f1`/`6ca58679` | Policy A 画布级旋转落地 + A3-V1 两坑修复（contract 字段 / 居中 offset），71/71；**Rotation Contract ✅ PASS** |
 | A3-V1 | `85284c78`/`43078485`/`6ca58679` | 生产采集器 + 两处真实 bug 修复（全白 / 旋转偏右上） |
-| A3-C5 | ⏸ | Full Fidelity Alignment **BLOCKED** by RenderResource fidelity（max 3.66mm，native content scale ≠ source） |
-| A3-R1 | 🆕 | RenderResource Fidelity 只读调查（CropBox vs MediaBox 嫌疑最大），禁 scale hack |
+| A3-3-2 Placement | ✅ | rot0 探针：left/top anchor <0.2mm 吻合 source（placement+坐标系精确） |
+| A3-C5 | ⏸ | Full Fidelity Alignment **BLOCKED** by RenderResource fidelity（max 3.66mm，pdf.js vs fitz content scale 差），等 RenderResource baseline 统一 |
+| A3-R1 | ✅ CLOSED | rot0 证明残差与 rotation 无关（非整体平移/四边错位），归 RenderResource |
+| A3-RF | 🆕 OPEN | **RenderResource Fidelity Gate（A3-RF-01）**：验证 renderPDFPageRaw 输出 vs fitz source；归因 RenderResource 层。假设 R2=CropBox(pdf.js) vs MediaBox(fitz) 待 PDF 探针定论 |
 
 ### A3 硬事实
 - **Policy A（冻结）**：纸面跟随内容旋转，rot90 → 2717×1890 → 1890×2717。canvas 现有 `createPlacement` 是 **Policy B**（纸固定、内容在纸内转），仅限 A4/merge 路径。

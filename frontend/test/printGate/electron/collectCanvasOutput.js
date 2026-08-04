@@ -360,5 +360,60 @@ export async function collectProductionRotatedCase(caseDef) {
   }
 }
 
+/**
+ * A3-RF RenderResource Probe — pdf.js 侧（Electron devtools 跑）。
+ *
+ * 镜像 collectProductionRotatedCase 的 native 渲染步，但只取 RenderResource 本身，
+ * 不做 placement / rotation —— 纯粹对比 pdf.js 产出的 resource 与 fitz 侧（probe_render_resource_fitz.py）。
+ *
+ * 输出：nativeRes（pdf.js getViewport 默认 CropBox 渲染）尺寸 + content bbox（透明底，alpha>0 即内容）。
+ * 与 fitz 探针的 mediabox_px / cropbox_px 比对：
+ *   - 若 nativeRes ≈ fitz cropbox_px 且 ≠ mediabox_px → 假设 R2 成立（pdf.js=CropBox, fitz=MediaBox）
+ *   - 若 nativeRes ≈ fitz mediabox_px → 两引擎同 box，残差在 AA / glyph 层
+ *
+ * @param {object} caseDef GATE_CASES 项（rotation 无关，本探针只取 native）
+ */
+export async function collectRenderResourceProbe(caseDef) {
+  try {
+    const item = await makePrintItem(caseDef)
+    const nativeRes = await renderPDFPageRaw(item._pdfData, GATE_DPI, item.key, null, false)
+    if (!nativeRes) return { ok: false, error: 'renderPDFPageRaw(native) 返回 null' }
+
+    const { canvas, width, height } = nativeRes
+    const ctx = canvas.getContext('2d')
+    const img = ctx.getImageData(0, 0, width, height).data
+
+    // 仿 node findContentBBox：pdf.js 透明底 → alpha>0 即内容（alphaThreshold=0）
+    let minX = width, minY = height, maxX = -1, maxY = -1
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const a = img[(y * width + x) * 4 + 3]
+        if (a > 0) {
+          if (x < minX) minX = x
+          if (x > maxX) maxX = x
+          if (y < minY) minY = y
+          if (y > maxY) maxY = y
+        }
+      }
+    }
+    const bbox = maxX >= 0 ? { x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1 } : null
+
+    const artifact = {
+      engine: 'pdfjs',
+      case: caseDef.id,
+      dpi: GATE_DPI,
+      nativeW: width,
+      nativeH: height,
+      bbox_method: 'alpha>0 (transparent bg)',
+      content_bbox_px: bbox,
+    }
+    console.log(`[GATE-A3RF] ${caseDef.id} OK native=${width}x${height} contentBBox=${JSON.stringify(bbox)}`)
+    return { ok: true, artifact }
+  } catch (e) {
+    console.error(`[GATE-A3RF] ${caseDef.id} FAIL:`, e.message)
+    return { ok: false, error: e.message }
+  }
+}
+
 // 供 node 侧分析复用
 export { GATE_CASES }

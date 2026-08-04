@@ -704,11 +704,49 @@ native 内容尺度差属 `renderPDFPageRaw` 栅格化保真度（pdf.js `getVie
 ⚠️ **红线**：A3-R1 期间**禁止**引入 scale compensation / +3.5mm hack / bbox 拉伸 ——
 否则破坏刚建立的 `resource ≠ placement ≠ PaperTransform` 原则。
 
+### 14.22 A3 收口状态（2026-08-04 用户定稿：拆分 Rotation PASS / Placement PASS / RenderResource OPEN）
+
+**核心架构判定**：`Resource ≠ Placement ≠ PaperTransform`。A3-V1 两轮采集 + rot0 探针已证明
+**Placement 链（纸张/坐标系/位移/旋转）精确**，残差 100% 落在 RenderResource 层（pdf.js vs fitz 栅格化尺度差）。
+**问题回到 Resource 层，不应污染 Placement/Rotation 已验证结论。**
+
+#### 14.22.1 A3 子项状态
+| 项 | 状态 | 证据 |
+|---|---|---|
+| A3-3-1 Rotation Coordinate Contract | ✅ | Policy A + C3/C4 冻结通过 |
+| A3-3-2 Placement Geometry (rot0) | ✅ | rot0 探针：left/top anchor <0.2mm 吻合 source |
+| A3-3-3 Rotation Transform | ✅ | rot90 bitmap 1890×2717 精确 + 旋转后边距反推 <0.2mm |
+| A3-R1 Rotation risk | CLOSED | rot0 证明残差与 rotation 无关（非整体平移/四边错位） |
+| A3-RF RenderResource Fidelity | ⚠️ OPEN | pdf.js vs fitz resource divergence（见 R2） |
+| A3-C5 Full Fidelity Alignment | ⏸ BLOCKED | 等待 RenderResource baseline 统一 |
+
+#### 14.22.2 新增 Gate：A3-RF-01（RenderResource Fidelity Gate）
+- **职责**：验证 `renderPDFPageRaw()` 生成的 resource 是否与 source renderer（fitz）一致。
+  这是 `resource ≠ placement` 原则的自然延伸——A3 验证「放在哪/怎么转」，RF 验证「bitmap 从哪来、是否忠实」。
+- **输入**：同一 PDF（PDF | +-- fitz raster / +-- pdf.js raster）。
+- **输出对比**：page size / content bbox / text·image coverage。
+- **归因**：差值归 RenderResource layer，**不归** Placement layer。
+- **与 A3-C5 关系**：A3-C5 的 ≤0.5mm 终判依赖统一的 RenderResource baseline；
+  在 pdf.js 与 fitz 尚未对齐前 A3-C5 保持 BLOCKED，但不阻塞 A3-3-3（旋转正确性可自洽验证）。
+
+#### 14.22.3 假设 R2（pending PDF probe，未定论）
+- **Hypothesis**：pdf.js `getViewport` 默认按 **CropBox** 选渲染框，而 `rasterize_pdf.py`/`add-pdf-margins`
+  按 **MediaBox**（或 page.rect）渲染 ⇒ 同一 PDF 两引擎 content box 尺度差（尤其底边）。
+- **状态**：pending —— PDF fixture 本地缺失（gitignored 真实发票），需 RenderResource Probe 取 box metadata 定论。
+- **禁止**直接写「原因就是 CropBox」——尚无 PDF metadata 证据。
+
+#### 14.22.4 A3 Gate 方法论修正（拒绝放宽容差）
+- ❌ **不放宽 A3 容差到 ~4mm**：A3 目标是「Canvas 输出可替代 Source 输出」，放宽=承认 Canvas≠Source，
+  会污染 A4 / OFD / merge / 一页多票（任何 renderer 差异都能塞进 4mm）。
+- ✅ **A3-3-3 改为自洽验证**：`native resource + placement + rotation transform = geometry correctness`，
+  参考物是 **native bitmap 自身 bbox**，而非 `pdf.js bitmap vs fitz raster bbox`（两 renderer 比尺寸非同一变量）。
+- 旋转正确性纯靠 canvas rot0 ↔ canvas rot90 互验（逆旋转后 bbox 重合即 PASS），彻底脱离 fitz 参考锚。
+
 ### 14.6 冻结状态
 ```
 A2-G1 source ✅ | canvas 采集链路 ✅ + 第一份报告 🔴FAIL(预期)
 A2-G1-CANVAS-2 同纸张实验 🔴 FAIL（renderPDFPageRaw customPaper 缺陷，双重 fit）
 A2-G1 OFD (G1-B) ⏸ | A2-G2..G6 ⏸
-A3-3-3 ✅（rotation+paper transform 验证）| A3-C5 ⏸ BLOCKED by RenderResource fidelity(max 3.66mm) | A3-R1 调查启动 | A3-V2 ⏸ | Phase B ⏸
+A3-3-1 ✅ | A3-3-2 Placement rot0 ✅ | A3-3-3 Rotation ✅ | A3-R1 CLOSED | A3-RF Render fidelity ⚠️ OPEN(pdf.js vs fitz divergence) | A3-C5 ⏸ BLOCKED(等 RenderResource baseline) | A3-V2 ⏸ | Phase B ⏸
 ```
 
