@@ -210,6 +210,8 @@ const PrintPreviewCanvas = memo(({ preview, marginSettings }) => {
   }, [preview, total])
 
   if (total === 0) {
+    // 无预览数据：优先展示模型 invalid 原因（如边距超出纸张尺寸）
+    const reason = preview && !preview.valid ? preview.reason : null
     return (
       <div className="pcm-preview-placeholder-text" style={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
         <svg viewBox="0 0 24 24" width="36" height="36" fill="none" stroke="var(--text-4)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginBottom: '8px', opacity: 0.6 }}>
@@ -217,8 +219,8 @@ const PrintPreviewCanvas = memo(({ preview, marginSettings }) => {
           <circle cx="8.5" cy="8.5" r="1.5" />
           <path d="m21 15-5-5L5 21" />
         </svg>
-        <p>暂无预览数据</p>
-        <span>请先选择纸张与合并模式</span>
+        <p>{reason || '暂无预览数据'}</p>
+        <span>{reason ? '请调整边距或纸张设置，确保打印内容有可用区域' : '请先选择纸张与合并模式'}</span>
       </div>
     )
   }

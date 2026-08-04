@@ -81,7 +81,7 @@ test('PM-02: merge2 → 2 slots 竖向等分（等高、末位收口）', () => 
   assert.equal(s1.source, 'B.pdf')
 })
 
-test('PM-03: merge4 → 1 page / 4 slots 横向（强制 landscape + 轴交换）', () => {
+test('PM-03: merge4 → 1 page / 4 slots 横向（强制 landscape，物理可用区重算）', () => {
   const files = [mk('A'), mk('B'), mk('C'), mk('D')]
   const plan = buildPrintExecutionPlan(files, {
     filter: SOURCE_FILE_FILTER,
@@ -95,14 +95,38 @@ test('PM-03: merge4 → 1 page / 4 slots 横向（强制 landscape + 轴交换�
   assert.ok(near(p.paperSizeMM.heightMM, 210), `landscape 高=${p.paperSizeMM.heightMM} vs 210`)
   assert.equal(p.slots.length, 4)
   const s0 = p.slots[0]
+  // 横向物理可用区（margins 属 Paper 坐标）：宽=297-6=291.08mm，高=210-6=204.05mm，竖向 4 等分
   assert.ok(near(s0.x, 2.96) && near(s0.y, 2.96), `slot0 原点 (${s0.x},${s0.y})`)
-  assert.ok(near(s0.width, 72.73, 0.1), `slot0.width=${s0.width} vs 72.73（横向 1/4）`)
-  assert.ok(near(s0.height, 204.05, 0.1), `slot0.height=${s0.height} vs 204.05（轴交换后）`)
-  // 横向排列：x 递增，y 不变
+  assert.ok(near(s0.width, 291.08, 0.1), `slot0.width=${s0.width} vs 291.08（横向可用宽 297-6）`)
+  assert.ok(near(s0.height, 51.01, 0.1), `slot0.height=${s0.height} vs 51.01（横向可用高 204.05 的 1/4）`)
+  // 竖向排列：y 递增，x 不变（横向物理可用区内等分）
   for (let i = 1; i < 4; i++) {
-    assert.ok(near(p.slots[i].x, p.slots[i - 1].x + p.slots[i - 1].width, 0.1), `slot${i}.x 连续`)
-    assert.ok(near(p.slots[i].y, s0.y, 0.1), `slot${i}.y 与 slot0 同高`)
+    assert.ok(near(p.slots[i].y, p.slots[i - 1].y + p.slots[i - 1].height, 0.1), `slot${i}.y 连续`)
+    assert.ok(near(p.slots[i].x, s0.x, 0.1), `slot${i}.x 与 slot0 同 x`)
+    assert.ok(p.slots[i].x + p.slots[i].width <= p.paperSizeMM.widthMM + 0.1, `slot${i} 不溢出纸宽`)
   }
+})
+
+test('PM-11: 横向 + 非对称边距（左30mm）→ slot 不溢出纸面，内容区贴物理可用区', () => {
+  const files = [mk('A')]
+  const plan = buildPrintExecutionPlan(files, {
+    filter: SOURCE_FILE_FILTER,
+    settings: { landscape: true, marginLeft: 30 },
+  })
+  const m = buildPrintPreviewModel(plan, {
+    files,
+    settings: { landscape: true, marginLeft: 30 },
+  })
+  assert.equal(m.valid, true)
+  const p = m.pages[0]
+  const s = p.slots[0]
+  // 横向物理可用区：x∈[30, 297-3] → 宽 264mm（margins 属 Paper 坐标，非轴交换）
+  assert.ok(near(s.x, 30, 0.1), `slot.x=${s.x} vs 30（物理左边距）`)
+  assert.ok(near(s.width, 264, 0.1), `slot.width=${s.width} vs 264（297-30-3）`)
+  assert.ok(s.x + s.width <= p.paperSizeMM.widthMM + 0.1,
+    `不溢出纸宽：x+w=${(s.x + s.width).toFixed(1)} vs ${p.paperSizeMM.widthMM}`)
+  // 右下角 = 物理可用区右下角（fit 目标完整落在纸内）
+  assert.ok(near(s.y + s.height, 210 - 3, 0.1), `y+h=${s.y + s.height} vs 207`)
 })
 
 test('PM-04: 一普二专 → extraPages 展开进 pages', () => {

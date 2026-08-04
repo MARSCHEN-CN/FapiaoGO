@@ -11,7 +11,9 @@
  *   - Plan 冻结「不描述怎么画」（禁止 usableRect/slotRect）——本模型是 Plan 的**消费方**：
  *     只读派生，绝不改写 plan 对象，绝不把几何反向写回 Plan。
  *   - 与打印几何的关系：本模型用「与 computePaperLayout 同构的本地公式」算安全区（原因见下），
- *     槽位等分复用生产函数 computeTicketSlots / slotToLandscape（node-safe）。
+ *     槽位等分复用生产函数 computeTicketSlots（node-safe）；横向票位在「横向物理可用区」
+ *     重算（margins 属 Paper 坐标不随内容旋转，与 RenderLayoutFactory 同源语义），
+ *     不用 slotToLandscape 轴交换（非对称边距会溢出）。
  *     预览语义 = 打印语义（同一 Plan），但本模型**不裁决**打印几何——打印几何仍由打印 adapter 决定。
  *
  * ⚠️ 为什么 previewPaperLayout 不直接 import previewState.computePaperLayout：
@@ -24,7 +26,7 @@
  * @module print/PrintPreviewModel
  */
 
-import { computeTicketSlots, slotToLandscape } from '../layout/SlotLayout.js'
+import { computeTicketSlots } from '../layout/SlotLayout.js'
 
 const PREVIEW_DPI = 300
 const PX_TO_MM = 25.4 / PREVIEW_DPI
@@ -115,6 +117,18 @@ export function buildPrintPreviewModel(plan, { files = [], settings = {}, curren
   const fileById = new Map(files.map((f) => [f.key, f]))
   const mL = layout.usableRect.x
   const mT = layout.usableRect.y
+  const mR = layout.paperRect.w - layout.usableRect.w - mL
+  const mB = layout.paperRect.h - layout.usableRect.h - mT
+
+  // 横向物理可用区（冻结语义：margins 属 Paper 坐标，Top/Left 仍为物理上/左边，不随内容旋转；
+  // 与 RenderLayoutFactory 的 usableRect swap 同源）。横向票位在此重算等分——
+  // 不用 slotToLandscape 简单轴交换：轴交换会把「自然垂直边距(mT+mB)」当成横向水平可用长度，
+  // 非对称边距时（如左 30mm 右 3mm）得宽 291mm > 纸宽 297-30-3=264mm → 右侧溢出被裁，内容挤右上角。
+  const landUsable = {
+    x: mL, y: mT,
+    w: layout.paperRect.h - mL - mR,
+    h: layout.paperRect.w - mT - mB,
+  }
 
   /**
    * 获取文件指定页的缩略图 URL
@@ -133,8 +147,11 @@ export function buildPrintPreviewModel(plan, { files = [], settings = {}, curren
 
   const pageToModel = (page) => {
     const isLandscape = page.orientation === 'landscape'
-    let slots = computeTicketSlots(layout, page.slots.length)
-    if (isLandscape) slots = slots.map((s) => slotToLandscape(s, { mL, mT }))
+    // 票位几何：横向在横向物理可用区重算（margins 不随内容旋转），纵向用自然可用区。
+    // 可用区非正（边距超出）→ 返回 null，由调用方统一判定 invalid。
+    const usable = isLandscape ? landUsable : layout.usableRect
+    if (usable.w <= 0 || usable.h <= 0) return null
+    const slots = computeTicketSlots({ usableRect: usable }, page.slots.length)
 
     const widthMM = (isLandscape ? layout.paperRect.h : layout.paperRect.w) * PX_TO_MM
     const heightMM = (isLandscape ? layout.paperRect.w : layout.paperRect.h) * PX_TO_MM
@@ -161,11 +178,14 @@ export function buildPrintPreviewModel(plan, { files = [], settings = {}, curren
     }
   }
 
-  // 构建基础预览页
+  // 构建基础预览页（横向边距超纸时 pageToModel 返回 null，过滤后判定 invalid）
   const basePages = [
     ...plan.pages.map(pageToModel),
     ...(plan.extraPages || []).map(pageToModel),
-  ]
+  ].filter(Boolean)
+  if (basePages.length === 0) {
+    return { valid: false, reason: '边距超出纸张尺寸（打印内容无可用区域）', pages: [], currentPageIndex: 0 }
+  }
 
   // 多页文档展开：将每个 slot 的多页文档展开为多个预览页
   const expandedPages = []
