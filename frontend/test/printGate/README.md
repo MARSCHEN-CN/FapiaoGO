@@ -90,3 +90,13 @@ console.log(JSON.stringify(r.artifact, null, 2))
 （RenderLayoutFactory.js:73-99，7 条校验）拒绝，**画布尺寸对但一笔没画=全白**。
 这就是 A3-V1「实现路径 ≠ 纯函数路径」要抓的东西。守卫见 Gate `A3-E2E-03/04`。
 **排查口诀：bitmap 尺寸对 + bbox=null ⇒ 先查契约校验，不是几何问题。**
+
+**⚠️ 复跑又踩第二坑（同次采集，已修 + 已加回归守卫 `A3-3-3-06`）**：
+契约修好后复跑：`bitmap=1890x2717 bbox=(657,0,1233x2160)` —— 画布尺寸对、有像素，
+但**右/顶贴边被裁、左空 657px、底空 557px**（内容画歪到右上角）。
+→ `transformPaperRotation` 的 `rotateCanvasCommand` 用 `placement.offset=(0,0)`，
+而 `drawRenderCommand`(renderDraw.js:53) 以 `(offset+drawW/2, offsetY+drawH/2)` 为旋转支点；
+offset=0 时支点落在「原纸面中心坐标」而非目标画布中心 → 纸面溢出 2 边、留白 2 边。
+修复：`offsetX=(nW-paperW)/2, offsetY=(nH-paperH)/2`（rot90: -413.5/+413.5）。手算验证命中 C5 (201,169,1500x2423)。
+⚠️ 测试本身也埋了坑：A3-3-3-01 原断言 `offset===0`（把 bug 冻结进测试），已改为断言居中偏移。
+**排查口诀 2：bitmap 尺寸对 + bbox 右/顶贴边、左/底留白 ⇒ 旋转居中 offset 错，不是 rotation 角度错。**
