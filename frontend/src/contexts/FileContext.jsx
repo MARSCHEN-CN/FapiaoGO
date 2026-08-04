@@ -1,6 +1,6 @@
-import { createContext, useContext, useReducer, useCallback, useState, useMemo, useSyncExternalStore } from 'react'
-import { filterFiles, isMergeMode } from '../utils'
-import { buildDocumentViewModel } from '../utils/documentViewModel'
+import { createContext, useContext, useReducer, useCallback, useState, useMemo, useRef, useSyncExternalStore } from 'react'
+import { filterFiles, isMergeMode, getPreviousYearInfo } from '../utils'
+import { buildDocumentViewModel, buildPageDuplicateInfo, buildDocumentDuplicateInfo } from '../utils/documentViewModel'
 import { amountToChinese } from '../utils/amountConverter'
 import { getActiveSessionId, getSession, subscribe, getDocumentVersion } from '../stores/ImportSessionStore'
 
@@ -76,6 +76,39 @@ export function FileProvider({ children }) {
     [files, invoiceDocs],
   )
 
+  // ── P1-A: 稳定派生数据引用（排序仅改变顺序时复用旧 Map 引用，减少 FileCardRow 重渲染） ──
+  // 当排序只改变文件顺序（不改变内容）时，previousYearInfo / duplicatePageInfo /
+  // duplicateDocumentInfo 的内容完全相同。通过内容签名检测是否真正变化，复用旧引用。
+  const derivedCache = useRef({ sig: '', previousYearInfo: null, duplicatePageInfo: null, duplicateDocumentInfo: null })
+
+  const { previousYearInfo, duplicatePageInfo, duplicateDocumentInfo } = useMemo(() => {
+    // 构建 order-invariant 签名：文件内容 + duplicateGroups 内容
+    const fileSig = files.length
+      ? files.map(f => `${f.key}|${f.status}|${f.invoiceDate || ''}|${f.docId || ''}`).sort().join('‖')
+      : ''
+    const dupSig = documentView.duplicateGroups.size
+      ? Array.from(documentView.duplicateGroups.entries())
+          .map(([k, docs]) => `${k}:${docs.map(d => d.key).sort().join(',')}`)
+          .sort().join('§')
+      : ''
+    const combinedSig = fileSig + '#' + dupSig
+
+    if (combinedSig === derivedCache.current.sig) {
+      return {
+        previousYearInfo: derivedCache.current.previousYearInfo,
+        duplicatePageInfo: derivedCache.current.duplicatePageInfo,
+        duplicateDocumentInfo: derivedCache.current.duplicateDocumentInfo,
+      }
+    }
+
+    const prevYear = getPreviousYearInfo(files)
+    const pageDup = buildPageDuplicateInfo(documentView.duplicateGroups)
+    const docDup = buildDocumentDuplicateInfo(documentView.duplicateGroups)
+
+    derivedCache.current = { sig: combinedSig, previousYearInfo: prevYear, duplicatePageInfo: pageDup, duplicateDocumentInfo: docDup }
+    return { previousYearInfo: prevYear, duplicatePageInfo: pageDup, duplicateDocumentInfo: docDup }
+  }, [files, documentView.duplicateGroups])
+
   const fileStats = useMemo(() => {
     // 可打印计数：Print Pipeline 域，打印以页为单位，保持 page 级
     let printableCount = 0
@@ -128,6 +161,10 @@ export function FileProvider({ children }) {
     setMergeMode,
     // Document 视图模型（D1 统一出口：统计/重复/列表聚合的唯一数据源）
     documentView,
+    // P0-2: 集中计算的派生数据（排序/展示共用，避免重复 O(n)）
+    previousYearInfo,
+    duplicatePageInfo,
+    duplicateDocumentInfo,
     // 文件统计
     totalAmount,
     printableCount,
@@ -140,6 +177,7 @@ export function FileProvider({ children }) {
     files, setFiles, searchQuery, filteredFiles, isSearching,
     mergeMode,
     documentView,
+    previousYearInfo, duplicatePageInfo, duplicateDocumentInfo,
     totalAmount, printableCount, hasFailedFiles, failedFilesCount,
     totalAmountInt, totalAmountDecimal, chineseAmount,
   ])

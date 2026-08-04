@@ -109,6 +109,81 @@ export function naturalSort(a, b) {
   }
   return ax.length - bx.length
 }
+
+// ── 预计算排序键（P0 优化：将 O(n log n) 正则比较降为 O(n) 预计算 + O(1) 比较） ──
+
+/**
+ * 将文件名预分割为自然排序 token 数组，避免在 Array.sort 比较器中反复执行正则。
+ * 300 条数据 → 约 5000 次比较 → 5000 次正则 → 优化为 1 次正则 + O(1) 数组比较。
+ */
+function tokenizeNaturalSort(str) {
+  if (!str) return [[Infinity, '']]
+  const tokens = []
+  str.replace(/(\d+)|(\D+)/g, (_, $1, $2) => {
+    tokens.push([$1 ? Number($1) : Infinity, $2 || ''])
+  })
+  return tokens
+}
+
+/**
+ * 比较两个预分割的自然排序 token 数组。
+ * @returns {number} -1 / 0 / 1
+ */
+function compareNaturalTokens(aTokens, bTokens) {
+  const len = Math.min(aTokens.length, bTokens.length)
+  for (let i = 0; i < len; i++) {
+    const an = aTokens[i], bn = bTokens[i]
+    const diff = (an[0] - bn[0]) || an[1].localeCompare(bn[1])
+    if (diff) return diff
+  }
+  return aTokens.length - bTokens.length
+}
+
+/**
+ * 预计算排序键数组。对列表每个元素计算一次主排序值和兜底排序值。
+ * @param {Array} list - 文件列表
+ * @param {string} field - 排序字段
+ * @returns {{ primary: Array, fallbackTokens: Array }}
+ */
+function precomputeSortKeys(list, field) {
+  const n = list.length
+  const primary = new Array(n)
+  const fallbackTokens = new Array(n)
+
+  for (let i = 0; i < n; i++) {
+    const file = list[i]
+    fallbackTokens[i] = tokenizeNaturalSort(file?.name || '')
+
+    switch (field) {
+      case 'invoiceType': {
+        const t = file?.invoiceType
+        primary[i] = t === '专票' ? 0 : t === '普票' ? 1 : 2
+        break
+      }
+      case 'fileName': {
+        primary[i] = fallbackTokens[i]
+        break
+      }
+      case 'amount': {
+        let val = NaN
+        if (file?.amount) {
+          const n = parseFloat(String(file.amount).replace(/[¥￥,\s]/g, ''))
+          if (!isNaN(n)) val = n
+        }
+        primary[i] = val
+        break
+      }
+      case 'invoiceDate': {
+        const d = file?.invoiceDate && file.invoiceDate !== '未知日期' ? file.invoiceDate : ''
+        primary[i] = d
+        break
+      }
+      default:
+        primary[i] = 0
+    }
+  }
+  return { primary, fallbackTokens }
+}
 export function isMergeMode(mergeMode) {
   return ['merge2', 'merge3', 'merge4'].includes(mergeMode)
 }
@@ -290,13 +365,16 @@ export function isFailedFile(file) {
 
 export function applySort(list, field, order, duplicateInfo = null, previousYearInfo = null) {
   const dir = order === 'desc' ? -1 : 1
+  const n = list.length
+  if (n <= 1) return list
 
-  // 单次遍历分区：失败文件、重复组、往年发票、正常文件（优先级由高到低）
+  // 单次遍历分区 + 预计算排序键
   const failedFiles = []
   const duplicateGroups = new Map()
   const previousYearFiles = []
   const normalFiles = []
-  for (let i = 0; i < list.length; i++) {
+
+  for (let i = 0; i < n; i++) {
     const file = list[i]
     if (isFailedFile(file)) {
       failedFiles.push(file)
@@ -313,69 +391,67 @@ export function applySort(list, field, order, duplicateInfo = null, previousYear
     }
   }
 
-  // 排序函数：主排序字段 + 文件名兜底保证稳定性
-  const sortFn = (a, b) => {
-    let result = 0
-    switch (field) {
-      case 'invoiceType': {
-        const typeOrder = (t) => {
-          if (t === '专票') return 0
-          if (t === '普票') return 1
-          return 2
+  // 为每个分区独立预计算排序键
+  function sortPartition(arr) {
+    if (arr.length <= 1) return arr
+    const { primary, fallbackTokens } = precomputeSortKeys(arr, field)
+
+    const sortFn = (ai, bi) => {
+      let result = 0
+      const aVal = primary[ai], bVal = primary[bi]
+
+      switch (field) {
+        case 'fileName':
+          result = compareNaturalTokens(aVal, bVal) * dir
+          break
+        case 'amount': {
+          const aNaN = isNaN(aVal), bNaN = isNaN(bVal)
+          if (aNaN && bNaN) result = 0
+          else if (aNaN) result = 1
+          else if (bNaN) result = -1
+          else result = (aVal - bVal) * dir
+          break
         }
-        result = (typeOrder(a.invoiceType) - typeOrder(b.invoiceType)) * dir
-        break
-      }
-      case 'fileName':
-        result = naturalSort(a.name, b.name) * dir
-        break
-      case 'amount': {
-        const parseAmt = (s) => {
-          if (!s) return NaN
-          const n = parseFloat(String(s).replace(/[¥￥,\s]/g, ''))
-          return isNaN(n) ? NaN : n
+        case 'invoiceDate': {
+          if (!aVal && !bVal) result = 0
+          else if (!aVal) result = 1
+          else if (!bVal) result = -1
+          else result = aVal.localeCompare(bVal) * dir
+          break
         }
-        const amtA = parseAmt(a.amount)
-        const amtB = parseAmt(b.amount)
-        if (isNaN(amtA) && isNaN(amtB)) result = 0
-        else if (isNaN(amtA)) result = 1
-        else if (isNaN(amtB)) result = -1
-        else result = (amtA - amtB) * dir
-        break
+        case 'invoiceType':
+        default:
+          result = (aVal - bVal) * dir
       }
-      case 'invoiceDate': {
-        const dateA = a.invoiceDate && a.invoiceDate !== '未知日期' ? a.invoiceDate : ''
-        const dateB = b.invoiceDate && b.invoiceDate !== '未知日期' ? b.invoiceDate : ''
-        if (!dateA && !dateB) result = 0
-        else if (!dateA) result = 1
-        else if (!dateB) result = -1
-        else result = dateA.localeCompare(dateB) * dir
-        break
-      }
-      default:
-        result = 0
+
+      if (result !== 0) return result
+      // 兜底：按文件名自然排序保证稳定性
+      return compareNaturalTokens(fallbackTokens[ai], fallbackTokens[bi])
     }
-    // 兜底：主排序字段相同时，按文件名升序排序保证稳定性
-    return result !== 0 ? result : naturalSort(a.name, b.name)
+
+    // 使用索引数组排序，避免移动对象
+    const indices = arr.map((_, i) => i)
+    indices.sort(sortFn)
+    return indices.map(i => arr[i])
   }
 
   // 分别对各分区应用排序
-  failedFiles.sort(sortFn)
-  previousYearFiles.sort(sortFn)
-  
+  const sortedFailed = sortPartition(failedFiles)
+  const sortedPreviousYear = sortPartition(previousYearFiles)
+
   // 重复组：先按组索引升序排列组，组内按用户选定字段排序
   const sortedDuplicateGroups = []
   const sortedGroupIndices = [...duplicateGroups.keys()].sort((a, b) => a - b)
   for (const groupIndex of sortedGroupIndices) {
     const groupFiles = duplicateGroups.get(groupIndex)
-    groupFiles.sort(sortFn)
-    sortedDuplicateGroups.push(...groupFiles)
+    const sortedGroup = sortPartition(groupFiles)
+    sortedDuplicateGroups.push(...sortedGroup)
   }
-  
-  normalFiles.sort(sortFn)
+
+  const sortedNormal = sortPartition(normalFiles)
 
   // 合并：失败文件在前，然后是重复组，然后是往年发票，最后是非重复文件
-  return [...failedFiles, ...sortedDuplicateGroups, ...previousYearFiles, ...normalFiles]
+  return [...sortedFailed, ...sortedDuplicateGroups, ...sortedPreviousYear, ...sortedNormal]
 }
 
 // ============================

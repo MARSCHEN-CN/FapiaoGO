@@ -1,6 +1,5 @@
 import React, { useMemo, useRef, useCallback, useEffect, useState } from 'react'
-import { isMergeMode, getPreviousYearInfo, resolveStatsMode, getElectronAPI } from '../utils'
-import { buildDocumentDuplicateInfo } from '../utils/documentViewModel'
+import { isMergeMode, resolveStatsMode, getElectronAPI } from '../utils'
 import { groupFilesByDocument } from '../utils/groupDocuments'
 import { useFileContext } from '../contexts/FileContext'
 import { PUBLIC_BASE, APP_VERSION } from '../config'
@@ -62,7 +61,7 @@ export default React.memo(function Sidebar({
 }) {
   const [removeSourceFile, setRemoveSourceFile] = useState(false)
   const [showPreviousYearWarning, setShowPreviousYearWarning] = useState(true)
-  const { files, searchQuery, setSearchQuery, filteredFiles, isSearching, documentView, totalAmount, hasFailedFiles, failedFilesCount } = useFileContext()
+  const { files, searchQuery, setSearchQuery, filteredFiles, isSearching, documentView, totalAmount, hasFailedFiles, failedFilesCount, previousYearInfo, duplicateDocumentInfo } = useFileContext()
   const mergeActive = isMergeMode(paperSize)
 
   // ── 排序下拉（纯 UI 状态，不上升到 App 级） ──
@@ -91,15 +90,12 @@ export default React.memo(function Sidebar({
   }, [sortMenuOpen, handleCloseSortMenu])
 
   // ── D1：重复检测以 document 为单位（多页发票 = 一个发票 = 不构成重复） ──
-  // duplicateGroups 由 Document 视图模型统一派生（invoiceNumber 分组，输入为 document 条目）
-  const duplicateInfo = useMemo(
-    () => buildDocumentDuplicateInfo(documentView.duplicateGroups),
-    [documentView],
-  )
+  // duplicateDocumentInfo 已由 FileContext 集中计算（基于 documentView.duplicateGroups）
+  const duplicateInfo = duplicateDocumentInfo
   const duplicateGroupCount = documentView.duplicateGroups.size
 
   // 往年发票：计数以 document 为单位；page 级 info 仅供 FileList 行级 badge
-  const previousYearInfo = useMemo(() => getPreviousYearInfo(files), [files])
+  // previousYearInfo 已由 FileContext 集中计算
   const previousYearCount = documentView.previousYearCount
   const hasPreviousYear = previousYearCount > 0
 

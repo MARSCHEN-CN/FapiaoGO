@@ -1,8 +1,21 @@
-import { useState, useCallback, useEffect, useRef } from 'react'
-import { applySort, getPreviousYearInfo } from '../utils'
-import { buildDocumentViewModel, buildPageDuplicateInfo } from '../utils/documentViewModel'
+import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
+import { applySort } from '../utils'
 
-export function useSort(setFiles, files) {
+/**
+ * useSort — 文件列表排序 Hook
+ *
+ * P0-2 优化：duplicatePageInfo 和 previousYearInfo 改为从外部传入（由 FileContext 集中计算），
+ * 避免在排序时重复执行 O(n) 的 buildDocumentViewModel + getPreviousYearInfo。
+ *
+ * P1-B 优化：合并排序触发逻辑，同时监听 sortBy/sortOrder 变化和 files 内容变化。
+ * useFileOps 不再内联排序——导入完成后由本 Hook 自动处理，消除双重计算。
+ *
+ * @param {Function} setFiles - FileContext 的 setFiles
+ * @param {Array} files - 当前文件列表
+ * @param {Map} duplicatePageInfo - buildPageDuplicateInfo(documentView.duplicateGroups) 结果
+ * @param {Map} previousYearInfo - getPreviousYearInfo(files) 结果
+ */
+export function useSort(setFiles, files, duplicatePageInfo, previousYearInfo) {
   const [sortBy, setSortBy] = useState(() => {
     try { return localStorage.getItem('invoiceSortBy') || 'fileName' }
     catch { return 'fileName' }
@@ -33,27 +46,43 @@ export function useSort(setFiles, files) {
     }
   }, [sortBy, sortOrder])
 
-  const duplicateInfo = useRef(null)
-  const previousYearInfo = useRef(null)
-  useEffect(() => {
-    if (!files || files.length === 0) {
-      duplicateInfo.current = null
-      previousYearInfo.current = null
-      return
-    }
-    // D1：重复检测以 document 为单位，再投影到页 key 供 applySort 分区
-    //    （同一 document 的所有页共享组索引，排序后拆分页仍相邻）
-    const { duplicateGroups } = buildDocumentViewModel(files)
-    duplicateInfo.current = buildPageDuplicateInfo(duplicateGroups)
-    previousYearInfo.current = getPreviousYearInfo(files)
-  }, [files])
+  // 使用从 FileContext 传入的已计算数据，不再重复计算
+  const duplicateInfoRef = useRef(null)
+  const previousYearInfoRef = useRef(null)
 
   useEffect(() => {
+    duplicateInfoRef.current = duplicatePageInfo
+    previousYearInfoRef.current = previousYearInfo
+  }, [duplicatePageInfo, previousYearInfo])
+
+  // P1-B: order-invariant 排序键签名（仅包含影响排序的字段：key 用于检测增删，其余字段影响排序结果）
+  // 注意：status 不包含在内——解析期间的 status 更新不应触发多余排序
+  const sortSig = useMemo(() => {
+    if (!files.length) return ''
+    return files.map(f => {
+      const key = f.key
+      const date = f.invoiceDate || ''
+      const type = f.invoiceType || ''
+      const amount = f.amount || ''
+      const name = f.name || ''
+      return `${key}|${date}|${type}|${amount}|${name}`
+    }).sort().join('‖')
+  }, [files])
+
+  // 上次已完成排序的签名（防止对同一组数据重复排序）
+  const lastSortedSigRef = useRef('')
+
+  // 统一排序触发：sortBy/sortOrder 变化 或 排序相关字段变化（新文件导入/删除/字段修改）
+  useEffect(() => {
+    const combinedSig = `${sortBy}|${sortOrder}|${sortSig}`
+    if (!sortSig || combinedSig === lastSortedSigRef.current) return
+
+    lastSortedSigRef.current = combinedSig
     setFiles(current => {
       if (current.length <= 1) return current
-      return applySort(current, sortBy, sortOrder, duplicateInfo.current, previousYearInfo.current)
+      return applySort(current, sortByRef.current, sortOrderRef.current, duplicateInfoRef.current, previousYearInfoRef.current)
     })
-  }, [sortBy, sortOrder, setFiles])
+  }, [sortBy, sortOrder, sortSig, setFiles])
 
   return {
     sortBy, sortOrder,

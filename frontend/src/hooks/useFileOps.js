@@ -3,9 +3,8 @@ import { useDropzone } from 'react-dropzone'
 import { BACKEND_URL, SUPPORTED_EXTENSIONS, IMPORT_SCALE_V1, IMPORT_CHUNK_SIZE } from '../config'
 import {
   getElectronAPI, getFilePath, getExtension, getExtensionWithDot,
-  getMimeType, concurrentBatch, applySort, getPreviousYearInfo,
+  getMimeType, concurrentBatch,
 } from '../utils'
-import { buildDocumentViewModel, buildPageDuplicateInfo } from '../utils/documentViewModel'
 import { stripIdentity } from '../utils/fileHelpers'
 import { applyFileUpdate } from '../utils/fileStateTransitions'
 import { createPlaceholders } from '../utils/placeholderGenerator'
@@ -26,7 +25,6 @@ import { resolveInstancePageFiles } from '../utils/instancePageOwnership'
 import { createImportSession, getActiveSessionId, getSession, reactivateSession, addFilesToSession, replaceFileItems, updateProgress, addDocument, flushSessionNotifications } from '../stores/ImportSessionStore'
 import { ensureDocumentFromFileObj, flushDocumentNotifications, getDocument, registerDocument } from '../stores/DocumentStore'
 import { createDocument, createPageMeta } from '../models/InvoiceDocument'
-import { processImportedFiles } from '../processors/invoicePostProcessor'
 import { consumeParseResult } from '../consumers/parseResultConsumer'
 import { createParseResult } from '../models/ParseResult'
 
@@ -34,7 +32,7 @@ import { createParseResult } from '../models/ParseResult'
 // 仅允许正向状态迁移，阻止回退（Import Pipeline Contract v1.2）
 // 规则定义已迁至 ../utils/fileStateTransitions（与 applyFileUpdate 同模块，单一事实源）
 
-export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sortOrderRef }) {
+export function useFileOps({ setFiles, settings, electronAPIRef }) {
   const [isNativeDragActive, setIsNativeDragActive] = useState(false)
   const [importing, setImporting] = useState(false)   // 整个导入流程（处理+解析）
   const [parsing, setParsing] = useState(false)
@@ -245,17 +243,12 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
       if (filesToParse.length > 1) {
         try {
           await parseFilesBatch(filesToParse)
-          setFiles((prev) => {
-            // D1：重复检测以 document 为单位，再投影到页 key 供 applySort 分区
-            const { duplicateGroups } = buildDocumentViewModel(prev)
-            return applySort(prev, sortByRef.current, sortOrderRef.current, buildPageDuplicateInfo(duplicateGroups), getPreviousYearInfo(prev))
-          })
+          // 排序交由 useSort 的 sortSig 变化检测自动触发
           return
         } catch (batchErr) {
           console.warn('[parseFiles] 批量解析失败，回退逐个解析:', batchErr)
-          fallbackDoneCount = 0  // 重置计数器，准备逐个解析
+          fallbackDoneCount = 0
           setParseProgress({ current: 0, total: filesToParse.length })
-          // 继续执行下方的逐个解析逻辑
         }
       }
 
@@ -303,11 +296,7 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
         setParseProgress({ current: fallbackDoneCount, total: filesToParse.length })
       }, CONCURRENCY_LIMIT)
 
-      setFiles((prev) => {
-        // D1：重复检测以 document 为单位，再投影到页 key 供 applySort 分区
-        const { duplicateGroups } = buildDocumentViewModel(prev)
-        return applySort(prev, sortByRef.current, sortOrderRef.current, buildPageDuplicateInfo(duplicateGroups), getPreviousYearInfo(prev))
-      })
+      // 排序交由 useSort 的 sortSig 变化检测自动触发
     } finally {
       setParsing(false)
       setParseProgress({ current: 0, total: 0 })
@@ -978,7 +967,7 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
     // 强制刷新所有待处理更新（hydration 结果），再后处理
     flushUpdates()
 
-    // 探针2+3：flush 后状态分布 + processImportedFiles 前完整状态
+    // 探针2+3：flush 后状态分布
     let successCount = 0
     let errorCount = 0
     setFiles((prev) => {
@@ -993,8 +982,8 @@ export function useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sort
         console.warn(`[ImportScale before process] ${notDone.length} 个文件未到终态:`,
           notDone.slice(0, 20).map(f => `${f.name}:${f.status}`))
       }
-      const { files: sortedFiles } = processImportedFiles(prev, sortByRef.current, sortOrderRef.current)
-      return sortedFiles
+      // 排序交由 useSort 的 sortSig 变化检测自动触发
+      return prev
     })
 
     // 导入完成：先显示100%完成状态，等主界面渲染稳定后再关闭弹窗，避免闪烁

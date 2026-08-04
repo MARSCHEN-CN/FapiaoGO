@@ -109,7 +109,7 @@ function AppContent() {
   // ============================
   // 共享状态
   // ============================
-  const { files, setFiles, setMergeMode, printableCount, documentView, filteredFiles, isSearching } = useFileContext()
+  const { files, setFiles, setMergeMode, printableCount, documentView, filteredFiles, isSearching, duplicatePageInfo, previousYearInfo } = useFileContext()
 
   // ── Step 10.5+: displayFiles（与 Sidebar 逻辑一致） ──
   // 优先使用装配结果 documentView.documents（InvoiceDocument 聚合条目），
@@ -137,7 +137,7 @@ function AppContent() {
 
   const {
     sortBy, sortOrder, toggleSort, sortByRef, sortOrderRef,
-  } = useSort(setFiles, files)
+  } = useSort(setFiles, files, duplicatePageInfo, previousYearInfo)
 
   const preview = usePreview({ files: displayFiles, settings, electronAPIRef })
   // ✅ 从正确的分组中解构属性
@@ -229,7 +229,7 @@ function AppContent() {
     getRootProps, getInputProps, isDragActive,
     handleOpenDialog,
     handleOpenFolder,
-  } = useFileOps({ setFiles, settings, electronAPIRef, sortByRef, sortOrderRef })
+  } = useFileOps({ setFiles, settings, electronAPIRef })
 
   // ── Print Intent (OS Trust Delegation) ──
   const { submitPrintIntent } = usePrintIntent(electronAPIRef)
