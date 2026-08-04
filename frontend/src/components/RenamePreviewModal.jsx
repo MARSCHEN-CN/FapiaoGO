@@ -68,6 +68,7 @@ const RenamePreviewModal = ({
   executing,
   reimportProgress,
   result,
+  rulesWarning,
   renameSettings,
   onSaveRenameSettings,
   onApplySettings,
@@ -565,6 +566,46 @@ const RenamePreviewModal = ({
               </span>
             </div>
           </div>
+
+          {rulesWarning && (
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '10px',
+              padding: '10px 14px',
+              margin: '6px 14px 0',
+              background: 'linear-gradient(135deg, #fff7ed 0%, #ffedd5 100%)',
+              border: '1px solid #fed7aa',
+              borderRadius: '10px',
+              fontSize: '13px',
+              color: '#c2410c',
+              fontWeight: 500,
+            }}>
+              <svg viewBox="0 0 16 16" width="18" height="18" fill="none" stroke="#ea580c" strokeWidth="1.5" style={{ flexShrink: 0 }}>
+                <path d="M8 1L15 14H1L8 1Z" />
+                <line x1="8" y1="6" x2="8" y2="9.5" />
+                <circle cx="8" cy="11.5" r="0.6" fill="#ea580c" />
+              </svg>
+              <span style={{ flex: 1 }}>{rulesWarning}</span>
+              <button
+                onClick={() => setShowRules(true)}
+                style={{
+                  padding: '5px 14px',
+                  fontSize: '12px',
+                  fontWeight: 600,
+                  borderRadius: '6px',
+                  border: 'none',
+                  background: '#ea580c',
+                  color: '#fff',
+                  cursor: 'pointer',
+                  whiteSpace: 'nowrap',
+                  flexShrink: 0,
+                }}
+              >
+                去设置
+              </button>
+            </div>
+          )}
 
           {viewMode === 'list' ? (
             <div className="rp-list rs-scroll">

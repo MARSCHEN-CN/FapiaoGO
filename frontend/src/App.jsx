@@ -282,6 +282,7 @@ function AppContent() {
     reimportProgress,
     renamePreviewVisible, setRenamePreviewVisible,
     renamePreviewFiles, renameResult, setRenameResult,
+    renameRulesWarning,
     renamedPreviewKey,
     alertModal: renamePackAlert, closeAlert: closeRenamePackAlert,
     handleRename, handleRenameConfirm, handlePack,
@@ -1158,6 +1159,7 @@ function AppContent() {
             executing={packing}
             reimportProgress={reimportProgress}
             result={renameResult}
+            rulesWarning={renameRulesWarning}
             renameSettings={settings.renameSettings || {}}
             onSaveRenameSettings={(renameSettings) => {
               saveSettings({ ...settings, renameSettings })

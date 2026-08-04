@@ -105,6 +105,7 @@ export function useRenamePack({ files, documentRows, settings, setFiles, parseFi
   const [renamePreviewVisible, setRenamePreviewVisible] = useState(false)
   const [renamePreviewFiles, setRenamePreviewFiles] = useState([])
   const [renameResult, setRenameResult] = useState(null)
+  const [renameRulesWarning, setRenameRulesWarning] = useState(null)
   const [alertModal, setAlertModal] = useState(null)
   const [reimporting, setReimporting] = useState(false)
   const [reimportProgress, setReimportProgress] = useState(null)
@@ -189,7 +190,19 @@ export function useRenamePack({ files, documentRows, settings, setFiles, parseFi
 
     const renameSettings = curSettings.renameSettings || {}
     const fields = renameSettings.fields || []
-    if (fields.length === 0) return false
+    if (fields.length === 0) {
+      const previews = documentFiles.map(f => ({
+        key: f.key,
+        originalName: f.name,
+        newName: f.name,
+      }))
+      const previewFiles = buildPreviewFilesFromDocuments(documentFiles, previews)
+      setRenamePreviewFiles(previewFiles)
+      setRenameRulesWarning('重命名规则未设置，请到设置中设置重命名规则')
+      return false
+    }
+
+    setRenameRulesWarning(null)
 
     const filesForPreview = documentFiles.map(f => ({
       key: f.key,
@@ -221,6 +234,7 @@ export function useRenamePack({ files, documentRows, settings, setFiles, parseFi
 
   const refreshRenamePreview = useCallback(() => {
     setRenameResult(null)
+    setRenameRulesWarning(null)
     computedNamesRef.current = {}
     previewDocumentMapRef.current = new Map()
     generatePreviewInner()
@@ -248,10 +262,20 @@ export function useRenamePack({ files, documentRows, settings, setFiles, parseFi
     const renameSettings = curSettings.renameSettings || {}
     const fields = renameSettings.fields || []
     if (fields.length === 0) {
-      setRenameResult({ success: false, error: '重命名规则未设置，请到设置中设置重命名规则' })
+      const previews = documentFiles.map(f => ({
+        key: f.key,
+        originalName: f.name,
+        newName: f.name,
+      }))
+      const previewFiles = buildPreviewFilesFromDocuments(documentFiles, previews)
+      setRenamePreviewFiles(previewFiles)
+      setRenameRulesWarning('重命名规则未设置，请到设置中设置重命名规则')
+      setRenameResult(null)
       setRenamePreviewVisible(true)
       return
     }
+
+    setRenameRulesWarning(null)
 
     const cachedNames = computedNamesRef.current
     const hasValidCache = cachedNames && Object.keys(cachedNames).length > 0 &&
@@ -542,6 +566,7 @@ export function useRenamePack({ files, documentRows, settings, setFiles, parseFi
     renamePreviewVisible, setRenamePreviewVisible,
     renamePreviewFiles, setRenamePreviewFiles,
     renameResult, setRenameResult,
+    renameRulesWarning, setRenameRulesWarning,
     alertModal, closeAlert,
     renamedPreviewKey,
     handleRename, handleRenameConfirm, handlePack,
