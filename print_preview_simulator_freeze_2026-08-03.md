@@ -589,6 +589,14 @@ Phase B    ⏸
 - **待验证项（标记不阻塞）**：Sumatra 真实打印 rot90 纸面方向需真实打印对照确认（node 采集不体现旋转，Policy A 为推断+采集器模型验证）；若实测 Policy B 修订 contract
 - **A3-3-3 Gate 预告**：A3-3-3-01 adapter rot90（画布 1890×2717 + rotatedBounds 互换 + offset 旋转）/ A3-3-3-02 margin vs C5 ≤0.5mm / A3-3-3-03 bitmap invariant（像素不变只旋转）
 
+### 14.17 A3-3-3 落地（2026-08-04，commit `c7690257`/`99795974`/`75ba73f1` + spec 修正 `49ca40cc`）
+- **⚠️ 实现模型修正（Gate 02/03 失败暴露，本轮最重要发现）**：`drawRenderCommand.contentRotation` 是 **Policy B 语义**（内容在**画布内**绕落盘中心旋转，renderDraw.js:52-56）——直接改 command 的 offset/rotatedBounds 走 cr 旋转会让内容旋转后**超出画布**（实测 bbox 320 vs C5 预期 201）。**Policy A 的正确实现 = 画布级旋转**：rot0 command 先绘制扩展纸面画布（2717×1890）→ `transformPaperRotation` 产 `rotateCanvasCommand`（把扩展纸面画布作为 source 居中旋转绘制到新画布 1890×2717）→ 与 A3-2 采集器同一数学。C4 表述修订：sourceOrigin 旋转阶段**完全不参与**（offset 不随旋转变换）。
+- **Commit 1**（`c7690257`）：`transformPaperRotation` 纯函数（90/180/270 全覆盖 + 非法角度 fail-loud；返回 {canvasW,canvasH,rotateCanvasCommand|null}；不返回 bitmap——用户实现边界）
+- **Commit 2**（`99795974`）：usePrint `renderFileToPrintImage` PDF 单文件分支两段式（rot0 绘制扩展纸面 → rotation≠0 画布整体旋转）；rotation 仍由 `fileRotations[f.key]` 派生；native 失败回退旧路径
+- **Commit 3**（`75ba73f1`）：五 Gate 全绿（**66/66**）——01 rot90 画布 1890×2717 + rotateCanvasCommand 结构 / 02 bbox 宽高互换 1500×2423 无负坐标（C5 锚点 (201,169)）/ 03 四边 margin vs L17/T14.3/R16/B10.6 ≤0.5mm（顺时针轮换）/ 04 rot180/270 + rot0 + 非法角度 / 05 usePrint 静态接线断言
+- **红线守住**：未改 renderPDFPageRaw / createLayout 通用 / MultiTicketComposer / 新 fit 算法；未绕过 command 层（画布旋转仍走 drawRenderCommand）；sourceOrigin 未被重新定义
+- **待验证**（§14.16 延续）：Sumatra 真实打印 rot90 纸面方向需真实打印对照；canvas 轨 rot90 端到端 bitmap 需 Electron 采集验证（纯函数数学已验证，绘制路径接线待采集确认）
+
 ### 14.6 冻结状态
 ```
 A2-G1 source ✅ | canvas 采集链路 ✅ + 第一份报告 🔴FAIL(预期)
