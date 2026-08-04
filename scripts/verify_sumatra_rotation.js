@@ -48,13 +48,23 @@
  *
  *   # V2-B：路由到 Wondershare PDFelement（推荐 capture writer），产出 artifact 并自动测量
  *   #   轨二 · 异形纸 230×160（真正的 A/B 判别器；Wondershare 已配「PostScript」自定义纸型）
+ *   #   Wondershare 虚拟打印机本机实测默认落盘到 C:\Users\it01\Desktop（随机数字名），
+ *   #   脚本已自动扫描该目录；若你改了输出目录，用 --search-dir 显式指定。
  *   node scripts/verify_sumatra_rotation.js \
  *     --pdf test_fixtures/25952000000127675627.pdf --rotation 90 \
  *     --printer "Wondershare PDFelement" --paper custom --custom-w 230 --custom-h 160 \
  *     --out artifacts/sumatra_a1_rot90.pdf \
  *     --rot0-out artifacts/sumatra_a1_rot0.pdf \
- *     --search-dir "C:/Users/it01/<Wondershare输出目录>" \
+ *     --search-dir "C:/Users/it01/Desktop" \
  *     --python "C:/Program Files/Python312/python.exe"
+ *
+ *   # --measure-only：跳过 Sumatra + writer 捕获，直接分析已落盘的 artifact（writer/env 解耦）
+ *   #   适合：writer 弹了保存框、或想对同一次捕获反复跑 V2-01/02/03 而不重打。
+ *   node scripts/verify_sumatra_rotation.js \
+ *     --pdf test_fixtures/25952000000127675627.pdf --rotation 90 \
+ *     --paper custom --custom-w 230 --custom-h 160 \
+ *     --out "C:/Users/it01/Desktop/34646.pdf" --rot0-out artifacts/sumatra_a1_rot0.pdf \
+ *     --measure-only --python "C:/Program Files/Python312/python.exe"
  *   #   轨一 · 常规纸 A4（验证旋转方向 V2-02；页尺寸无法区分 A/B → NONDISCRIM）
  *   node scripts/verify_sumatra_rotation.js \
  *     --pdf test_fixtures/a4_landscape_sample.pdf --paper a4 --rotation 90 \
@@ -266,6 +276,7 @@ function main() {
   const pdf = get('--pdf', 'test_fixtures/25952000000127675627.pdf')
   const rotation = parseInt(get('--rotation', '90'), 10)
   const dryRun = argv.includes('--dry-run')
+  const measureOnly = argv.includes('--measure-only')
   const printer = get('--printer', '')
   const out = get('--out', '')
   const rot0Out = get('--rot0-out', '')
@@ -307,7 +318,7 @@ function main() {
   }
   console.log('')
 
-  if (dryRun || !printer) {
+  if ((dryRun || !printer) && !measureOnly) {
     if (!printer) console.log('（未指定 --printer，仅输出 -print-settings 字符串。V2-B 需 --printer=<虚拟PDF writer> + --out）')
     return
   }
@@ -326,17 +337,26 @@ function main() {
   searchDirs.push(outDir, process.cwd())
   const userDir = process.env.USERPROFILE || process.env.HOME
   if (userDir) searchDirs.push(
-    path.join(userDir, 'Desktop'),
+    path.join(userDir, 'Desktop'),                                // Wondershare 虚拟打印机本机实测默认落盘目录
     path.join(userDir, 'Documents'),
     path.join(userDir, 'Downloads'),
     path.join(userDir, 'PDF24'),                                // PDF24 静默自动保存默认目录（已弃用，仅兜底）
     path.join(userDir, 'AppData', 'Local', 'Temp', 'PDF24'),    // PDF24 任务暂存(.ps)目录
-    // Wondershare 候选输出目录（不确定时务必用 --search-dir 显式传入）
+    // Wondershare 候选输出目录（本机实测默认落到 Desktop；不确定时务必用 --search-dir 显式传入）
     path.join(userDir, 'Documents', 'PDFelement'),
     path.join(userDir, 'PDFelement'),
     path.join(userDir, 'AppData', 'Roaming', 'Wondershare', 'PDFelement10', 'Output')
   )
   const uniqDirs = [...new Set(searchDirs)].filter(d => fs.existsSync(d))
+
+  // ── --measure-only：跳过 Sumatra 调用与 writer 捕获，直接分析已落盘的 artifact ──
+  // 这就是把「虚拟打印机 env 适配」(writer 落盘/对话框) 与「rotation contract 验证」(V2-01/02/03) 解耦的开关。
+  // 用法：先用 --printer 跑一次拿到 writer 输出文件，再以此模式 + --out <该文件> 复跑分析，无需重打。
+  if (measureOnly) {
+    console.log('（--measure-only：跳过 Sumatra 调用与 writer 捕获，直接对 --out 做 V2-01/02/03 分析）')
+    const r = measure(out, python, rot0Out, pol, oc.baseFlag, uniqDirs)
+    process.exit(r ? 0 : 1)
+  }
 
   const args = ['-print-to', printer, '-print-settings', printSettings, '-silent', '-exit-when-done', pdf]
   console.log(`▶ 调用 SumatraPDF（同生产 -print-settings，目标=虚拟 writer）: ${sumatra}`)
