@@ -843,7 +843,11 @@ Final canvas contract         ← A3-C5 Geometry Closure（自洽）+ Source Ali
 - **V2-B（验证已有命令，非探索）**：把**同一条生产 -print-settings** 路由到一个**虚拟 PDF writer**（非物理打印机）执行，拿到可分析的 artifact PDF，再用 fitz 量几何。
   - 调用形态（与生产一致，仅目标打印机换成虚拟 writer）：
     `SumatraPDF.exe -print-to <VIRTUAL_PDF_WRITER> -print-settings "<V2-A字符串>" -silent -exit-when-done <A1.pdf>`
-  - ⚠️ **虚拟 PDF writer 必须忠实遵循 `paper=230mm x 160mm` + `disable-auto-rotation`**（不自动回旋、不夹成标准纸），否则 artifact MediaBox 骗人。推荐 Ghostscript PDF / PDF24 / Bullzip；"Microsoft Print to PDF" 既弹框又不保自定义纸，不推荐。
+  - ⚠️ **虚拟 PDF writer 必须忠实遵循 `paper=230mm x 160mm` + `disable-auto-rotation`**（不自动回旋、不夹成标准纸），否则 artifact MediaBox 骗人。
+  - **捕获 writer 选型（2026-08-04 收敛）**：
+    - ✅ **Wondershare PDFelement = A3-V2 唯一 capture writer**（用户已验证：可输出 PDF、可保 230×160 自定义纸、稳定静默落盘）。230×160 异形纸：用户已在 Wondershare 配置名为「PostScript」的 230×160 自定义纸型承接。
+    - ❌ **PDF24 已弃用**：暂存 .ps 到 %LOCALAPPDATA%\Temp\PDF24\ 并弹「保存助手」，-silent 下 Sumatra 返回但 PDF 不提交，自动化收益极低。
+    - ❌ "Microsoft Print to PDF"：CLI 弹框且不保自定义纸（230×160 实测被夹成 A4）。
   - SumatraPDF 只能打印、不能直接吐 PDF → 虚拟 writer 是产出 artifact 的唯一途径（「虚拟 writer」与「物理打印机」的精确区别在此）。
 - **V2 Gate 分层**：
   - **V2-01 Source Media Geometry**：量 artifact MediaBox（pt/mm）+ 方向，裁决 Policy A/B。**⚠️ 判别有效性条件**：仅当「生产命令为 `disable-auto-rotation` + Policy A/B 页尺寸确有差异」时，V2-01 才能裁决 A/B。标准命名纸(a4/a5)下，生产 `-print-settings` 要么带 `landscape`/`portrait` 旗标**钉死页方向**（页尺寸由旗标决定，与 A/B 无关），要么内容旋转后方向恰与请求纸一致（无交换）→ **页尺寸无法区分 A/B**，此时 V2-01 只报告实测值，A/B 判别无效。详见 §14.24.3.1。
@@ -854,8 +858,8 @@ Final canvas contract         ← A3-C5 Geometry Closure（自洽）+ Source Ali
 #### 14.24.3.1 双轨策略（2026-08-04 用户纠正后定稿）
 - **背景发现**：复现 `buildPrintSettings` 逻辑后发现——**标准命名纸(a4/a5)无法作为 Policy A/B 的页尺寸判别器**。原因：标准纸的生产命令要么带 `landscape`/`portrait` 旗标钉死页方向，要么内容旋转后方向恰与请求纸一致，两种情况下 Policy A 与 Policy B 预测页尺寸**相同**，量输出纸面分不出 A/B。唯一干净的 A/B 判别器是 **`disable-auto-rotation` + 显式 landscape-spec 自定义纸（230×160）** 组合（即 A1 场景）——此时 Policy A(160×230 portrait) 与 Policy B(230×160 landscape) 页尺寸不同，量 artifact 即可裁决。
 - **结论：两轨互补、缺一不可**（这正是用户「A4/A5 先测 + 异形纸用万兴」策略的正确性依据）：
-  - **轨一 · 常规纸（A4/A5，PDF24 等能保标准纸的 writer）**：验证「Sumatra 忠实执行生产命令」+ **旋转方向**（V2-02 边距 90°CW 置换）。页尺寸无判别力，但覆盖最常见场景。脚本已参数化 `--paper a4|a5|custom`，并自动从源 MediaBox 检测 contentOrient。
-  - **轨二 · 异形纸（230×160，Wondershare PDF 自定义纸）**：**真正的 A/B 判别器**（transpose 检查）。用户已确认 Wondershare PDF 可保自定义纸（需先在 Wondershare 里配置 230×160 自定义纸型）。命令：`--printer "Wondershare PDFelement" --paper custom --custom-w 230 --custom-h 160`。
+  - **轨一 · 常规纸（A4/A5，统一用 Wondershare PDFelement）**：验证「Sumatra 忠实执行生产命令」+ **旋转方向**（V2-02 边距 90°CW 置换）。页尺寸无判别力，但覆盖最常见场景。脚本已参数化 `--paper a4|a5|custom`，并自动从源 MediaBox 检测 contentOrient。
+  - **轨二 · 异形纸（230×160，Wondershare PDF 自定义纸「PostScript」）**：**真正的 A/B 判别器**（transpose 检查）。Wondershare 已配置名为「PostScript」的 230×160 自定义纸型承接 `paper=230mm x 160mm`。命令：`--printer "Wondershare PDFelement" --paper custom --custom-w 230 --custom-h 160 --search-dir <Wondershare输出目录>`。
 - **A3-C5 Source Alignment 收口条件**：轨二 artifact 裁决 Policy A → PASS；裁决 Policy B → 修订 contract（情况 B）。轨一只作必要支撑，不单独收口 A/B。
 
 #### 14.24.4 判定矩阵

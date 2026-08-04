@@ -21,11 +21,19 @@
  *
  * 为何需要虚拟 PDF writer：SumatraPDF 是查看器，只能打印、不能直接吐 PDF。
  *         要拿到 fitz 能分析的 artifact，必须经由一个 PDF writer（从 Sumatra 视角就是「打印机」，
- *         但吐的是 PDF 文件而非纸张）。推荐 Ghostscript PDF / PDF24 / Bullzip；
- *         "Microsoft Print to PDF" 在 CLI 下弹保存框且不保自定义纸（本机实测：自定义 230×160mm 被夹成 A4 210×297mm，artifact 无效），不推荐。
- *         ⚠️ PDF24 注意：它把打印任务暂存为 .ps 到 %LOCALAPPDATA%\Temp\PDF24\ 并弹出「保存助手」对话框，
- *            仅当用户保存后才产出最终 PDF。-silent 下 Sumatra 返回但 PDF 不提交 → 必须先在 PDF24 设置里
- *            启用「静默自动保存」到某目录（默认 C:\Users\<user>\PDF24，本脚本已自动搜索该目录）。
+ *         但吐的是 PDF 文件而非纸张）。
+ *
+ * 捕获 writer 选型（2026-08-04 收敛结论，见用户复盘）：
+ *   ✅ Wondershare PDFelement（推荐，A3-V2 唯一纳入的 capture writer）：
+ *        - 用户已验证：可输出 PDF、可保存自定义纸、稳定静默落盘。
+ *        - 230×160 异形纸：用户已在 Wondershare 里配置名为「PostScript」的 230×160 自定义纸型承接。
+ *        - Sumatra 仍发生产命令 `paper=230mm x 160mm`（与生产一致），由 Wondershare 的 PostScript 纸型承接。
+ *   ❌ PDF24（已证明不适合自动化）：把任务暂存为 .ps 到 %LOCALAPPDATA%\Temp\PDF24\ 并弹「保存助手」，
+ *        -silent 下 Sumatra 返回但 PDF 不提交 → 必须手动启用静默自动保存，收益极低，已弃用。
+ *   ❌ "Microsoft Print to PDF"：CLI 下弹保存框且不保自定义纸（自定义 230×160mm 实测被夹成 A4 210×297mm）。
+ *
+ * ⚠️ 验证环境变量必须提前收敛（本轮回溯核心）：writer 名称 + 输出目录 + 自定义纸型，三者缺一都会再烧一轮。
+ *    Wondershare 输出目录请用 --search-dir 显式传入（脚本自动扫描目录有限，不保证覆盖）。
  *
  * V2 Gate：
  *   V2-01 Source Media Geometry：量 artifact MediaBox（pt/mm）+ 方向 → Policy A/B 裁决者。
@@ -38,29 +46,26 @@
  *   node scripts/verify_sumatra_rotation.js --pdf test_fixtures/25952000000127675627.pdf --rotation 90 --dry-run
  *   node scripts/verify_sumatra_rotation.js --pdf <A4.pdf> --paper a4 --rotation 90 --dry-run
  *
- *   # V2-B：路由到虚拟 PDF writer，产出 artifact 并自动测量
- *   #   标准纸(a4/a5)：验证「生产命令忠实 + 旋转方向(V2-02)」，页尺寸无法区分 A/B
- *   #   异形纸(custom 230×160 + Wondershare)：A/B 判别器
+ *   # V2-B：路由到 Wondershare PDFelement（推荐 capture writer），产出 artifact 并自动测量
+ *   #   轨二 · 异形纸 230×160（真正的 A/B 判别器；Wondershare 已配「PostScript」自定义纸型）
  *   node scripts/verify_sumatra_rotation.js \
  *     --pdf test_fixtures/25952000000127675627.pdf --rotation 90 \
  *     --printer "Wondershare PDFelement" --paper custom --custom-w 230 --custom-h 160 \
  *     --out artifacts/sumatra_a1_rot90.pdf \
  *     --rot0-out artifacts/sumatra_a1_rot0.pdf \
+ *     --search-dir "C:/Users/it01/<Wondershare输出目录>" \
  *     --python "C:/Program Files/Python312/python.exe"
+ *   #   轨一 · 常规纸 A4（验证旋转方向 V2-02；页尺寸无法区分 A/B → NONDISCRIM）
  *   node scripts/verify_sumatra_rotation.js \
  *     --pdf test_fixtures/a4_landscape_sample.pdf --paper a4 --rotation 90 \
- *     --printer "PDF24 PDF" --out artifacts/sumatra_a4_rot90.pdf \
+ *     --printer "Wondershare PDFelement" --out artifacts/sumatra_a4_rot90.pdf \
  *     --rot0-out artifacts/sumatra_a4_rot0.pdf \
+ *     --search-dir "C:/Users/it01/<Wondershare输出目录>" \
  *     --python "C:/Program Files/Python312/python.exe"
  *
  *   注意：SumatraPDF -print-to 不能指定输出路径，writer 落盘位置由驱动决定。
- *   若 writer 未保存到 --out，脚本会自动扫描 --search-dir（默认含输出目录/cwd/桌面/文档/下载）
- *   抓取最近 60s 内生成的 .pdf 复制到 --out 再测量。
- *   可脚本化 writer（Ghostscript/Bullzip/PDF24）可让 --out 直接生效。
- *
- *   # 仅测一个 rot90 artifact（用 A3-3-3 C5 rot0 边距作参考，权威性略低）
- *   node scripts/verify_sumatra_rotation.js --pdf ... --rotation 90 \
- *     --printer "Ghostscript PDF" --out artifacts/sumatra_a1_rot90.pdf --python ...
+ *   若 writer 未保存到 --out，脚本自动扫描 --search-dir（默认另含输出目录/cwd/桌面/文档/下载/Wondershare候选）
+ *   抓取最近 60s 内 .pdf 复制到 --out 再测量。Wondershare 输出目录务必用 --search-dir 显式传入（最稳）。
  */
 
 const { execFile } = require('child_process')
@@ -315,7 +320,7 @@ function main() {
   const outDir = path.dirname(path.resolve(out))
   try { fs.mkdirSync(outDir, { recursive: true }) } catch {}
 
-  // 抓取目录：用户指定 + 输出目录 + cwd + 常见用户目录（writer 静默落盘位置未知时用）
+  // 抓取目录：用户指定(--search-dir)优先 + 输出目录 + cwd + 常见用户目录 + Wondershare 候选
   const searchDirs = []
   if (searchDir) searchDirs.push(...searchDir.split(',').map(s => s.trim()).filter(Boolean).map(s => path.resolve(s)))
   searchDirs.push(outDir, process.cwd())
@@ -324,8 +329,12 @@ function main() {
     path.join(userDir, 'Desktop'),
     path.join(userDir, 'Documents'),
     path.join(userDir, 'Downloads'),
-    path.join(userDir, 'PDF24'),                                // PDF24 静默自动保存默认目录
-    path.join(userDir, 'AppData', 'Local', 'Temp', 'PDF24')    // PDF24 任务暂存(.ps)目录
+    path.join(userDir, 'PDF24'),                                // PDF24 静默自动保存默认目录（已弃用，仅兜底）
+    path.join(userDir, 'AppData', 'Local', 'Temp', 'PDF24'),    // PDF24 任务暂存(.ps)目录
+    // Wondershare 候选输出目录（不确定时务必用 --search-dir 显式传入）
+    path.join(userDir, 'Documents', 'PDFelement'),
+    path.join(userDir, 'PDFelement'),
+    path.join(userDir, 'AppData', 'Roaming', 'Wondershare', 'PDFelement10', 'Output')
   )
   const uniqDirs = [...new Set(searchDirs)].filter(d => fs.existsSync(d))
 
@@ -361,15 +370,10 @@ function measure(outPdf, python, rot0Out, pol, baseFlag, searchDirs = []) {
       console.error('   原因: SumatraPDF -print-to 不能指定输出路径，文件落在虚拟 writer 自己决定的位置。')
       if (staging.length) {
         console.error(`   ⚠️ 检测到 PDF24 已把任务暂存为 .ps（${staging.join('; ')}）但未生成 PDF。`)
-        console.error('      PDF24 默认会打开「保存助手」对话框等待你点保存；-silent 下 Sumatra 已返回但 PDF 未提交。')
-        console.error('      解决 A（推荐）: 在 PDF24 设置中启用「静默自动保存」到某目录（默认 C:\\Users\\it01\\PDF24），')
-        console.error('                      该目录本脚本已自动纳入搜索；或显式 --search-dir 指向该目录。')
-        console.error('      解决 B        : 改用 Wondershare PDFelement（已验证可处理自定义纸，通常可静默保存），')
-        console.error('                      并 --search-dir 指向其输出目录。')
-      } else {
-        console.error('   解决: ① 用 --search-dir <writer实际输出目录> 指定；或')
-        console.error('         ② 配置 writer 静默自动保存（PDF24 静默自动保存 / Wondershare）。')
+        console.error('      PDF24 不适合自动化验证（已弃用），请改用 Wondershare PDFelement。')
       }
+      console.error('   解决: 用 --search-dir <Wondershare实际输出目录> 显式指定（最稳）；')
+      console.error('         并确认 Wondershare 已配置静默保存到该目录、且 230×160 用「PostScript」自定义纸型。')
       return null
     }
     outPdf = grabbed
