@@ -22,7 +22,7 @@
  * 为何需要虚拟 PDF writer：SumatraPDF 是查看器，只能打印、不能直接吐 PDF。
  *         要拿到 fitz 能分析的 artifact，必须经由一个 PDF writer（从 Sumatra 视角就是「打印机」，
  *         但吐的是 PDF 文件而非纸张）。推荐 Ghostscript PDF / PDF24 / Bullzip；
- *         "Microsoft Print to PDF" 在 CLI 下弹保存框且不保自定义纸，不推荐。
+ *         "Microsoft Print to PDF" 在 CLI 下弹保存框且不保自定义纸（本机实测：自定义 230×160mm 被夹成 A4 210×297mm，artifact 无效），不推荐。
  *
  * V2 Gate：
  *   V2-01 Source Media Geometry：量 artifact MediaBox（pt/mm）+ 方向 → Policy A/B 裁决者。
@@ -286,40 +286,59 @@ function measure(outPdf, python, rot0Out, printer, sumatra, printSettings, searc
   console.log(`\n── V2-01 Source Media Geometry ──`)
   console.log(`   MediaBox : ${m90.wPx}×${m90.hPx}px (${m90.wMm}×${m90.hMm}mm, ${m90.orient})`)
   console.log(`   Policy A : ${POLICY_A.wPx}×${POLICY_A.hPx}px (${POLICY_A.wMm}×${POLICY_A.hMm}mm, ${POLICY_A.orient})`)
-  const orientMatch = m90.orient === POLICY_A.orient
-  const dimMatch = Math.abs(m90.wPx - POLICY_A.wPx) <= 40 && Math.abs(m90.hPx - POLICY_A.hPx) <= 40
-  console.log(`   → 方向${orientMatch ? '✅ 吻合 Policy A(portrait)' : '⚠️ landscape=Policy B 倾向'}`)
+  console.log(`   Policy B : 2717×1890px (230×160mm, landscape)`)
+  // 裁决必须校验「纸尺寸」而非仅「方向」：writer 可能把自定义纸夹成标准纸(A4)，
+  // 此时方向仍 portrait 但尺寸不符 Policy A，属无效 artifact（本机 MS Print to PDF 实测夹成 A4）。
+  const TOL_MM = 8
+  const nearA = Math.abs(m90.wMm - POLICY_A.wMm) <= TOL_MM && Math.abs(m90.hMm - POLICY_A.hMm) <= TOL_MM
+  const nearB = Math.abs(m90.wMm - 230) <= TOL_MM && Math.abs(m90.hMm - 160) <= TOL_MM
+  let paperVerdict = 'INVALID'
+  if (nearA) {
+    paperVerdict = 'A'
+    console.log(`   → ✅ 尺寸+方向吻合 Policy A (160×230mm portrait)`)
+  } else if (nearB) {
+    paperVerdict = 'B'
+    console.log(`   → ⚠️ 吻合 Policy B (230×160mm landscape)，需修订 rotation contract`)
+  } else {
+    console.log(`   → 🔴 纸尺寸 ${m90.wMm}×${m90.hMm}mm 既非 Policy A(160×230) 也非 Policy B(230×160)`)
+    console.log(`      疑似虚拟 writer 把自定义纸夹成标准纸(实测≈A4?)。该 artifact 对 Policy A/B 裁决无效。`)
+    console.log(`      解决: 换忠实自定义纸的 writer (Ghostscript/Bullzip/PDF24)`)
+  }
 
   console.log(`\n── V2-02 Content Rotation ──`)
-  let refMargins = C5_ROT0_MARGINS_MM
-  let refLabel = 'A3-3-3 C5 rot0 参考'
-  if (rot0Out && fs.existsSync(rot0Out)) {
-    console.log(`   测量 rot0 artifact: ${rot0Out}`)
-    const d0 = runProbe(rot0Out, python)
-    const m0 = d0 ? computeMetrics(d0) : null
-    if (m0 && m0.margins) { refMargins = m0.margins; refLabel = 'Sumatra rot0 artifact(自包含)' }
-    else console.log(`   ⚠️ rot0 artifact 解析失败，回退到 C5 参考`)
-  }
-  const expected = rotateMargins90CW(refMargins)
-  if (m90.margins) {
-    console.log(`   rot90 边距 : L=${m90.margins.L} T=${m90.margins.T} R=${m90.margins.R} B=${m90.margins.B}`)
-    console.log(`   ${refLabel} rot0: L=${refMargins.L} T=${refMargins.T} R=${refMargins.R} B=${refMargins.B}`)
-    console.log(`   90°CW 预期 : L'=B=${expected.L} T'=L=${expected.T} R'=T=${expected.R} B'=R=${expected.B}`)
-    const permOk = marginMultisetMatch(m90.margins, expected, 5)
-    console.log(`   → 边距置换${permOk ? '✅ 守恒(L\'=B,T\'=L,R\'=T,B\'=R)' : '⚠️ 不守恒，查旋转方向/虚拟 writer'}`)
+  if (paperVerdict === 'INVALID') {
+    console.log(`   ⏭️ 跳过: 纸面被 clamp，边距在错误几何上量，置换校验无意义`)
   } else {
-    console.log(`   ⚠️ rot90 artifact 无 content bbox（空白页？），跳过边距校验`)
+    let refMargins = C5_ROT0_MARGINS_MM
+    let refLabel = 'A3-3-3 C5 rot0 参考'
+    if (rot0Out && fs.existsSync(rot0Out)) {
+      console.log(`   测量 rot0 artifact: ${rot0Out}`)
+      const d0 = runProbe(rot0Out, python)
+      const m0 = d0 ? computeMetrics(d0) : null
+      if (m0 && m0.margins) { refMargins = m0.margins; refLabel = 'Sumatra rot0 artifact(自包含)' }
+      else console.log(`   ⚠️ rot0 artifact 解析失败，回退到 C5 参考`)
+    }
+    const expected = rotateMargins90CW(refMargins)
+    if (m90.margins) {
+      console.log(`   rot90 边距 : L=${m90.margins.L} T=${m90.margins.T} R=${m90.margins.R} B=${m90.margins.B}`)
+      console.log(`   ${refLabel} rot0: L=${refMargins.L} T=${refMargins.T} R=${refMargins.R} B=${refMargins.B}`)
+      console.log(`   90°CW 预期 : L'=B=${expected.L} T'=L=${expected.T} R'=T=${expected.R} B'=R=${expected.B}`)
+      const permOk = marginMultisetMatch(m90.margins, expected, 5)
+      console.log(`   → 边距置换${permOk ? '✅ 守恒(L\'=B,T\'=L,R\'=T,B\'=R)' : '⚠️ 不守恒，查旋转方向/虚拟 writer'}`)
+    } else {
+      console.log(`   ⚠️ rot90 artifact 无 content bbox（空白页？），跳过边距校验`)
+    }
   }
 
   console.log(`\n── V2-03 Canvas ↔ Source ──`)
-  if (orientMatch && dimMatch) {
+  if (paperVerdict === 'A') {
     console.log('✅ Policy A 吻合：source 几何=canvas 纸面跟随内容旋转')
     console.log('   → A3-C5 Source Semantic Alignment = PASS（待用户真机确认写入冻结状态）')
-  } else if (m90.orient === 'landscape' && m90.wMm > m90.hMm) {
+  } else if (paperVerdict === 'B') {
     console.log('⚠️ Policy B 倾向：source 纸面 landscape + 内容旋转在固定纸内')
     console.log('   → 需修订 rotation contract（冻结文档 §14.24.4 情况 B），A3-C5 Source Alignment 转「修订中」')
   } else {
-    console.log('🔴 异常输出，查 resolveOrientationCommands 映射或虚拟 writer 行为')
+    console.log('🔴 无法裁决：artifact 纸面被 clamp，V2-01 无效。换忠实自定义纸的 writer 后重跑。')
   }
   return m90
 }
