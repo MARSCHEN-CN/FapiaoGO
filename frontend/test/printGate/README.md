@@ -57,3 +57,36 @@ node collectGateOutput.mjs  # 或 import collectAllSource() 编程调用
 2. **OFD source 轨无边距**（main.js:512 `imgExts` 不含 `.ofd`），且 fitz 不支持 OFD → bbox 需后端 Render Contract（fetchPrintRaster）补采。
 3. **source 轨 rotation 由 Sumatra 原生处理**，不在 PDF 内容中 → node 采集的 bbox 不体现旋转；旋转方向验证须 canvas 轨（rotations 参数）。
 4. **add-pdf-margins.py 语义 = 扩展页面尺寸、内容位置不变**（L189），不是 contain-fit。
+
+## A3-V1 生产路径采集（rot90，A3-3 Verification Closure）
+
+**目的**：纯函数 Gate（A3-3-3-01..05）只证明几何数学对，**不证明生产实现路径能真的画出来**。
+A3-V1 用 `collectProductionRotatedCase` 逐字镜像 `usePrint.js renderFileToPrintImage` PDF 单文件分支的
+调用序列（computePaperLayout+extendPaperLayoutContract → renderPDFPageRaw native → applySourceOriginPlacement
+→ transformPaperRotation → **两段式 drawRenderCommand**），采实际 bitmap。
+
+**运行**（Electron dev，devtools 渲染进程 console）：
+```js
+globalThis.__GATE_REPO_ROOT__ = 'E:/print706/'
+const m = await import('/@fs/E:/print706/frontend/test/printGate/electron/collectCanvasOutput.js?t=' + Date.now())
+const r = await m.collectProductionRotatedCase(m.GATE_CASES.find(c => c.id === 'A1-prod-rot90'))
+console.log(JSON.stringify(r.artifact, null, 2))
+```
+> `?t=` 破 vite 模块缓存，改代码后必须带（否则跑的是旧模块）。
+
+**C5 验收锚点（rot90）**：
+| 项 | 预期 | 容差 |
+|---|---|---|
+| bitmap | 1890×2717 | 精确（Policy A：纸面跟随内容） |
+| bbox | (201, 169, 1500×2423) | ≤1.5px |
+| marginMm | L17.0 / T14.3 / R16.0 / B10.5 | ≤0.5mm |
+
+顺时针轮换关系：rot0 的 L14.3/T16/R10.6/B17 → rot90 的 L17/T14.3/R16/B10.6。
+
+**⚠️ 首次采集踩坑（2026-08-04，已修 + 已加回归守卫）**：
+`bitmap=1890x2717 bbox=null marginMm=null` + console 报
+`[drawRenderCommand] RenderCommand 契约违例，跳过绘制: 不支持的 version=undefined`
+→ PlacementAdapter 产出的 command 缺 `version:1` / `paper`，被 `validateRenderCommand`
+（RenderLayoutFactory.js:73-99，7 条校验）拒绝，**画布尺寸对但一笔没画=全白**。
+这就是 A3-V1「实现路径 ≠ 纯函数路径」要抓的东西。守卫见 Gate `A3-E2E-03/04`。
+**排查口诀：bitmap 尺寸对 + bbox=null ⇒ 先查契约校验，不是几何问题。**
