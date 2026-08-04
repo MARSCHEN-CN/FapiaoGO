@@ -2,6 +2,9 @@
 // 应用配置常量
 // ============================
 
+// 应用版本号（唯一来源，修改此处即全局同步）
+export const APP_VERSION = '1.0.0'
+
 // ── 打印管线版本开关 ──
 // 'source' = 源文件直通 Sumatra（新管线）
 // 'legacy' = 旧管线（Canvas→PNG→PDF→Sumatra，可回滚）

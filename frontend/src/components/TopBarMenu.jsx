@@ -3,7 +3,7 @@
  * 包含：菜单下拉、主题卡片、快捷键卡片、关于弹窗（via Portal 到 document.body）
  */
 import { createPortal } from 'react-dom'
-import { PUBLIC_BASE } from '../config'
+import { PUBLIC_BASE, APP_VERSION } from '../config'
 
 export default function TopBarMenu({
   showDropdown,
@@ -151,7 +151,7 @@ export default function TopBarMenu({
             </div>
             <h3 className="tb-about-title">发票管理助手</h3>
             <div className="tb-about-version-row">
-              <p className="tb-about-version">版本 V1.0.0</p>
+              <p className="tb-about-version">版本 V{APP_VERSION}</p>
               <a
                 className="tb-about-github"
                 href="https://github.com/MARSCHEN-CN/FapiaoGO"

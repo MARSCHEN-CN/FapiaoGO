@@ -1298,7 +1298,7 @@ def _header_guided_raw_boundaries_6col(_first, _last, _first_before, _first_afte
     # 如果 "称" 未识别到，回退到 称-价 间距中点
     b1 = -1
     if _first('称') > 0:
-        b1 = _last('称', use_x1=True) + 2.0
+        b1 = _last('称', use_x1=True) + 10.0
     if b1 <= 0:
         b1 = _gap_mid('称', '价') if (_first('称') > 0 and _first('价') > 0) else -1
 

@@ -459,7 +459,7 @@ const RenamePreviewModal = ({
             ) : (
               <>
                 <h3 className="rp-title">重命名预览</h3>
-                <span className="rp-count">{files.length} 个文件</span>
+                <span className="rp-count">{files.length} 个发票</span>
                 {stats.conflicts > 0 && (
                   <span className="rp-conflict-badge">{stats.conflicts} 个冲突</span>
                 )}

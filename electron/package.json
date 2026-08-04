@@ -1,6 +1,6 @@
 {
   "name": "FapiaoGO",
-  "version": "0.0.1",
+  "version": "1.0.0",
   "description": "发票打印工具",
   "main": "main.js",
   "scripts": {

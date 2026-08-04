@@ -210,11 +210,11 @@ def sanitize_sheet_name(name, max_len=31):
 
 def _safe_num(val):
     if val is None or val == '':
-        return None
+        return 0.0
     try:
         return float(str(val).replace(',', ''))
     except (ValueError, TypeError):
-        return None
+        return 0.0
 
 
 def _quantity_value(raw):
