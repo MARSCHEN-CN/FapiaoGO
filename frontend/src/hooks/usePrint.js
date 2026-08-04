@@ -82,7 +82,7 @@ function revokeBlobUrls(urls, ref) {
   urls.forEach(url => revokeBlobUrl(url, ref))
 }
 
-export function usePrint({ files, settings, fileRotations, setFiles, electronAPIRef, submitPrintIntent }) {
+export function usePrint({ files, settings, fileRotations, setFiles, electronAPIRef, submitPrintIntent, previewFile }) {
   const [printing, setPrinting] = useState(false)
   const [printProgress, setPrintProgress] = useState({})
   const [printFiles, setPrintFiles] = useState([])
@@ -518,13 +518,20 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
     // 保证「预览显示什么 = 确认后打印什么」的语义对齐，仅不渲染像素）。
     try {
       const plan = buildPrintExecutionPlan(files, { filter: SOURCE_FILE_FILTER, settings, fileRotations })
-      setPrintPreviewModel(buildPrintPreviewModel(plan, { files, settings }))
+
+      // 构建当前选中页的定位信息（用于预览从当前选中页开始）
+      const currentSelection = previewFile ? {
+        fileId: previewFile.key,
+        pageIndex: previewFile.pageNum ?? 0,
+      } : null
+
+      setPrintPreviewModel(buildPrintPreviewModel(plan, { files, settings, currentSelection }))
     } catch (err) {
       console.error('[usePrint] 构建打印预览描述失败:', err)
       setPrintPreviewModel(null)
     }
     setPrintConfirmModal(true)
-  }, [files, settings, fileRotations])
+  }, [files, settings, fileRotations, previewFile])
 
   const handlePrintConfirm = useCallback(() => {
     setPrintConfirmModal(false)

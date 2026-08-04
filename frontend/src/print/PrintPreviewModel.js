@@ -25,6 +25,7 @@
  */
 
 import { computeTicketSlots, slotToLandscape } from '../layout/SlotLayout.js'
+import { BACKEND_URL } from '../config.js'
 
 const PREVIEW_DPI = 300
 const PX_TO_MM = 25.4 / PREVIEW_DPI
@@ -86,15 +87,16 @@ export function previewPaperLayout(paperSize = 'A4', customPaper = null, margins
  *
  * @param {Object} plan - buildPrintExecutionPlan 产物（pages[] / extraPages[]）
  * @param {Object} [options]
- * @param {Array<Object>} [options.files] - 文件对象数组（key→name 映射用）
+ * @param {Array<Object>} [options.files] - 文件对象数组（key→name 映射 + 缩略图 URL）
  * @param {Object} [options.settings] - { paperSize, customPaper, marginLeft/Right/Top/Bottom }
- * @returns {{valid:boolean, reason?:string, pages:Array<Object>}}
+ * @param {Object} [options.currentSelection] - { fileId, pageIndex } 当前选中页，用于定位
+ * @returns {{valid:boolean, reason?:string, pages:Array<Object>, currentPageIndex:number}}
  *   pages[].paperSizeMM = { widthMM, heightMM }（按方向交换后的显示尺寸）
- *   pages[].slots[] = { x, y, width, height, source, rotation }（mm，相对纸张左上角）
+ *   pages[].slots[] = { x, y, width, height, source, rotation, thumbnailUrl, fileId, pageIndex }
  */
-export function buildPrintPreviewModel(plan, { files = [], settings = {} } = {}) {
+export function buildPrintPreviewModel(plan, { files = [], settings = {}, currentSelection = null } = {}) {
   if (!plan || !Array.isArray(plan.pages)) {
-    return { valid: false, reason: 'plan 缺失或结构非法', pages: [] }
+    return { valid: false, reason: 'plan 缺失或结构非法', pages: [], currentPageIndex: 0 }
   }
   const layout = previewPaperLayout(
     settings.paperSize || 'A4',
@@ -106,18 +108,32 @@ export function buildPrintPreviewModel(plan, { files = [], settings = {} } = {})
       bottom: settings.marginBottom,
     },
   )
-  if (!layout.valid) return { valid: false, reason: layout.reason, pages: [] }
+  if (!layout.valid) return { valid: false, reason: layout.reason, pages: [], currentPageIndex: 0 }
 
   const fileById = new Map(files.map((f) => [f.key, f]))
-  const mL = layout.usableRect.x  // 自然空间左内缩 px（slotToLandscape 用）
+  const mL = layout.usableRect.x
   const mT = layout.usableRect.y
+
+  /**
+   * 获取文件指定页的缩略图 URL
+   * 优先使用 docId 从后端 /thumbnail 端点获取，fallback 到 previewImage
+   */
+  const getThumbnailUrl = (file, pageIndex = 0) => {
+    if (!file) return null
+    if (file.docId) {
+      return `${BACKEND_URL}/thumbnail/${file.docId}?page=${pageIndex + 1}`
+    }
+    if (file.previewImage) {
+      return file.previewImage
+    }
+    return null
+  }
 
   const pageToModel = (page) => {
     const isLandscape = page.orientation === 'landscape'
     let slots = computeTicketSlots(layout, page.slots.length)
     if (isLandscape) slots = slots.map((s) => slotToLandscape(s, { mL, mT }))
 
-    // 纸张 mm：从 px 反推（与 layout 严格自洽——UI 按 mm 画 = 按 px 画，无换算误差）
     const widthMM = (isLandscape ? layout.paperRect.h : layout.paperRect.w) * PX_TO_MM
     const heightMM = (isLandscape ? layout.paperRect.w : layout.paperRect.h) * PX_TO_MM
 
@@ -135,17 +151,73 @@ export function buildPrintPreviewModel(plan, { files = [], settings = {} } = {})
           height: round2(s.height * PX_TO_MM),
           source: f?.name || slotDef.fileId || `#${i + 1}`,
           rotation: slotDef.rotation || 0,
+          thumbnailUrl: getThumbnailUrl(f, 0),
+          fileId: slotDef.fileId,
+          pageIndex: 0,
         }
       }),
     }
   }
 
+  // 构建基础预览页
+  const basePages = [
+    ...plan.pages.map(pageToModel),
+    ...(plan.extraPages || []).map(pageToModel),
+  ]
+
+  // 多页文档展开：将每个 slot 的多页文档展开为多个预览页
+  const expandedPages = []
+  for (const page of basePages) {
+    if (page.slots.length === 1) {
+      const slot = page.slots[0]
+      const f = fileById.get(slot.fileId)
+      const pageCount = f?.pageCount || 1
+      if (pageCount <= 1) {
+        expandedPages.push(page)
+      } else {
+        for (let p = 0; p < pageCount; p++) {
+          expandedPages.push({
+            ...page,
+            slots: [{
+              ...slot,
+              pageIndex: p,
+              thumbnailUrl: getThumbnailUrl(f, p),
+            }],
+          })
+        }
+      }
+    } else {
+      // 合并模式：多 slot 保持不变，但更新每个 slot 的缩略图
+      expandedPages.push({
+        ...page,
+        slots: page.slots.map((slot) => {
+          const f = fileById.get(slot.fileId)
+          return {
+            ...slot,
+            thumbnailUrl: getThumbnailUrl(f, 0),
+            pageIndex: 0,
+          }
+        }),
+      })
+    }
+  }
+
+  // 计算当前选中页在展开后预览页中的索引
+  let currentPageIndex = 0
+  if (currentSelection?.fileId) {
+    for (let i = 0; i < expandedPages.length; i++) {
+      const slot = expandedPages[i].slots[0]
+      if (slot && slot.fileId === currentSelection.fileId && (slot.pageIndex || 0) === (currentSelection.pageIndex || 0)) {
+        currentPageIndex = i
+        break
+      }
+    }
+  }
+
   return {
     valid: true,
-    pages: [
-      ...plan.pages.map(pageToModel),
-      ...(plan.extraPages || []).map(pageToModel),
-    ],
+    pages: expandedPages,
+    currentPageIndex,
   }
 }
 

@@ -34,7 +34,6 @@ import { wheelZoomFactor } from '../hooks/continuousZoom.mjs'
  * @param {number} props.viewRotation - 用户查看旋转
  * @param {{ width: number, height: number }} [props.containerSize] - ⚠️ D2-1 起不再用于 fitScale 计算
  *   （已由内置 ResizeObserver 自测量替代）。保留 prop 接口供 useViewerState pan clamp 使用，D2-2 移除。
- * @param {boolean} props.grayscale - 灰度模式
  * @param {boolean} props.loading - 加载中
  * @param {(deltaY: number) => void} props.onWheelZoom - ⚠️ 旧模型滚轮缩放回调（未传 mode 时生效）。
  * @param {(panX: number, panY: number) => void} props.onPanChange - 平移回调
@@ -60,7 +59,6 @@ function ViewerViewportInner({
   panY,
   viewRotation,
   containerSize,
-  grayscale,
   loading,
   onWheelZoom,
   onPanChange,
@@ -388,7 +386,6 @@ function ViewerViewportInner({
             width: '100%',
             height: '100%',
             objectFit: 'contain',
-            filter: grayscale ? 'grayscale(100%)' : 'none',
           }}
         />
         {overlaySlot}

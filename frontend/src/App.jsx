@@ -242,7 +242,7 @@ function AppContent() {
     alertModal: printAlert, closeAlert: closePrintAlert,
     printConfirmModal, printPreviewModel, handlePrintCancel,
     executePrint,  // Step 3.2: 唯一打印执行入口
-  } = usePrint({ files, settings, fileRotations, setFiles, electronAPIRef, submitPrintIntent })
+  } = usePrint({ files, settings, fileRotations, setFiles, electronAPIRef, submitPrintIntent, previewFile })
 
   // ── Print progress refs (local; IPC print-progress handler 专用) ──
   // 这两个 ref 仅在 App.jsx 的 IPC 'print-progress' handler 中使用，
@@ -1054,22 +1054,11 @@ function AppContent() {
 
           {/* 滚动层：ref 绑定在这里 */}
           <div ref={previewContainerRef} className="canvas-scroll">
-            {/* Display Area Refactor Step 10：双轨展示适配器。
-                已注册 InvoiceDocument → DocumentViewer（新路径）；
-                否则 → PreviewCanvas（legacy，保留一个版本周期）。 */}
+            {/* 展示区适配器：始终使用 DocumentViewer 如实展示当前选中的发票，不受任何打印设置影响。 */}
             <DisplayAdapter
               file={previewFile}
               containerSize={containerSize}
-              grayscale={settings.grayscale}
               onViewerController={setViewerController}
-              mergeActive={mergeActive}
-              previewCanvas={previewCanvas}
-              previewUrl={previewUrl}
-              previewRenderVersion={previewRenderVersion}
-              paperLayout={paperLayout}
-              contentLayout={contentLayout}
-              previewRotation={previewRotation}
-              previewLoading={previewLoading}
             />
           </div>
 
@@ -1215,6 +1204,8 @@ function AppContent() {
           paperOrientation={paperOrientation}
           contentRotation={previewRotation}
           previewModel={printPreviewModel}
+          files={files}
+          previewFile={previewFile}
           onConfirm={onPrintConfirm}
           onCancel={handlePrintCancel}
           onSettingsChange={updateSettings}

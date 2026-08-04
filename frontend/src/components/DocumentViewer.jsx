@@ -35,7 +35,6 @@ import './DocumentViewer.css'
  * @param {import('../models/InvoiceDocument').InvoiceDocument|null} props.document - 文档模型
  * @param {{ width: number, height: number }} props.containerSize - 视口容器尺寸
  * @param {number} [props.initialPage=0] - 初始页 index（0-based）
- * @param {boolean} [props.grayscale=false] - 灰度模式
  * @param {React.ReactNode} [props.overlaySlot] - OCR/字段 Overlay 插槽
  * @param {(controller: Object|null) => void} [props.onViewerController] - 缩放控制上抬
  * @param {() => void} [props.onViewerReady] - Viewer 完全就绪回调
@@ -45,7 +44,6 @@ export const DocumentViewer = React.memo(function DocumentViewer({
   document,
   containerSize,
   initialPage = 0,
-  grayscale = false,
   overlaySlot,
   onViewerController,
   onViewerReady,
@@ -170,7 +168,6 @@ export const DocumentViewer = React.memo(function DocumentViewer({
           panY={state.panY}
           viewRotation={state.viewRotation}
           containerSize={containerSize}
-          grayscale={grayscale}
           loading={isLoading}
           onEnterManual={actions.enterManual}
           onFitScaleChange={actions.reportFitScale}

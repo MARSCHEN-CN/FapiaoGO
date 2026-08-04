@@ -24,6 +24,8 @@ const PrintConfirmModal = ({
   paperOrientation,
   contentRotation,
   previewModel,
+  files,
+  previewFile,
   onConfirm,
   onCancel,
 }) => {
@@ -375,7 +377,17 @@ const PrintConfirmModal = ({
               <span className="pcm-preview-subtitle">打印布局（随设置实时更新）</span>
             </div>
             <div className="pcm-preview-body">
-              <PrintPreviewCanvas preview={previewModel} />
+              <PrintPreviewCanvas
+                preview={previewModel}
+                files={files}
+                previewFile={previewFile}
+                marginSettings={{
+                  left: settings.marginLeft ?? 3,
+                  right: settings.marginRight ?? 3,
+                  top: settings.marginTop ?? 3,
+                  bottom: settings.marginBottom ?? 3,
+                }}
+              />
             </div>
           </div>
         </div>
