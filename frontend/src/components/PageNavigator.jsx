@@ -27,6 +27,8 @@ import React, { memo, useState, useRef, useCallback, useEffect } from 'react'
  * @param {() => void} props.onPrev - 上一页
  * @param {() => void} props.onNext - 下一页
  * @param {(page: number) => void} props.onJump - 跳转到指定页（0-based）
+ * @param {string} [props.className] - 覆盖默认定位类 'page-navigator'（absolute 居中）。
+ *   容器内嵌使用（如打印预览）时传入自定义类，如 'pcm-preview-navigator'（static 流式布局）。
  */
 export const PageNavigator = memo(function PageNavigator({
   currentPage,
@@ -34,6 +36,7 @@ export const PageNavigator = memo(function PageNavigator({
   onPrev,
   onNext,
   onJump,
+  className,
 }) {
   const [editing, setEditing] = useState(false)
   const [inputValue, setInputValue] = useState('')
@@ -95,7 +98,7 @@ export const PageNavigator = memo(function PageNavigator({
   if (totalPages <= 1) return null
 
   return (
-    <div className="page-navigator" role="navigation" aria-label="页面导航">
+    <div className={className || 'page-navigator'} role="navigation" aria-label="页面导航">
       {/* 首页按钮 */}
       <button
         className="page-nav-btn page-nav-btn-first"

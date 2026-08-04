@@ -1028,7 +1028,7 @@ button.pc-btn.outline,
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 24px;
+  padding: 20px 16px; /* 水平内缩收窄：纸面更贴近 body 边缘（出血感），不再受固定宽度限制 */
   gap: 16px;
   overflow: auto;
   background:
@@ -1037,20 +1037,25 @@ button.pc-btn.outline,
 }
 .pcm-preview-page {
   display: flex; flex-direction: column; align-items: center; gap: 8px;
+  width: 100%; /* 撑满 body 内容宽：纸面宽度随容器自适应（不再有 160px 固定框） */
 }
-.pcm-preview-page-inner {
-  width: 160px;
-  height: 226px;
+/* 纸面 SVG：白纸视觉直接上移（无 inner 层）；宽度撑满、高度按 viewBox 比例自动 */
+.pcm-preview-page svg {
+  display: block;
+  width: 100%;
+  height: auto;
   background: #fff;
   border-radius: 4px;
   box-shadow: 0 4px 20px rgba(0,0,0,0.1), 0 1px 3px rgba(0,0,0,0.08);
-  overflow: hidden;
-  padding: 0;
+  flex-shrink: 0;
 }
-.pcm-preview-page-inner svg { display: block; }
-.pcm-preview-page-tag {
-  font-size: 11px;
-  color: var(--text-3);
+/* 页码导航（复用展示区 PageNavigator；覆盖 absolute 居中定位为流式布局） */
+.pcm-preview-navigator {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  user-select: none;
+  flex-shrink: 0;
 }
 .pcm-preview-placeholder-text {
   text-align: center;

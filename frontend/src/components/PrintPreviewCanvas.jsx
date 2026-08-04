@@ -9,12 +9,13 @@
  *   - 纸张轮廓（SVG viewBox = mm，1:1 无换算误差）
  *   - 安全边距可视化（虚线框 + 边距值）
  *   - 发票缩略图（<image> 元素，支持旋转 transform）
- *   - 页导航（上一页 / 下一页 / 第 x 页 / 共 n 页）
+ *   - 页码导航（复用展示区 PageNavigator：首页/上页/跳转/下页/末页）
  *
  * @module components/PrintPreviewCanvas
  */
 
 import { memo, useState, useEffect } from 'react'
+import { PageNavigator } from './PageNavigator'
 
 const ORIENT_LABEL = { portrait: '纵向', landscape: '横向' }
 
@@ -142,78 +143,70 @@ const PrintPreviewCanvas = memo(({ preview, marginSettings }) => {
   const page = pages[idx]
   const { widthMM, heightMM } = page.paperSizeMM
   const slotCount = page.slots.length
-  const tag = `${page.paper} · ${ORIENT_LABEL[page.orientation] || page.orientation} · ${slotCount} 票`
 
   const margins = marginSettings || {}
   const hasMargins = margins.left > 0 || margins.right > 0 || margins.top > 0 || margins.bottom > 0
 
   return (
-    <div className="pcm-preview-page" style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-      <div className="pcm-preview-page-inner" style={{ flex: 1, minHeight: 0 }}>
-        <svg
-          viewBox={`0 0 ${widthMM} ${heightMM}`}
-          width="100%"
-          height="100%"
-          preserveAspectRatio="xMidYMid meet"
-          role="img"
-          aria-label={`打印预览：${page.paper} ${ORIENT_LABEL[page.orientation] || ''} ${slotCount} 票`}
-        >
-          {/* 纸张背景 */}
-          <rect x="0" y="0" width={widthMM} height={heightMM} rx="1.5" fill="#fff" stroke="var(--border-light)" strokeWidth="0.6" />
+    <div className="pcm-preview-page">
+      {/* 纸面 SVG 直接渲染（无固定宽度内层；白纸/圆角/阴影由 .pcm-preview-page svg 提供，
+          宽度撑满容器、高度按 viewBox 比例自适应，纸面可贴近 body 边缘出血） */}
+      <svg
+        viewBox={`0 0 ${widthMM} ${heightMM}`}
+        width="100%"
+        role="img"
+        aria-label={`打印预览：${page.paper} ${ORIENT_LABEL[page.orientation] || ''} ${slotCount} 票`}
+      >
+        {/* 纸张背景 */}
+        <rect x="0" y="0" width={widthMM} height={heightMM} rx="1.5" fill="#fff" stroke="var(--border-light)" strokeWidth="0.6" />
 
-          {/* 安全边距可视化 */}
-          {hasMargins && (
-            <rect
-              x={margins.left || 0}
-              y={margins.top || 0}
-              width={Math.max(0, widthMM - (margins.left || 0) - (margins.right || 0))}
-              height={Math.max(0, heightMM - (margins.top || 0) - (margins.bottom || 0))}
-              fill="var(--accent)" fillOpacity="0.03"
-              stroke="var(--accent)" strokeOpacity="0.25"
-              strokeWidth="0.2"
-              strokeDasharray="0.8 0.6"
-            />
-          )}
+        {/* 安全边距可视化 */}
+        {hasMargins && (
+          <rect
+            x={margins.left || 0}
+            y={margins.top || 0}
+            width={Math.max(0, widthMM - (margins.left || 0) - (margins.right || 0))}
+            height={Math.max(0, heightMM - (margins.top || 0) - (margins.bottom || 0))}
+            fill="var(--accent)" fillOpacity="0.03"
+            stroke="var(--accent)" strokeOpacity="0.25"
+            strokeWidth="0.2"
+            strokeDasharray="0.8 0.6"
+          />
+        )}
 
-          {/* 边距标注 */}
-          {hasMargins && (
-            <>
-              {margins.top > 0 && (
-                <text x={widthMM / 2} y={(margins.top || 0) / 2 + 1} fontSize="2" fill="var(--text-3)" fillOpacity="0.6" textAnchor="middle">
-                  ↑{margins.top}mm
-                </text>
-              )}
-              {margins.bottom > 0 && (
-                <text x={widthMM / 2} y={heightMM - (margins.bottom || 0) / 2} fontSize="2" fill="var(--text-3)" fillOpacity="0.6" textAnchor="middle">
-                  ↓{margins.bottom}mm
-                </text>
-              )}
-              {margins.left > 0 && (
-                <text x={(margins.left || 0) / 2 + 1} y={heightMM / 2} fontSize="2" fill="var(--text-3)" fillOpacity="0.6" textAnchor="middle"
-                  transform={`rotate(-90 ${(margins.left || 0) / 2 + 1} ${heightMM / 2})`}>
-                  ←{margins.left}mm
-                </text>
-              )}
-              {margins.right > 0 && (
-                <text x={widthMM - (margins.right || 0) / 2} y={heightMM / 2} fontSize="2" fill="var(--text-3)" fillOpacity="0.6" textAnchor="middle"
-                  transform={`rotate(90 ${widthMM - (margins.right || 0) / 2} ${heightMM / 2})`}>
-                  {margins.right}mm→
-                </text>
-              )}
-            </>
-          )}
+        {/* 边距标注 */}
+        {hasMargins && (
+          <>
+            {margins.top > 0 && (
+              <text x={widthMM / 2} y={(margins.top || 0) / 2 + 1} fontSize="2" fill="var(--text-3)" fillOpacity="0.6" textAnchor="middle">
+                ↑{margins.top}mm
+              </text>
+            )}
+            {margins.bottom > 0 && (
+              <text x={widthMM / 2} y={heightMM - (margins.bottom || 0) / 2} fontSize="2" fill="var(--text-3)" fillOpacity="0.6" textAnchor="middle">
+                ↓{margins.bottom}mm
+              </text>
+            )}
+            {margins.left > 0 && (
+              <text x={(margins.left || 0) / 2 + 1} y={heightMM / 2} fontSize="2" fill="var(--text-3)" fillOpacity="0.6" textAnchor="middle"
+                transform={`rotate(-90 ${(margins.left || 0) / 2 + 1} ${heightMM / 2})`}>
+                ←{margins.left}mm
+              </text>
+            )}
+            {margins.right > 0 && (
+              <text x={widthMM - (margins.right || 0) / 2} y={heightMM / 2} fontSize="2" fill="var(--text-3)" fillOpacity="0.6" textAnchor="middle"
+                transform={`rotate(90 ${widthMM - (margins.right || 0) / 2} ${heightMM / 2})`}>
+                {margins.right}mm→
+              </text>
+            )}
+          </>
+        )}
 
-          {/* 发票缩略图槽位 */}
-          {page.slots.map((slot, i) => (
-            <SlotImage key={`${slot.fileId || 'slot'}-${slot.pageIndex}-${i}`} slot={slot} index={i} />
-          ))}
-        </svg>
-      </div>
-
-      {/* 页信息 + 导航 */}
-      <div className="pcm-preview-page-tag" style={{ marginTop: '6px', fontSize: '12px' }}>
-        {tag} · 第 {idx + 1} 页 / 共 {total} 页
-      </div>
+        {/* 发票缩略图槽位 */}
+        {page.slots.map((slot, i) => (
+          <SlotImage key={`${slot.fileId || 'slot'}-${slot.pageIndex}-${i}`} slot={slot} index={i} />
+        ))}
+      </svg>
 
       {/* 当前页详情（文件名 + 旋转） */}
       <div style={{ fontSize: '11px', color: 'var(--text-4)', lineHeight: 1.5, minHeight: '18px' }}>
@@ -224,28 +217,16 @@ const PrintPreviewCanvas = memo(({ preview, marginSettings }) => {
         ))}
       </div>
 
-      {/* 页导航按钮 */}
+      {/* 页码导航（多页时显示；复用展示区 PageNavigator，0-based 接口一致） */}
       {total > 1 && (
-        <div style={{ display: 'flex', gap: '8px', marginTop: '6px' }}>
-          <button
-            type="button"
-            className="pcm-btn pcm-btn-cancel"
-            style={{ padding: '2px 10px', fontSize: '12px' }}
-            disabled={idx === 0}
-            onClick={() => setCurrent(idx - 1)}
-          >
-            上一页
-          </button>
-          <button
-            type="button"
-            className="pcm-btn pcm-btn-confirm"
-            style={{ padding: '2px 10px', fontSize: '12px' }}
-            disabled={idx >= total - 1}
-            onClick={() => setCurrent(idx + 1)}
-          >
-            下一页
-          </button>
-        </div>
+        <PageNavigator
+          className="pcm-preview-navigator"
+          currentPage={idx}
+          totalPages={total}
+          onPrev={() => setCurrent(idx - 1)}
+          onNext={() => setCurrent(idx + 1)}
+          onJump={(p) => setCurrent(p)}
+        />
       )}
     </div>
   )
