@@ -21,8 +21,9 @@ const ORIENT_LABEL = { portrait: '纵向', landscape: '横向' }
 
 /**
  * 单个发票缩略图槽位渲染（内部组件，方便管理加载状态）
+ * 纯内容：缩略图 + 槽位边框；不叠加任何标签/序号信息（打印预览 = 现实打印内容）。
  */
-const SlotImage = memo(({ slot, index }) => {
+const SlotImage = memo(({ slot }) => {
   const [loaded, setLoaded] = useState(false)
   const [error, setError] = useState(false)
 
@@ -76,33 +77,12 @@ const SlotImage = memo(({ slot, index }) => {
         />
       )}
 
-      {/* 槽位边框 + 序号 */}
+      {/* 槽位边框 */}
       <rect
         x={slot.x} y={slot.y} width={slot.width} height={slot.height}
         rx="0.8" fill="none"
         stroke="var(--accent)" strokeOpacity="0.5" strokeWidth="0.3"
       />
-
-      {/* 底部标签：序号 + 文件名 */}
-      <rect
-        x={slot.x + 0.5}
-        y={slot.y + slot.height - 3}
-        width={Math.min(slot.width - 1, slot.source.length * 1.2 + 3)}
-        height={2.5}
-        fill="rgba(0,0,0,0.6)"
-        rx="0.4"
-      />
-      <text
-        x={slot.x + 1}
-        y={slot.y + slot.height - 1.2}
-        fontSize="1.8"
-        fill="#fff"
-        fillOpacity="0.9"
-        dominantBaseline="central"
-      >
-        {index + 1}. {slot.source.length > 12 ? slot.source.slice(0, 12) + '…' : slot.source}
-        {slot.rotation !== 0 ? ` ⟳${slot.rotation}°` : ''}
-      </text>
     </g>
   )
 })
@@ -157,8 +137,8 @@ const PrintPreviewCanvas = memo(({ preview, marginSettings }) => {
         role="img"
         aria-label={`打印预览：${page.paper} ${ORIENT_LABEL[page.orientation] || ''} ${slotCount} 票`}
       >
-        {/* 纸张背景 */}
-        <rect x="0" y="0" width={widthMM} height={heightMM} rx="1.5" fill="#fff" stroke="var(--border-light)" strokeWidth="0.6" />
+        {/* 纸张轮廓（无底色：viewBox 透明，纯粹显示打印内容 + 安全边距线条） */}
+        <rect x="0" y="0" width={widthMM} height={heightMM} rx="1.5" fill="none" stroke="var(--border-light)" strokeWidth="0.6" />
 
         {/* 安全边距可视化 */}
         {hasMargins && (
@@ -204,18 +184,9 @@ const PrintPreviewCanvas = memo(({ preview, marginSettings }) => {
 
         {/* 发票缩略图槽位 */}
         {page.slots.map((slot, i) => (
-          <SlotImage key={`${slot.fileId || 'slot'}-${slot.pageIndex}-${i}`} slot={slot} index={i} />
+          <SlotImage key={`${slot.fileId || 'slot'}-${slot.pageIndex}-${i}`} slot={slot} />
         ))}
       </svg>
-
-      {/* 当前页详情（文件名 + 旋转） */}
-      <div style={{ fontSize: '11px', color: 'var(--text-4)', lineHeight: 1.5, minHeight: '18px' }}>
-        {page.slots.map((s, i) => (
-          <span key={i} style={{ marginRight: '10px', whiteSpace: 'nowrap' }}>
-            {i + 1}. {s.source}{s.pageIndex > 0 ? ` (第${s.pageIndex + 1}页)` : ''}{s.rotation !== 0 ? `（转${s.rotation}°）` : ''}
-          </span>
-        ))}
-      </div>
 
       {/* 页码导航（多页时显示；复用展示区 PageNavigator，0-based 接口一致） */}
       {total > 1 && (
