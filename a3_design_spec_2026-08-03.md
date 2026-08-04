@@ -233,3 +233,12 @@ rot90    : 画布 1890×2717，内容 bbox (201,169,1500×2423)，边距 L17/T14
 ## 3. 待验证项（标记，不阻塞 contract 冻结）
 - **Sumatra 真实打印的 rot90 纸面方向**：当前 node 采集不体现旋转（冻结事实「source rotation 由 Sumatra 原生处理」），Policy A 基于 contentOrientation 语义推断 + A3-2 采集器模型，**需真实打印对照确认**；若实测 Sumatra 为 Policy B，修订本 contract
 - A3-3-3 Gate 预告：A3-3-3-01 adapter rot90（画布 1890×2717 + rotatedBounds 互换 + offset 旋转）、A3-3-3-02 margin（四边 vs C5 ≤0.5mm）、A3-3-3-03 bitmap invariant（像素不变只旋转）
+
+### §7.1 补充：实现模型修正注记（2026-08-04，A3-3-3 落地时确认）
+
+> C4 原文「offset 随画布旋转」表述不精确，实际实现为**画布级旋转**，特此修正：
+
+- **发现**：`drawRenderCommand` 的 `contentRotation` 是 **Policy B 语义**（内容在**画布内**绕落盘中心旋转，renderDraw.js:52-56）。若按 C4 旧表述「改 command 的 offset/rotatedBounds + cr 旋转」，内容旋转后会**超出画布**（实测 A1 bbox 320 vs C5 预期 201）——Policy A 不满足。
+- **修正**：Policy A 的正确实现 = **画布级旋转**：rot0 command 先绘制扩展纸面画布（2717×1890）→ `transformPaperRotation` 产出 `rotateCanvasCommand`（把扩展纸面画布作为 source，居中旋转绘制到新画布 1890×2717）→ 与 A3-2 采集器（canvas 2D 旋转整个画布）**同一数学**。
+- **C4 修订表述**：sourceOrigin 是 paper-space 属性，**旋转阶段完全不参与**（rot0 阶段 offset 已施加；旋转作用于整个扩展纸面画布，offset 不随旋转变换）。
+- 数学锚点（画布旋转模型，已验证 C5）：内容 bbox (169,189,2423×1500) 中心 (1380.5,939) vs 纸面中心 (1358.5,945) → rel (22,-6)；rotate90 → (6,22)；新画布 1890×2717 中心 (945,1358.5) → 新内容中心 (951,1380.5) → bbox (201,169,1500×2423)，边距 L17.0/T14.3/R16.0/B10.5mm（C5 锚点 L17/T14.3/R16/B10.6 全 ≤0.5mm ✅）。
