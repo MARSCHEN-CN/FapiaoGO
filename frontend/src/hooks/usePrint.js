@@ -12,7 +12,7 @@ import { printSingleSourceFile as printSingleSource, printMergedImages } from '.
 import { runMergedPrintTasks } from '../runners/printRunner'
 import { computePaperLayout } from '../previewState'
 import { extendPaperLayoutContract } from '../print/paperLayoutContract'
-import { applySourceOriginPlacement } from '../print/placementAdapter'
+import { applySourceOriginPlacement, transformPaperRotation } from '../print/placementAdapter'
 import { fetchPrintRaster, buildPrintJobItem } from '../utils/printAdapter'
 // A1/A1.5：已证等价的 Plan 事实来源 + 影子比较 helper（Commit 2 source / Commit 3 merge 分支消费）
 import { buildPrintExecutionPlan, SOURCE_FILE_FILTER, MERGE_FILE_FILTER } from '../print/buildPrintExecutionPlan'
@@ -312,20 +312,37 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
           nativeCmd = applySourceOriginPlacement({
             renderResource: nativeRes,
             paperLayout: paperLayout0,
-            rotation: 0,  // A3-3-2 仅 rot0
+            rotation: 0,  // A3-3-2：rot0 基础 command（sourceOrigin 施加；rotation 属 A3-3-3）
           })
-          // 扩展纸画布 = paperLayout paperRect（px）+ 白底
           const pw = paperLayout0.paperRect?.w || nativeRes.width
           const ph = paperLayout0.paperRect?.h || nativeRes.height
+          // ── A3-3-3：Policy A 画布级旋转（a3_design_spec §7.1）──
+          // drawRenderCommand 的 contentRotation 是 Policy B（内容在画布内旋转），Policy A 需画布级旋转：
+          // rot0 command 先绘制扩展纸面 → transformPaperRotation 产画布旋转 command →
+          // 把扩展纸面画布作为 source 旋转绘制到新画布（与 A3-2 采集器同一数学，C5 已验证）。
+          // sourceOrigin 是 paper-space 属性，旋转阶段不参与（C4）。
+          const rotInfo = transformPaperRotation(nativeCmd, rotation, pw, ph)
           nativePlacedCanvas = document.createElement('canvas')
-          nativePlacedCanvas.width = pw
-          nativePlacedCanvas.height = ph
+          nativePlacedCanvas.width = rotInfo.canvasW
+          nativePlacedCanvas.height = rotInfo.canvasH
           const nctx = nativePlacedCanvas.getContext('2d')
           nctx.fillStyle = '#ffffff'
-          nctx.fillRect(0, 0, pw, ph)
+          nctx.fillRect(0, 0, rotInfo.canvasW, rotInfo.canvasH)
           // 绘制：native bitmap 位移到 (offsetX, offsetY)，scale=1（drawRenderCommand 同款几何）
           const { drawRenderCommand } = await import('../layout/renderDraw.js')
-          drawRenderCommand(nctx, nativeCmd, nativeRes.canvas, nativeRes.width, nativeRes.height)
+          if (rotInfo.rotateCanvasCommand) {
+            // rotation≠0：两段式——先画扩展纸面到临时画布，再整体旋转绘制到最终画布（Policy A）
+            const tmpCanvas = document.createElement('canvas')
+            tmpCanvas.width = pw
+            tmpCanvas.height = ph
+            const tctx = tmpCanvas.getContext('2d')
+            tctx.fillStyle = '#ffffff'
+            tctx.fillRect(0, 0, pw, ph)
+            drawRenderCommand(tctx, nativeCmd, nativeRes.canvas, nativeRes.width, nativeRes.height)
+            drawRenderCommand(nctx, rotInfo.rotateCanvasCommand, tmpCanvas, pw, ph)
+          } else {
+            drawRenderCommand(nctx, nativeCmd, nativeRes.canvas, nativeRes.width, nativeRes.height)
+          }
         } else {
           console.warn('[usePrint] native render 返回 null，回退 renderMultipleItemsToCanvas')
         }
