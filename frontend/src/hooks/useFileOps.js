@@ -22,7 +22,7 @@ import { ensureRenderContract, ensureDocumentMetadata } from '../services/render
 import { mapParseResultToFileUpdate } from '../mappers/parseResultMapper'
 import { updateDocumentIdentity } from '../utils/identity'
 import { resolveInstancePageFiles } from '../utils/instancePageOwnership'
-import { createImportSession, getActiveSessionId, getSession, reactivateSession, addFilesToSession, replaceFileItems, updateProgress, addDocument, flushSessionNotifications } from '../stores/ImportSessionStore'
+import { createImportSession, getActiveSessionId, getSession, reactivateSession, addFilesToSession, replaceFileItems, updateProgress, addDocument, patchDocument, sealDocument, flushSessionNotifications } from '../stores/ImportSessionStore'
 import { ensureDocumentFromFileObj, flushDocumentNotifications, getDocument, registerDocument } from '../stores/DocumentStore'
 import { createDocument, createPageMeta } from '../models/InvoiceDocument'
 import { consumeParseResult } from '../consumers/parseResultConsumer'
@@ -851,15 +851,21 @@ export function useFileOps({ setFiles, settings, electronAPIRef }) {
                 // 覆盖 Page 字段（金额/日期）。null/undefined 时由 view model 回退 rep 字段。
                 doc.amount = assembled.amount
                 doc.invoiceDate = assembled.invoiceDate
+                doc._source = 'backend_assembly'
                 if (session?.id) {
-                  addDocument(session.id, doc, { silent: true })
+                  const instanceKey = doc.instanceId || doc.docId || doc.id
+                  const added = addDocument(session.id, doc, { silent: true, source: 'backend_assembly' })
+                  if (!added) {
+                    // 文档已存在（per-file 路径先行注册）→ patch 更新 assembly 产生的字段
+                    patchDocument(session.id, instanceKey, {
+                      amount: doc.amount,
+                      invoiceDate: doc.invoiceDate,
+                    })
+                    console.log('[ADD DOCUMENT][assembly] patch existing', { instanceKey, pages: doc?.pages?.length })
+                  } else {
+                    console.log('[ADD DOCUMENT][assembly] new', { instanceKey, pages: doc?.pages?.length, sourceDocId: doc?.sourceDocId })
+                  }
                   sessionDocsTouched = true
-                  console.log('[ADD DOCUMENT][assembly]', {
-                    id: doc?.id || doc?.docId,
-                    pages: doc?.pages?.length,
-                    sourceDocId: doc?.sourceDocId,
-                    _pageKeys: doc?._pageKeys?.length,
-                  })
                 }
                 assembledDocIds.add(invDocId)
               }
@@ -881,7 +887,7 @@ export function useFileOps({ setFiles, settings, electronAPIRef }) {
                     // 为单页文档设置 _pageKeys（强身份匹配），与 assembly 多页文档一致，
                     // 避免 invoiceDocumentToRow 弱身份回退匹配失败导致文档不显示
                     if (!doc._pageKeys) doc._pageKeys = [fileObj.key]
-                    addDocument(session.id, doc, { silent: true })
+                    addDocument(session.id, doc, { silent: true, source: 'fallback' })
                     sessionDocsTouched = true
                     console.log('[ADD DOCUMENT][gate-reject]', {
                       id: doc?.id || doc?.docId,
@@ -900,6 +906,15 @@ export function useFileOps({ setFiles, settings, electronAPIRef }) {
               if (sessionDocsTouched) {
                 flushSessionNotifications(session.id)
                 sessionDocsTouched = false
+              }
+              // Entity Boundary: seal assembled docs after flush
+              for (const invDocId of assembledDocIds) {
+                const sealedDoc = getDocument(invDocId)
+                if (sealedDoc) {
+                  const instanceKey = sealedDoc.instanceId || sealedDoc.docId || sealedDoc.id
+                  sealDocument(session.id, instanceKey)
+                  console.log('[SEAL DOCUMENT][assembly]', { instanceKey, invDocId })
+                }
               }
             }
 
@@ -922,7 +937,7 @@ export function useFileOps({ setFiles, settings, electronAPIRef }) {
                   if (doc && session?.id) {
                     // 为单页文档设置 _pageKeys（强身份匹配）
                     if (!doc._pageKeys) doc._pageKeys = [fileObj.key]
-                    addDocument(session.id, doc, { silent: true })
+                    addDocument(session.id, doc, { silent: true, source: 'fallback' })
                     sessionDocsTouched = true
                     console.log('[ADD DOCUMENT][fallback]', {
                       id: doc?.id || doc?.docId,
@@ -941,6 +956,17 @@ export function useFileOps({ setFiles, settings, electronAPIRef }) {
             if (sessionDocsTouched) {
               flushSessionNotifications(session.id)
               sessionDocsTouched = false
+            }
+            // Entity Boundary: seal fallback docs after flush
+            if (!hasAssembledDocs) {
+              for (const fileObj of chunk) {
+                const effectiveDocId = fileObj.key
+                const sealedDoc = getDocument(effectiveDocId)
+                if (sealedDoc) {
+                  const instanceKey = sealedDoc.instanceId || sealedDoc.docId || sealedDoc.id
+                  sealDocument(session.id, instanceKey)
+                }
+              }
             }
           },
         },

@@ -7,14 +7,18 @@ import {
   documentIdentityKey,
 } from './documentViewModel.js'
 
-// ── 夹具：模拟 buildFileObj 产出的拆分页（docId + pageNum 1-based） ──
+// ── 夹具：模拟 buildFileObj 产出的拆分页 ──
+// IS-4.3 严格约束：拆分页必须同时具备 sourceDocId + totalPages + pageNum
+// 才能被视为多页文档的一部分。
 let seq = 0
-function page(docId, pageNum, extra = {}) {
+function page(sourceDocId, pageNum, extra = {}) {
   seq += 1
   return {
     key: `key-${seq}`,
     name: extra.name ?? `invoice_p${pageNum}.pdf`,
-    docId,
+    docId: extra.docId ?? sourceDocId,
+    sourceDocId,
+    totalPages: extra.totalPages ?? null,
     pageNum,
     status: 'parsed',
     invoiceNumber: extra.invoiceNumber ?? '',
@@ -37,8 +41,8 @@ function single(extra = {}) {
 }
 
 // ───────────────────────── Case 1：一张 3 页发票 ─────────────────────────
-test('Case 1: 同一 docId 的 3 页 → 聚合为 1 个 document（共3页）', () => {
-  const files = [page('AAA', 1), page('AAA', 2), page('AAA', 3)]
+test('Case 1: 同一 sourceDocId 的 3 页 → 聚合为 1 个 document（共3页）', () => {
+  const files = [page('AAA', 1, { totalPages: 3 }), page('AAA', 2, { totalPages: 3 }), page('AAA', 3, { totalPages: 3 })]
   const docs = groupFilesByDocument(files)
 
   assert.equal(docs.length, 1)
@@ -50,14 +54,13 @@ test('Case 1: 同一 docId 的 3 页 → 聚合为 1 个 document（共3页）',
 })
 
 // ───────────────────────── Case 2：两份相同内容的 2 页发票 ─────────────────────────
-// docId 是内容哈希（sha256(bytes)[:24]）：相同内容重复导入 → 相同 docId。
-// pageNum 重复（两个 p1、两个 p2）→ 必须拆分为两个独立 document。
-test('Case 2: 相同 docId 的两份 2 页导入 → 2 个 document（各共2页，非共4页）', () => {
+// 相同 sourceDocId 但 pageNum 重复（两个 p1、两个 p2）→ 必须拆分为两个独立 document。
+test('Case 2: 相同 sourceDocId 的两份 2 页导入 → 2 个 document（各共2页，非共4页）', () => {
   const files = [
-    page('AAA', 1, { name: 'A_p1.pdf' }),
-    page('AAA', 2, { name: 'A_p2.pdf' }),
-    page('AAA', 1, { name: 'B_p1.pdf' }),
-    page('AAA', 2, { name: 'B_p2.pdf' }),
+    page('AAA', 1, { name: 'A_p1.pdf', totalPages: 2 }),
+    page('AAA', 2, { name: 'A_p2.pdf', totalPages: 2 }),
+    page('AAA', 1, { name: 'B_p1.pdf', totalPages: 2 }),
+    page('AAA', 2, { name: 'B_p2.pdf', totalPages: 2 }),
   ]
   const docs = groupFilesByDocument(files)
 
@@ -73,9 +76,9 @@ test('Case 2: 相同 docId 的两份 2 页导入 → 2 个 document（各共2页
 
 test('Case 2b: 三份相同内容的 2 页导入 → 3 个 document', () => {
   const files = [
-    page('AAA', 1), page('AAA', 2),
-    page('AAA', 1), page('AAA', 2),
-    page('AAA', 1), page('AAA', 2),
+    page('AAA', 1, { totalPages: 2 }), page('AAA', 2, { totalPages: 2 }),
+    page('AAA', 1, { totalPages: 2 }), page('AAA', 2, { totalPages: 2 }),
+    page('AAA', 1, { totalPages: 2 }), page('AAA', 2, { totalPages: 2 }),
   ]
   const docs = groupFilesByDocument(files)
   assert.equal(docs.length, 3)
@@ -84,10 +87,10 @@ test('Case 2b: 三份相同内容的 2 页导入 → 3 个 document', () => {
 
 test('Case 2c: 乱序到达（p1,p1,p2,p2）仍按 pageNum 唯一性正确分区', () => {
   const files = [
-    page('AAA', 1, { name: 'A_p1.pdf' }),
-    page('AAA', 1, { name: 'B_p1.pdf' }),
-    page('AAA', 2, { name: 'A_p2.pdf' }),
-    page('AAA', 2, { name: 'B_p2.pdf' }),
+    page('AAA', 1, { name: 'A_p1.pdf', totalPages: 2 }),
+    page('AAA', 1, { name: 'B_p1.pdf', totalPages: 2 }),
+    page('AAA', 2, { name: 'A_p2.pdf', totalPages: 2 }),
+    page('AAA', 2, { name: 'B_p2.pdf', totalPages: 2 }),
   ]
   const docs = groupFilesByDocument(files)
   assert.equal(docs.length, 2)
@@ -98,73 +101,62 @@ test('Case 2c: 乱序到达（p1,p1,p2,p2）仍按 pageNum 唯一性正确分区
   assert.equal(docs[0]._pages[1].name, 'A_p2.pdf')
 })
 
-// ───────────────────────── Case 3：重复检测仍按 invoiceNumber（document 级） ─────────────────────────
-test('Case 3: 两个不同 docId、同号发票 → 1 组重复', () => {
+// ───────────────────────── Case 3：重复检测（无 invoiceDocs 时不聚合，按页检测） ─────────────────────────
+test('Case 3: 无 invoiceDocs 时每页独立 → 4 页同号 = 4 个文档', () => {
   const files = [
-    page('AAA', 1, { invoiceNumber: '123' }),
-    page('AAA', 2, { invoiceNumber: '123' }),
-    page('BBB', 1, { invoiceNumber: '123' }),
-    page('BBB', 2, { invoiceNumber: '123' }),
+    page('AAA', 1, { invoiceNumber: '123', totalPages: 2 }),
+    page('AAA', 2, { invoiceNumber: '123', totalPages: 2 }),
+    page('BBB', 1, { invoiceNumber: '123', totalPages: 2 }),
+    page('BBB', 2, { invoiceNumber: '123', totalPages: 2 }),
   ]
   const vm = buildDocumentViewModel(files)
-  assert.equal(vm.documentCount, 2)
+  assert.equal(vm.documentCount, 4, '无 invoiceDocs 时每页独立')
+  // 4 页同号 → 重复检测按 invoiceNumber 分组 → 1 组重复，4 个条目
   assert.equal(vm.duplicateGroups.size, 1)
-  const group = [...vm.duplicateGroups.values()][0]
-  assert.equal(group.length, 2) // 两个 document 条目
 })
 
-test('Case 3b: 相同内容的两份同号发票（同 docId）→ 仍检出 1 组重复', () => {
+test('Case 3b: 无 invoiceDocs 时每页独立 → 同源 4 页仍为 4 个文档', () => {
   const files = [
-    page('AAA', 1, { invoiceNumber: '123' }),
-    page('AAA', 2, { invoiceNumber: '123' }),
-    page('AAA', 1, { invoiceNumber: '123' }),
-    page('AAA', 2, { invoiceNumber: '123' }),
+    page('AAA', 1, { invoiceNumber: '123', totalPages: 2 }),
+    page('AAA', 2, { invoiceNumber: '123', totalPages: 2 }),
+    page('AAA', 1, { invoiceNumber: '123', totalPages: 2 }),
+    page('AAA', 2, { invoiceNumber: '123', totalPages: 2 }),
   ]
   const vm = buildDocumentViewModel(files)
-  assert.equal(vm.documentCount, 2)
-  assert.equal(vm.duplicateGroups.size, 1)
-
-  // 重复组 badge 信息：两个实例都在 Map 中（uiKey 唯一，不互相覆盖）
-  const info = buildDocumentDuplicateInfo(vm.duplicateGroups)
-  const docs = vm.documents
-  assert.equal(info.size, 2)
-  assert.equal(info.get(documentIdentityKey(docs[0])).isFirst, true)
-  assert.equal(info.get(documentIdentityKey(docs[1])).isFirst, false)
-  assert.notEqual(documentIdentityKey(docs[0]), documentIdentityKey(docs[1]))
+  assert.equal(vm.documentCount, 4, '无 invoiceDocs 不聚合')
 })
 
-test('Case 3c: 一张 3 页发票（同号页）→ 不构成重复', () => {
+test('Case 3c: 无 invoiceDocs 时 3 页同号发票 → 3 个独立文档', () => {
   const files = [
-    page('AAA', 1, { invoiceNumber: '123' }),
-    page('AAA', 2, { invoiceNumber: '123' }),
-    page('AAA', 3, { invoiceNumber: '123' }),
+    page('AAA', 1, { invoiceNumber: '123', totalPages: 3 }),
+    page('AAA', 2, { invoiceNumber: '123', totalPages: 3 }),
+    page('AAA', 3, { invoiceNumber: '123', totalPages: 3 }),
   ]
   const vm = buildDocumentViewModel(files)
-  assert.equal(vm.documentCount, 1)
-  assert.equal(vm.duplicateGroups.size, 0)
+  assert.equal(vm.documentCount, 3, '无 invoiceDocs 不聚合为 1')
 })
 
-// ───────────────────────── 统计：金额按 document 计一次 ─────────────────────────
-test('统计: 3 页发票每页 amount=100 → totalAmount=100（非 300）', () => {
+// ───────────────────────── 统计：金额按文档（无 invoiceDocs 时按页） ─────────────────────────
+test('统计: 无 invoiceDocs 时 3 页各 amount=100 → totalAmount=300（按页累加）', () => {
   const files = [
-    page('AAA', 1, { amount: '100' }),
-    page('AAA', 2, { amount: '100' }),
-    page('AAA', 3, { amount: '100' }),
+    page('AAA', 1, { amount: '100', totalPages: 3 }),
+    page('AAA', 2, { amount: '100', totalPages: 3 }),
+    page('AAA', 3, { amount: '100', totalPages: 3 }),
   ]
   const vm = buildDocumentViewModel(files)
-  assert.equal(vm.totalAmount, 100)
+  assert.equal(vm.totalAmount, 300, '无 invoiceDocs 不聚合，按页累加')
 })
 
-test('统计: 相同内容两份（各 2 页、amount=100）→ totalAmount=200', () => {
+test('统计: 无 invoiceDocs 时 4 页各 amount=100 → totalAmount=400', () => {
   const files = [
-    page('AAA', 1, { amount: '100' }),
-    page('AAA', 2, { amount: '100' }),
-    page('AAA', 1, { amount: '100' }),
-    page('AAA', 2, { amount: '100' }),
+    page('AAA', 1, { amount: '100', totalPages: 2 }),
+    page('AAA', 2, { amount: '100', totalPages: 2 }),
+    page('AAA', 1, { amount: '100', totalPages: 2 }),
+    page('AAA', 2, { amount: '100', totalPages: 2 }),
   ]
   const vm = buildDocumentViewModel(files)
-  assert.equal(vm.documentCount, 2)
-  assert.equal(vm.totalAmount, 200)
+  assert.equal(vm.documentCount, 4, '无 invoiceDocs 不聚合')
+  assert.equal(vm.totalAmount, 400, '无 invoiceDocs 按页累加')
 })
 
 // ───────────────────────── 非拆分页 passthrough 与混排 ─────────────────────────
@@ -193,8 +185,8 @@ test('非拆分页: 已有 originalName 的文件保持不变（reference pass-t
 
 test('混排: 多页 document + 单页文件，顺序保持（document 出现在首页位置）', () => {
   const s1 = single({ name: 'x.jpg' })
-  const p1 = page('AAA', 1)
-  const p2 = page('AAA', 2)
+  const p1 = page('AAA', 1, { totalPages: 2 })
+  const p2 = page('AAA', 2, { totalPages: 2 })
   const s2 = single({ name: 'y.jpg' })
   const docs = groupFilesByDocument([s1, p1, p2, s2])
   assert.equal(docs.length, 3)
@@ -215,7 +207,11 @@ test('restoreOriginalName: _pN 后缀还原', () => {
 
 // ───────────────────────── 0-based pageNum（buildFileObj 保留 page_index=0） ─────────────────────────
 test('0-based pageNum: pageNum=0,1,2 正确聚合为 3 页 document', () => {
-  const files = [page('BBB', 0, { name: 'first.pdf' }), page('BBB', 1, { name: 'second.pdf' }), page('BBB', 2, { name: 'third.pdf' })]
+  const files = [
+    page('BBB', 0, { name: 'first.pdf', totalPages: 3 }),
+    page('BBB', 1, { name: 'second.pdf', totalPages: 3 }),
+    page('BBB', 2, { name: 'third.pdf', totalPages: 3 })
+  ]
   const docs = groupFilesByDocument(files)
 
   assert.equal(docs.length, 1)
@@ -227,32 +223,18 @@ test('0-based pageNum: pageNum=0,1,2 正确聚合为 3 页 document', () => {
   assert.equal(docs[0].key, files[0].key)
 })
 
-test('0-based pageNum: pageNum=null 视为 0，不误过滤首页', () => {
-  // 模拟 buildFileObj 行为：page_index=0 时 pageNum 为 null（旧行为）
+test('0-based pageNum: pageNum=0 的首页不被过滤（非 null 合法）', () => {
+  // IS-4.3 严格约束：pageNum=0 是合法页码，应参与分组
   const files = [
-    { ...page('CCC', 1, { name: 'p1.pdf' }), pageNum: null },
-    page('CCC', 1, { name: 'p2.pdf' }),
+    page('CCC', 0, { name: 'p1.pdf', totalPages: 2 }),
+    page('CCC', 1, { name: 'p2.pdf', totalPages: 2 }),
   ]
   const docs = groupFilesByDocument(files)
 
-  // 两页都应参与聚合
   assert.equal(docs.length, 1)
   assert.equal(docs[0]._pageCount, 2)
   assert.equal(docs[0]._pages[0].name, 'p1.pdf')
   assert.equal(docs[0]._pages[1].name, 'p2.pdf')
-})
-
-test('0-based pageNum: pageNum=0 与 pageNum=null 同时存在时视为同页（去重）', () => {
-  const files = [
-    page('DDD', 0, { name: 'p0_v1.pdf' }),
-    { ...page('DDD', 1, { name: 'p0_v2.pdf' }), pageNum: null },
-    page('DDD', 1, { name: 'p1.pdf' }),
-  ]
-  const docs = groupFilesByDocument(files)
-
-  // 因 pageKey=0 和 pageKey=null 都归一为 0，两个首页会分到不同实例
-  // 这是正确行为——null 视为 0，与现有实例冲突则创建新实例
-  assert.ok(docs.length >= 1)
 })
 
 // ───────────────────────── 合并模式：InvoiceDocument 覆盖 + 剩余文件补全 ─────────────────────────
@@ -287,8 +269,8 @@ test('合并模式：invoiceDocs 覆盖 A，files 中 B 被补全返回（单页
 })
 
 test('合并模式：invoiceDocs 覆盖多页组，未覆盖的单页文件仍显示', () => {
-  const p1 = page('AAA', 1, { name: 'multi_p1.pdf', invoiceNumber: 'N1', amount: '300' })
-  const p2 = page('AAA', 2, { name: 'multi_p2.pdf', invoiceNumber: 'N1', amount: '300' })
+  const p1 = page('AAA', 1, { name: 'multi_p1.pdf', invoiceNumber: 'N1', amount: '300', totalPages: 2 })
+  const p2 = page('AAA', 2, { name: 'multi_p2.pdf', invoiceNumber: 'N1', amount: '300', totalPages: 2 })
   const lone = single({ name: 'lone.pdf', invoiceNumber: 'N2', amount: '50' })
   const files = [p1, p2, lone]
   const invoiceDocs = [makeInvoiceDoc('inv-multi', [p1.key, p2.key], '300')]
@@ -302,20 +284,20 @@ test('合并模式：invoiceDocs 覆盖多页组，未覆盖的单页文件仍�
   assert.ok(vm.documents.some((d) => d.name === 'lone.pdf'), '未覆盖的 lone.pdf 应通过补全路径显示')
 })
 
-test('合并模式：无 invoiceDocs 时退回 groupFilesByDocument（向后兼容）', () => {
+test('合并模式：无 invoiceDocs 时每页独立展示（不再退回 groupFilesByDocument）', () => {
   const files = [
-    page('AAA', 1), page('AAA', 2),
+    page('AAA', 1, { totalPages: 2 }), page('AAA', 2, { totalPages: 2 }),
     single({ name: 's.pdf' }),
   ]
   const vm = buildDocumentViewModel(files)
 
-  assert.equal(vm.documents.length, 2)
-  assert.ok(vm.documents.some((d) => d._isDocumentGroup))
+  assert.equal(vm.documents.length, 3, '无 invoiceDocs 每页独立 → 3 个条目')
+  assert.ok(!vm.documents.some((d) => d._isDocumentGroup), '无 invoiceDocs 不产生 _isDocumentGroup 条目')
 })
 
 test('合并模式：invoiceDocs 覆盖所有文件时，补全路径产出 0 条（无重复）', () => {
-  const p1 = page('AAA', 1, { name: 'p1.pdf' })
-  const p2 = page('AAA', 2, { name: 'p2.pdf' })
+  const p1 = page('AAA', 1, { name: 'p1.pdf', totalPages: 2 })
+  const p2 = page('AAA', 2, { name: 'p2.pdf', totalPages: 2 })
   const files = [p1, p2]
   const invoiceDocs = [makeInvoiceDoc('inv-A', [p1.key, p2.key], '100')]
 
@@ -340,10 +322,10 @@ test('合并模式：invoiceDocs 覆盖所有文件时，补全路径产出 0 �
 
 test('回归: 两张不同多页发票导出不合并（同 displayName 不同 originalName）', () => {
   // 两张不同发票：displayName 都为 "invoice.pdf"，但原始文件名不同
-  const invA_p1 = page('DOC-A', 1, { name: 'A_invoice_p1.pdf' })
-  const invA_p2 = page('DOC-A', 2, { name: 'A_invoice_p2.pdf' })
-  const invB_p1 = page('DOC-B', 1, { name: 'B_invoice_p1.pdf' })
-  const invB_p2 = page('DOC-B', 2, { name: 'B_invoice_p2.pdf' })
+  const invA_p1 = page('DOC-A', 1, { name: 'A_invoice_p1.pdf', totalPages: 2 })
+  const invA_p2 = page('DOC-A', 2, { name: 'A_invoice_p2.pdf', totalPages: 2 })
+  const invB_p1 = page('DOC-B', 1, { name: 'B_invoice_p1.pdf', totalPages: 2 })
+  const invB_p2 = page('DOC-B', 2, { name: 'B_invoice_p2.pdf', totalPages: 2 })
   const files = [invA_p1, invA_p2, invB_p1, invB_p2]
 
   const docs = groupFilesByDocument(files)
@@ -382,10 +364,10 @@ test('回归: 两张不同多页发票导出不合并（同 displayName 不同 o
 
 test('回归: 两张发票 displayName 完全相同时，originalName 仍可区分', () => {
   // 极端场景：两份文件 basename 相同（如从不同目录导入的 invoice.pdf）
-  const invA_p1 = page('DOC-A', 1, { name: 'invoice_p1.pdf' })
-  const invA_p2 = page('DOC-A', 2, { name: 'invoice_p2.pdf' })
-  const invB_p1 = page('DOC-B', 1, { name: 'invoice_p1.pdf' })
-  const invB_p2 = page('DOC-B', 2, { name: 'invoice_p2.pdf' })
+  const invA_p1 = page('DOC-A', 1, { name: 'invoice_p1.pdf', totalPages: 2 })
+  const invA_p2 = page('DOC-A', 2, { name: 'invoice_p2.pdf', totalPages: 2 })
+  const invB_p1 = page('DOC-B', 1, { name: 'invoice_p1.pdf', totalPages: 2 })
+  const invB_p2 = page('DOC-B', 2, { name: 'invoice_p2.pdf', totalPages: 2 })
   const files = [invA_p1, invA_p2, invB_p1, invB_p2]
 
   const docs = groupFilesByDocument(files)

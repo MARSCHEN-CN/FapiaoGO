@@ -23,14 +23,36 @@
 /**
  * legacy 同源过滤（instanceId 缺失/失配时的兜底口径，与 Step 4.3 前行为一致）。
  *
+ * 防跨实例合并：当匹配到的文件含有 instanceId 时，验证实例一致性。
+ * 如果文件属于不同实例（不同 instanceId），则只保留第一个实例的文件，
+ * 防止 fallback 路径将不同导入的同内容文件错误合并。
+ *
  * @param {Object[]} matchingFiles
  * @param {string} [targetSourceDocId]
  * @returns {Object[]}
  */
 function legacySameSource(matchingFiles, targetSourceDocId) {
-  return targetSourceDocId
+  const filtered = targetSourceDocId
     ? matchingFiles.filter((f) => (f.sourceDocId || f.docId) === targetSourceDocId)
     : matchingFiles
+
+  // 【防跨实例合并】检查匹配文件的 instanceId 一致性
+  const instanceIds = new Set()
+  for (const f of filtered) {
+    if (f?.instanceId) instanceIds.add(f.instanceId)
+  }
+
+  if (instanceIds.size > 1) {
+    // 多个不同实例 → 疑似跨导入合并，只保留第一个实例的文件
+    const firstInstanceId = instanceIds.values().next().value
+    console.warn(
+      `[instancePageOwnership] legacySameSource 检测到 ${instanceIds.size} 个不同实例，` +
+      `仅保留第一个实例(instanceId=${firstInstanceId})的文件，防止跨实例合并`,
+    )
+    return filtered.filter((f) => f?.instanceId === firstInstanceId)
+  }
+
+  return filtered
 }
 
 /**

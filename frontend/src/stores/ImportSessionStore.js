@@ -249,63 +249,133 @@ export function updateFileStatus(sessionId, fileKey, updates) {
 }
 
 /**
- * 文档实例去重键（IS-4.2 Step 4.2）。
+ * 统一文档实例身份（Invoice Entity Boundary Contract §四）。
  *
- * 规则：instanceId || id || docId。
- *   - instanceId：文档实例身份。同内容 A/B（同 docId）实例身份不同 → 各自保留，
- *     不再被误判为重复而丢弃。
- *   - id || docId：无 instanceId 的旧数据回退口径，与 addDocument 旧去重基准
- *     （`d.id || d.docId`）完全一致，行为不变。
+ * 规则：invoiceDocumentId || instanceId || docId || id。
+ *   - invoiceDocumentId：领域 ID（最终目标，当前多数 doc 尚未携带，预留优先级）
+ *   - instanceId：文档实例身份。同内容 A/B（同 docId）实例身份不同 → 各自保留
+ *   - docId：内容身份（Render Identity），内容哈希，比 id 更稳定
+ *   - id：兜底旧数据兼容
  *
- * 注意：与 DocumentStore.resolveDocumentIdentity（instanceId || docId || id）回退顺序
- * 不同——本 store 的历史口径是 id 优先于 docId，此处沿用，避免引入回归。
+ * ⚠️ 2026-08-05 修正：与 DocumentStore.resolveDocumentIdentity 统一为同一回退顺序。
+ *   之前本 store 是 instanceId||id||docId（id 优先 docId），DocumentStore 是
+ *   instanceId||docId||id（docId 优先 id）。不一致导致同一文档在两 Store 中存储键不同。
  *
  * @param {Object|null|undefined} doc
  * @returns {string|null} 去重键，无法解析时返回 null
  */
 export function resolveDocumentInstanceKey(doc) {
   if (!doc) return null
-  return doc.instanceId || doc.id || doc.docId || null
+  return doc.invoiceDocumentId || doc.instanceId || doc.docId || doc.id || null
 }
 
 /**
- * 向会话中添加一个 InvoiceDocument（双写模式，E-1）。
- * 通过实例身份去重（IS-4.2 Step 4.2）：去重键 = instanceId || id || docId。
- * 同 instanceId 的文档不会被重复添加；同内容 A/B（不同 instanceId）各自保留。
+ * 向会话中添加一个 InvoiceDocument（append-only，E-1 修正）。
+ *
+ * Invoice Entity Boundary Contract §二/§五：
+ *   - 仅 append，已存在同 instanceKey 的文档时拒绝覆盖（返回 false）
+ *   - 需要更新已注册文档时请使用 patchDocument
+ *   - 需要更新页数/内容（assembly 阶段）应在 SEALED 之前通过 patchDocument 完成
+ *
+ * 来源检查：doc._source 必须为合法值（"backend_assembly" / "fallback"），
+ * 拒绝 "file_update" 等非授权来源。
  *
  * 批处理（B-1）：options.silent=true 时注册后不立即 notify，由调用方在循环结束后
  * 调用 flushSessionNotifications(sessionId) 统一通知，避免 N 文档 N 次通知（hydration 大批量路径）。
- * 非 silent 时行为与原一致：每次 addDocument 都 notify（含去重跳过，无害 no-op 重渲染），
- * 以保持单文档 add 的既有语义（Case 1）。
  *
  * @param {string} sessionId
  * @param {Object} doc - InvoiceDocument（来自 DocumentStore）
- * @param {{silent?: boolean}} [options] - silent=true 时注册后不立即 notify（批处理统一 flush）
+ * @param {{silent?: boolean, source?: string}} [options] - silent 批处理 / source 来源标记
+ * @returns {boolean} true=新增成功, false=已存在或非法来源
  */
 export function addDocument(sessionId, doc, options = {}) {
   const session = sessions.get(sessionId)
-  if (!session) return
-  // IS-4.2 Step 4.2：去重键 = instanceId || id || docId（无 instanceId 回退 id||docId，行为不变）
+  if (!session) return false
   const instanceKey = resolveDocumentInstanceKey(doc)
-  if (!instanceKey) return
+  if (!instanceKey) return false
   session.documents = session.documents || []
   const existingIdx = session.documents.findIndex(d => resolveDocumentInstanceKey(d) === instanceKey)
-  const isNew = existingIdx === -1
-  if (isNew) {
-    session.documents.push(doc)
-  } else {
-    // 更新已存在的文档：assembly 阶段可能更新页数/内容，
-    // 必须替换旧版本，否则 invoiceDocumentsToRows 读到过时数据（单页 vs 多页）
-    session.documents[existingIdx] = doc
+  if (existingIdx !== -1) {
+    console.warn('[addDocument] 拒绝覆盖已注册实体', { instanceKey, existingLifecycle: session.documents[existingIdx].lifecycle })
+    return false
   }
-  documentVersion++  // 即使 silent 也递增：flush 时 useSyncExternalStore 快照依赖此版本号
+  // 来源检查：仅允许 backend_assembly / fallback
+  const source = options.source || doc._source || ''
+  if (source && source !== 'backend_assembly' && source !== 'fallback') {
+    console.warn('[addDocument] 拒绝非授权来源', { instanceKey, source })
+    return false
+  }
+  // 标记来源（供后续审计）
+  if (source) doc._source = source
+  session.documents.push(doc)
+  documentVersion++
   if (options.silent) {
-    // 批处理模式：仅累积待通知，循环结束后由 flushSessionNotifications 统一通知
-    if (isNew) pendingNotifySessionIds.add(sessionId)
+    pendingNotifySessionIds.add(sessionId)
   } else {
-    // 原行为：每次 addDocument 都 notify（含去重跳过）
     notify(sessionId)
   }
+  return true
+}
+
+/**
+ * 合并更新已注册 InvoiceDocument 的 metadata/status（不替换实体）。
+ *
+ * Invoice Entity Boundary Contract §二：
+ *   SEALED 后的文档只能通过 patchDocument 更新 metadata/status，
+ *   不可通过 addDocument 覆盖。本函数不改变 docId/instanceId/pages 结构。
+ *
+ * @param {string} sessionId
+ * @param {string} instanceKey - resolveDocumentInstanceKey 锁定的实例键
+ * @param {Object} patch - 要合并的字段（仅 metadata/status，不含 pages/docId）
+ * @returns {boolean} true=更新成功, false=未找到
+ */
+export function patchDocument(sessionId, instanceKey, patch) {
+  const session = sessions.get(sessionId)
+  if (!session || !instanceKey || !patch) return false
+  session.documents = session.documents || []
+  const idx = session.documents.findIndex(d => resolveDocumentInstanceKey(d) === instanceKey)
+  if (idx === -1) return false
+  const doc = session.documents[idx]
+  // 允许更新的字段白名单：业务元数据 + 生命状态
+  const allowedFields = ['amount', 'invoiceDate', 'invoiceType', 'invoiceNumber',
+    'buyerName', 'sellerName', 'status', 'lifecycle', 'parseMethod']
+  for (const key of Object.keys(patch)) {
+    if (allowedFields.includes(key)) {
+      doc[key] = patch[key]
+    }
+  }
+  documentVersion++
+  return true
+}
+
+/**
+ * 将 InvoiceDocument 标记为 SEALED（生命周期终态）。
+ *
+ * Invoice Entity Boundary Contract §三：
+ *   SEALED 后禁止 addDocument 覆盖、禁止拆分/合并/重新归类。
+ *   seal 是文档级操作（doc.lifecycle='SEALED'），不是 Session 级。
+ *   同一 Session 可包含多个 SEALED 文档 + 正在 ASSEMBLING 的新文档。
+ *
+ * @param {string} sessionId
+ * @param {string} instanceKey - resolveDocumentInstanceKey 锁定的实例键
+ * @returns {boolean} true=seal 成功, false=未找到
+ */
+export function sealDocument(sessionId, instanceKey) {
+  return patchDocument(sessionId, instanceKey, { lifecycle: 'SEALED' })
+}
+
+/**
+ * 检查指定文档是否已 SEALED。
+ *
+ * @param {string} sessionId
+ * @param {string} instanceKey
+ * @returns {boolean}
+ */
+export function isDocumentSealed(sessionId, instanceKey) {
+  const session = sessions.get(sessionId)
+  if (!session || !instanceKey) return false
+  const doc = (session.documents || []).find(d => resolveDocumentInstanceKey(d) === instanceKey)
+  return doc?.lifecycle === 'SEALED'
 }
 
 /**

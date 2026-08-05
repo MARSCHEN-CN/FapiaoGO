@@ -49,7 +49,7 @@ export function consumeParseResult(result, fileObj, sessionId, siblings = null) 
     // 当前 UI 仍从 files[] 消费，documents[] 仅建立并存状态。
     const doc = getDocument(update.docId)
     if (doc && sessionId) {
-      addDocument(sessionId, doc)
+      addDocument(sessionId, doc, { source: 'fallback' })
     }
   }
 
