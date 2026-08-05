@@ -227,11 +227,9 @@ export function detectDuplicateInvoices(files) {
 
     const invoiceNumber = file.invoiceNumber || ''
 
-    // 需要有有效的发票号码才进行分组
-    if (!invoiceNumber) return
-
-    // 使用发票号码作为分组key（数电票20位号码已是唯一标识）
-    const key = invoiceNumber
+    // 需要有效的身份键才进行分组（Invoice Entity Boundary Contract §四）
+    // invoiceDocumentId > 领域键 > invoiceNumber（仅回退）
+    const key = file.invoiceDocumentId || file.documentId || file.invoiceNumber || ''
 
     if (!duplicates.has(key)) {
       duplicates.set(key, [])

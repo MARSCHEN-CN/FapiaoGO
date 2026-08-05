@@ -1,5 +1,9 @@
 /**
- * documentSelector — 文档级选择的唯一收敛点（DocumentSelector）
+ * documentSelector — RENDER 路径中 groupDocuments 的唯一允许入口
+ *
+ * Invoice Entity Boundary Contract §八：
+ *   本模块是 groupFilesByDocument/groupFilesByInstance 在 RENDER/PREVIEW 路径
+ *   中的唯一允许调用点。禁止在 LIST/STORE/IDENTITY 路径中使用。
  *
  * 职责：
  *   消灭「每个消费者自己从 files[] 猜 Document」的 Page 泄漏点。所有业务动作
@@ -10,7 +14,7 @@
  * 领域边界（与 Print703 迁移铁律一致）：
  *   - Page/File 层不得决定业务输出；InvoiceDocument 是唯一业务入口。
  *   - 装配结果（documentView.documents = InvoiceDocument[]）优先；
- *     旧路径 groupFilesByDocument 仅作为 fallback，待全消费者迁移完成后清理。
+ *     旧路径 groupFilesByDocument 仅作为 RENDER fallback，不参与 Store 注册。
  *
  * @module utils/documentSelector
  */

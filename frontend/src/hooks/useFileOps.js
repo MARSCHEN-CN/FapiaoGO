@@ -864,6 +864,7 @@ export function useFileOps({ setFiles, settings, electronAPIRef }) {
                     patchDocument(session.id, instanceKey, {
                       amount: doc.amount,
                       invoiceDate: doc.invoiceDate,
+                      _source: 'backend_assembly', // Step 4: 升级来源标记
                     })
                     console.log('[ADD DOCUMENT][assembly] patch existing', { instanceKey, pages: doc?.pages?.length })
                   } else {

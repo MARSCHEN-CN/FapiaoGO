@@ -111,8 +111,8 @@ test('Case 3: 无 invoiceDocs 时每页独立 → 4 页同号 = 4 个文档', ()
   ]
   const vm = buildDocumentViewModel(files)
   assert.equal(vm.documentCount, 4, '无 invoiceDocs 时每页独立')
-  // 4 页同号 → 重复检测按 invoiceNumber 分组 → 1 组重复，4 个条目
-  assert.equal(vm.duplicateGroups.size, 1)
+  // documentId 优先于 invoiceNumber（Step 4A）→ AAA/B 不同源 → 2 组各 2 条重复
+  assert.equal(vm.duplicateGroups.size, 2, '不同 sourceDocId → 各自一组重复')
 })
 
 test('Case 3b: 无 invoiceDocs 时每页独立 → 同源 4 页仍为 4 个文档', () => {

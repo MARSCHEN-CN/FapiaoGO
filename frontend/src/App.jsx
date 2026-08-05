@@ -447,45 +447,53 @@ function AppContent() {
   }, [displayFiles])
 
   const removeFailedFiles = useCallback((removeSource = false) => {
-    // ✅ 先读取最新列表计算要删除的文件（不在 updater 内做副作用）
     const liveFiles = filesRef.current
     const toRemove = liveFiles.filter(fileObj =>
       fileObj.failedFields?.length ||
       fileObj.parseMethod?.includes('数据缺失') ||
       fileObj.parseMethod?.includes('缺失')
     )
-    // ✅ 物理删除源文件（异步，不阻塞 UI）
+    // 物理删除源文件（异步，不阻塞 UI）
     if (removeSource && toRemove.length > 0) {
       const paths = toRemove.map(f => f.path).filter(Boolean)
       const ipc = electronAPIRef.current?.ipcRenderer
       if (paths.length > 0 && ipc) {
         ipc.invoke('delete-files', paths).then(res => {
-          if (res.failed?.length) {
-            console.warn('[removeFailed] 部分文件删除失败:', res.failed)
-          }
-        }).catch(err => {
-          console.error('[removeFailed] 删除源文件出错:', err)
-        })
+          if (res.failed?.length) console.warn('[removeFailed] 部分文件删除失败:', res.failed)
+        }).catch(err => console.error('[removeFailed] 删除源文件出错:', err))
       }
     }
-    // 如果正在预览的是被移除的文件，清理预览（auto-nav useEffect 会处理导航）
     const livePreview = previewFileRef.current
     if (livePreview && toRemove.some(f => f.key === livePreview.key)) {
       cleanupPreviewUrl()
     }
-    setFiles(prev => prev.filter(fileObj =>
-      !fileObj.failedFields?.length &&
-      !fileObj.parseMethod?.includes('数据缺失') &&
-      !fileObj.parseMethod?.includes('缺失')
-    ))
-    // O 修复：同步从 session.files 移除被删除的失败文件
+    // Step 4: 优先使用 deleteInvoiceDocument
     const failSid = getActiveSessionId()
-    if (failSid && toRemove.length > 0) removeFilesFromSession(failSid, toRemove.map((f) => f.key))
+    const deletedKeys = new Set()
+    if (failSid) {
+      const session = getSession(failSid)
+      if (session?.documents?.length) {
+        const toRemoveKeys = new Set(toRemove.map(f => f.key))
+        for (const doc of session.documents) {
+          const pageKeys = doc._pageKeys || []
+          if (pageKeys.some(k => toRemoveKeys.has(k))) {
+            const instanceKey = resolveDocumentInstanceKey(doc)
+            const result = deleteInvoiceDocument(failSid, instanceKey)
+            if (result.success) result.removedPageKeys.forEach(k => deletedKeys.add(k))
+          }
+        }
+      }
+    }
+    if (deletedKeys.size > 0) {
+      setFiles(prev => prev.filter(f => !deletedKeys.has(f.key)))
+    } else {
+      // 回退：无 InvoiceDocument 时走旧路径
+      setFiles(prev => prev.filter(fileObj => !fileObj.failedFields?.length && !fileObj.parseMethod?.includes('数据缺失') && !fileObj.parseMethod?.includes('缺失')))
+      if (failSid && toRemove.length > 0) removeFilesFromSession(failSid, toRemove.map((f) => f.key))
+    }
   }, [cleanupPreviewUrl])
 
   const removeDuplicateFiles = useCallback((removeSource = false) => {
-    // ✅ D1：重复检测以 document 为单位——先把页聚合成 document，再按 invoiceNumber 分组。
-    //    删除重复 = 删除组内非首个 document 的全部页（不能按页删，否则多页发票被截断）。
     const liveFiles = filesRef.current
     const { duplicateGroups } = buildDocumentViewModel(liveFiles)
     const duplicateKeys = new Set()
@@ -500,28 +508,38 @@ function AppContent() {
         }
       })
     })
-    // ✅ 物理删除源文件（异步，不阻塞 UI）
     if (pathsToDelete.length > 0) {
       const ipc = electronAPIRef.current?.ipcRenderer
       if (ipc) {
         ipc.invoke('delete-files', pathsToDelete).then(res => {
-          if (res.failed?.length) {
-            console.warn('[removeDup] 部分文件删除失败:', res.failed)
-          }
-        }).catch(err => {
-          console.error('[removeDup] 删除源文件出错:', err)
-        })
+          if (res.failed?.length) console.warn('[removeDup] 部分文件删除失败:', res.failed)
+        }).catch(err => console.error('[removeDup] 删除源文件出错:', err))
       }
     }
-    // 如果正在预览的是被移除的文件，清理预览（auto-nav useEffect 会处理导航）
     const livePreview = previewFileRef.current
     if (livePreview && duplicateKeys.has(livePreview.key)) {
       cleanupPreviewUrl()
     }
-    setFiles(prev => prev.filter(fileObj => !duplicateKeys.has(fileObj.key)))
-    // O 修复：同步从 session.files 移除被删除的重复文件
+    // Step 4: 优先使用 deleteInvoiceDocument
     const dupSid = getActiveSessionId()
-    if (dupSid && duplicateKeys.size > 0) removeFilesFromSession(dupSid, [...duplicateKeys])
+    let deletedViaDocument = false
+    if (dupSid && duplicateKeys.size > 0) {
+      const session = getSession(dupSid)
+      if (session?.documents?.length) {
+        for (const doc of session.documents) {
+          const pageKeys = doc._pageKeys || []
+          if (pageKeys.some(k => duplicateKeys.has(k))) {
+            const instanceKey = resolveDocumentInstanceKey(doc)
+            const result = deleteInvoiceDocument(dupSid, instanceKey)
+            if (result.success) { result.removedPageKeys.forEach(k => duplicateKeys.add(k)); deletedViaDocument = true }
+          }
+        }
+      }
+    }
+    setFiles(prev => prev.filter(fileObj => !duplicateKeys.has(fileObj.key)))
+    if (!deletedViaDocument && dupSid && duplicateKeys.size > 0) {
+      removeFilesFromSession(dupSid, [...duplicateKeys])
+    }
   }, [cleanupPreviewUrl])
 
   const removePreviousYearFiles = useCallback((removeSource = false) => {
@@ -552,18 +570,30 @@ function AppContent() {
         })
       }
     }
-    // 如果正在预览的是被移除的文件，清理预览（auto-nav useEffect 会处理导航）
     const livePreview = previewFileRef.current
     if (livePreview && prevYearKeys.has(livePreview.key)) {
       cleanupPreviewUrl()
     }
-    setFiles(prev => prev.filter(fileObj => {
-      const info = prevYearInfo.get(fileObj.key)
-      return !(info && info.isPreviousYear)
-    }))
-    // O 修复：同步从 session.files 移除被删除的往年文件
+    // Step 4: 优先使用 deleteInvoiceDocument
     const pySid = getActiveSessionId()
-    if (pySid && prevYearKeys.size > 0) removeFilesFromSession(pySid, [...prevYearKeys])
+    let deletedViaDocument = false
+    if (pySid && prevYearKeys.size > 0) {
+      const session = getSession(pySid)
+      if (session?.documents?.length) {
+        for (const doc of session.documents) {
+          const pageKeys = doc._pageKeys || []
+          if (pageKeys.some(k => prevYearKeys.has(k))) {
+            const instanceKey = resolveDocumentInstanceKey(doc)
+            const result = deleteInvoiceDocument(pySid, instanceKey)
+            if (result.success) { result.removedPageKeys.forEach(k => prevYearKeys.add(k)); deletedViaDocument = true }
+          }
+        }
+      }
+    }
+    setFiles(prev => prev.filter(fileObj => !prevYearKeys.has(fileObj.key)))
+    if (!deletedViaDocument && pySid && prevYearKeys.size > 0) {
+      removeFilesFromSession(pySid, [...prevYearKeys])
+    }
   }, [cleanupPreviewUrl])
 
   // ============================

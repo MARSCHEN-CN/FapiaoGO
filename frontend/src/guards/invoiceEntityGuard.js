@@ -30,7 +30,7 @@ export const Lifecycle = {
 const ALLOWED_PATCH_FIELDS = new Set([
   'amount', 'invoiceDate', 'invoiceType',
   'buyerName', 'sellerName', 'status',
-  'parseMethod', 'lifecycle',
+  'parseMethod', 'lifecycle', '_source',
 ])
 
 /** 禁止 patch 修改的字段（身份/结构字段） */
