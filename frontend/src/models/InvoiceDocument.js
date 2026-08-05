@@ -36,6 +36,7 @@
  * @property {string} sourceHash - 源文件哈希（用于去重/缓存身份）
  * @property {number} pageCount - 总页数
  * @property {PageMeta[]} pages - 页面元数据数组
+ * @property {'CREATED'|'REGISTERED'|'SEALED'|'DELETED'} [lifecycle] - 生命周期状态（Invoice Entity Boundary Contract §三）
  */
 
 /**

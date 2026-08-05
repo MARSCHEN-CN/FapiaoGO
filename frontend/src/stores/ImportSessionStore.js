@@ -23,6 +23,7 @@
  */
 
 import { createSession, createSessionFile } from '../models/ImportSession.js'
+import { assertCanRegisterDocument, assertCanPatchDocument, assertCanSealDocument, Lifecycle } from '../guards/invoiceEntityGuard.js'
 
 // ── 会话存储 ────────────────────────────────────────────
 
@@ -154,6 +155,11 @@ export function reactivateSession(id) {
   const session = sessions.get(id)
   if (session && (session.status === 'completed' || session.status === 'cancelled' || session.status === 'failed')) {
     session.status = 'running'
+    // 文档级 lifecycle 不受影响：SEALED 文档保持 SEALED，由 guard 保护
+    const sealedCount = (session.documents || []).filter(d => d.lifecycle === Lifecycle.SEALED).length
+    if (sealedCount > 0) {
+      console.log(`[reactivateSession] session 恢复为 running，${sealedCount} 个 SEALED 文档不受影响`)
+    }
   }
 }
 
@@ -295,8 +301,12 @@ export function addDocument(sessionId, doc, options = {}) {
   if (!instanceKey) return false
   session.documents = session.documents || []
   const existingIdx = session.documents.findIndex(d => resolveDocumentInstanceKey(d) === instanceKey)
-  if (existingIdx !== -1) {
-    console.warn('[addDocument] 拒绝覆盖已注册实体', { instanceKey, existingLifecycle: session.documents[existingIdx].lifecycle })
+  const existing = existingIdx !== -1 ? session.documents[existingIdx] : null
+  // Guard: 生命周期检查（Invoice Entity Boundary Contract §二/§三）
+  try {
+    assertCanRegisterDocument(doc, existing)
+  } catch (e) {
+    console.warn('[addDocument] guard 拒绝:', e.message)
     return false
   }
   // 来源检查：仅允许 backend_assembly / fallback
@@ -305,8 +315,9 @@ export function addDocument(sessionId, doc, options = {}) {
     console.warn('[addDocument] 拒绝非授权来源', { instanceKey, source })
     return false
   }
-  // 标记来源（供后续审计）
+  // 标记来源 + 生命周期（供后续审计）
   if (source) doc._source = source
+  if (!doc.lifecycle) doc.lifecycle = Lifecycle.REGISTERED
   session.documents.push(doc)
   documentVersion++
   if (options.silent) {
@@ -336,13 +347,16 @@ export function patchDocument(sessionId, instanceKey, patch) {
   const idx = session.documents.findIndex(d => resolveDocumentInstanceKey(d) === instanceKey)
   if (idx === -1) return false
   const doc = session.documents[idx]
-  // 允许更新的字段白名单：业务元数据 + 生命状态
-  const allowedFields = ['amount', 'invoiceDate', 'invoiceType', 'invoiceNumber',
-    'buyerName', 'sellerName', 'status', 'lifecycle', 'parseMethod']
+  // Guard: 生命周期 + 字段白名单检查（Invoice Entity Boundary Contract §二）
+  try {
+    assertCanPatchDocument(doc, patch)
+  } catch (e) {
+    console.warn('[patchDocument] guard 拒绝:', e.message)
+    return false
+  }
+  // guard 通过 → 所有字段合法，直接合并
   for (const key of Object.keys(patch)) {
-    if (allowedFields.includes(key)) {
-      doc[key] = patch[key]
-    }
+    doc[key] = patch[key]
   }
   documentVersion++
   return true
@@ -361,7 +375,22 @@ export function patchDocument(sessionId, instanceKey, patch) {
  * @returns {boolean} true=seal 成功, false=未找到
  */
 export function sealDocument(sessionId, instanceKey) {
-  return patchDocument(sessionId, instanceKey, { lifecycle: 'SEALED' })
+  const session = sessions.get(sessionId)
+  if (!session || !instanceKey) return false
+  session.documents = session.documents || []
+  const idx = session.documents.findIndex(d => resolveDocumentInstanceKey(d) === instanceKey)
+  if (idx === -1) return false
+  const doc = session.documents[idx]
+  // Guard: seal 前检查（pages>=1、有效身份、生命周期合法性）
+  try {
+    assertCanSealDocument(doc)
+  } catch (e) {
+    console.warn('[sealDocument] guard 拒绝:', e.message)
+    return false
+  }
+  doc.lifecycle = Lifecycle.SEALED
+  documentVersion++
+  return true
 }
 
 /**
