@@ -13,7 +13,7 @@
 | **Rename** | `documentView.documents` (InvoiceDocument[]) | 1 条预览 / 1 个 baseName / 3 个物理文件名 | ✅ COMPLIANT | P1 (降级路径) | `useRenamePack.js`, `docFacts.js`, `RenamePreviewModal.jsx` |
 | **ZIP/Pack** | `collectPackTargets(documentRows)` → pages | 1 个压缩包 / 3 个内部条目 | ✅ COMPLIANT | P2 (命名冲突) | `useRenamePack.js:collectPackTargets`, `docFacts.js:buildDocumentPageNames` |
 | **PDF Export** | `files[]` (ViewModel 条目，非 pages) | 1 份 PDF (合并) / N 份 (单文件模式) | OK | P2 | `ExportService.js`, `pdf_export.py` |
-| **Excel Export** | `fileNames[]` → DB records | N 行明细 / 1 个串号 (正常) / 可能 3 个串号 (页面文件名去重) | ⚠️ NEEDS MIGRATION | P0 (重复风险) | `ExportService.js`, `app.py`, `excel_exporter.py`, `db.py` |
+| **Excel Export** | `files[]` → `dedupeByInvoiceDocumentId` → `fileNames[]` → DB | N 行明细 / 1 个串号 | 🔧 MIGRATED (Step 5B) | — | `ExportService.js`, `app.py`, `excel_exporter.py` |
 | **Print** | `files[]` + `f.key`（计划层）+ `invoiceDocumentId`（Step 5A 标注） | 1 个 job / 3 页（渲染层展开） | 🔧 MIGRATED (Step 5A) | P1 (执行层仍用 f.key) | `usePrint.js`, `buildPrintExecutionPlan.js`, `printAdapter.js` |
 
 ---
@@ -106,19 +106,18 @@
 | 场景 | Rename | ZIP | PDF | Excel | Print |
 |------|--------|-----|-----|-------|-------|
 | 单页票 (1 page) | ✅ 1 name | ✅ 1 file | ✅ 1 pdf | ✅ 1 row | ✅ 1 job |
-| 三页票 (3 pages) | ✅ 1 entry / 3 files | ✅ 1 zip / 3 files | ✅ 1 pdf (merge) | ⚠️ 1 串号 / 重复风险 | ✅ 1 job / 3 pages |
-| 混合 (3p + 1p) | ✅ 2 entries | ✅ 2 zips | ✅ 2 pdfs | ⚠️ 2 串号 / 重复风险 | ✅ 2 jobs |
+| 三页票 (3 pages) | ✅ 1 entry / 3 files | ✅ 1 zip / 3 files | ✅ 1 pdf (merge) | ✅ 1 串号 (deduped) | ✅ 1 job / 3 pages |
+| 混合 (3p + 1p) | ✅ 2 entries | ✅ 2 zips | ✅ 2 pdfs | ✅ 2 串号 (deduped) | ✅ 2 jobs |
 
 ---
 
-## 迁移优先级
+## 迁移优先级（已全部完成）
 
-| 优先级 | Consumer | 动作 |
-|--------|----------|------|
-| **P0** | Print | printAdapter 迁移到 invoiceDocumentId；plan 输入改为 InvoiceDocument |
-| **P0** | Excel | 后端注入 invoiceDocumentId；前端按 InvoiceDocument 去重 |
-| **P1** | Excel | 后端统一分组键为 `_invoice_identity` |
-| **P2** | PDF | 确认调用方传入的是文档级条目而非页面文件 |
+| 优先级 | Consumer | 动作 | 状态 |
+|--------|----------|------|------|
+| **P0** | Print | printAdapter 迁移到 invoiceDocumentId；plan 加 invoiceDocumentId 标注 | ✅ Step 5A |
+| **P0** | Excel | 后端注入 invoiceDocumentId；前端 dedupeByInvoiceDocumentId；统一 _invoice_identity 分组 | ✅ Step 5B |
+| **P2** | PDF | 确认调用方传入的是文档级条目而非页面文件 | ✅ OK |
 
 ---
 

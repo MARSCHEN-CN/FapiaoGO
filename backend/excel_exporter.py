@@ -113,7 +113,18 @@ def _get_cols_from_columns(columns):
     return _COLS_CACHE[key]
 
 def _invoice_identity(rec):
-    return rec.get('recordId') or rec.get('originalFilename') or rec.get('invoiceNumber') or f"__ANON_{id(rec)}"
+    """Invoice Entity Boundary Freeze v1: invoiceDocumentId 为领域主键，最高优先级。
+    
+    invoiceDocumentId > recordId > originalFilename > invoiceNumber > __ANON
+    invoiceNumber 仅作为最终兜底，不作为身份主键。
+    """
+    return (
+        rec.get('invoiceDocumentId') or
+        rec.get('recordId') or
+        rec.get('originalFilename') or
+        rec.get('invoiceNumber') or
+        f"__ANON_{id(rec)}"
+    )
 
 
 def sanitize_columns(columns):
@@ -288,7 +299,7 @@ class _XlsxWriteOnlyWriter:
             group_key_fn = _invoice_identity
         else:
             cols = _get_default_cols(self.include_remark)
-            group_key_fn = lambda inv: inv.get('invoiceNumber') or f"__UNIQUE_{id(inv)}"
+            group_key_fn = _invoice_identity  # Step 5B: 统一使用 _invoice_identity，不再裸用 invoiceNumber
 
         col_index_map = {key: c for c, (_, key, _, _) in enumerate(cols, 1)}
 

@@ -76,6 +76,28 @@ export function extractExportFileNames(files) {
   return names
 }
 
+/**
+ * Step 5B: 按 invoiceDocumentId 去重文件列表。
+ * 防止多页发票的页面文件被作为独立的导出实体。
+ * 同一 invoiceDocumentId 的所有页面文件只保留第一个（representative）。
+ *
+ * @param {Array} files
+ * @returns {Array} 去重后的文件列表
+ */
+function dedupeByInvoiceDocumentId(files) {
+  if (!Array.isArray(files) || files.length === 0) return files
+  const seen = new Set()
+  const result = []
+  for (const f of files) {
+    if (!f) continue
+    const id = f.invoiceDocumentId || f.documentId || ''
+    if (id && seen.has(id)) continue
+    if (id) seen.add(id)
+    result.push(f)
+  }
+  return result
+}
+
 // ═══════════════════════════════════════════════════════════
 // 私有辅助
 // ═══════════════════════════════════════════════════════════
@@ -165,11 +187,11 @@ export async function exportExcel({
     return createFailedExport({ taskId, error: 'Electron API 不可用' })
   }
 
+  // Step 5B: 按 invoiceDocumentId 去重，防止多页发票的页面文件导致重复导出
+  const dedupedFiles = dedupeByInvoiceDocumentId(files)
+
   // 只传文件名列表，后端从数据库读取完整数据
-  // FIX: 使用 originalName（原始文件名）而非 name（显示用的还原后的文件名）
-  // 原因：数据库中存储的是原始文件名（如 "invoice_p1.pdf"），
-  // 而 name 是还原后的文件名（如 "invoice.pdf"），会导致查询失败
-  const fileNames = extractExportFileNames(files)
+  const fileNames = extractExportFileNames(dedupedFiles)
   
   console.log('[ExportService.exportExcel] 文件名列表:', {
     count: fileNames.length,

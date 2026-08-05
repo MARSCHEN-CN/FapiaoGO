@@ -106,6 +106,7 @@ def _build_export_header(rec):
         tax_amount = 0
     row = {
         "recordId": str(rec.get('id', '')),
+        "invoiceDocumentId": rec.get('invoice_document_id') or rec.get('invoiceDocumentId') or '',
         "serialNo": "",
         "invoiceType": rec.get('type', ''),
         "invoiceNumber": rec.get('number', ''),
