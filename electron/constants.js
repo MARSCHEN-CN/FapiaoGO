@@ -73,8 +73,8 @@ const FIELD_LABELS = {
   type: '发票类型', fphm: '发票号码',
   kprq: '开票日期', gmfmc: '购买方名称', gmfsh: '购买方税号',
   xsfmc: '销售方名称', xsfsh: '销售方税号',
-  amountJe: '发票金额', amountSe: '发票税额',
-  amountHj: '价税合计', amountHjDx: '价税合计大写',
+  amountJe: '税前金额', amountSe: '税额',
+  amountHj: '总金额', amountHjDx: '总金额大写',
   note: '备注', skr: '收款人', fhr: '复核人', kpr: '开票人',
   cus: '自定义内容',
 }
