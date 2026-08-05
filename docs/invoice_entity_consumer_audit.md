@@ -14,7 +14,7 @@
 | **ZIP/Pack** | `collectPackTargets(documentRows)` → pages | 1 个压缩包 / 3 个内部条目 | ✅ COMPLIANT | P2 (命名冲突) | `useRenamePack.js:collectPackTargets`, `docFacts.js:buildDocumentPageNames` |
 | **PDF Export** | `files[]` (ViewModel 条目，非 pages) | 1 份 PDF (合并) / N 份 (单文件模式) | OK | P2 | `ExportService.js`, `pdf_export.py` |
 | **Excel Export** | `fileNames[]` → DB records | N 行明细 / 1 个串号 (正常) / 可能 3 个串号 (页面文件名去重) | ⚠️ NEEDS MIGRATION | P0 (重复风险) | `ExportService.js`, `app.py`, `excel_exporter.py`, `db.py` |
-| **Print** | `files[]` + `f.key` | 1 个 job (计划) / 3 页 (渲染层展开) | ❌ NEEDS MIGRATION | P0 (全链路旧模型) | `usePrint.js`, `buildPrintExecutionPlan.js`, `printAdapter.js` |
+| **Print** | `files[]` + `f.key`（计划层）+ `invoiceDocumentId`（Step 5A 标注） | 1 个 job / 3 页（渲染层展开） | 🔧 MIGRATED (Step 5A) | P1 (执行层仍用 f.key) | `usePrint.js`, `buildPrintExecutionPlan.js`, `printAdapter.js` |
 
 ---
 
@@ -57,6 +57,15 @@
 **风险:** 如果调用方传入 3 个页面文件而非 1 个文档条目 → 会导出 3 份 PDF（取决于前端 ViewModel 正确性）
 
 ---
+
+### 3.5 Print — 🔧 MIGRATED (Step 5A, 2026-08-05)
+
+**迁移内容:**
+- `printAdapter.js`: `buildPrintJobItem` 输出增加 `invoiceDocumentId` 字段（通过 `resolveInvoiceIdentity` 获取）
+- `buildPrintExecutionPlan.js`: 每页 plan 增加 `invoiceDocumentId` + slots 增加 `invoiceDocumentId` 标注
+- 不替换 `f.key`（打印执行需要文件路径），`invoiceDocumentId` 作为身份追踪字段
+
+**仍保留:** 执行层（`deriveSourcePrintJobs.js`、`usePrint.js`）仍使用 `f.key` 做文件查找——这是打印物理文件的必要步骤，不是身份问题。
 
 ### 4. Excel Export — ⚠️ NEEDS MIGRATION
 

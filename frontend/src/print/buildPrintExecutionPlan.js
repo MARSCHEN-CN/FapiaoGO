@@ -11,6 +11,8 @@
  *   - 不接任何执行路由，不改变打印行为（source / canvas 几何差异全部留在各自 adapter）。
  *   - 多页文档（OFD/PDF 多页）的逐页展开留在渲染层（renderFileToPrintImage / buildPrintJobItem），
  *     Plan 层面每个文件 = 1 个执行单元（与 executePrint / doPrint 当前粒度一致）。
+ *   - Step 5A: 每页 plan 加 invoiceDocumentId 标注（Invoice Entity Boundary Freeze v1）。
+ *     不替换 f.key（打印执行需要文件路径），作为身份追踪字段。
  *
  * 这是 executePrint / doPrint / 未来 PrintPreviewModel 的共同「打印事实描述」来源。
  * Plan 是共同语言，不是要求所有执行路径立即一致 —— source adapter 与 canvas adapter 各自
@@ -20,6 +22,7 @@
  */
 
 import { isMergeMode, getForcedLandscape } from '../utils/mergeMode.js'
+import { resolveInvoiceIdentity } from '../utils/invoiceIdentityResolver.js'
 
 /**
  * Source 打印入口过滤（忠实镜像 executePrint L817）。
@@ -119,9 +122,11 @@ export function buildPrintExecutionPlan(files, options = {}) {
         type: 'multi-ticket',
         paper: { size: paperSize },
         orientation,
+        invoiceDocumentIds: group.map((f) => f.invoiceDocumentId || resolveInvoiceIdentity(f) || ''),
         slots: group.map((f) => ({
           fileId: f.key,
           rotation: perFileRotation(f),
+          invoiceDocumentId: f.invoiceDocumentId || resolveInvoiceIdentity(f) || '',
         })),
       })
     }
@@ -140,10 +145,11 @@ export function buildPrintExecutionPlan(files, options = {}) {
     type: 'single',
     paper: { size: paperSize },
     orientation,
+    invoiceDocumentId: f.invoiceDocumentId || resolveInvoiceIdentity(f) || '',
     // 多页文档逐页展开在渲染层（renderFileToPrintImage / buildPrintJobItem）；
     // Plan 层面每文件=1 单元，pageIndex 默认 0。
     source: { fileId: f.key, pageIndex: 0 },
-    slots: [{ fileId: f.key, rotation: perFileRotation(f) }],
+    slots: [{ fileId: f.key, rotation: perFileRotation(f), invoiceDocumentId: f.invoiceDocumentId || resolveInvoiceIdentity(f) || '' }],
   }))
 
   // 一普二专：专票作为第 2 轮额外打印
@@ -157,8 +163,9 @@ export function buildPrintExecutionPlan(files, options = {}) {
       type: 'single',
       paper: { size: paperSize },
       orientation,
+      invoiceDocumentId: f.invoiceDocumentId || resolveInvoiceIdentity(f) || '',
       source: { fileId: f.key, pageIndex: 0 },
-      slots: [{ fileId: f.key, rotation: perFileRotation(f) }],
+      slots: [{ fileId: f.key, rotation: perFileRotation(f), invoiceDocumentId: f.invoiceDocumentId || resolveInvoiceIdentity(f) || '' }],
       _round: 2,
     }))
   }

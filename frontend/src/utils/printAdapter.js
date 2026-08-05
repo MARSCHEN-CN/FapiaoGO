@@ -25,6 +25,7 @@
 
 import { getDocument } from '../stores/DocumentStore'
 import { resolvePrintUrl } from './previewResourceResolver'
+import { resolveInvoiceIdentity } from './invoiceIdentityResolver'
 
 /**
  * @typedef {Object} PrintPageRef
@@ -39,6 +40,7 @@ import { resolvePrintUrl } from './previewResourceResolver'
  * @property {string} fileFormat - 文件格式
  * @property {number} pageCount - 总页数
  * @property {string} docId - 文档 ID
+ * @property {string} invoiceDocumentId - 领域主键（Invoice Entity Boundary Freeze v1）
  * @property {PrintPageRef[]} pages - 每页引用（Render Print 逐页渲染用）
  */
 
@@ -57,6 +59,7 @@ import { resolvePrintUrl } from './previewResourceResolver'
  */
 export function buildPrintJobItem(fileObj) {
   const docId = fileObj.docId || fileObj.documentId || ''
+  const invDocId = resolveInvoiceIdentity(fileObj) || fileObj.invoiceDocumentId || ''
   const doc = docId ? getDocument(docId) : null
 
   // 有 Document：逐页构建 pages[]（Render Contract 的 /print 端点，200dpi）
@@ -67,6 +70,7 @@ export function buildPrintJobItem(fileObj) {
       fileFormat: fileObj.fileFormat || 'pdf',
       pageCount: doc.pageCount,
       docId: doc.docId,
+      invoiceDocumentId: invDocId || doc.invoiceDocumentId || '',
       pages: doc.pages.map((page, index) => ({
         index,
         url: resolvePrintUrl(page, doc.docId),
@@ -81,6 +85,7 @@ export function buildPrintJobItem(fileObj) {
     fileFormat: fileObj.fileFormat || 'pdf',
     pageCount: 1,
     docId,
+    invoiceDocumentId: invDocId,
     pages: [],
   }
 }
