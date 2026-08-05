@@ -14,7 +14,8 @@
 | **ZIP/Pack** | `collectPackTargets(documentRows)` → pages | 1 个压缩包 / 3 个内部条目 | ✅ COMPLIANT | P2 (命名冲突) | `useRenamePack.js:collectPackTargets`, `docFacts.js:buildDocumentPageNames` |
 | **PDF Export** | `files[]` (ViewModel 条目，非 pages) | 1 份 PDF (合并) / N 份 (单文件模式) | OK | P2 | `ExportService.js`, `pdf_export.py` |
 | **Excel Export** | `files[]` → `dedupeByInvoiceDocumentId` → `fileNames[]` → DB | N 行明细 / 1 个串号 | 🔧 MIGRATED (Step 5B) | — | `ExportService.js`, `app.py`, `excel_exporter.py` |
-| **Print** | `files[]` + `f.key`（计划层）+ `invoiceDocumentId`（Step 5A 标注） | 1 个 job / 3 页（渲染层展开） | 🔧 MIGRATED (Step 5A) | P1 (执行层仍用 f.key) | `usePrint.js`, `buildPrintExecutionPlan.js`, `printAdapter.js` |
+| **Print Preview** | Page Projection（只读投影） | N/A（纯渲染） | ✅ CONTRACT DEFINED | — | `PrintConfirmModal.jsx`, `PrintPreviewModel.js`, `print_projection_contract.md` |
+| **Print Execution** | `files[]` + `invoiceDocumentId` (Step 5A) | 1 个 job / 3 页（渲染层展开） | 🔧 MIGRATED | — | `usePrint.js`, `buildPrintExecutionPlan.js`, `printAdapter.js` |
 
 ---
 
@@ -84,18 +85,20 @@
 
 ---
 
-### 5. Print — ❌ NEEDS MIGRATION (P0)
+### 6. Print Preview — ✅ CONTRACT DEFINED (Step 5C, 2026-08-05)
 
-**链路:** `usePrint({files}) → buildPrintExecutionPlan(files) → derivePrintJobs(plan, files) → PrintService`
+**定位:** Print Preview 不是 InvoiceDocument 消费者，是 Page Projection（纸张预览视图）。
 
-**发现:**
-1. **全链路使用 `files[]` + `f.key`**: 从 `usePrint.js`(line 85) → `buildPrintExecutionPlan.js`(line 94) → `deriveSourcePrintJobs.js`(line 23)，所有地方都用 `f.key` 作为身份
-2. **零处使用 `invoiceDocumentId`**: 13 个文件的 print 链中无任何引用
-3. **printAdapter.js 使用 `fileObj.docId` 而非 `invoiceDocumentId`**: 第 59 行是唯一桥接到 DocumentStore 的位置，但用的是旧 `docId`
-4. **多页展开在渲染层**: `buildPrintJobItem` 通过 DocumentStore 的 `doc.pages` 展开，行为正确但身份层未迁移
+**合同:** `docs/print_projection_contract.md`
 
-**P0 修复项:**
-- `printAdapter.js`: `resolvePrintIdentity` 使用 `invoiceDocumentId`
+**当前实现:**
+- `PrintConfirmModal.jsx`: 纯展示 + 设置收集，无写操作
+- `PrintPreviewModel.js`: 纯函数 plan → 预览模型
+- 当前无逐页选中/取消 UI（all-or-nothing）
+- `removeFile` 不在打印上下文中调用
+
+**禁止:** Print Preview 修改 InvoiceDocument / 调用 deleteInvoiceDocument
+
 - `buildPrintExecutionPlan.js`: 输入应接受 `InvoiceDocument[]` 或至少标记 `invoiceDocumentId`
 - `usePrint.js`: `createPrintPlanInput` 从 `documentView.documents` 构建输入
 
@@ -103,11 +106,11 @@
 
 ## 验收矩阵
 
-| 场景 | Rename | ZIP | PDF | Excel | Print |
-|------|--------|-----|-----|-------|-------|
-| 单页票 (1 page) | ✅ 1 name | ✅ 1 file | ✅ 1 pdf | ✅ 1 row | ✅ 1 job |
-| 三页票 (3 pages) | ✅ 1 entry / 3 files | ✅ 1 zip / 3 files | ✅ 1 pdf (merge) | ✅ 1 串号 (deduped) | ✅ 1 job / 3 pages |
-| 混合 (3p + 1p) | ✅ 2 entries | ✅ 2 zips | ✅ 2 pdfs | ✅ 2 串号 (deduped) | ✅ 2 jobs |
+| 场景 | Rename | ZIP | PDF | Excel | Print Preview | Print Exec |
+|------|--------|-----|-----|-------|---------------|-----------|
+| 单页票 (1 page) | ✅ 1 name | ✅ 1 file | ✅ 1 pdf | ✅ 1 row | ✅ 1 page view | ✅ 1 job |
+| 三页票 (3 pages) | ✅ 1 entry / 3 files | ✅ 1 zip / 3 files | ✅ 1 pdf (merge) | ✅ 1 串号 (deduped) | ✅ 3 page views | ✅ 1 job / 3 pages |
+| 混合 (3p + 1p) | ✅ 2 entries | ✅ 2 zips | ✅ 2 pdfs | ✅ 2 串号 (deduped) | ✅ 4 page views | ✅ 2 jobs |
 
 ---
 
