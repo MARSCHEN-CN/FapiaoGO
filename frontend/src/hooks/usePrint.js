@@ -82,7 +82,7 @@ function revokeBlobUrls(urls, ref) {
   urls.forEach(url => revokeBlobUrl(url, ref))
 }
 
-export function usePrint({ files, settings, fileRotations, setFiles, electronAPIRef, submitPrintIntent, previewFile }) {
+export function usePrint({ files, settings, fileRotations, setFiles, electronAPIRef, submitPrintIntent, previewFile, setSettings }) {
   const [printing, setPrinting] = useState(false)
   const [printProgress, setPrintProgress] = useState({})
   const [printFiles, setPrintFiles] = useState([])
@@ -541,9 +541,13 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
 
   // ── 打印前确认弹窗 ──
   const handlePrintShowConfirm = useCallback(() => {
-    // PreviewModel 已是 derived state，打开弹窗只负责显隐；设置变化自动重建。
+    if (previewFile) {
+      const detectedOrient = detectDocumentOrientation(previewFile)
+      const shouldLandscape = detectedOrient === 'landscape'
+      setSettings(prev => (prev.landscape !== shouldLandscape ? { ...prev, landscape: shouldLandscape } : prev))
+    }
     setPrintConfirmModal(true)
-  }, [])
+  }, [previewFile, setSettings])
 
   const handlePrintConfirm = useCallback(() => {
     setPrintConfirmModal(false)

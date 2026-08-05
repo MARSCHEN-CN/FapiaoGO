@@ -242,7 +242,7 @@ function AppContent() {
     alertModal: printAlert, closeAlert: closePrintAlert,
     printConfirmModal, printPreviewModel, handlePrintCancel,
     executePrint,  // Step 3.2: 唯一打印执行入口
-  } = usePrint({ files, settings, fileRotations, setFiles, electronAPIRef, submitPrintIntent, previewFile })
+  } = usePrint({ files, settings, fileRotations, setFiles, electronAPIRef, submitPrintIntent, previewFile, setSettings })
 
   // ── Print progress refs (local; IPC print-progress handler 专用) ──
   // 这两个 ref 仅在 App.jsx 的 IPC 'print-progress' handler 中使用，
