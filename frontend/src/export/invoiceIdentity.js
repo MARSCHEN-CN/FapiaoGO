@@ -9,7 +9,10 @@
 //   预览显示 5 张、导出合计却按 4 张计算 这类隐蔽错位。
 //
 // 规则（稳定字符串，禁止 Symbol）：
-//   发票号 → 原文件名 → __ANON_{index}
+//   invoiceDocumentId → recordId → originalFilename → invoiceNumber → __ANON_{index}
+//
+// ⚠️ invoiceDocumentId 为领域主键（Invoice Entity Boundary Contract §四），
+//   优先级最高。同一发票跨导入时，后端 assembly 产出的 invoiceDocumentId 保持一致。
 //
 // ⚠️ 为什么不能用 Symbol('anon')：
 //   每次调用都生成一个全新的 Symbol，Symbol('anon') !== Symbol('anon')，
@@ -17,6 +20,7 @@
 //   会全部错乱。所以空号兜底必须用稳定字符串 __ANON_{index}。
 export function getInvoiceIdentity(row, index = 0) {
   return (
+    row.invoiceDocumentId ||
     row.recordId ||
     row.originalFilename ||
     row.invoiceNumber ||

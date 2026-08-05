@@ -23,7 +23,8 @@
  */
 
 import { createSession, createSessionFile } from '../models/ImportSession.js'
-import { assertCanRegisterDocument, assertCanPatchDocument, assertCanSealDocument, Lifecycle } from '../guards/invoiceEntityGuard.js'
+import { assertCanRegisterDocument, assertCanPatchDocument, assertCanSealDocument, assertCanDeleteDocument, Lifecycle } from '../guards/invoiceEntityGuard.js'
+import { resolveInvoiceIdentity } from '../utils/invoiceIdentityResolver.js'
 
 // ── 会话存储 ────────────────────────────────────────────
 
@@ -255,24 +256,16 @@ export function updateFileStatus(sessionId, fileKey, updates) {
 }
 
 /**
- * 统一文档实例身份（Invoice Entity Boundary Contract §四）。
+ * 统一文档实例身份（委托 invoiceIdentityResolver）。
  *
- * 规则：invoiceDocumentId || instanceId || docId || id。
- *   - invoiceDocumentId：领域 ID（最终目标，当前多数 doc 尚未携带，预留优先级）
- *   - instanceId：文档实例身份。同内容 A/B（同 docId）实例身份不同 → 各自保留
- *   - docId：内容身份（Render Identity），内容哈希，比 id 更稳定
- *   - id：兜底旧数据兼容
- *
- * ⚠️ 2026-08-05 修正：与 DocumentStore.resolveDocumentIdentity 统一为同一回退顺序。
- *   之前本 store 是 instanceId||id||docId（id 优先 docId），DocumentStore 是
- *   instanceId||docId||id（docId 优先 id）。不一致导致同一文档在两 Store 中存储键不同。
+ * Invoice Entity Boundary Contract §四：
+ *   identity = invoiceDocumentId || id || instanceId || docId
  *
  * @param {Object|null|undefined} doc
  * @returns {string|null} 去重键，无法解析时返回 null
  */
 export function resolveDocumentInstanceKey(doc) {
-  if (!doc) return null
-  return doc.invoiceDocumentId || doc.instanceId || doc.docId || doc.id || null
+  return resolveInvoiceIdentity(doc)
 }
 
 /**
@@ -405,6 +398,50 @@ export function isDocumentSealed(sessionId, instanceKey) {
   if (!session || !instanceKey) return false
   const doc = (session.documents || []).find(d => resolveDocumentInstanceKey(d) === instanceKey)
   return doc?.lifecycle === 'SEALED'
+}
+
+/**
+ * 删除 InvoiceDocument 及其关联的所有 pages（Invoice Entity Boundary Contract §六）。
+ *
+ * 执行顺序：
+ *   1. lifecycle 检查（assertCanDeleteDocument）
+ *   2. 标记 lifecycle=DELETED（软删除）
+ *   3. 收集 _pageKeys → 从 session.files 移除关联 pages
+ *   4. 从 session.documents 移除
+ *
+ * @param {string} sessionId
+ * @param {string} instanceKey - resolveDocumentInstanceKey 锁定的实例键
+ * @returns {{success: boolean, removedPageKeys: string[]}}
+ */
+export function deleteInvoiceDocument(sessionId, instanceKey) {
+  const session = sessions.get(sessionId)
+  if (!session || !instanceKey) return { success: false, removedPageKeys: [] }
+  session.documents = session.documents || []
+  const idx = session.documents.findIndex(d => resolveDocumentInstanceKey(d) === instanceKey)
+  if (idx === -1) return { success: false, removedPageKeys: [] }
+  const doc = session.documents[idx]
+  // Guard 检查
+  try {
+    assertCanDeleteDocument(doc)
+  } catch (e) {
+    console.warn('[deleteInvoiceDocument] guard 拒绝:', e.message)
+    return { success: false, removedPageKeys: [] }
+  }
+  // 软删除：标记 lifecycle=DELETED
+  doc.lifecycle = Lifecycle.DELETED
+  // 收集关联的 page-level file keys
+  const removedPageKeys = Array.isArray(doc._pageKeys) ? [...doc._pageKeys] : []
+  // 从 session.files 移除关联 pages
+  if (removedPageKeys.length > 0) {
+    const keySet = new Set(removedPageKeys)
+    session.files = session.files.filter(f => !keySet.has(f.key))
+    session.progress.total = session.files.length
+  }
+  // 从 session.documents 移除
+  session.documents.splice(idx, 1)
+  documentVersion++
+  notify(sessionId)
+  return { success: true, removedPageKeys }
 }
 
 /**

@@ -46,7 +46,7 @@ import { ZoomToolbar } from './components/ZoomToolbar'
 import { PageNavigator } from './components/PageNavigator'
 import { useDocument } from './hooks/useDocument'
 import { removeDocument, getRegisteredDocIds } from './stores/DocumentStore'
-import { clearActiveSession, getActiveSessionId, removeFilesFromSession } from './stores/ImportSessionStore'
+import { clearActiveSession, getActiveSessionId, getSession, removeFilesFromSession, deleteInvoiceDocument, resolveDocumentInstanceKey } from './stores/ImportSessionStore'
 import { resolvePreviewUrl } from './utils/previewResourceResolver'
 import { prefetchPreviewUrls } from './utils/previewPrefetcher'
 import StatusIndicator from './components/StatusIndicator'
@@ -328,7 +328,6 @@ function AppContent() {
   }, [renameResult, renamedPreviewKey, skipAutoNavRef])
 
   const removeFile = useCallback((key) => {
-    // 先找到当前预览文件在列表中的位置（读取 ref 中的最新 files / previewFile）
     const liveFiles = filesRef.current
     const livePreview = previewFileRef.current
     const currentIndex = livePreview ? liveFiles.findIndex(f => f.key === livePreview.key) : -1
@@ -338,10 +337,39 @@ function AppContent() {
       cleanupPreviewUrl()
     }
 
-    // ✅ 删除文件时清理预览缓存（释放 Blob/Uint8Array 内存）
     clearFilePreviewCache(key)
 
-    // 计算下一个要预览的文件（在 setFiles 之前计算，避免在 updater 中执行副作用）
+    // Step 3B: 尝试按 InvoiceDocument 删除
+    const sid = getActiveSessionId()
+    let deletedViaDocument = false
+    if (sid) {
+      const session = getSession(sid)
+      if (session?.documents?.length) {
+        // 查找覆盖此 page key 的 InvoiceDocument
+        const doc = session.documents.find(d =>
+          Array.isArray(d._pageKeys) && d._pageKeys.includes(key)
+        )
+        if (doc) {
+          const instanceKey = resolveDocumentInstanceKey(doc)
+          const result = deleteInvoiceDocument(sid, instanceKey)
+          if (result.success) {
+            deletedViaDocument = true
+            // 批量从 React state 移除所有关联 pages
+            const removedKeys = new Set(result.removedPageKeys)
+            setFiles((prev) => prev.filter((f) => !removedKeys.has(f.key)))
+            console.log('[removeFile] 通过 deleteInvoiceDocument 删除', { instanceKey, pages: result.removedPageKeys.length })
+          }
+        }
+      }
+    }
+
+    // 旧路径回退：page-level 删除（无 InvoiceDocument 关联时）
+    if (!deletedViaDocument) {
+      setFiles((prev) => prev.filter((f) => f.key !== key))
+      if (sid) removeFilesFromSession(sid, [key])
+    }
+
+    // 计算下一个预览文件
     let nextPreviewFile = null
     if (isPreviewing) {
       if (currentIndex > 0) {
@@ -350,11 +378,6 @@ function AppContent() {
         nextPreviewFile = liveFiles.find(f => f.key !== key)
       }
     }
-
-    setFiles((prev) => prev.filter((f) => f.key !== key))
-    // O 修复：同步从 session.files 移除，使 admission gate 不再永久拦截该路径（生命周期隔离）
-    const sid = getActiveSessionId()
-    if (sid) removeFilesFromSession(sid, [key])
 
     if (nextPreviewFile) {
       // ✅ 直接在 React 18 批处理中调用 handlePreview，移除 setTimeout hack

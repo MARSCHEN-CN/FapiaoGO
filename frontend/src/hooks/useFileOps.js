@@ -22,6 +22,7 @@ import { ensureRenderContract, ensureDocumentMetadata } from '../services/render
 import { mapParseResultToFileUpdate } from '../mappers/parseResultMapper'
 import { updateDocumentIdentity } from '../utils/identity'
 import { resolveInstancePageFiles } from '../utils/instancePageOwnership'
+import { generateInvoiceDocumentId } from '../utils/invoiceIdentityResolver'
 import { createImportSession, getActiveSessionId, getSession, reactivateSession, addFilesToSession, replaceFileItems, updateProgress, addDocument, patchDocument, sealDocument, flushSessionNotifications } from '../stores/ImportSessionStore'
 import { ensureDocumentFromFileObj, flushDocumentNotifications, getDocument, registerDocument } from '../stores/DocumentStore'
 import { createDocument, createPageMeta } from '../models/InvoiceDocument'
@@ -805,11 +806,13 @@ export function useFileOps({ setFiles, settings, electronAPIRef }) {
                   (a, b) => (a.pageNum ?? 0) - (b.pageNum ?? 0)
                 )
                 const repFile = sortedFiles[0]
-                // Step E1.1: Document identity 绑定文件实例（key），而非内容哈希（sourceDocId）。
-                // 同内容但不同文件实例（同发票复制、两次导入）产生不同 docId，不被 ImportSessionStore
-                // 的 docId 去重吃掉。instanceKey = repFile.key（前端文件实例唯一键，跨 session 不重复）。
-                const instanceKey = repFile?.key || assembled.sourceDocId || ''
-                const invDocId = `${instanceKey}_inv_${assembled.invoiceNumber || ''}`
+                // Step E1.1 / Step 3A: Document identity = generateInvoiceDocumentId
+                // 使用 sourceDocId + invoiceNumber 生成 invoiceDocumentId（领域主键）
+                const invDocId = generateInvoiceDocumentId({
+                  sourceDocId: repFile?.docId || assembled.sourceDocId || '',
+                  invoiceNumber: assembled.invoiceNumber || '',
+                  fileKey: repFile?.key || '',
+                })
                 const prev = getDocument(invDocId)
                 // 绕过 ensureDocumentFromFileObj（它按 docId 过滤文件，但 assembly 的 docId ≠ 文件 docId），
                 // 直接由 sortedFiles 构造 InvoiceDocument
@@ -835,6 +838,7 @@ export function useFileOps({ setFiles, settings, electronAPIRef }) {
                   pages,
                 })
                 registerDocument(doc)
+                doc.invoiceDocumentId = invDocId  // Step 3A: 领域主键
                 if (doc !== prev) docsTouched = true
                 // E-2.2: 记录 sourceDocId + 该发票的精确页面 fileKey 列表（按页码排序）
                 doc.sourceDocId = repFile.docId || assembled.sourceDocId || ''
@@ -911,9 +915,9 @@ export function useFileOps({ setFiles, settings, electronAPIRef }) {
               for (const invDocId of assembledDocIds) {
                 const sealedDoc = getDocument(invDocId)
                 if (sealedDoc) {
-                  const instanceKey = sealedDoc.instanceId || sealedDoc.docId || sealedDoc.id
+                  const instanceKey = sealedDoc.invoiceDocumentId || sealedDoc.instanceId || sealedDoc.docId || sealedDoc.id
                   sealDocument(session.id, instanceKey)
-                  console.log('[SEAL DOCUMENT][assembly]', { instanceKey, invDocId })
+                  console.log('[SEAL DOCUMENT][assembly]', { invoiceDocumentId: sealedDoc.invoiceDocumentId, invDocId })
                 }
               }
             }

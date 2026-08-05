@@ -20,28 +20,22 @@
 // 显式 .js 后缀：本模块需可被 node --test 直接加载（前端其余文件靠 bundler 解析
 // extensionless，但 DocumentStore 是 13-A.3.5c 单测的入口，须 ESM 可解析）。webpack 两种写法皆兼容。
 import { createDocument, createPageMeta } from '../models/InvoiceDocument.js'
+import { resolveInvoiceIdentity } from '../utils/invoiceIdentityResolver.js'
 
 /** @type {Map<string, import('../models/InvoiceDocument').InvoiceDocument>} */
 const documents = new Map()
 
 /**
- * 统一文档身份出口（IS-4.2 Step 4.1）。
+ * 统一文档身份出口（委托 invoiceIdentityResolver）。
  *
- * 返回 DocumentStore 的存储键 = instanceId || docId || id。
- *   - instanceId：文档实例身份（前端 producer 生成、后端 assembly 透传）。同内容
- *     A/B 导入得到不同 instanceId → 落入不同键，不再互相覆盖。
- *   - docId：内容哈希（Render Identity）。无 instanceId 的旧数据回退到此，行为不变。
- *
- * 接受 doc 对象（注册/更新）或字符串（查找/移除），保证写入与读取用同一身份解析，
- * 避免「写 instanceId 键、读 docId 键」的错位。调用方应一致使用本函数。
+ * Invoice Entity Boundary Contract §四：
+ *   identity = invoiceDocumentId || id || instanceId || docId
  *
  * @param {Object|string|null|undefined} docOrId
  * @returns {string|null} 存储键，无法解析时返回 null
  */
 export function resolveDocumentIdentity(docOrId) {
-  if (!docOrId) return null
-  if (typeof docOrId === 'string') return docOrId || null
-  return docOrId.instanceId || docOrId.docId || docOrId.id || null
+  return resolveInvoiceIdentity(docOrId)
 }
 
 /**

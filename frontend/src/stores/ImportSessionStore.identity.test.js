@@ -26,10 +26,11 @@ const {
 
 const docsOf = (sessionId) => getSession(sessionId).documents
 
-test('resolveDocumentInstanceKey：instanceId 优先，回退 docId || id', () => {
-  assert.equal(resolveDocumentInstanceKey({ instanceId: 'I1', id: 'X', docId: 'H' }), 'I1')
-  assert.equal(resolveDocumentInstanceKey({ id: 'X', docId: 'H' }), 'H', 'docId 优先于 id（统一后）')
-  assert.equal(resolveDocumentInstanceKey({ id: 'X' }), 'X')
+test('resolveDocumentInstanceKey：invoiceDocumentId 优先，回退 id || instanceId || docId', () => {
+  assert.equal(resolveDocumentInstanceKey({ invoiceDocumentId: 'INV-A', id: 'X', docId: 'H' }), 'INV-A', 'invoiceDocumentId 最高优先级')
+  assert.equal(resolveDocumentInstanceKey({ instanceId: 'I1', id: 'X', docId: 'H' }), 'X', 'id 优先于 instanceId（Step 3A）')
+  assert.equal(resolveDocumentInstanceKey({ id: 'X', docId: 'H' }), 'X', 'id 优先于 docId')
+  assert.equal(resolveDocumentInstanceKey({ instanceId: 'I1', docId: 'H' }), 'I1', 'instanceId 优先于 docId')
   assert.equal(resolveDocumentInstanceKey({ docId: 'H' }), 'H')
   assert.equal(resolveDocumentInstanceKey(null), null)
   assert.equal(resolveDocumentInstanceKey({}), null)
@@ -71,11 +72,11 @@ test('legacy：无 instanceId 按 docId 去重（旧行为不变）', () => {
   assert.equal(docsOf(s.id).length, 2)
 })
 
-test('legacy：docId 优先于 id（统一后语义）', () => {
+test('legacy：id 优先于 docId（Step 3A 统一后）', () => {
   const s = createImportSession()
   addDocument(s.id, { id: 'X', docId: 'H1', pages: [{}] })
-  addDocument(s.id, { id: 'X', docId: 'H2', pages: [{}] }) // 同 id 但不同 docId → docId 优先 → 不同键
-  assert.equal(docsOf(s.id).length, 2, 'docId 优先 → 不同 docId = 不同键')
+  addDocument(s.id, { id: 'X', docId: 'H2', pages: [{}] }) // 同 id → 去重
+  assert.equal(docsOf(s.id).length, 1, 'id 优先 → 同 id = 同键，去重')
 })
 
 test('来源检查：拒绝 file_update 来源', () => {
@@ -83,4 +84,18 @@ test('来源检查：拒绝 file_update 来源', () => {
   const r = addDocument(s.id, { instanceId: 'I1', docId: 'HASH', pages: [{}] }, { source: 'file_update' })
   assert.equal(r, false, 'file_update 来源应被拒绝')
   assert.equal(docsOf(s.id).length, 0)
+})
+
+test('Step 3A: invoiceDocumentId 作为领域主键', () => {
+  const s = createImportSession()
+  addDocument(s.id, { invoiceDocumentId: 'INV-A', instanceId: 'I1', id: 'X', pages: [{}] })
+  addDocument(s.id, { invoiceDocumentId: 'INV-A', instanceId: 'I2', id: 'Y', pages: [{}] })
+  assert.equal(docsOf(s.id).length, 1, '同 invoiceDocumentId → 去重，不管 instanceId/id 差异')
+})
+
+test('Step 3A: 不同 invoiceDocumentId 各自保留', () => {
+  const s = createImportSession()
+  addDocument(s.id, { invoiceDocumentId: 'INV-A', instanceId: 'I1', pages: [{}] })
+  addDocument(s.id, { invoiceDocumentId: 'INV-B', instanceId: 'I1', pages: [{}] })
+  assert.equal(docsOf(s.id).length, 2, '不同 invoiceDocumentId 各自保留')
 })
