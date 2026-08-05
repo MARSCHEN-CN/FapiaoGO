@@ -27,6 +27,7 @@
  */
 
 import { computeTicketSlots } from '../layout/SlotLayout.js'
+import { detectDocumentOrientation } from '../utils/detectOrientation.js'
 
 const PREVIEW_DPI = 300
 const PX_TO_MM = 25.4 / PREVIEW_DPI
@@ -81,6 +82,24 @@ export function previewPaperLayout(paperSize = 'A4', customPaper = null, margins
     paperRect: { w: paperW, h: paperH },
     usableRect: { x: mLeft, y: mTop, w: innerW, h: innerH },
   }
+}
+
+/**
+ * 计算自动预览旋转角：根据内容方向与纸张方向的差异决定是否旋转。
+ * 旋转规则：纸张方向是主导，内容方向必须适配纸张。
+ *   - 方向一致 → 0°（不旋转）
+ *   - 横向内容 + 纵向纸张 → -90°（逆时针旋转，使横向内容适配纵向纸张）
+ *   - 纵向内容 + 横向纸张 → +90°（顺时针旋转，使纵向内容适配横向纸张）
+ *
+ * @param {'portrait'|'landscape'} contentOrient - 内容天然方向
+ * @param {'portrait'|'landscape'} paperOrient - 纸张方向
+ * @returns {number} 旋转角度（0 | -90 | 90）
+ */
+function computeAutoRotation(contentOrient, paperOrient) {
+  if (contentOrient === paperOrient) return 0
+  if (contentOrient === 'landscape' && paperOrient === 'portrait') return -90
+  if (contentOrient === 'portrait' && paperOrient === 'landscape') return 90
+  return 0
 }
 
 /**
@@ -163,13 +182,18 @@ export function buildPrintPreviewModel(plan, { files = [], settings = {}, curren
       slots: slots.map((s, i) => {
         const slotDef = page.slots[i] || {}
         const f = fileById.get(slotDef.fileId)
+        const userRotation = slotDef.rotation || 0
+        const contentOrient = f ? detectDocumentOrientation(f) : 'portrait'
+        const autoRotation = computeAutoRotation(contentOrient, page.orientation)
+        const effectiveRotation = userRotation !== 0 ? userRotation : autoRotation
         return {
           x: round2(s.x * PX_TO_MM),
           y: round2(s.y * PX_TO_MM),
           width: round2(s.width * PX_TO_MM),
           height: round2(s.height * PX_TO_MM),
           source: f?.name || slotDef.fileId || `#${i + 1}`,
-          rotation: slotDef.rotation || 0,
+          rotation: effectiveRotation,
+          previewTransform: { rotation: effectiveRotation },
           thumbnailUrl: getThumbnailUrl(f, 0),
           fileId: slotDef.fileId,
           pageIndex: 0,

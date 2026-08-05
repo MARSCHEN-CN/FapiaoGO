@@ -33,6 +33,17 @@ const SlotImage = memo(({ slot }) => {
 
   const cx = slot.x + slot.width / 2
   const cy = slot.y + slot.height / 2
+  const isRot90 = Math.abs(slot.rotation) === 90
+
+  // ±90° 旋转时：内容在旋转前的 bounding box 尺寸需要与原槽位尺寸互换，
+  // 这样旋转后内容才能正确填满槽位（preserveAspectRatio 负责等比 fit）。
+  // 例：横向内容 + 纵向纸张 → 旋转 -90°，旋转前 box=slot.height×slot.width，
+  // 旋转后 box=slot.width×slot.height → 正好填满槽位。
+  const imgW = isRot90 ? slot.height : slot.width
+  const imgH = isRot90 ? slot.width : slot.height
+  const imgX = cx - imgW / 2
+  const imgY = cy - imgH / 2
+
   const transform = slot.rotation
     ? `rotate(${slot.rotation} ${cx} ${cy})`
     : undefined
@@ -40,48 +51,51 @@ const SlotImage = memo(({ slot }) => {
   const hasThumbnail = !!slot.thumbnailUrl && !error
 
   return (
-    <g transform={transform}>
-      {hasThumbnail ? (
-        <>
-          <image
-            href={slot.thumbnailUrl}
-            x={slot.x}
-            y={slot.y}
-            width={slot.width}
-            height={slot.height}
-            preserveAspectRatio="xMidYMid meet"
-            style={{
-              opacity: loaded ? 1 : 0,
-              transition: 'opacity 0.2s ease-in',
-            }}
-            onLoad={() => setLoaded(true)}
-            onError={() => {
-              console.warn('[PrintPreviewCanvas] 缩略图加载失败:', slot.source)
-              setError(true)
-            }}
-          />
-          {!loaded && (
-            <rect
-              x={slot.x} y={slot.y} width={slot.width} height={slot.height}
-              fill="var(--accent-soft)" fillOpacity="0.3"
-              rx="0.5"
-            />
-          )}
-        </>
-      ) : (
-        <rect
-          x={slot.x} y={slot.y} width={slot.width} height={slot.height}
-          fill="var(--accent-soft)" fillOpacity="0.2"
-          rx="0.5"
-        />
-      )}
-
-      {/* 槽位边框 */}
+    <g>
+      {/* 槽位边框：纸张布局，不随内容旋转 */}
       <rect
         x={slot.x} y={slot.y} width={slot.width} height={slot.height}
         rx="0.8" fill="none"
         stroke="var(--accent)" strokeOpacity="0.5" strokeWidth="0.3"
       />
+
+      {/* 内容组：按需旋转 */}
+      <g transform={transform}>
+        {hasThumbnail ? (
+          <>
+            <image
+              href={slot.thumbnailUrl}
+              x={imgX}
+              y={imgY}
+              width={imgW}
+              height={imgH}
+              preserveAspectRatio="xMidYMid meet"
+              style={{
+                opacity: loaded ? 1 : 0,
+                transition: 'opacity 0.2s ease-in',
+              }}
+              onLoad={() => setLoaded(true)}
+              onError={() => {
+                console.warn('[PrintPreviewCanvas] 缩略图加载失败:', slot.source)
+                setError(true)
+              }}
+            />
+            {!loaded && (
+              <rect
+                x={imgX} y={imgY} width={imgW} height={imgH}
+                fill="var(--accent-soft)" fillOpacity="0.3"
+                rx="0.5"
+              />
+            )}
+          </>
+        ) : (
+          <rect
+            x={imgX} y={imgY} width={imgW} height={imgH}
+            fill="var(--accent-soft)" fillOpacity="0.2"
+            rx="0.5"
+          />
+        )}
+      </g>
     </g>
   )
 })
