@@ -48,12 +48,13 @@ export const DocumentViewer = React.memo(function DocumentViewer({
   onViewerController,
   onViewerReady,
   file,
+  previewRotation,
 }) {
   // Architecture Law D1：DocumentViewer 自包含 loading/empty 状态。
   const isLoading = !document || !document.pageCount
   const totalPages = document?.pageCount || 0
 
-  const { state, actions } = useViewerState({ document, containerSize, initialPage })
+  const { state, actions } = useViewerState({ document, containerSize, initialPage, contentRotation: previewRotation })
 
   // D2-4.1：viewer controller 桥接
   // 包含 currentPage/totalPages 供 App.jsx status-bar 中的 PageNavigator 使用。

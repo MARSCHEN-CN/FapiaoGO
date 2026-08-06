@@ -78,7 +78,7 @@ const SCALE_MAX = 20
  * @param {number} [opts.initialPage=0] - 初始页 index（0-based，来自 fileObj.pageNum - 1）
  * @returns {{ state: ViewerState, actions: ViewerActions }}
  */
-export function useViewerState({ document, containerSize, initialPage = 0 }) {
+export function useViewerState({ document, containerSize, initialPage = 0, contentRotation }) {
   // Architecture Law D1：容错 null document（双 Buffer 文件切换期间）。
   // max 为 0 时 currentPage clamp 到 0，后续 document 就绪后由 goToPageRef 导航。
   const [currentPage, setCurrentPage] = useState(() => {
@@ -97,6 +97,12 @@ export function useViewerState({ document, containerSize, initialPage = 0 }) {
   const [panX, setPanX] = useState(0)
   const [panY, setPanY] = useState(0)
   const [viewRotation, setViewRotation] = useState(0)
+
+  // Commit 3 fix: 同步 fileRotations[fileKey] → Viewer viewRotation
+  useEffect(() => {
+    const cr = contentRotation ?? 0
+    setViewRotation(cr)
+  }, [contentRotation])
 
   // 用 ref 追踪容器尺寸，避免闭包陈旧
   const containerRef = useRef(containerSize)

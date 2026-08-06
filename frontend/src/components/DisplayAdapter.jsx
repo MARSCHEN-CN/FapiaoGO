@@ -72,6 +72,7 @@ export const DisplayAdapter = React.memo(function DisplayAdapter({
   file,
   containerSize,
   onViewerController,
+  previewRotation,
 }) {
   // ── 所有 hooks 必须在顶部无条件调用（React Rules of Hooks） ──
 
@@ -162,6 +163,7 @@ export const DisplayAdapter = React.memo(function DisplayAdapter({
         initialPage={initialPage}
         onViewerController={onViewerController}
         file={file}
+        previewRotation={previewRotation}
       />
     </div>
   )

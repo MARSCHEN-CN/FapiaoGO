@@ -258,11 +258,11 @@ function AppContent() {
     executePrint(previewFile, settings)
   }, [previewFile, settings, executePrint, handlePrintCancel])
 
-  // ── Ctrl+P: close any state → 打开打印确认页 ──
+  // ── Ctrl+P: close any state → executePrint ──
   const onCtrlP = useCallback(() => {
     handlePrintClose()
-    handlePrint()
-  }, [handlePrint, handlePrintClose])
+    executePrint(previewFile, settings)
+  }, [previewFile, settings, executePrint, handlePrintClose])
 
   // ── PDF 导出弹窗状态 ──
   const [showPdfExport, setShowPdfExport] = useState(false)
@@ -1113,6 +1113,7 @@ function AppContent() {
               file={previewFile}
               containerSize={containerSize}
               onViewerController={setViewerController}
+              previewRotation={previewRotation}
             />
           </div>
 

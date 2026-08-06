@@ -60,17 +60,15 @@ export default memo(function PreviewCanvas({ previewFile, previewCanvas, preview
   }, [previewCanvas, grayscale, previewRenderVersion])
 
   // ── Render Engine <img> 路径 ──
-  // [DIAG-10] 显示层诊断：哪个源在渲染
-  if (previewRotation !== 0) {
-    const hasCanvas = !!(previewCanvas && previewCanvas.width > 0)
-    console.log('[DIAG-10 display layer] rotation=%d previewUrl=%s hasCanvas=%s canvasSize=%dx%d contentReady=%s',
-      previewRotation,
-      previewUrl ? 'SET' : 'null',
-      hasCanvas,
-      hasCanvas ? `${previewCanvas.width}x${previewCanvas.height}` : 'none',
-      contentReady
-    )
-  }
+  // [DIAG-10] 每次渲染输出
+  console.log('[DIAG-10 display layer] rotation=%d previewUrl=%s hasCanvas=%s canvasSize=%s contentReady=%s containerW=%d',
+    previewRotation ?? 'undef',
+    previewUrl ? 'SET' : 'null',
+    !!(previewCanvas && previewCanvas.width > 0),
+    (previewCanvas && previewCanvas.width > 0) ? `${previewCanvas.width}x${previewCanvas.height}` : 'none',
+    contentReady,
+    containerW
+  )
   if (previewUrl && contentReady && containerW > 0) {
     // 🆕 V17：RE 已按 paperLandscape 输出正确方向图，内容永远 natural，无需 CSS rotate。
     // 容器方向由 usePreview 依 paperLandscape 计算（containerW/H 已是有效纸张尺寸），
