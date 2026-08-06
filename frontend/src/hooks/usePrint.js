@@ -13,6 +13,7 @@ import { runMergedPrintTasks } from '../runners/printRunner'
 import { computePaperLayout } from '../previewState'
 import { extendPaperLayoutContract } from '../print/paperLayoutContract'
 import { applySourceOriginPlacement, transformPaperRotation } from '../print/placementAdapter'
+import { getContentDimensions, resolveContentPlacement, resolveContentBounds } from '../layout/RotationResolver'
 import { fetchPrintRaster, buildPrintJobItem } from '../utils/printAdapter'
 // A1/A1.5：已证等价的 Plan 事实来源 + 影子比较 helper（Commit 2 source / Commit 3 merge 分支消费）
 import { buildPrintExecutionPlan, createPrintPlanInput } from '../print/buildPrintExecutionPlan'
@@ -514,9 +515,45 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
   // Commit 1（derived preview）：预览描述不再存 state 快照，而是从打印会话上下文
   // 派生（useMemo）；settings/files/fileRotations 一变即重建，杜绝「打开时快照过期」。
   // 与 doPrint/executePrint 共用 createPrintPlanInput → filter 同源，plan 即唯一事实源。
+
+  // Commit 3-B：计算每个文件的 PlacementResult（RotationResolver）
+  //   Preview 与 Print 共享同一布局结果，杜绝各自解释旋转。
+  const placements = useMemo(() => {
+    const result = {}
+    if (!settings?.paperSize) return result
+    const paper = settings.customPaper && settings.customPaper.widthMM > 0
+      ? settings.customPaper
+      : null
+    const paperSize = paper || { widthMM: 210, heightMM: 297 }  // default A4
+    const margins = {
+      left: settings.marginLeft ?? 3,
+      right: settings.marginRight ?? 3,
+      top: settings.marginTop ?? 3,
+      bottom: settings.marginBottom ?? 3,
+    }
+    for (const f of files) {
+      const dims = getContentDimensions(f)
+      if (!dims) continue
+      const contentRotation = fileRotations[f.key] || 0
+      const rotated = resolveContentBounds(dims, contentRotation)
+      try {
+        result[f.key] = resolveContentPlacement({
+          contentSize: rotated,
+          contentRotation,
+          paperSize,
+          margins,
+          dpi: PREVIEW_DPI,
+        })
+      } catch (_) {
+        // 边距超纸等情况，跳过该文件的 placement 计算
+      }
+    }
+    return result
+  }, [files, settings, fileRotations])
+
   const printPlanInput = useMemo(
-    () => createPrintPlanInput(files, settings, fileRotations),
-    [files, settings, fileRotations],
+    () => createPrintPlanInput(files, settings, fileRotations, placements),
+    [files, settings, fileRotations, placements],
   )
 
   // Phase 3.5：打印预览描述（derived state，非快照；null = 构建失败）
@@ -830,7 +867,8 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
       console.log('[PRINT] PrintSettings:', JSON.stringify(ps))
 
       const userSettings = { ...settings, ...(printSettings || {}) }
-      const result = await printSingleSource(file, ipc, userSettings, fileRotations, detectDocumentOrientation)
+      const filePlacement = placements[file.key] || null
+      const result = await printSingleSource(file, ipc, userSettings, fileRotations, detectDocumentOrientation, filePlacement)
 
       console.log('[PRINT] Source pipeline result:', result)
 
@@ -865,15 +903,16 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
 
     // 合并 settings + printSettings 作为 userSettings
     const userSettings = { ...settings, ...(printSettings || {}) }
+    const filePlacement = placements[f.key] || null
 
-    const result = await printSingleSource(f, ipc, userSettings, fileRotations, detectDocumentOrientation)
+    const result = await printSingleSource(f, ipc, userSettings, fileRotations, detectDocumentOrientation, filePlacement)
 
     return {
       success: result.success,
       message: result.error || '',
       error: result.error || null,
     }
-  }, [settings, fileRotations, electronAPIRef, detectDocumentOrientation])
+  }, [settings, fileRotations, electronAPIRef, detectDocumentOrientation, placements])
 
   /**
    * 批量打印（source 管线），管理总进度
