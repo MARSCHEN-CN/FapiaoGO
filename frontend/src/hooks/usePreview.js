@@ -586,6 +586,35 @@ export function usePreview({ files, settings, electronAPIRef }) {
   // ============================
   // 预览渲染
   // ============================
+  // Commit 3 fix: 当旋转 ≠ 0 时，RE 后端不消费 content_rotation，需走 Canvas 路径。
+  // Canvas 路径需要 _pdfData，此处独立 effect 预加载（避免主 render effect 中的 async 时序问题）。
+  useEffect(() => {
+    if (!previewFile || previewRotation === 0) return
+    if (previewFile._pdfData) return  // 已有数据，无需加载
+    if (!previewFile.printPath) return
+
+    let cancelled = false
+    const load = async () => {
+      try {
+        const ipc = electronAPIRef.current?.ipcRenderer
+        if (!ipc) return
+        const fd = await ipc.invoke('read-file', previewFile.printPath)
+        if (cancelled) return
+        if (fd?.success) {
+          previewFile._pdfData = new Uint8Array(fd.data)
+          console.log('[DIAG-9 pdfData loaded] size=%d for canvas rotation render', previewFile._pdfData.length)
+          // 触发重渲染：修改 previewFile 的引用不会自动触发 React update，
+          // 需要通过 setFiles 或 forceUpdate 机制。此处用 state trick。
+          setPreviewRenderVersion(v => v + 1)  // 触发 render effect 重跑
+        }
+      } catch (e) {
+        if (!cancelled) console.warn('[DIAG-9 pdfData load failed]', e.message)
+      }
+    }
+    load()
+    return () => { cancelled = true }
+  }, [previewFile?.key, previewRotation])
+
   useEffect(() => {
     if (!previewFile) { clearCommitted(); return }
 
@@ -987,7 +1016,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
   }, [previewFile, mergePair, settings.paperSize, currentRotation, fileRotations, settings.mergeMode,
       settings.marginLeft, settings.marginRight, settings.marginTop, settings.marginBottom,
       settings.customPaper?.widthMM, settings.customPaper?.heightMM, reBlockedDocId,
-      renderCommand, renderCommandReady])
+      renderCommand, renderCommandReady, previewRenderVersion])
 
   // ResizeObserver ✅ 使用 requestAnimationFrame 节流，避免频繁重绘
   // 补充 window resize 监听：当浏览器窗口大小变化时，ResizeObserver
