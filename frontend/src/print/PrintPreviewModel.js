@@ -242,6 +242,10 @@ export function buildPrintPreviewModel(plan, { files = [], settings = {}, curren
     }
   }
 
+  // [DIAG-12] Runtime Trace — Plan entry
+  console.log('[DIAG-12 plan input] pageCount=%d firstPageOrientation=%s firstSlotRotation=%d',
+    plan.pages.length, plan.pages[0]?.orientation || '?', plan.pages[0]?.slots[0]?.rotation || 0)
+
   // 构建基础预览页（横向边距超纸时 pageToModel 返回 null，过滤后判定 invalid）
   const basePages = [
     ...plan.pages.map(pageToModel),
