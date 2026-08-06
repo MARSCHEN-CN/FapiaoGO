@@ -1,253 +1,44 @@
 {
-  "_meta": "A1.5 golden snapshot — hand-verified expected PrintExecutionPlan for legacy sample inputs. Source: A.parsed,B.ofd(docId+printPath),C.error,D.专票; Merge: A,B,C(error),D.专票,E.专票 @ merge2. NOTE: B.ofd carries printPath (real parsed OFD always has one); D/E use canonical invoiceType '专票' (the value the detector checks via includes('专票')). If production invoiceType is '增值税专用发票' the 一普二专 branch is effectively dead — pre-existing legacy behavior, A1 mirrors it faithfully; flagged separately.",
+  "_meta": "A1.5 golden snapshot — Commit 3-A regenerated with contentRotation + placement + invoiceDocumentId fields. Source: A.parsed,B.ofd(docId+printPath),C.error,D.专票; Merge: A,B,C(error),D.专票,E.专票 @ merge2.",
   "source_extraSpecial_false": {
-    "strategy": {
-      "oneNormalTwoSpecial": false
-    },
+    "strategy": { "oneNormalTwoSpecial": false },
     "mergeMode": "none",
     "pages": [
-      {
-        "type": "single",
-        "paper": {
-          "size": "A4"
-        },
-        "orientation": "portrait",
-        "source": {
-          "fileId": "A",
-          "pageIndex": 0
-        },
-        "slots": [
-          {
-            "fileId": "A",
-            "rotation": 90
-          }
-        ]
-      },
-      {
-        "type": "single",
-        "paper": {
-          "size": "A4"
-        },
-        "orientation": "portrait",
-        "source": {
-          "fileId": "B",
-          "pageIndex": 0
-        },
-        "slots": [
-          {
-            "fileId": "B",
-            "rotation": 0
-          }
-        ]
-      },
-      {
-        "type": "single",
-        "paper": {
-          "size": "A4"
-        },
-        "orientation": "portrait",
-        "source": {
-          "fileId": "D",
-          "pageIndex": 0
-        },
-        "slots": [
-          {
-            "fileId": "D",
-            "rotation": 180
-          }
-        ]
-      }
+      { "type": "single", "paper": { "size": "A4" }, "orientation": "portrait", "invoiceDocumentId": "", "source": { "fileId": "A", "pageIndex": 0 }, "slots": [{ "fileId": "A", "rotation": 90, "contentRotation": 90, "placement": null, "invoiceDocumentId": "" }] },
+      { "type": "single", "paper": { "size": "A4" }, "orientation": "portrait", "invoiceDocumentId": "doc-b", "source": { "fileId": "B", "pageIndex": 0 }, "slots": [{ "fileId": "B", "rotation": 0, "contentRotation": 0, "placement": null, "invoiceDocumentId": "doc-b" }] },
+      { "type": "single", "paper": { "size": "A4" }, "orientation": "portrait", "invoiceDocumentId": "", "source": { "fileId": "D", "pageIndex": 0 }, "slots": [{ "fileId": "D", "rotation": 180, "contentRotation": 180, "placement": null, "invoiceDocumentId": "" }] }
     ],
     "extraPages": []
   },
   "source_extraSpecial_true": {
-    "strategy": {
-      "oneNormalTwoSpecial": true
-    },
+    "strategy": { "oneNormalTwoSpecial": true },
     "mergeMode": "none",
     "pages": [
-      {
-        "type": "single",
-        "paper": {
-          "size": "A4"
-        },
-        "orientation": "portrait",
-        "source": {
-          "fileId": "A",
-          "pageIndex": 0
-        },
-        "slots": [
-          {
-            "fileId": "A",
-            "rotation": 90
-          }
-        ]
-      },
-      {
-        "type": "single",
-        "paper": {
-          "size": "A4"
-        },
-        "orientation": "portrait",
-        "source": {
-          "fileId": "B",
-          "pageIndex": 0
-        },
-        "slots": [
-          {
-            "fileId": "B",
-            "rotation": 0
-          }
-        ]
-      },
-      {
-        "type": "single",
-        "paper": {
-          "size": "A4"
-        },
-        "orientation": "portrait",
-        "source": {
-          "fileId": "D",
-          "pageIndex": 0
-        },
-        "slots": [
-          {
-            "fileId": "D",
-            "rotation": 180
-          }
-        ]
-      }
+      { "type": "single", "paper": { "size": "A4" }, "orientation": "portrait", "invoiceDocumentId": "", "source": { "fileId": "A", "pageIndex": 0 }, "slots": [{ "fileId": "A", "rotation": 90, "contentRotation": 90, "placement": null, "invoiceDocumentId": "" }] },
+      { "type": "single", "paper": { "size": "A4" }, "orientation": "portrait", "invoiceDocumentId": "doc-b", "source": { "fileId": "B", "pageIndex": 0 }, "slots": [{ "fileId": "B", "rotation": 0, "contentRotation": 0, "placement": null, "invoiceDocumentId": "doc-b" }] },
+      { "type": "single", "paper": { "size": "A4" }, "orientation": "portrait", "invoiceDocumentId": "", "source": { "fileId": "D", "pageIndex": 0 }, "slots": [{ "fileId": "D", "rotation": 180, "contentRotation": 180, "placement": null, "invoiceDocumentId": "" }] }
     ],
     "extraPages": [
-      {
-        "type": "single",
-        "paper": {
-          "size": "A4"
-        },
-        "orientation": "portrait",
-        "source": {
-          "fileId": "D",
-          "pageIndex": 0
-        },
-        "slots": [
-          {
-            "fileId": "D",
-            "rotation": 180
-          }
-        ],
-        "_round": 2
-      }
+      { "type": "single", "paper": { "size": "A4" }, "orientation": "portrait", "invoiceDocumentId": "", "source": { "fileId": "D", "pageIndex": 0 }, "slots": [{ "fileId": "D", "rotation": 180, "contentRotation": 180, "placement": null, "invoiceDocumentId": "" }], "_round": 2 }
     ]
   },
   "merge2": {
-    "strategy": {
-      "oneNormalTwoSpecial": false
-    },
+    "strategy": { "oneNormalTwoSpecial": false },
     "mergeMode": "merge2",
     "pages": [
-      {
-        "type": "multi-ticket",
-        "paper": {
-          "size": "A4"
-        },
-        "orientation": "portrait",
-        "slots": [
-          {
-            "fileId": "A",
-            "rotation": 90
-          },
-          {
-            "fileId": "B",
-            "rotation": 0
-          }
-        ]
-      },
-      {
-        "type": "multi-ticket",
-        "paper": {
-          "size": "A4"
-        },
-        "orientation": "portrait",
-        "slots": [
-          {
-            "fileId": "C",
-            "rotation": 270
-          },
-          {
-            "fileId": "D",
-            "rotation": 180
-          }
-        ]
-      },
-      {
-        "type": "multi-ticket",
-        "paper": {
-          "size": "A4"
-        },
-        "orientation": "portrait",
-        "slots": [
-          {
-            "fileId": "E",
-            "rotation": 0
-          }
-        ]
-      }
+      { "type": "multi-ticket", "paper": { "size": "A4" }, "orientation": "portrait", "invoiceDocumentIds": ["", "doc-b"], "slots": [{ "fileId": "A", "rotation": 90, "contentRotation": 90, "placement": null, "invoiceDocumentId": "" }, { "fileId": "B", "rotation": 0, "contentRotation": 0, "placement": null, "invoiceDocumentId": "doc-b" }] },
+      { "type": "multi-ticket", "paper": { "size": "A4" }, "orientation": "portrait", "invoiceDocumentIds": ["", ""], "slots": [{ "fileId": "C", "rotation": 270, "contentRotation": 270, "placement": null, "invoiceDocumentId": "" }, { "fileId": "D", "rotation": 180, "contentRotation": 180, "placement": null, "invoiceDocumentId": "" }] },
+      { "type": "multi-ticket", "paper": { "size": "A4" }, "orientation": "portrait", "invoiceDocumentIds": [""], "slots": [{ "fileId": "E", "rotation": 0, "contentRotation": 0, "placement": null, "invoiceDocumentId": "" }] }
     ],
     "extraPages": []
   },
   "merge2_extraSpecial_true": {
-    "strategy": {
-      "oneNormalTwoSpecial": true
-    },
+    "strategy": { "oneNormalTwoSpecial": true },
     "mergeMode": "merge2",
     "pages": [
-      {
-        "type": "multi-ticket",
-        "paper": {
-          "size": "A4"
-        },
-        "orientation": "portrait",
-        "slots": [
-          {
-            "fileId": "A",
-            "rotation": 90
-          },
-          {
-            "fileId": "B",
-            "rotation": 0
-          }
-        ]
-      },
-      {
-        "type": "multi-ticket",
-        "paper": {
-          "size": "A4"
-        },
-        "orientation": "portrait",
-        "slots": [
-          {
-            "fileId": "C",
-            "rotation": 270
-          },
-          {
-            "fileId": "D",
-            "rotation": 180
-          }
-        ]
-      },
-      {
-        "type": "multi-ticket",
-        "paper": {
-          "size": "A4"
-        },
-        "orientation": "portrait",
-        "slots": [
-          {
-            "fileId": "E",
-            "rotation": 0
-          }
-        ]
-      }
+      { "type": "multi-ticket", "paper": { "size": "A4" }, "orientation": "portrait", "invoiceDocumentIds": ["", "doc-b"], "slots": [{ "fileId": "A", "rotation": 90, "contentRotation": 90, "placement": null, "invoiceDocumentId": "" }, { "fileId": "B", "rotation": 0, "contentRotation": 0, "placement": null, "invoiceDocumentId": "doc-b" }] },
+      { "type": "multi-ticket", "paper": { "size": "A4" }, "orientation": "portrait", "invoiceDocumentIds": ["", ""], "slots": [{ "fileId": "C", "rotation": 270, "contentRotation": 270, "placement": null, "invoiceDocumentId": "" }, { "fileId": "D", "rotation": 180, "contentRotation": 180, "placement": null, "invoiceDocumentId": "" }] },
+      { "type": "multi-ticket", "paper": { "size": "A4" }, "orientation": "portrait", "invoiceDocumentIds": [""], "slots": [{ "fileId": "E", "rotation": 0, "contentRotation": 0, "placement": null, "invoiceDocumentId": "" }] }
     ],
     "extraPages": []
   }

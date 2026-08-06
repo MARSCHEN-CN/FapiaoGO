@@ -30,6 +30,7 @@
  */
 
 import { isMergeMode, getForcedLandscape } from '../utils/mergeMode.js'
+import { resolveInvoiceIdentity } from '../utils/invoiceIdentityResolver.js'
 
 /**
  * 旧 merge 路径过滤（doPrint L453-459）。
@@ -57,10 +58,11 @@ function legacySourceFilter(f) {
  * @param {Object} [options]
  * @param {Object} [options.settings] - { mergeMode, landscape, paperSize, extraSpecial }
  * @param {Object} [options.fileRotations] - { [fileKey]: rotationDegrees }
+ * @param {Object} [options.placements] - { [fileKey]: PlacementResult }（Commit 3-A 新增，与新版保持字段一致）
  * @returns {{ strategy:{oneNormalTwoSpecial:boolean}, mergeMode:string, pages:Array, extraPages:Array }}
  */
 export function buildLegacyPrintPlan(files, options = {}) {
-  const { settings = {}, fileRotations = {} } = options
+  const { settings = {}, fileRotations = {}, placements = {} } = options
 
   const mergeMode = settings.mergeMode || 'none'
   const isMerge = isMergeMode(mergeMode)
@@ -72,6 +74,19 @@ export function buildLegacyPrintPlan(files, options = {}) {
 
   const paperSize = settings.paperSize || 'A4'
   const perFileRotation = (f) => fileRotations[f.key] || 0
+  const perFilePlacement = (f) => placements[f.key] || null
+
+  // Commit 3-A: slot 字段对齐 buildPrintExecutionPlan（contentRotation + placement + invoiceDocumentId）
+  const buildSlot = (f) => {
+    const contentRotation = perFileRotation(f)
+    return {
+      fileId: f.key,
+      rotation: contentRotation,
+      contentRotation,
+      placement: perFilePlacement(f),
+      invoiceDocumentId: f.invoiceDocumentId || resolveInvoiceIdentity(f) || '',
+    }
+  }
 
   // 方向：merge 强制 getForcedLandscape；source 用用户配置（与旧代码逐字同构）
   const orientation = isMerge
@@ -88,10 +103,8 @@ export function buildLegacyPrintPlan(files, options = {}) {
         type: 'multi-ticket',
         paper: { size: paperSize },
         orientation,
-        slots: group.map((f) => ({
-          fileId: f.key,
-          rotation: perFileRotation(f),
-        })),
+        invoiceDocumentIds: group.map((f) => f.invoiceDocumentId || resolveInvoiceIdentity(f) || ''),
+        slots: group.map(buildSlot),
       })
     }
     // 关键不变量：doPrint 忽略 extraSpecial，merge 不展开 round2
@@ -108,8 +121,9 @@ export function buildLegacyPrintPlan(files, options = {}) {
     type: 'single',
     paper: { size: paperSize },
     orientation,
+    invoiceDocumentId: f.invoiceDocumentId || resolveInvoiceIdentity(f) || '',
     source: { fileId: f.key, pageIndex: 0 },
-    slots: [{ fileId: f.key, rotation: perFileRotation(f) }],
+    slots: [buildSlot(f)],
   }))
 
   // 一普二专：仅 source 路径，专票作第 2 轮（executePrint L822-829）
@@ -122,8 +136,9 @@ export function buildLegacyPrintPlan(files, options = {}) {
       type: 'single',
       paper: { size: paperSize },
       orientation,
+      invoiceDocumentId: f.invoiceDocumentId || resolveInvoiceIdentity(f) || '',
       source: { fileId: f.key, pageIndex: 0 },
-      slots: [{ fileId: f.key, rotation: perFileRotation(f) }],
+      slots: [buildSlot(f)],
       _round: 2,
     }))
   }

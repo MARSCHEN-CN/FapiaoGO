@@ -61,14 +61,16 @@ export const MERGE_FILE_FILTER = (f) => {
  * @param {Array<Object>} files - 文件对象数组（同 buildPrintExecutionPlan）
  * @param {Object} [settings] - 打印设置（mergeMode/paperSize/...）
  * @param {Object} [fileRotations] - { [fileKey]: rotationDegrees }
- * @returns {{files: Array<Object>, options: {filter: Function, settings: Object, fileRotations: Object}}}
+ * @param {Object} [placements] - { [fileKey]: PlacementResult }（Commit 3-A 新增：
+ *   RotationResolver 输出，含 scale/offset/rotation。Preview 与 Print 共享布局结果。）
+ * @returns {{files: Array<Object>, options: {filter: Function, settings: Object, fileRotations: Object, placements: Object}}}
  *   可直接解构传给 buildPrintExecutionPlan。
  */
-export function createPrintPlanInput(files, settings = {}, fileRotations = {}) {
+export function createPrintPlanInput(files, settings = {}, fileRotations = {}, placements = {}) {
   const filter = isMergeMode(settings.mergeMode)
     ? MERGE_FILE_FILTER
     : SOURCE_FILE_FILTER
-  return { files, options: { filter, settings, fileRotations } }
+  return { files, options: { filter, settings, fileRotations, placements } }
 }
 
 /**
@@ -79,6 +81,8 @@ export function createPrintPlanInput(files, settings = {}, fileRotations = {}) {
  * @param {(f:Object)=>boolean} [options.filter] - 入口特定过滤器（默认不过滤，使用原始 files 副本）
  * @param {Object} [options.settings] - { mergeMode, landscape, paperSize, extraSpecial }
  * @param {Object} [options.fileRotations] - { [fileKey]: rotationDegrees }
+ * @param {Object} [options.placements] - { [fileKey]: PlacementResult }（Commit 3-A 新增：
+ *   RotationResolver 输出。Preview 与 Print 共享布局结果，避免各自解释旋转。）
  * @param {string} [options.mode] - 仅作注释/未来；Plan 数据本身 pipeline-agnostic
  * @returns {{
  *   strategy: { oneNormalTwoSpecial: boolean },
@@ -92,6 +96,7 @@ export function buildPrintExecutionPlan(files, options = {}) {
     filter,
     settings = {},
     fileRotations = {},
+    placements = {},
   } = options
 
   // 1. 过滤（保留入口差异：filter 完全透传，A1 不统一口径）
@@ -111,6 +116,19 @@ export function buildPrintExecutionPlan(files, options = {}) {
 
   const paperSize = settings.paperSize || 'A4'
   const perFileRotation = (f) => fileRotations[f.key] || 0
+  const perFilePlacement = (f) => placements[f.key] || null
+
+  // Commit 3-A: 统一 slot 构建函数，确保 contentRotation / placement 字段一致
+  const buildSlot = (f) => {
+    const contentRotation = perFileRotation(f)
+    return {
+      fileId: f.key,
+      rotation: contentRotation,  // deprecated alias → 迁移后删除
+      contentRotation,           // 用户旋转（来自 fileRotations）
+      placement: perFilePlacement(f),  // RotationResolver 布局结果（Commit 3-A 新增）
+      invoiceDocumentId: f.invoiceDocumentId || resolveInvoiceIdentity(f) || '',
+    }
+  }
 
   // ── merge 模式：按 groupSize 滑窗分组，每组 = 1 物理页（多 slot） ──
   // 忠实镜像 doPrint L493-502
@@ -123,11 +141,7 @@ export function buildPrintExecutionPlan(files, options = {}) {
         paper: { size: paperSize },
         orientation,
         invoiceDocumentIds: group.map((f) => f.invoiceDocumentId || resolveInvoiceIdentity(f) || ''),
-        slots: group.map((f) => ({
-          fileId: f.key,
-          rotation: perFileRotation(f),
-          invoiceDocumentId: f.invoiceDocumentId || resolveInvoiceIdentity(f) || '',
-        })),
+        slots: group.map(buildSlot),
       })
     }
     // 注意：当前 doPrint 不处理一普二专（保留该行为不变量，不在此展开 extraPages）
@@ -149,7 +163,7 @@ export function buildPrintExecutionPlan(files, options = {}) {
     // 多页文档逐页展开在渲染层（renderFileToPrintImage / buildPrintJobItem）；
     // Plan 层面每文件=1 单元，pageIndex 默认 0。
     source: { fileId: f.key, pageIndex: 0 },
-    slots: [{ fileId: f.key, rotation: perFileRotation(f), invoiceDocumentId: f.invoiceDocumentId || resolveInvoiceIdentity(f) || '' }],
+    slots: [buildSlot(f)],
   }))
 
   // 一普二专：专票作为第 2 轮额外打印
@@ -165,7 +179,7 @@ export function buildPrintExecutionPlan(files, options = {}) {
       orientation,
       invoiceDocumentId: f.invoiceDocumentId || resolveInvoiceIdentity(f) || '',
       source: { fileId: f.key, pageIndex: 0 },
-      slots: [{ fileId: f.key, rotation: perFileRotation(f), invoiceDocumentId: f.invoiceDocumentId || resolveInvoiceIdentity(f) || '' }],
+      slots: [buildSlot(f)],
       _round: 2,
     }))
   }

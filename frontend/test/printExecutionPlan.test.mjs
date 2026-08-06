@@ -40,7 +40,7 @@ test('Case 1: 单 PDF → 1 page / 1 slot (single)', () => {
   })
   assert.equal(plan.pages.length, 2)
   assert.equal(plan.pages[0].type, 'single')
-  assert.deepEqual(plan.pages[0].slots, [{ fileId: 'A', rotation: 0 }])
+  assert.deepEqual(plan.pages[0].slots, [{ fileId: 'A', rotation: 0, contentRotation: 0, placement: null, invoiceDocumentId: '' }])
   assert.deepEqual(plan.pages[0].source, { fileId: 'A', pageIndex: 0 })
   assert.equal(plan.extraPages.length, 0)
   assert.equal(plan.mergeMode, 'none')
@@ -71,12 +71,12 @@ test('Case 3: merge2 (4 文件) → 2 pages / 各 2 slots (portrait)', () => {
   assert.equal(plan.pages[0].type, 'multi-ticket')
   assert.equal(plan.pages[0].slots.length, 2)
   assert.deepEqual(plan.pages[0].slots, [
-    { fileId: 'A', rotation: 0 },
-    { fileId: 'B', rotation: 0 },
+    { fileId: 'A', rotation: 0, contentRotation: 0, placement: null, invoiceDocumentId: '' },
+    { fileId: 'B', rotation: 0, contentRotation: 0, placement: null, invoiceDocumentId: '' },
   ])
   assert.deepEqual(plan.pages[1].slots, [
-    { fileId: 'C', rotation: 0 },
-    { fileId: 'D', rotation: 0 },
+    { fileId: 'C', rotation: 0, contentRotation: 0, placement: null, invoiceDocumentId: '' },
+    { fileId: 'D', rotation: 0, contentRotation: 0, placement: null, invoiceDocumentId: '' },
   ])
   assert.equal(plan.pages[0].orientation, 'portrait') // merge2 强制竖向
   assert.equal(plan.mergeMode, 'merge2')
