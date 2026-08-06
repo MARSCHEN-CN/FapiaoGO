@@ -840,7 +840,8 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
       const contentOrientation = detectDocumentOrientation(file)
 
       const ps = {
-        rotation: fileRotation,
+        rotation: fileRotation,   // deprecated alias（兼容 electron 旧版本）
+        sourceRotation: fileRotation,  // Commit 3-B-2-A: 清晰命名，区别于 contentRotation/layoutRotation
         paperkind: settings.paperkind || printSettings?.paperkind,
         paper: printSettings?.paperSize || settings.paperSize || PRINT_SETTINGS_DEFAULTS.paper,
         fit: printSettings?.fit || PRINT_SETTINGS_DEFAULTS.fit,

@@ -130,11 +130,11 @@ async function buildSumatraCommand(target, settings) {
       normalizedSettings.paper,
       normalizedSettings.customPaper
     );
-    console.log('[CommandBuilder] orient: content=%s (src=%s), paper=%s (paper=%s), rotation=%d',
+    console.log('[CommandBuilder] orient: content=%s (src=%s), paper=%s (paper=%s), sourceRotation=%d',
       contentOrient,
       settings.contentOrientation ? 'frontend' : 'mediaBox',
       normalizedSettings.paperOrientation,
-      normalizedSettings.paper, normalizedSettings.rotation || 0);
+      normalizedSettings.paper, normalizedSettings.sourceRotation ?? normalizedSettings.rotation ?? 0);
   }
 
   // Step 2: Capability 自动映射 — 从缓存补齐 paperkind（异步，避免打印链路同步磁盘读取）

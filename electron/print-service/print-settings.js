@@ -95,7 +95,7 @@ function getPaperOrientation(paperId, customPaper) {
  * 归一化 PrintSettings（纯函数，返回副本，不修改输入）
  *
  * @param {object} ps - 原始 PrintSettings
- * @param {number} [ps.rotation=0] - 内容旋转角度: 0 | 90 | 180 | 270
+ * @param {number} [ps.sourceRotation=0] - 内容旋转角度（Commit 3-B-2-A 改名，回退 ps.rotation）
  * @param {number} [ps.paperkind] - Windows DMPAPER_* ID（优先级高于 paper name）
  * @param {string} [ps.paper] - 纸张尺寸名称（A4/A5/Letter/Custom）
  * @param {object} [ps.customPaper] - 自定义纸张尺寸
@@ -123,7 +123,7 @@ function normalize(ps) {
  *   ③ paper 存在且无 paperkind → paper=<name>（旧版兼容）
  *
  * @param {object} ps - PrintSettings
- * @param {number} [ps.rotation=0] - 旋转角度: 0 | 90 | 180 | 270
+ * @param {number} [ps.sourceRotation=0] - 旋转角度: 0 | 90 | 180 | 270（回退 ps.rotation）
  * @param {string} [ps.fit='contain'] - 适应方式: 'none' | 'contain' | 'fill'
  * @param {number} [ps.paperkind] - Windows DMPAPER_* ID
  * @param {string} [ps.paper] - 纸张尺寸名称（A4/A5/Letter/Custom）
@@ -140,7 +140,7 @@ function normalize(ps) {
  *
  * @example
  * // 横向内容→竖向纸→旋转90°
- * buildPrintSettings({ rotation: 90, paper: 'A4', contentOrientation: 'landscape', paperOrientation: 'portrait' })
+ * buildPrintSettings({ sourceRotation: 90, paper: 'A4', contentOrientation: 'landscape', paperOrientation: 'portrait' })
  * // → "disable-auto-rotation,rotate=90,fit,paper=a4"
  *
  * @example
@@ -153,12 +153,13 @@ function buildPrintSettings(ps) {
   const parts = [];
 
   // 1. 解析方向命令（仅在提供方向信息时激活，否则向后兼容）
+  const sourceRotation = normalized.sourceRotation ?? normalized.rotation ?? 0
   const hasOrient = normalized.contentOrientation && normalized.paperOrientation;
   if (hasOrient) {
     const orientResult = resolveOrientationCommands(
       normalized.contentOrientation,
       normalized.paperOrientation,
-      normalized.rotation || 0
+      sourceRotation
     );
     parts.push(orientResult.baseFlag);
     if (orientResult.rotate !== 0) {
@@ -166,7 +167,7 @@ function buildPrintSettings(ps) {
     }
   } else {
     parts.push('disable-auto-rotation');
-    if (normalized.rotation && normalized.rotation !== 0) {
+    if (sourceRotation && sourceRotation !== 0) {
       parts.push(`rotate=${normalized.rotation}`);
     }
   }
