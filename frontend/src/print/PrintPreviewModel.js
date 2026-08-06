@@ -27,7 +27,7 @@
  */
 
 import { computeTicketSlots } from '../layout/SlotLayout.js'
-import { detectDocumentOrientation } from '../utils/detectOrientation.js'
+import { resolveContentPlacement, resolveContentBounds, getContentDimensions } from '../layout/RotationResolver.js'
 
 const PREVIEW_DPI = 300
 const PX_TO_MM = 25.4 / PREVIEW_DPI
@@ -82,24 +82,6 @@ export function previewPaperLayout(paperSize = 'A4', customPaper = null, margins
     paperRect: { w: paperW, h: paperH },
     usableRect: { x: mLeft, y: mTop, w: innerW, h: innerH },
   }
-}
-
-/**
- * 计算自动预览旋转角：根据内容方向与纸张方向的差异决定是否旋转。
- * 旋转规则：纸张方向是主导，内容方向必须适配纸张。
- *   - 方向一致 → 0°（不旋转）
- *   - 横向内容 + 纵向纸张 → -90°（逆时针旋转，使横向内容适配纵向纸张）
- *   - 纵向内容 + 横向纸张 → +90°（顺时针旋转，使纵向内容适配横向纸张）
- *
- * @param {'portrait'|'landscape'} contentOrient - 内容天然方向
- * @param {'portrait'|'landscape'} paperOrient - 纸张方向
- * @returns {number} 旋转角度（0 | -90 | 90）
- */
-function computeAutoRotation(contentOrient, paperOrient) {
-  if (contentOrient === paperOrient) return 0
-  if (contentOrient === 'landscape' && paperOrient === 'portrait') return -90
-  if (contentOrient === 'portrait' && paperOrient === 'landscape') return 90
-  return 0
 }
 
 /**
@@ -183,9 +165,37 @@ export function buildPrintPreviewModel(plan, { files = [], settings = {}, curren
         const slotDef = page.slots[i] || {}
         const f = fileById.get(slotDef.fileId)
         const userRotation = slotDef.rotation || 0
-        const contentOrient = f ? detectDocumentOrientation(f) : 'portrait'
-        const autoRotation = computeAutoRotation(contentOrient, page.orientation)
-        const effectiveRotation = userRotation !== 0 ? userRotation : autoRotation
+
+        // 三层旋转模型（Commit 1）：RotationResolver 替换旧 computeAutoRotation
+        //   contentRotation = 用户旋转（来自 slotDef.rotation）
+        //   layoutRotation  = 内容适配纸张的自动旋转
+        //   finalRotation   = contentRotation + layoutRotation（仅当文件有可用尺寸时才计算）
+        let effectiveRotation = userRotation
+        const contentDims = f ? getContentDimensions(f) : null
+        if (contentDims && contentDims.width > 0 && contentDims.height > 0) {
+          const rotatedSize = resolveContentBounds(contentDims, userRotation)
+          const paperW_mm = layout.paperRect.w * PX_TO_MM
+          const paperH_mm = layout.paperRect.h * PX_TO_MM
+          const marginLeft_mm = mL * PX_TO_MM
+          const marginRight_mm = mR * PX_TO_MM
+          const marginTop_mm = mT * PX_TO_MM
+          const marginBottom_mm = mB * PX_TO_MM
+          // 纸面尺寸不变：不因内容旋转而旋转纸面
+          const placement = resolveContentPlacement({
+            contentSize: rotatedSize,
+            contentRotation: userRotation,
+            paperSize: { widthMM: paperW_mm, heightMM: paperH_mm },
+            paperOrientation: page.orientation,
+            margins: {
+              left: marginLeft_mm,
+              right: marginRight_mm,
+              top: marginTop_mm,
+              bottom: marginBottom_mm,
+            },
+            dpi: PREVIEW_DPI,
+          })
+          effectiveRotation = placement.finalRotation
+        }
         return {
           x: round2(s.x * PX_TO_MM),
           y: round2(s.y * PX_TO_MM),

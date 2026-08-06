@@ -97,6 +97,29 @@ export function detectPaperOrientation(paper) {
 }
 
 /**
+ * 从文件对象提取原始内容尺寸（px，旋转前）。
+ * 支持 PDF（_pdfPageWidth/_pdfPageHeight）、图片（_imageWidth/_imageHeight）、
+ * OFD（previewWidth/previewHeight）。
+ *
+ * @param {object} file - 文件对象
+ * @returns {{width:number, height:number}|null} 原始内容尺寸，或 null（无可用尺寸）
+ */
+export function getContentDimensions(file) {
+  if (!file) return null
+  // PDF：加载时提取的页面尺寸
+  if (file._pdfPageWidth > 0 && file._pdfPageHeight > 0) {
+    return { width: file._pdfPageWidth, height: file._pdfPageHeight }
+  }
+  // 图片 / OFD previewImage
+  const w = file._imageWidth || file.previewWidth || 0
+  const h = file._imageHeight || file.previewHeight || 0
+  if (w > 0 && h > 0) {
+    return { width: w, height: h }
+  }
+  return null
+}
+
+/**
  * Layer 2：打印布局旋转（自动适配）。
  *
  * 规则（用户定稿）：
