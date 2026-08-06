@@ -193,7 +193,11 @@ export function resolveContentPlacement({
   const contentOrientation = detectContentOrientation({ width: effectiveContentW, height: effectiveContentH })
 
   // ── Layer 2：纸张世界 ──
-  const paperOrientation = paperOrientInput || detectPaperOrientation(paperSize)
+  // 两个独立变量：
+  //   paperShapeOrientation = 纸张物理形状（A4→portrait, 297×210→landscape）
+  //   paperOrientation      = 用户选择的最终方向（portrait/landscape 切换）
+  const paperShapeOrientation = detectPaperOrientation(paperSize)
+  const paperOrientation = paperOrientInput || paperShapeOrientation
   const paperW = roundPx(paperSize.widthMM * pxPerMm)
   const paperH = roundPx(paperSize.heightMM * pxPerMm)
   const toPx = (mm) => roundPx((Number(mm) || 0) * pxPerMm)
@@ -202,10 +206,17 @@ export function resolveContentPlacement({
   const mT = toPx(margins.top)
   const mB = toPx(margins.bottom)
 
-  // ── 纸面适配旋转（Fit）──
-  // fitRotation = 内容方向不适配纸张方向时的补偿旋转（-90/0/+90）
-  // 它不是"布局旋转内容"，而是"计算纸面适配所需的旋转补偿"
-  const fitRotation = computeLayoutRotation(contentOrientation, paperOrientation)
+  // ── 纸面适配旋转（二阶段 Fit，Commit 2-D）──
+  // Stage 1: shapeFitRotation — 内容方向 vs 纸张物理形状
+  //   e.g. 横内容 + A4(竖形纸) → -90
+  // Stage 2: orientationFitRotation — 纸张物理形状 → 用户方向
+  //   e.g. A4(竖形纸) + 用户选横向 → 90
+  // renderRotation = shapeFitRotation + orientationFitRotation
+  const shapeFitRotation = computeLayoutRotation(contentOrientation, paperShapeOrientation)
+  const orientationFitRotation = computeLayoutRotation(paperShapeOrientation, paperOrientation)
+  // fitRotation = 原始值(-90/0/90)，renderRotation = 归一化(0/90/180/270)
+  const fitRotation = shapeFitRotation + orientationFitRotation
+  const renderRotation = normalizeRotation(fitRotation)
   const fitRotated = isRotated(Math.abs(fitRotation))
   const placedContentW = fitRotated ? effectiveContentH : effectiveContentW
   const placedContentH = fitRotated ? effectiveContentW : effectiveContentH
@@ -244,12 +255,20 @@ export function resolveContentPlacement({
     effectiveContentSize: { width: effectiveContentW, height: effectiveContentH },
 
     // Layer 2：纸面适配（PrintPreview 拥有纸张权限）
-    // fitRotation = 内容方向不适配纸张时的补偿旋转（-90/0/+90）
+    //   纸张物理形状（A4→portrait, 297×210→landscape）
+    paperShapeOrientation,
+    //   用户选择的最终方向
+    paperOrientation,
+    //   Stage 1: 内容 vs 纸张物理形状
+    shapeFitRotation,
+    //   Stage 2: 纸张物理形状 → 用户方向
+    orientationFitRotation,
+    //   总适配旋转 = shapeFitRotation + orientationFitRotation
     fitRotation,
+    renderRotation,
 
     // 几何
     canvasSize,
-    paperOrientation,
     availableRect: { x: mL, y: mT, w: availableW, h: availableH },
     scale,
     offset: { x: offsetX, y: offsetY },
@@ -264,7 +283,7 @@ export function resolveContentPlacement({
       translateX: offsetX,
       translateY: offsetY,
       scale,
-      rotationDeg: normalizeRotation(cr + fitRotation),
+      rotationDeg: renderRotation,
       rotationCx: placedContentW / 2,
       rotationCy: placedContentH / 2,
       imageWidth: placedContentW,

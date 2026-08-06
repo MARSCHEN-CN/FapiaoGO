@@ -289,8 +289,9 @@ describe('resolveContentPlacement', () => {
     assert.equal(rt.imageHeight, 1400)
   })
 
-  it('Case 12: renderTransform rot90 — 内容用户旋转90° + 竖纸 → finalRotation=0, renderTransform 不旋转', () => {
-    // 原始竖内容 1000×1400，contentRotation=90 → 有效横内容 + 竖纸 → fitRotation=-90 → finalRotation=0
+  it('Case 12: renderTransform rot90 — 内容用户旋转90° + 竖纸 → fitRotation=-90', () => {
+    // 原始竖内容 1000×1400，contentRotation=90 → 有效横内容 + 竖纸 → fitRotation=-90
+    // 缩略图已 bake contentRotation（?content_rotation=90），SVG 只施加 fitRotation
     const r = resolveContentPlacement({
       contentSize: { width: 1000, height: 1400 },  // 原始竖内容
       contentRotation: 90,
@@ -299,11 +300,12 @@ describe('resolveContentPlacement', () => {
       dpi: 300,
     })
     const rt = r.renderTransform
-    assert.equal(normalizeRotation(r.contentRotation + r.fitRotation), 0, '用户90+布局-90=0')
-    assert.equal(rt.rotationDeg, 0, 'renderTransform 不旋转（finalRotation=0）')
+    assert.equal(r.contentRotation + r.fitRotation, 0, '用户90+fit-90=0')
+    // renderTransform 只施加 fitRotation（正常化为 270 = -90）
+    assert.equal(rt.rotationDeg, normalizeRotation(r.fitRotation), 'renderTransform fitRotation=270')
     // 布局旋转后，imageWidth 交换
-    assert.equal(rt.imageWidth, 1000, '布局-90°后宽=原高1000')
-    assert.equal(rt.imageHeight, 1400, '布局-90°后高=原宽1400')
+    assert.equal(rt.imageWidth, 1000, 'fitRotated后宽=有效高1000')
+    assert.equal(rt.imageHeight, 1400, 'fitRotated后高=有效宽1400')
   })
 
   it('rejects invalid paperSize', () => {
