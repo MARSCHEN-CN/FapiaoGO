@@ -1,45 +1,39 @@
 /**
- * RotationResolver — 打印布局旋转解析器（三层旋转模型，2026-08-06）
+ * RotationResolver — 打印布局旋转解析器（三层权限模型，2026-08-06）
  *
- * ## 三层旋转模型（冻结契约）
+ * ## 权限边界（Commit 2-C 冻结）
  *
- * Layer 1 — 展示区（Document Viewer）：
- *   只有内容，没有纸张。用户旋转 = contentRotation。
- *   状态：fileRotations[fileKey]（由 usePreview.handleRotate 维护）。
+ *   模块            | 可以修改              | 不可修改
+ *   ───────────────┼──────────────────────┼──────────────────
+ *   Viewer         | contentRotation      | paper
+ *   PrintPreview   | paperOrientation     | contentRotation
+ *   PrintPipeline  | 执行 placement        | 决定旋转
  *
- * Layer 2 — 打印预览区（Print Preview）：
- *   第一次出现纸张世界。打印布局引擎负责把「旋转后的内容」适配到「纸张 + 安全边距」。
- *   额外旋转 = layoutRotation（自动计算，不写入用户状态）。
- *   最终旋转 = finalRotation = contentRotation + layoutRotation。
+ * ## 两层 Resolver
  *
- * Layer 3 — 打印执行：
- *   忠实执行 PrintPreview 生成的 PrintSpec，打印机不重新理解 rotation/fit/margin。
+ *   1. ContentResolve（本文件前半）：
+ *      输入 contentRotation + contentSize → 输出 effectiveContentSize + effectiveOrientation
+ *      职责：把用户旋转动作物化为内容几何。Viewer 拥有旋转权限。
+ *
+ *   2. FitResolve（本文件后半）：
+ *      输入 effectiveOrientation + paperSize → 输出 fitRotation（-90/0/+90）
+ *      职责：纸面适配——当内容方向≠纸张方向时，计算所需的补偿旋转。
+ *      fitRotation 不改变 contentRotation，只影响最终 placement 的 transform。
  *
  * ## 核心公式
  *
- *   contentSize = 用户旋转后内容尺寸（宽×高，px）
- *   paperSize   = 纸张尺寸（宽×高，mm）
- *   safeMargins = 安全边距（left/right/top/bottom，mm）
+ *   effectiveContentW = contentRotated ? contentSize.h : contentSize.w
+ *   effectiveContentH = contentRotated ? contentSize.w : contentSize.h
  *
- *   layoutRotation =
+ *   fitRotation =
  *     0   : 内容方向 == 纸张方向
- *     -90 : 内容横向 + 纸张纵向（逆时针转内容塞入竖纸）
- *     +90 : 内容纵向 + 纸张横向（顺时针转内容塞入横纸）
- *
- *   finalRotation = normalizeRotation(contentRotation + layoutRotation)
- *
- *   scale = min(
- *     availableWidth  / (layoutRotated ? contentHeight : contentWidth),
- *     availableHeight / (layoutRotated ? contentWidth  : contentHeight)
- *   )
+ *     -90 : 内容横向 + 纸张纵向
+ *     +90 : 内容纵向 + 纸张横向
  *
  * ## 与旧 Policy A 的区别
  *
  *   旧: rot90 → 纸面跟随旋转（paper follows content）
- *   新: rot90 → 内容旋转 → 布局决定纸张承载方式 → 打印机执行布局结果
- *
- *   旧 transformPaperRotation  →  新 resolveContentPlacement
- *   旧 slot.rotation（模糊）     →  新 contentRotation / layoutRotation / finalRotation
+ *   新: rot90 → 内容旋转 → 纸面适配 → 打印机执行布局结果
  *
  * @module layout/RotationResolver
  */
@@ -208,14 +202,13 @@ export function resolveContentPlacement({
   const mT = toPx(margins.top)
   const mB = toPx(margins.bottom)
 
-  // ── 布局旋转 ──
-  const layoutRotation = computeLayoutRotation(contentOrientation, paperOrientation)
-  const finalRotation = normalizeRotation(cr + layoutRotation)
-
-  // 布局旋转后内容尺寸（在 effectiveContentW/H 基础上再旋转）
-  const layoutRotated = isRotated(Math.abs(layoutRotation))
-  const placedContentW = layoutRotated ? effectiveContentH : effectiveContentW
-  const placedContentH = layoutRotated ? effectiveContentW : effectiveContentH
+  // ── 纸面适配旋转（Fit）──
+  // fitRotation = 内容方向不适配纸张方向时的补偿旋转（-90/0/+90）
+  // 它不是"布局旋转内容"，而是"计算纸面适配所需的旋转补偿"
+  const fitRotation = computeLayoutRotation(contentOrientation, paperOrientation)
+  const fitRotated = isRotated(Math.abs(fitRotation))
+  const placedContentW = fitRotated ? effectiveContentH : effectiveContentW
+  const placedContentH = fitRotated ? effectiveContentW : effectiveContentH
 
   // 可用区域（纸张扣除安全边距）
   const availableW = paperW - mL - mR
@@ -242,33 +235,36 @@ export function resolveContentPlacement({
   const canvasSize = { width: paperW, height: paperH }
 
   return {
-    // Layer 1
+    // Layer 1：内容世界（Viewer 拥有旋转权限）
     contentRotation: cr,
     contentSize: { width: contentSize.width, height: contentSize.height },
     contentOrientation,
 
-    // Layer 2
-    layoutRotation,
-    finalRotation,
-    paperOrientation,
+    // 有效内容尺寸（content-rotated，供消费者直接使用）
+    effectiveContentSize: { width: effectiveContentW, height: effectiveContentH },
+
+    // Layer 2：纸面适配（PrintPreview 拥有纸张权限）
+    // fitRotation = 内容方向不适配纸张时的补偿旋转（-90/0/+90）
+    fitRotation,
 
     // 几何
     canvasSize,
+    paperOrientation,
     availableRect: { x: mL, y: mT, w: availableW, h: availableH },
     scale,
     offset: { x: offsetX, y: offsetY },
     placedRect: { x: offsetX, y: offsetY, w: scaledW, h: scaledH },
 
-    // SVG renderTransform（Commit 2-B）
+    // SVG renderTransform（Commit 2-B→2-C 改名）
     //   translate(ox,oy) → 定位到纸面坐标
     //   scale(s)         → fit 缩放
-    //   rotate(deg,cx,cy)→ 绕内容中心旋转（cx,cy 在内容坐标系中，缩放前）
+    //   rotate(deg,cx,cy)→ 总旋转 = contentRotation + fitRotation（绕内容中心）
     //   消费方只需把 transform 直接作为 SVG <g> 属性，image 尺寸=imageWidth×imageHeight
     renderTransform: {
       translateX: offsetX,
       translateY: offsetY,
       scale,
-      rotationDeg: finalRotation,
+      rotationDeg: normalizeRotation(cr + fitRotation),
       rotationCx: placedContentW / 2,
       rotationCy: placedContentH / 2,
       imageWidth: placedContentW,

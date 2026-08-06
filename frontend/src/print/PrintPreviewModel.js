@@ -27,7 +27,7 @@
  */
 
 import { computeTicketSlots } from '../layout/SlotLayout.js'
-import { resolveContentPlacement, resolveContentBounds, getContentDimensions } from '../layout/RotationResolver.js'
+import { resolveContentPlacement, resolveContentBounds, getContentDimensions, normalizeRotation } from '../layout/RotationResolver.js'
 
 const PREVIEW_DPI = 300
 const PX_TO_MM = 25.4 / PREVIEW_DPI
@@ -202,7 +202,9 @@ export function buildPrintPreviewModel(plan, { files = [], settings = {}, curren
             },
             dpi: PREVIEW_DPI,
           })
-          effectiveRotation = placementResult.finalRotation
+          effectiveRotation = normalizeRotation(
+            (placementResult.contentRotation || 0) + (placementResult.fitRotation || 0)
+          )
         }
         return {
           x: round2(s.x * PX_TO_MM),
@@ -210,12 +212,10 @@ export function buildPrintPreviewModel(plan, { files = [], settings = {}, curren
           width: round2(s.width * PX_TO_MM),
           height: round2(s.height * PX_TO_MM),
           source: f?.name || slotDef.fileId || `#${i + 1}`,
-          // deprecated（保留兼容，迁移后删除）→ 新消费者请用 contentRotation / layoutRotation / finalRotation
+          // deprecated（保留兼容）→ 新消费者请用 contentRotation / fitRotation
           rotation: effectiveRotation,
-          // 三层旋转字段（Commit 2 新增）
           contentRotation: placementResult?.contentRotation ?? userRotation,
-          layoutRotation: placementResult?.layoutRotation ?? 0,
-          finalRotation: effectiveRotation,
+          fitRotation: placementResult?.fitRotation ?? 0,
           // 布局结果（Commit 2 新增，PrintPreviewCanvas 消费）
           placement: placementResult ? {
             scale: placementResult.scale,

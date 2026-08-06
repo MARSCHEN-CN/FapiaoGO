@@ -3,8 +3,8 @@
  *
  * 消费 buildPrintPreviewModel 的输出：
  *   { valid, currentPageIndex, pages: [{ paper, orientation, paperSizeMM,
- *     slots: [{ x, y, width, height, source, rotation, contentRotation, layoutRotation,
- *              finalRotation, placement, thumbnailUrl, fileId, pageIndex }] }] }
+ *     slots: [{ x, y, width, height, source, rotation, contentRotation, fitRotation,
+ *              placement, thumbnailUrl, fileId, pageIndex }] }] }
  *
  * 渲染内容：
  *   - 纸张轮廓（SVG viewBox = mm，1:1 无换算误差）
@@ -12,10 +12,10 @@
  *   - 发票缩略图（<image> 元素）
  *   - 页码控制（固定底部区域：上一页/页码指示器可输入跳转/下一页）
  *
- * Commit 2-A（旋转架构迁移）：
+ * Commit 2-A→2-C（旋转架构迁移）：
  *   - 已删除 CSS transform:rotate() —— 旋转语义上移到 RotationResolver。
  *   - 缩略图直接填充槽位区域，不再自行计算旋转前 bounding box。
- *   - slot.rotation 保留为 deprecated alias（= finalRotation）。
+ *   - slot.rotation 保留为 deprecated alias（= contentRotation + fitRotation）。
  *
  * @module components/PrintPreviewCanvas
  */

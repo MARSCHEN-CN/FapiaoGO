@@ -7,7 +7,7 @@ const ROW_HEIGHT = 64
 const OVERSCAN = 5
 
 // ─── FileCard 行组件 ─────────────────────────────────────────────
-const FileCardRow = memo(({ index, style, files, previewFileKey, mergeActive, mergeCount, duplicateInfo, previousYearInfo, fileRotations, onPreview, onRemove, onRotate, onHoverFile }) => {
+const FileCardRow = memo(({ index, style, files, previewFileKey, previewFileDocId, mergeActive, mergeCount, duplicateInfo, previousYearInfo, fileRotations, onPreview, onRemove, onRotate, onHoverFile }) => {
   const fileObj = files?.[index]
   if (!fileObj) return null
 
@@ -162,7 +162,7 @@ const FileCardRow = memo(({ index, style, files, previewFileKey, mergeActive, me
           if (fileObj.status === 'parsing') return null
           if (isFailedFile(fileObj)) return <span className="fc-amount fc-failed">解析失败</span>
           if (!fileObj.amount) return null
-          const num = parseFloat(String(fileObj.amount || '').replace(/[¥￥,\s]/g, ''))
+          const num = parseFloat((fileObj.amount || '').replace(/[¥￥,\s]/g, ''))
           if (isNaN(num) || num === 0) return null
           return <span className="fc-amount">¥{num.toLocaleString()}</span>
         })()}
@@ -185,6 +185,7 @@ const FileCardRow = memo(({ index, style, files, previewFileKey, mergeActive, me
   if (prev.onRotate !== next.onRotate) return false
   if (prev.onHoverFile !== next.onHoverFile) return false
   if (prev.previewFileKey !== next.previewFileKey) return false
+  if (prev.previewFileDocId !== next.previewFileDocId) return false
   if (prev.mergeActive !== next.mergeActive || prev.mergeCount !== next.mergeCount) return false
   if (prev.duplicateInfo !== next.duplicateInfo) return false
   if (prev.previousYearInfo !== next.previousYearInfo) return false
@@ -208,6 +209,7 @@ export default memo(function FileList({
   const mergeActive = isMergeMode(paperSize)
   const mergeCount = mergeActive ? parseInt(paperSize.replace('merge', ''), 10) : 2
   const previewFileKey = previewFile?.key || null
+  const previewFileDocId = previewFile?.docId || null
   const listRef = useRef(null)
 
   // ⚠ 警告：不要删除下面 rowProps 中的 `files` 键，即使 FileCardRow 未直接使用它。
@@ -219,6 +221,7 @@ export default memo(function FileList({
   const rowProps = useMemo(() => ({
     files,           // Do NOT remove: react-window v2 memoizes Object.values(rowProps)
     previewFileKey,
+    previewFileDocId,
     mergeActive,
     mergeCount,
     duplicateInfo,
@@ -228,7 +231,7 @@ export default memo(function FileList({
     onRemove,
     onRotate,
     onHoverFile,
-  }), [files, previewFileKey, mergeActive, mergeCount, duplicateInfo, previousYearInfo, fileRotations, onPreview, onRemove, onRotate, onHoverFile])
+  }), [files, previewFileKey, previewFileDocId, mergeActive, mergeCount, duplicateInfo, previousYearInfo, fileRotations, onPreview, onRemove, onRotate, onHoverFile])
 
   // 选中文件自动滚动（react-window v2 API：scrollToRow({ index, align })）
   useEffect(() => {

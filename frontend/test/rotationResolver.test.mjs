@@ -2,11 +2,11 @@
  * RotationResolver 单元测试 — 三层旋转模型验证（2026-08-06）
  *
  * 测试用例（用户定稿）：
- *   1. 竖内容 + 竖纸 → layoutRotation=0, finalRotation=0
- *   2. 横内容 + 竖纸 → layoutRotation=-90, finalRotation=-90
- *   3. 竖内容 + 横纸 → layoutRotation=+90, finalRotation=+90
+ *   1. 竖内容 + 竖纸 → fitRotation=0, finalRotation=0
+ *   2. 横内容 + 竖纸 → fitRotation=-90, finalRotation=-90
+ *   3. 竖内容 + 横纸 → fitRotation=+90, finalRotation=+90
  *   4. contentRotation=90 + 竖内容 + 竖纸 → finalRotation=90
- *   5. contentRotation=90 + 竖纸（原横内容）→ 此时旋转后内容为横，layoutRotation=-90，finalRotation=0
+ *   5. contentRotation=90 + 竖纸（原横内容）→ 此时旋转后内容为横，fitRotation=-90，finalRotation=0
  *   6. 安全边距 → scale 计算正确
  *   7. 居中 → offset 非负且居中
  */
@@ -107,15 +107,15 @@ describe('resolveContentPlacement', () => {
   // 共用纸张：A4 竖向 @300dpi ≈ 2480×3508px
   const A4_PORTRAIT = { widthMM: 210, heightMM: 297 }
 
-  it('Case 1: 竖内容 + 竖纸 → layoutRotation=0, finalRotation=0', () => {
+  it('Case 1: 竖内容 + 竖纸 → fitRotation=0, finalRotation=0', () => {
     const r = resolveContentPlacement({
       contentSize: { width: 1000, height: 1400 },
       contentRotation: 0,
       paperSize: A4_PORTRAIT,
       dpi: 300,
     })
-    assert.equal(r.layoutRotation, 0)
-    assert.equal(r.finalRotation, 0)
+    assert.equal(r.fitRotation, 0)
+    assert.equal(normalizeRotation(r.contentRotation + r.fitRotation), 0)
     assert.equal(r.contentOrientation, 'portrait')
     assert.equal(r.paperOrientation, 'portrait')
     // scale 应 ∈ (0, 1]（内容尺寸较小，不放大，scale=1）
@@ -123,20 +123,20 @@ describe('resolveContentPlacement', () => {
     // available 宽 = 2480-6mm*2 ≈ 2339px（默认 margin=3mm → 35px each side）
   })
 
-  it('Case 2: 横内容 + 竖纸 → layoutRotation=-90, finalRotation=270', () => {
+  it('Case 2: 横内容 + 竖纸 → fitRotation=-90, finalRotation=270', () => {
     const r = resolveContentPlacement({
       contentSize: { width: 1400, height: 1000 },
       contentRotation: 0,
       paperSize: A4_PORTRAIT,
       dpi: 300,
     })
-    assert.equal(r.layoutRotation, -90)
-    assert.equal(r.finalRotation, 270)  // 0 + (-90) → 270
+    assert.equal(r.fitRotation, -90)
+    assert.equal(normalizeRotation(r.contentRotation + r.fitRotation), 270)  // 0 + (-90) → 270
     assert.equal(r.contentOrientation, 'landscape')
     assert.equal(r.paperOrientation, 'portrait')
   })
 
-  it('Case 3: 竖内容 + 横纸 → layoutRotation=+90, finalRotation=90', () => {
+  it('Case 3: 竖内容 + 横纸 → fitRotation=+90, finalRotation=90', () => {
     const A4_LANDSCAPE = { widthMM: 297, heightMM: 210 }
     const r = resolveContentPlacement({
       contentSize: { width: 1000, height: 1400 },
@@ -144,14 +144,14 @@ describe('resolveContentPlacement', () => {
       paperSize: A4_LANDSCAPE,
       dpi: 300,
     })
-    assert.equal(r.layoutRotation, 90)
-    assert.equal(r.finalRotation, 90)
+    assert.equal(r.fitRotation, 90)
+    assert.equal(normalizeRotation(r.contentRotation + r.fitRotation), 90)
     assert.equal(r.contentOrientation, 'portrait')
     assert.equal(r.paperOrientation, 'landscape')
   })
 
-  it('Case 4: contentRotation=90 竖内容 → 旋转后横内容 + 竖纸 → layoutRotation=-90, finalRotation=0', () => {
-    // 原始竖内容 1000×1400，contentRotation=90 → 有效横内容 + 竖纸 → layoutRotation=-90
+  it('Case 4: contentRotation=90 竖内容 → 旋转后横内容 + 竖纸 → fitRotation=-90, finalRotation=0', () => {
+    // 原始竖内容 1000×1400，contentRotation=90 → 有效横内容 + 竖纸 → fitRotation=-90
     const r = resolveContentPlacement({
       contentSize: { width: 1000, height: 1400 },  // 原始竖内容
       contentRotation: 90,
@@ -159,12 +159,12 @@ describe('resolveContentPlacement', () => {
       dpi: 300,
     })
     assert.equal(r.contentRotation, 90)
-    assert.equal(r.layoutRotation, -90)
-    assert.equal(r.finalRotation, 0)  // 90 + (-90) = 0
+    assert.equal(r.fitRotation, -90)
+    assert.equal(normalizeRotation(r.contentRotation + r.fitRotation), 0)  // 90 + (-90) = 0
     assert.equal(r.contentOrientation, 'landscape')  // 旋转后内容是横的
   })
 
-  it('Case 5: contentRotation=0 横内容 + 横纸 → layoutRotation=0, finalRotation=0', () => {
+  it('Case 5: contentRotation=0 横内容 + 横纸 → fitRotation=0, finalRotation=0', () => {
     const A4_LANDSCAPE = { widthMM: 297, heightMM: 210 }
     const r = resolveContentPlacement({
       contentSize: { width: 1400, height: 1000 },
@@ -172,8 +172,8 @@ describe('resolveContentPlacement', () => {
       paperSize: A4_LANDSCAPE,
       dpi: 300,
     })
-    assert.equal(r.layoutRotation, 0)
-    assert.equal(r.finalRotation, 0)
+    assert.equal(r.fitRotation, 0)
+    assert.equal(normalizeRotation(r.contentRotation + r.fitRotation), 0)
     assert.equal(r.contentOrientation, 'landscape')
     assert.equal(r.paperOrientation, 'landscape')
   })
@@ -241,8 +241,8 @@ describe('resolveContentPlacement', () => {
       dpi: 300,
     })
     assert.equal(r.contentRotation, 180)
-    assert.equal(r.layoutRotation, 0)  // 竖内容 + 竖纸
-    assert.equal(r.finalRotation, 180)
+    assert.equal(r.fitRotation, 0)  // 竖内容 + 竖纸
+    assert.equal(normalizeRotation(r.contentRotation + r.fitRotation), 180)
   })
 
   it('Case 10: 270° contentRotation 竖内容 → 旋转后横内容 + 竖纸 → finalRotation=180', () => {
@@ -254,8 +254,8 @@ describe('resolveContentPlacement', () => {
       dpi: 300,
     })
     assert.equal(r.contentRotation, 270)
-    assert.equal(r.layoutRotation, -90)
-    assert.equal(r.finalRotation, 180)  // 270 + (-90) = 180
+    assert.equal(r.fitRotation, -90)
+    assert.equal(normalizeRotation(r.contentRotation + r.fitRotation), 180)  // 270 + (-90) = 180
   })
 
   it('rejects invalid contentSize', () => {
@@ -290,7 +290,7 @@ describe('resolveContentPlacement', () => {
   })
 
   it('Case 12: renderTransform rot90 — 内容用户旋转90° + 竖纸 → finalRotation=0, renderTransform 不旋转', () => {
-    // 原始竖内容 1000×1400，contentRotation=90 → 有效横内容 + 竖纸 → layoutRotation=-90 → finalRotation=0
+    // 原始竖内容 1000×1400，contentRotation=90 → 有效横内容 + 竖纸 → fitRotation=-90 → finalRotation=0
     const r = resolveContentPlacement({
       contentSize: { width: 1000, height: 1400 },  // 原始竖内容
       contentRotation: 90,
@@ -299,7 +299,7 @@ describe('resolveContentPlacement', () => {
       dpi: 300,
     })
     const rt = r.renderTransform
-    assert.equal(r.finalRotation, 0, '用户90+布局-90=0')
+    assert.equal(normalizeRotation(r.contentRotation + r.fitRotation), 0, '用户90+布局-90=0')
     assert.equal(rt.rotationDeg, 0, 'renderTransform 不旋转（finalRotation=0）')
     // 布局旋转后，imageWidth 交换
     assert.equal(rt.imageWidth, 1000, '布局-90°后宽=原高1000')

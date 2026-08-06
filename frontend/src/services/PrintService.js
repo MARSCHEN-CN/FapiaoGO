@@ -60,7 +60,7 @@ export function buildPrintSettings(file, userSettings, fileRotations, detectOrie
   const contentOrientation = detectOrientationFn?.(file)
 
   return {
-    // Commit 3-B-2-A: rotation 改名 sourceRotation，清晰区别于 contentRotation/layoutRotation/finalRotation
+    // Commit 3-B-2-A: rotation 改名 sourceRotation，清晰区别于 contentRotation/fitRotation
     //   sourceRotation = 用户原始旋转意图（仅用于 Sumatra source file 路径的旧执行器）
     //   placement = RotationResolver 布局结果（新模型，Canvas 路径已使用）
     //   ⚠️ 保留 rotation 为 deprecated alias（兼容 electron 旧版本）
