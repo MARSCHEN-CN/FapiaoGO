@@ -151,9 +151,9 @@ describe('resolveContentPlacement', () => {
   })
 
   it('Case 4: contentRotation=90 竖内容 → 旋转后横内容 + 竖纸 → layoutRotation=-90, finalRotation=0', () => {
-    // 这是关键用例：用户点了顺时针90，内容变横，竖纸自动 -90 转回来 → 最终 0
+    // 原始竖内容 1000×1400，contentRotation=90 → 有效横内容 + 竖纸 → layoutRotation=-90
     const r = resolveContentPlacement({
-      contentSize: { width: 1400, height: 1000 },  // 旋转后尺寸（原 1000×1400 旋转 90°）
+      contentSize: { width: 1000, height: 1400 },  // 原始竖内容
       contentRotation: 90,
       paperSize: A4_PORTRAIT,
       dpi: 300,
@@ -246,8 +246,9 @@ describe('resolveContentPlacement', () => {
   })
 
   it('Case 10: 270° contentRotation 竖内容 → 旋转后横内容 + 竖纸 → finalRotation=180', () => {
+    // 原始竖内容 1000×1400，contentRotation=270(= -90) → 有效横内容 + 竖纸
     const r = resolveContentPlacement({
-      contentSize: { width: 1400, height: 1000 },  // 270° 旋转后 ≈ 90° 结果
+      contentSize: { width: 1000, height: 1400 },  // 原始竖内容
       contentRotation: 270,
       paperSize: A4_PORTRAIT,
       dpi: 300,
@@ -289,8 +290,9 @@ describe('resolveContentPlacement', () => {
   })
 
   it('Case 12: renderTransform rot90 — 内容用户旋转90° + 竖纸 → finalRotation=0, renderTransform 不旋转', () => {
+    // 原始竖内容 1000×1400，contentRotation=90 → 有效横内容 + 竖纸 → layoutRotation=-90 → finalRotation=0
     const r = resolveContentPlacement({
-      contentSize: { width: 1400, height: 1000 },  // 旋转后横内容
+      contentSize: { width: 1000, height: 1400 },  // 原始竖内容
       contentRotation: 90,
       paperSize: A4_PORTRAIT,
       margins: { left: 3, right: 3, top: 3, bottom: 3 },

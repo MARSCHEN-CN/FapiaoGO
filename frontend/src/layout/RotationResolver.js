@@ -191,7 +191,12 @@ export function resolveContentPlacement({
   const roundPx = (v) => Math.round(v)
 
   // ── Layer 1：内容世界 ──
-  const contentOrientation = detectContentOrientation(contentSize)
+  // Commit 3 fix: 先用 contentRotation 旋转原始尺寸，再检测方向。
+  // 原横票+用户旋转90° → 有效竖内容 → 竖纸=匹配(layout=0)、横纸=需旋转(layout=-90)
+  const contentRotated = isRotated(Math.abs(cr))
+  const effectiveContentW = contentRotated ? contentSize.height : contentSize.width
+  const effectiveContentH = contentRotated ? contentSize.width : contentSize.height
+  const contentOrientation = detectContentOrientation({ width: effectiveContentW, height: effectiveContentH })
 
   // ── Layer 2：纸张世界 ──
   const paperOrientation = paperOrientInput || detectPaperOrientation(paperSize)
@@ -207,10 +212,10 @@ export function resolveContentPlacement({
   const layoutRotation = computeLayoutRotation(contentOrientation, paperOrientation)
   const finalRotation = normalizeRotation(cr + layoutRotation)
 
-  // 布局旋转后内容尺寸
+  // 布局旋转后内容尺寸（在 effectiveContentW/H 基础上再旋转）
   const layoutRotated = isRotated(Math.abs(layoutRotation))
-  const placedContentW = layoutRotated ? contentSize.height : contentSize.width
-  const placedContentH = layoutRotated ? contentSize.width : contentSize.height
+  const placedContentW = layoutRotated ? effectiveContentH : effectiveContentW
+  const placedContentH = layoutRotated ? effectiveContentW : effectiveContentH
 
   // 可用区域（纸张扣除安全边距）
   const availableW = paperW - mL - mR
