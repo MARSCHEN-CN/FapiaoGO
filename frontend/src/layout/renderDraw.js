@@ -37,6 +37,12 @@ export function drawRenderCommand(ctx, cmd, source, contentW, contentH, ratio = 
   const drawH = cmd.rotatedBounds.height * cmd.placement.scale * ratio
   const cr = cmd.contentRotation
 
+  // [DIAG-6] drawRenderCommand 旋转执行
+  if (cr !== 0) {
+    console.log('[DIAG-6 drawRenderCommand] contentRotation=%d offset=(%d,%d) drawW=%d drawH=%d ratio=%d',
+      cr, offsetX, offsetY, Math.round(drawW), Math.round(drawH), ratio)
+  }
+
   ctx.save()
   // clip：Merge 的每项裁剪到 slot 矩形；单文件预览 cmd.clip 为整页（或不传 → 不裁）。
   if (cmd.clip && typeof cmd.clip.width === 'number' && cmd.clip.width > 0) {

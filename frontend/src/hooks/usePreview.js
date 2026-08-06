@@ -566,7 +566,17 @@ export function usePreview({ files, settings, electronAPIRef }) {
   // paperLayout 在 Render 阶段随 settings 同步派生 → margin 修改当帧即生效，无 effect 滞后。
   const renderCommand = useMemo(
     () => {
-      return buildRenderCommand(paperLayout, { ...(documentStateRef.current || {}), contentRotation: previewRotation })
+      const cmd = buildRenderCommand(paperLayout, { ...(documentStateRef.current || {}), contentRotation: previewRotation })
+      // [DIAG-5] RenderCommand 输出
+      if (previewRotation !== 0) {
+        console.log('[DIAG-5 renderCommand built] contentRotation=%d rotation=%d placement={scale:%s,offset:(%d,%d)} rotatedBounds={%d,%d} valid=%s',
+          cmd?.contentRotation, cmd?.rotation,
+          cmd?.placement?.scale ?? 'null',
+          cmd?.placement?.offsetX ?? 'null', cmd?.placement?.offsetY ?? 'null',
+          cmd?.rotatedBounds?.width ?? 'null', cmd?.rotatedBounds?.height ?? 'null',
+          !!(cmd && cmd.placement && cmd.placement.scale > 0))
+      }
+      return cmd
     },
     [paperLayout, previewRotation, previewFile, paperOrientation]
   )
