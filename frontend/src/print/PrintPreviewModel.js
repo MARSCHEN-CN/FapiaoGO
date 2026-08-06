@@ -215,6 +215,9 @@ export function buildPrintPreviewModel(plan, { files = [], settings = {}, curren
             offset: { x: placementResult.offset.x, y: placementResult.offset.y },
             placedRect: { ...placementResult.placedRect },
             canvasSize: { ...placementResult.canvasSize },
+            // SVG renderTransform（Commit 2-B 新增）
+            //   消费方直接作为 <g transform="..."> 属性
+            renderTransform: { ...placementResult.renderTransform },
           } : null,
           previewTransform: { rotation: effectiveRotation },
           thumbnailUrl: getThumbnailUrl(f, 0),

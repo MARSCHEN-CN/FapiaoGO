@@ -28,8 +28,11 @@ const ORIENT_LABEL = { portrait: '纵向', landscape: '横向' }
  * 单个发票缩略图槽位渲染（内部组件，方便管理加载状态）
  * 纯内容：缩略图 + 槽位边框；不叠加任何标签/序号信息（打印预览 = 现实打印内容）。
  *
- * Commit 2-A: 不再使用 CSS rotate —— 旋转由 RotationResolver 计算，
- * finalRotation 已包含内容旋转 + 布局适配，缩略图直接填充槽位区域。
+ * Commit 2-B: 消费 placement.renderTransform（RotationResolver 计算的三段式 SVG transform）。
+ *   translate(ox,oy) → 定位到纸面坐标
+ *   scale(s)         → fit 缩放
+ *   rotate(deg,cx,cy)→ 绕内容中心旋转
+ *   无 placement 时 fallback 到 slot fill（文件无尺寸数据时）。
  */
 const SlotImage = memo(({ slot }) => {
   const [loaded, setLoaded] = useState(false)
@@ -40,53 +43,99 @@ const SlotImage = memo(({ slot }) => {
     setError(false)
   }, [slot.thumbnailUrl])
 
-  // Commit 2-A: 不再计算 isRot90 / imgW/H 互换 / transform:rotate()
-  // 缩略图直接填充槽位区域（x, y, width, height 来自 computeTicketSlots）
   const hasThumbnail = !!slot.thumbnailUrl && !error
+  const t = slot.placement?.renderTransform
+
+  // 三段式 SVG transform 字符串（Commit 2-B）
+  const svgTransform = t
+    ? `translate(${t.translateX},${t.translateY}) scale(${t.scale}) rotate(${t.rotationDeg},${t.rotationCx},${t.rotationCy})`
+    : null
 
   return (
     <g>
-      {/* 槽位边框：纸张布局 */}
+      {/* 槽位边框：纸张布局（始终在 slot.x/y/w/h，不受内容旋转影响） */}
       <rect
         x={slot.x} y={slot.y} width={slot.width} height={slot.height}
         rx="0.8" fill="none"
         stroke="var(--accent)" strokeOpacity="0.5" strokeWidth="0.3"
       />
 
-      {/* 内容：直接填充槽位（Commit 2-A 去掉 CSS rotate） */}
-      {hasThumbnail ? (
+      {t ? (
+        /* Commit 2-B: renderTransform 管控内容放置 */
+        <g transform={svgTransform}>
+          {hasThumbnail ? (
+            <>
+              <image
+                href={slot.thumbnailUrl}
+                x="0"
+                y="0"
+                width={t.imageWidth}
+                height={t.imageHeight}
+                preserveAspectRatio="none"
+                style={{
+                  opacity: loaded ? 1 : 0,
+                  transition: 'opacity 0.2s ease-in',
+                }}
+                onLoad={() => setLoaded(true)}
+                onError={() => {
+                  console.warn('[PrintPreviewCanvas] 缩略图加载失败:', slot.source)
+                  setError(true)
+                }}
+              />
+              {!loaded && (
+                <rect
+                  x="0" y="0" width={t.imageWidth} height={t.imageHeight}
+                  fill="var(--accent-soft)" fillOpacity="0.3"
+                  rx="0.5"
+                />
+              )}
+            </>
+          ) : (
+            <rect
+              x="0" y="0" width={t.imageWidth} height={t.imageHeight}
+              fill="var(--accent-soft)" fillOpacity="0.2"
+              rx="0.5"
+            />
+          )}
+        </g>
+      ) : (
+        /* fallback：无 placement 时直接填充槽位（文件无尺寸数据） */
         <>
-          <image
-            href={slot.thumbnailUrl}
-            x={slot.x}
-            y={slot.y}
-            width={slot.width}
-            height={slot.height}
-            preserveAspectRatio="xMidYMid meet"
-            style={{
-              opacity: loaded ? 1 : 0,
-              transition: 'opacity 0.2s ease-in',
-            }}
-            onLoad={() => setLoaded(true)}
-            onError={() => {
-              console.warn('[PrintPreviewCanvas] 缩略图加载失败:', slot.source)
-              setError(true)
-            }}
-          />
-          {!loaded && (
+          {hasThumbnail ? (
+            <>
+              <image
+                href={slot.thumbnailUrl}
+                x={slot.x}
+                y={slot.y}
+                width={slot.width}
+                height={slot.height}
+                preserveAspectRatio="xMidYMid meet"
+                style={{
+                  opacity: loaded ? 1 : 0,
+                  transition: 'opacity 0.2s ease-in',
+                }}
+                onLoad={() => setLoaded(true)}
+                onError={() => {
+                  console.warn('[PrintPreviewCanvas] 缩略图加载失败:', slot.source)
+                  setError(true)
+                }}
+              />
+              {!loaded && (
+                <rect
+                  x={slot.x} y={slot.y} width={slot.width} height={slot.height}
+                  fill="var(--accent-soft)" fillOpacity="0.3"
+                  rx="0.5"
+                />
+              )}
+            </>
+          ) : (
             <rect
               x={slot.x} y={slot.y} width={slot.width} height={slot.height}
-              fill="var(--accent-soft)" fillOpacity="0.3"
+              fill="var(--accent-soft)" fillOpacity="0.2"
               rx="0.5"
             />
           )}
         </>
-      ) : (
-        <rect
-          x={slot.x} y={slot.y} width={slot.width} height={slot.height}
-          fill="var(--accent-soft)" fillOpacity="0.2"
-          rx="0.5"
-        />
       )}
     </g>
   )

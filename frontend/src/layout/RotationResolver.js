@@ -253,6 +253,22 @@ export function resolveContentPlacement({
     scale,
     offset: { x: offsetX, y: offsetY },
     placedRect: { x: offsetX, y: offsetY, w: scaledW, h: scaledH },
+
+    // SVG renderTransform（Commit 2-B）
+    //   translate(ox,oy) → 定位到纸面坐标
+    //   scale(s)         → fit 缩放
+    //   rotate(deg,cx,cy)→ 绕内容中心旋转（cx,cy 在内容坐标系中，缩放前）
+    //   消费方只需把 transform 直接作为 SVG <g> 属性，image 尺寸=imageWidth×imageHeight
+    renderTransform: {
+      translateX: offsetX,
+      translateY: offsetY,
+      scale,
+      rotationDeg: finalRotation,
+      rotationCx: placedContentW / 2,
+      rotationCy: placedContentH / 2,
+      imageWidth: placedContentW,
+      imageHeight: placedContentH,
+    },
   }
 }
 

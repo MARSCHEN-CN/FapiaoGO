@@ -265,6 +265,45 @@ describe('resolveContentPlacement', () => {
     }), /contentSize/)
   })
 
+  it('Case 11: renderTransform — translate+scale+rotate 三段式数值锚点', () => {
+    // 竖内容 1000×1400 + A4 portrait + 0° → 居中，scale≤1，rotation=0
+    const r = resolveContentPlacement({
+      contentSize: { width: 1000, height: 1400 },
+      contentRotation: 0,
+      paperSize: A4_PORTRAIT,
+      margins: { left: 3, right: 3, top: 3, bottom: 3 },
+      dpi: 300,
+    })
+    const rt = r.renderTransform
+    assert.ok(rt, 'renderTransform must exist')
+    assert.equal(rt.rotationDeg, 0, '竖内容+竖纸→不旋转')
+    assert.ok(rt.scale > 0 && rt.scale <= 1, 'scale∈(0,1]')
+    assert.ok(rt.translateX > 0, 'translateX>0（边距内）')
+    assert.ok(rt.translateY > 0, 'translateY>0（边距内）')
+    // rotation center = 内容中心
+    assert.equal(rt.rotationCx, rt.imageWidth / 2)
+    assert.equal(rt.rotationCy, rt.imageHeight / 2)
+    // image 尺寸 = placedContent 尺寸（竖内容不变）
+    assert.equal(rt.imageWidth, 1000)
+    assert.equal(rt.imageHeight, 1400)
+  })
+
+  it('Case 12: renderTransform rot90 — 内容用户旋转90° + 竖纸 → finalRotation=0, renderTransform 不旋转', () => {
+    const r = resolveContentPlacement({
+      contentSize: { width: 1400, height: 1000 },  // 旋转后横内容
+      contentRotation: 90,
+      paperSize: A4_PORTRAIT,
+      margins: { left: 3, right: 3, top: 3, bottom: 3 },
+      dpi: 300,
+    })
+    const rt = r.renderTransform
+    assert.equal(r.finalRotation, 0, '用户90+布局-90=0')
+    assert.equal(rt.rotationDeg, 0, 'renderTransform 不旋转（finalRotation=0）')
+    // 布局旋转后，imageWidth 交换
+    assert.equal(rt.imageWidth, 1000, '布局-90°后宽=原高1000')
+    assert.equal(rt.imageHeight, 1400, '布局-90°后高=原宽1400')
+  })
+
   it('rejects invalid paperSize', () => {
     assert.throws(() => resolveContentPlacement({
       contentSize: { width: 100, height: 100 },
