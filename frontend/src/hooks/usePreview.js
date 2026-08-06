@@ -65,6 +65,13 @@ export function usePreview({ files, settings, electronAPIRef }) {
   const [fileRotations, setFileRotations] = useState({})
   const fileRotationsRef = useRef(fileRotations)
   useEffect(() => { fileRotationsRef.current = fileRotations }, [fileRotations])
+  // [DIAG-2] 监控 fileRotations 变化
+  useEffect(() => {
+    const keys = Object.keys(fileRotations).filter(k => (fileRotations[k] || 0) !== 0)
+    if (keys.length > 0) {
+      console.log('[DIAG-2 fileRotations changed]', keys.length, 'non-zero entries:', fileRotations)
+    }
+  }, [fileRotations])
   const [showLeftArrow, setShowLeftArrow] = useState(false)
   const [showRightArrow, setShowRightArrow] = useState(false)
 
@@ -358,6 +365,8 @@ export function usePreview({ files, settings, electronAPIRef }) {
     const key = targetKey || previewFileRef.current?.key
     if (!key) return
     const deg = ((fileRotations[key] || 0) + 90) % 360
+    console.log('[DIAG-1 rotate click] targetKey=%s resolvedKey=%s currentRotation=%d nextRotation=%d fileRotations=%o',
+      targetKey, key, fileRotations[key] || 0, deg, fileRotations)
     setFileRotations(prev => ({ ...prev, [key]: deg }))
     // 持久化 contentRotation（纸张方向 Fact 之一），paperOrientation 取当前 Fact
     // 4.1.5：写入键严格用 Document 身份 docId，不回退 path/key（uiKey 永不入持久层）
@@ -544,6 +553,11 @@ export function usePreview({ files, settings, electronAPIRef }) {
   // （TDZ）。移到此处后，所有消费方（含 preview 渲染 effect）都能拿到已初始化的 const。
   // ✅ previewRotation 必须在 contentLayout memo 之前声明（useMemo 首次渲染立即执行，不能闭包捕获尚未初始化的 const）
   const previewRotation = fileRotations[previewFile?.key] || 0
+  // [DIAG-3] Viewer 消费 rotation
+  if (previewRotation !== 0) {
+    console.log('[DIAG-3 viewer rotation] fileKey=%s previewRotation=%d fileRotations=%o',
+      previewFile?.key, previewRotation, fileRotations)
+  }
 
   // ── Stage 1：RenderCommand 唯一派生点（F3/F5）──
   // Preview 消费其 placement/rotation/clip，不再自算 fit/scale/swap（消除第二套算法）。

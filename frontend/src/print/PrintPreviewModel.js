@@ -165,6 +165,11 @@ export function buildPrintPreviewModel(plan, { files = [], settings = {}, curren
         const slotDef = page.slots[i] || {}
         const f = fileById.get(slotDef.fileId)
         const userRotation = slotDef.rotation || 0
+        // [DIAG-4] PrintPreview 消费 rotation
+        if (userRotation !== 0) {
+          console.log('[DIAG-4 printPreview rotation] fileKey=%s slotDef.rotation=%d fileRotations-used=%o',
+            slotDef.fileId, userRotation, { hasDim: !!(f && f._pdfPageWidth > 0) })
+        }
 
         // 三层旋转模型（Commit 1→2）：RotationResolver 替换旧 computeAutoRotation
         //   contentRotation = 用户旋转（来自 slotDef.rotation）
