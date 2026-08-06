@@ -229,6 +229,13 @@ export function buildPrintPreviewModel(plan, { files = [], settings = {}, curren
           previewTransform: { rotation: effectiveRotation },
           thumbnailUrl: getThumbnailUrl(f, 0, userRotation),
           fileId: slotDef.fileId,
+          // [DIAG-11] renderTransform.rotationDeg 语义验证
+          _diag: placementResult && (userRotation !== 0 || placementResult.fitRotation !== 0) ? {
+            contentRotation: placementResult.contentRotation,
+            fitRotation: placementResult.fitRotation,
+            effectiveSize: placementResult.effectiveContentSize,
+            rotationDeg: placementResult.renderTransform.rotationDeg,
+          } : undefined,
           pageIndex: 0,
         }
       }),
@@ -240,6 +247,20 @@ export function buildPrintPreviewModel(plan, { files = [], settings = {}, curren
     ...plan.pages.map(pageToModel),
     ...(plan.extraPages || []).map(pageToModel),
   ].filter(Boolean)
+
+  // [DIAG-11] 打印旋转语义验证矩阵
+  if (basePages.length > 0) {
+    for (const p of basePages) {
+      for (const s of p.slots) {
+        if (s._diag) {
+          console.log('[DIAG-11 rotation matrix] contentRotation=%d fitRotation=%d effectiveSize=%s rotationDeg=%d paperOrientation=%s',
+            s._diag.contentRotation, s._diag.fitRotation, s._diag.effectiveSize,
+            s._diag.rotationDeg, p.orientation)
+          break
+        }
+      }
+    }
+  }
   if (basePages.length === 0) {
     return { valid: false, reason: '边距超出纸张尺寸（打印内容无可用区域）', pages: [], currentPageIndex: 0 }
   }
