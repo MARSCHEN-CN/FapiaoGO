@@ -171,9 +171,16 @@ def thumbnail(doc_id: str):
     documents can build a per-page thumbnail strip. The page flows into
     ``engine.render`` and therefore into the render cache key, so distinct
     pages never collide in cache.
+
+    Rotation-Aware (Commit 3 fix): accepts ``?content_rotation=90`` to render
+    thumbnails at the user's chosen orientation. Passed as view_state.rotation.
     """
     page = _int_param("page", 1)
-    return _render_and_respond(doc_id, "thumbnail", page)
+    cr = _int_param("content_rotation", 0)
+    vs = {}
+    if cr:
+        vs["rotation"] = cr
+    return _render_and_respond(doc_id, "thumbnail", page, vs)
 
 
 # ── GET /render/{doc_id} ───────────────────────────────────────

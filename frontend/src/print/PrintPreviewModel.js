@@ -135,10 +135,12 @@ export function buildPrintPreviewModel(plan, { files = [], settings = {}, curren
    * 获取文件指定页的缩略图 URL
    * 优先使用 docId 从后端 /thumbnail 端点获取（page 参数后端 1-based），fallback 到 previewImage
    */
-  const getThumbnailUrl = (file, pageIndex = 0) => {
+  const getThumbnailUrl = (file, pageIndex = 0, contentRotation = 0) => {
     if (!file) return null
     if (file.docId) {
-      return `${backendUrl}/thumbnail/${file.docId}?page=${pageIndex + 1}`
+      const base = `${backendUrl}/thumbnail/${file.docId}?page=${pageIndex + 1}`
+      // Commit 3 fix: 传 content_rotation 给后端，让它生成正确方向的缩略图
+      return contentRotation ? `${base}&content_rotation=${contentRotation}` : base
     }
     if (file.previewImage) {
       return file.previewImage
@@ -225,7 +227,7 @@ export function buildPrintPreviewModel(plan, { files = [], settings = {}, curren
             renderTransform: { ...placementResult.renderTransform },
           } : null,
           previewTransform: { rotation: effectiveRotation },
-          thumbnailUrl: getThumbnailUrl(f, 0),
+          thumbnailUrl: getThumbnailUrl(f, 0, userRotation),
           fileId: slotDef.fileId,
           pageIndex: 0,
         }
@@ -258,7 +260,7 @@ export function buildPrintPreviewModel(plan, { files = [], settings = {}, curren
             slots: [{
               ...slot,
               pageIndex: p,
-              thumbnailUrl: getThumbnailUrl(f, p),
+              thumbnailUrl: getThumbnailUrl(f, p, slot.rotation || 0),
             }],
           })
         }
@@ -271,7 +273,7 @@ export function buildPrintPreviewModel(plan, { files = [], settings = {}, curren
           const f = fileById.get(slot.fileId)
           return {
             ...slot,
-            thumbnailUrl: getThumbnailUrl(f, 0),
+            thumbnailUrl: getThumbnailUrl(f, 0, slot.contentRotation || slot.rotation || 0),
             pageIndex: 0,
           }
         }),
