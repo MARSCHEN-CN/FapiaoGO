@@ -106,6 +106,7 @@ describe('computeLayoutRotation', () => {
 describe('resolveContentPlacement', () => {
   // 共用纸张：A4 竖向 @300dpi ≈ 2480×3508px
   const A4_PORTRAIT = { widthMM: 210, heightMM: 297 }
+  const LANDSCAPE_PAPER = { widthMM: 297, heightMM: 210 }
 
   it('Case 1: 竖内容 + 竖纸 → fitRotation=0, finalRotation=0', () => {
     const r = resolveContentPlacement({
@@ -314,5 +315,61 @@ describe('resolveContentPlacement', () => {
       contentRotation: 0,
       paperSize: {},
     }), /paperSize/)
+  })
+
+  // ── Commit 2-E Gate: 二阶段纸面适配矩阵 ──
+  // 验证 shapeAdjustedOrientation + orientationFitRotation 显式中转
+  it('Gate E1: 横票+横纸型+横向 → renderRotation=0', () => {
+    const r = resolveContentPlacement({
+      contentSize: { width: 1400, height: 1000 },  // 横向
+      contentRotation: 0,
+      paperSize: LANDSCAPE_PAPER,  // 297×210 横向纸型
+      dpi: 300,
+    })
+    assert.equal(r.shapeFitRotation, 0)      // 横内容+横纸型=匹配
+    assert.equal(r.shapeAdjustedOrientation, 'landscape')
+    assert.equal(r.orientationFitRotation, 0) // 横向=横向
+    assert.equal(r.renderRotation, 0)
+  })
+
+  it('Gate E2: 横票+横纸型+纵向 → renderRotation=-90(270)', () => {
+    const r = resolveContentPlacement({
+      contentSize: { width: 1400, height: 1000 },
+      contentRotation: 0,
+      paperSize: LANDSCAPE_PAPER,
+      paperOrientation: 'portrait',  // 用户选纵向
+      dpi: 300,
+    })
+    assert.equal(r.shapeFitRotation, 0)
+    assert.equal(r.shapeAdjustedOrientation, 'landscape')
+    assert.equal(r.orientationFitRotation, -90)  // 横→纵
+    assert.equal(r.renderRotation, 270)  // normalize(-90)
+  })
+
+  it('Gate E3: 横票+竖纸型(A4)+竖向 → renderRotation=270', () => {
+    const r = resolveContentPlacement({
+      contentSize: { width: 1400, height: 1000 },
+      contentRotation: 0,
+      paperSize: A4_PORTRAIT,
+      dpi: 300,
+    })
+    assert.equal(r.shapeFitRotation, -90)  // 横内容+竖纸型=不匹配
+    assert.equal(r.shapeAdjustedOrientation, 'portrait')
+    assert.equal(r.orientationFitRotation, 0) // 竖=竖
+    assert.equal(r.renderRotation, 270)  // normalize(-90)
+  })
+
+  it('Gate E4: 横票+竖纸型(A4)+横向 → renderRotation=0', () => {
+    const r = resolveContentPlacement({
+      contentSize: { width: 1400, height: 1000 },
+      contentRotation: 0,
+      paperSize: A4_PORTRAIT,
+      paperOrientation: 'landscape',  // 用户选横向
+      dpi: 300,
+    })
+    assert.equal(r.shapeFitRotation, -90)
+    assert.equal(r.shapeAdjustedOrientation, 'portrait')
+    assert.equal(r.orientationFitRotation, 90)  // 竖→横
+    assert.equal(r.renderRotation, 0)  // -90+90=0
   })
 })

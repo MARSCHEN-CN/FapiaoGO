@@ -206,14 +206,15 @@ export function resolveContentPlacement({
   const mT = toPx(margins.top)
   const mB = toPx(margins.bottom)
 
-  // ── 纸面适配旋转（二阶段 Fit，Commit 2-D）──
+  // ── 纸面适配旋转（二阶段 Fit，Commit 2-E）──
   // Stage 1: shapeFitRotation — 内容方向 vs 纸张物理形状
-  //   e.g. 横内容 + A4(竖形纸) → -90
-  // Stage 2: orientationFitRotation — 纸张物理形状 → 用户方向
-  //   e.g. A4(竖形纸) + 用户选横向 → 90
-  // renderRotation = shapeFitRotation + orientationFitRotation
+  //   横内容 + A4(竖形纸) → -90；竖内容 + A4(竖形纸) → 0
+  // Stage 2: orientationFitRotation — shape-adjusted 方向 → 用户方向
+  //   shapeAdjustedOrientation: 内容经 shapeFit 后的方向（= paperShapeOrientation）
   const shapeFitRotation = computeLayoutRotation(contentOrientation, paperShapeOrientation)
-  const orientationFitRotation = computeLayoutRotation(paperShapeOrientation, paperOrientation)
+  // shape-adjusted 方向：shapeFit 后内容已经匹配纸型 → ≡ paperShapeOrientation
+  const shapeAdjustedOrientation = paperShapeOrientation
+  const orientationFitRotation = computeLayoutRotation(shapeAdjustedOrientation, paperOrientation)
   // fitRotation = 原始值(-90/0/90)，renderRotation = 归一化(0/90/180/270)
   const fitRotation = shapeFitRotation + orientationFitRotation
   const renderRotation = normalizeRotation(fitRotation)
@@ -261,7 +262,9 @@ export function resolveContentPlacement({
     paperOrientation,
     //   Stage 1: 内容 vs 纸张物理形状
     shapeFitRotation,
-    //   Stage 2: 纸张物理形状 → 用户方向
+    //   Stage 1 后的内容方向（= paperShapeOrientation，显式中转）
+    shapeAdjustedOrientation,
+    //   PaperShape → UserOrientation 的旋转
     orientationFitRotation,
     //   总适配旋转 = shapeFitRotation + orientationFitRotation
     fitRotation,
