@@ -166,11 +166,12 @@ export function buildPrintPreviewModel(plan, { files = [], settings = {}, curren
         const f = fileById.get(slotDef.fileId)
         const userRotation = slotDef.rotation || 0
 
-        // 三层旋转模型（Commit 1）：RotationResolver 替换旧 computeAutoRotation
+        // 三层旋转模型（Commit 1→2）：RotationResolver 替换旧 computeAutoRotation
         //   contentRotation = 用户旋转（来自 slotDef.rotation）
         //   layoutRotation  = 内容适配纸张的自动旋转
-        //   finalRotation   = contentRotation + layoutRotation（仅当文件有可用尺寸时才计算）
+        //   finalRotation   = contentRotation + layoutRotation
         let effectiveRotation = userRotation
+        let placementResult = null  // resolveContentPlacement 输出（有尺寸时填充）
         const contentDims = f ? getContentDimensions(f) : null
         if (contentDims && contentDims.width > 0 && contentDims.height > 0) {
           const rotatedSize = resolveContentBounds(contentDims, userRotation)
@@ -181,7 +182,7 @@ export function buildPrintPreviewModel(plan, { files = [], settings = {}, curren
           const marginTop_mm = mT * PX_TO_MM
           const marginBottom_mm = mB * PX_TO_MM
           // 纸面尺寸不变：不因内容旋转而旋转纸面
-          const placement = resolveContentPlacement({
+          placementResult = resolveContentPlacement({
             contentSize: rotatedSize,
             contentRotation: userRotation,
             paperSize: { widthMM: paperW_mm, heightMM: paperH_mm },
@@ -194,7 +195,7 @@ export function buildPrintPreviewModel(plan, { files = [], settings = {}, curren
             },
             dpi: PREVIEW_DPI,
           })
-          effectiveRotation = placement.finalRotation
+          effectiveRotation = placementResult.finalRotation
         }
         return {
           x: round2(s.x * PX_TO_MM),
@@ -202,7 +203,19 @@ export function buildPrintPreviewModel(plan, { files = [], settings = {}, curren
           width: round2(s.width * PX_TO_MM),
           height: round2(s.height * PX_TO_MM),
           source: f?.name || slotDef.fileId || `#${i + 1}`,
+          // deprecated（保留兼容，迁移后删除）→ 新消费者请用 contentRotation / layoutRotation / finalRotation
           rotation: effectiveRotation,
+          // 三层旋转字段（Commit 2 新增）
+          contentRotation: placementResult?.contentRotation ?? userRotation,
+          layoutRotation: placementResult?.layoutRotation ?? 0,
+          finalRotation: effectiveRotation,
+          // 布局结果（Commit 2 新增，PrintPreviewCanvas 消费）
+          placement: placementResult ? {
+            scale: placementResult.scale,
+            offset: { x: placementResult.offset.x, y: placementResult.offset.y },
+            placedRect: { ...placementResult.placedRect },
+            canvasSize: { ...placementResult.canvasSize },
+          } : null,
           previewTransform: { rotation: effectiveRotation },
           thumbnailUrl: getThumbnailUrl(f, 0),
           fileId: slotDef.fileId,
