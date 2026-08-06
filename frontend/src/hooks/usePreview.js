@@ -614,6 +614,13 @@ export function usePreview({ files, settings, electronAPIRef }) {
       : null
     const reUrl = getRenderEnginePreviewUrl(previewFile, USE_RENDER_ENGINE_PREVIEW, previewSpec)
 
+    // [DIAG-7] RE URL 中的 content_rotation
+    if (previewRotation !== 0 && previewSpec) {
+      console.log('[DIAG-7 RE content_rotation] spec.contentRotation=%d spec.rotation=%d reUrl_content_rotation=%s',
+        previewSpec.contentRotation, previewSpec.rotation,
+        reUrl?.match(/content_rotation=(\d+)/)?.[1] ?? 'not-found')
+    }
+
     // ✅ L2 缓存旁路：有缓存 Canvas 时跳过 Canvas 渲染，但不阻止 Render Dispatcher 决策
     if (skipRenderRef.current) {
       skipRenderRef.current = false
