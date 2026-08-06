@@ -780,7 +780,14 @@ export function usePreview({ files, settings, electronAPIRef }) {
       setReBlockedDocId(fileObj.docId)
       console.log(`[PREVIEW FLOW ${renderToken}] RECOVER_FALLBACK | marked RE blocked, falling back to canvas`)
     }
-    if (hasRenderEngineUrl && reBlockedDocId !== previewFile.docId) {
+    // Commit 3 fix: RE 后端目前不消费 content_rotation（Slice 1.2B 才支持）。
+    // 当用户旋转了内容（previewRotation ≠ 0），强制走 Canvas 本地渲染路径，
+    // 让 drawRenderCommand 正确执行旋转。旋转归零后自动切回 RE 快速路径。
+    const reRotateSupported = previewRotation === 0
+    if (!reRotateSupported) {
+      console.log('[DIAG-8 canvas fallback] contentRotation=%d → skipping RE, using Canvas render', previewRotation)
+    }
+    if (hasRenderEngineUrl && reBlockedDocId !== previewFile.docId && reRotateSupported) {
       const url = reUrl
       renderEngineUrlRef.current = url
       // ✅ Stage 0.8 Commit Buffer（修正版）：以 committedPreviewRef.current.url 判断是否需重新探测，
