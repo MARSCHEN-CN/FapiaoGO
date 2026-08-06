@@ -1,0 +1,236 @@
+/**
+ * RotationResolver — 打印布局旋转解析器（三层旋转模型，2026-08-06）
+ *
+ * ## 三层旋转模型（冻结契约）
+ *
+ * Layer 1 — 展示区（Document Viewer）：
+ *   只有内容，没有纸张。用户旋转 = contentRotation。
+ *   状态：fileRotations[fileKey]（由 usePreview.handleRotate 维护）。
+ *
+ * Layer 2 — 打印预览区（Print Preview）：
+ *   第一次出现纸张世界。打印布局引擎负责把「旋转后的内容」适配到「纸张 + 安全边距」。
+ *   额外旋转 = layoutRotation（自动计算，不写入用户状态）。
+ *   最终旋转 = finalRotation = contentRotation + layoutRotation。
+ *
+ * Layer 3 — 打印执行：
+ *   忠实执行 PrintPreview 生成的 PrintSpec，打印机不重新理解 rotation/fit/margin。
+ *
+ * ## 核心公式
+ *
+ *   contentSize = 用户旋转后内容尺寸（宽×高，px）
+ *   paperSize   = 纸张尺寸（宽×高，mm）
+ *   safeMargins = 安全边距（left/right/top/bottom，mm）
+ *
+ *   layoutRotation =
+ *     0   : 内容方向 == 纸张方向
+ *     -90 : 内容横向 + 纸张纵向（逆时针转内容塞入竖纸）
+ *     +90 : 内容纵向 + 纸张横向（顺时针转内容塞入横纸）
+ *
+ *   finalRotation = normalizeRotation(contentRotation + layoutRotation)
+ *
+ *   scale = min(
+ *     availableWidth  / (layoutRotated ? contentHeight : contentWidth),
+ *     availableHeight / (layoutRotated ? contentWidth  : contentHeight)
+ *   )
+ *
+ * ## 与旧 Policy A 的区别
+ *
+ *   旧: rot90 → 纸面跟随旋转（paper follows content）
+ *   新: rot90 → 内容旋转 → 布局决定纸张承载方式 → 打印机执行布局结果
+ *
+ *   旧 transformPaperRotation  →  新 resolveContentPlacement
+ *   旧 slot.rotation（模糊）     →  新 contentRotation / layoutRotation / finalRotation
+ *
+ * @module layout/RotationResolver
+ */
+
+/**
+ * 归一化旋转角度到 0/90/180/270
+ * @param {number} deg
+ * @returns {number}
+ */
+export function normalizeRotation(deg) {
+  return ((Math.round(deg) % 360) + 360) % 360
+}
+
+/**
+ * 判断角度是否导致宽高交换
+ * @param {number} deg - 归一化后角度
+ * @returns {boolean}
+ */
+export function isRotated(deg) {
+  const r = normalizeRotation(deg)
+  return r === 90 || r === 270
+}
+
+/**
+ * Layer 1 输出：用户旋转后内容在「内容世界」的尺寸。
+ *
+ * @param {{width:number, height:number}} contentBounds - 原始内容尺寸（px）
+ * @param {number} contentRotation - 用户旋转角（0/90/180/270）
+ * @returns {{width:number, height:number}} 旋转后内容尺寸
+ */
+export function resolveContentBounds(contentBounds, contentRotation) {
+  const r = normalizeRotation(contentRotation)
+  if (isRotated(r)) {
+    return { width: contentBounds.height, height: contentBounds.width }
+  }
+  return { width: contentBounds.width, height: contentBounds.height }
+}
+
+/**
+ * 检测内容天然方向
+ * @param {{width:number, height:number}} size - 内容尺寸（旋转前原始尺寸）
+ * @returns {'portrait'|'landscape'}
+ */
+export function detectContentOrientation(size) {
+  return size.width > size.height ? 'landscape' : 'portrait'
+}
+
+/**
+ * 检测纸张方向
+ * @param {{widthMM:number, heightMM:number}} paper
+ * @returns {'portrait'|'landscape'}
+ */
+export function detectPaperOrientation(paper) {
+  return paper.widthMM > paper.heightMM ? 'landscape' : 'portrait'
+}
+
+/**
+ * Layer 2：打印布局旋转（自动适配）。
+ *
+ * 规则（用户定稿）：
+ *   - 内容方向 == 纸张方向 → 0（不额外旋转）
+ *   - 横向内容 + 纵向纸张 → -90（逆时针转内容塞入竖纸）
+ *   - 纵向内容 + 横向纸张 → +90（顺时针转内容塞入横纸）
+ *
+ * @param {'portrait'|'landscape'} contentOrientation - 旋转后内容的天然方向
+ * @param {'portrait'|'landscape'} paperOrientation   - 纸张方向
+ * @returns {number} layoutRotation（0 | -90 | 90）
+ */
+export function computeLayoutRotation(contentOrientation, paperOrientation) {
+  if (contentOrientation === paperOrientation) return 0
+  if (contentOrientation === 'landscape' && paperOrientation === 'portrait') return -90
+  if (contentOrientation === 'portrait' && paperOrientation === 'landscape') return 90
+  return 0
+}
+
+/**
+ * ## RotationResolver 主入口
+ *
+ * 输入「内容世界」（Layer 1 结果）和「纸张世界」（Layer 2 参数），
+ * 输出完整的布局描述。
+ *
+ * @param {Object} input
+ * @param {{width:number, height:number}} input.contentSize  - 旋转后内容尺寸（px，resolveContentBounds 输出）
+ * @param {number}              input.contentRotation         - 用户旋转角（0/90/180/270）
+ * @param {{widthMM:number, heightMM:number}} input.paperSize - 纸张尺寸（mm）
+ * @param {'portrait'|'landscape'} [input.paperOrientation]    - 纸张方向（不传则自动从 paperSize 推导）
+ * @param {{left?:number, right?:number, top?:number, bottom?:number}} [input.margins] - 安全边距（mm，默认 0）
+ * @param {number} [input.dpi=300]                            - 渲染 DPI
+ * @returns {{
+ *   // Layer 1 透传
+ *   contentRotation: number,         // 用户旋转（0/90/180/270）
+ *   contentSize: {width:number, height:number},  // 旋转后内容尺寸（px）
+ *   contentOrientation: 'portrait'|'landscape',  // 旋转后内容方向
+ *
+ *   // Layer 2 派生
+ *   layoutRotation: number,          // 布局旋转（0|-90|90）
+ *   finalRotation: number,           // 最终旋转 = contentRotation + layoutRotation（归一化 0/90/180/270）
+ *   paperOrientation: 'portrait'|'landscape',   // 纸张方向
+ *
+ *   // 几何（px@dpi）
+ *   canvasSize: {width:number, height:number},  // 最终画布尺寸（纸张 px + 方向适配）
+ *   availableRect: {x:number, y:number, w:number, h:number},  // 安全区（px，已扣除 margins）
+ *   scale: number,                   // fit scale = min(availableW / contentW, availableH / contentH)
+ *   offset: {x:number, y:number},    // 居中偏移（px，locatedLayout 下内容左上角位置）
+ *   placedRect: {x:number, y:number, w:number, h:number},  // 缩放居中后内容在画布上的位置
+ * }}
+ */
+export function resolveContentPlacement({
+  contentSize,
+  contentRotation,
+  paperSize,
+  paperOrientation: paperOrientInput,
+  margins = {},
+  dpi = 300,
+}) {
+  // ── 校验 ──
+  if (!contentSize?.width || !contentSize?.height) {
+    throw new Error('RotationResolver: contentSize 需含正数 width/height')
+  }
+  if (!paperSize?.widthMM || !paperSize?.heightMM) {
+    throw new Error('RotationResolver: paperSize 需含正数 widthMM/heightMM')
+  }
+
+  const cr = normalizeRotation(contentRotation)
+  const pxPerMm = dpi / 25.4
+  const roundPx = (v) => Math.round(v)
+
+  // ── Layer 1：内容世界 ──
+  const contentOrientation = detectContentOrientation(contentSize)
+
+  // ── Layer 2：纸张世界 ──
+  const paperOrientation = paperOrientInput || detectPaperOrientation(paperSize)
+  const paperW = roundPx(paperSize.widthMM * pxPerMm)
+  const paperH = roundPx(paperSize.heightMM * pxPerMm)
+  const toPx = (mm) => roundPx((Number(mm) || 0) * pxPerMm)
+  const mL = toPx(margins.left)
+  const mR = toPx(margins.right)
+  const mT = toPx(margins.top)
+  const mB = toPx(margins.bottom)
+
+  // ── 布局旋转 ──
+  const layoutRotation = computeLayoutRotation(contentOrientation, paperOrientation)
+  const finalRotation = normalizeRotation(cr + layoutRotation)
+
+  // 布局旋转后内容尺寸
+  const layoutRotated = isRotated(Math.abs(layoutRotation))
+  const placedContentW = layoutRotated ? contentSize.height : contentSize.width
+  const placedContentH = layoutRotated ? contentSize.width : contentSize.height
+
+  // 可用区域（纸张扣除安全边距）
+  const availableW = paperW - mL - mR
+  const availableH = paperH - mT - mB
+
+  if (availableW <= 0 || availableH <= 0) {
+    throw new Error(`RotationResolver: 安全边距超出纸张尺寸 (paper=${paperSize.widthMM}x${paperSize.heightMM}mm, available=${availableW}x${availableH}px)`)
+  }
+
+  // fit scale（只缩小不放大——内容小于安全区时保持原尺寸）
+  const scale = Math.min(
+    1,
+    availableW / placedContentW,
+    availableH / placedContentH,
+  )
+
+  // 居中偏移
+  const scaledW = roundPx(placedContentW * scale)
+  const scaledH = roundPx(placedContentH * scale)
+  const offsetX = mL + Math.round((availableW - scaledW) / 2)
+  const offsetY = mT + Math.round((availableH - scaledH) / 2)
+
+  // 最终画布 = 纸张尺寸（纸面不旋转，内容适配）
+  const canvasSize = { width: paperW, height: paperH }
+
+  return {
+    // Layer 1
+    contentRotation: cr,
+    contentSize: { width: contentSize.width, height: contentSize.height },
+    contentOrientation,
+
+    // Layer 2
+    layoutRotation,
+    finalRotation,
+    paperOrientation,
+
+    // 几何
+    canvasSize,
+    availableRect: { x: mL, y: mT, w: availableW, h: availableH },
+    scale,
+    offset: { x: offsetX, y: offsetY },
+    placedRect: { x: offsetX, y: offsetY, w: scaledW, h: scaledH },
+  }
+}
+
+export default resolveContentPlacement
