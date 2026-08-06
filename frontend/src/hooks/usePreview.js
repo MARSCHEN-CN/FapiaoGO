@@ -651,11 +651,17 @@ export function usePreview({ files, settings, electronAPIRef }) {
     }
 
     // ✅ L2 缓存旁路：有缓存 Canvas 时跳过 Canvas 渲染，但不阻止 Render Dispatcher 决策
-    if (skipRenderRef.current) {
+    // Commit 3 fix: 旋转 ≠ 0 时不走 L2 缓存（缓存不包含 contentRotation），
+    // 也不设 reUrl（RE 不消费 content_rotation），强制走 Canvas 路径重渲染。
+    if (skipRenderRef.current && previewRotation === 0) {
       skipRenderRef.current = false
       if (reUrl) { setPreviewUrl(reUrl) }  // RE 可用 → 优先使用（不受缓存影响）
       console.log(`[PREVIEW FLOW ${renderToken}] FINALLY | skipped (L2 cache hit)`)
       return  // 不执行 Canvas 渲染（缓存内容已就绪或 RE 已设）
+    }
+    // 旋转 ≠ 0 时也清掉 skipRenderRef
+    if (skipRenderRef.current) {
+      skipRenderRef.current = false
     }
 
     const isImageOrOfd =
