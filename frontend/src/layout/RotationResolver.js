@@ -280,7 +280,7 @@ export function resolveContentPlacement({
     // SVG renderTransform（Commit 2-B→2-C 改名）
     //   translate(ox,oy) → 定位到纸面坐标
     //   scale(s)         → fit 缩放
-    //   rotate(deg,cx,cy)→ 总旋转 = contentRotation + fitRotation（绕内容中心）
+    //   rotate(deg,cx,cy)→ fitRotation 归一化值（contentRotation 已 bake 到缩略图）
     //   消费方只需把 transform 直接作为 SVG <g> 属性，image 尺寸=imageWidth×imageHeight
     renderTransform: {
       translateX: offsetX,

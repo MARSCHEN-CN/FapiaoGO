@@ -294,7 +294,7 @@ export function buildPrintPreviewModel(plan, { files = [], settings = {}, curren
             slots: [{
               ...slot,
               pageIndex: p,
-              thumbnailUrl: getThumbnailUrl(f, p, slot.rotation || 0),
+              thumbnailUrl: getThumbnailUrl(f, p, slot.contentRotation || slot.rotation || 0),
             }],
           })
         }
