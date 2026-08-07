@@ -229,13 +229,13 @@ export function buildPrintPreviewModel(plan, { files = [], settings = {}, curren
           previewTransform: { rotation: effectiveRotation },
           thumbnailUrl: getThumbnailUrl(f, 0, userRotation),
           fileId: slotDef.fileId,
-          // [DIAG-11] renderTransform.rotationDeg 语义验证
-          _diag: placementResult && (userRotation !== 0 || placementResult.fitRotation !== 0) ? {
+          // [DIAG] renderTransform 语义验证（无条件）
+          _diag: placementResult ? {
             contentRotation: placementResult.contentRotation,
             fitRotation: placementResult.fitRotation,
             effectiveSize: placementResult.effectiveContentSize,
             rotationDeg: placementResult.renderTransform.rotationDeg,
-          } : undefined,
+          } : null,
           pageIndex: 0,
         }
       }),
@@ -252,17 +252,17 @@ export function buildPrintPreviewModel(plan, { files = [], settings = {}, curren
     ...(plan.extraPages || []).map(pageToModel),
   ].filter(Boolean)
 
-  // [DIAG-11] 打印旋转语义验证矩阵
+  // [DIAG-11] 打印旋转语义验证矩阵（无条件）
   if (basePages.length > 0) {
-    for (const p of basePages) {
-      for (const s of p.slots) {
-        if (s._diag) {
-          console.log('[DIAG-11 rotation matrix] contentRotation=%d fitRotation=%d effectiveSize=%s rotationDeg=%d paperOrientation=%s',
-            s._diag.contentRotation, s._diag.fitRotation, s._diag.effectiveSize,
-            s._diag.rotationDeg, p.orientation)
-          break
-        }
-      }
+    const p = basePages[0]
+    const s = p.slots[0]
+    if (s._diag) {
+      console.log('[DIAG-11 rotation matrix] contentRotation=%d fitRotation=%d effectiveSize=%s rotationDeg=%d paperOrientation=%s',
+        s._diag.contentRotation, s._diag.fitRotation, s._diag.effectiveSize,
+        s._diag.rotationDeg, p.orientation)
+    } else {
+      console.log('[DIAG-11 no placement] slotRotation=%d hasThumb=%s paperOrientation=%s',
+        s.rotation, !!s.thumbnailUrl, p.orientation)
     }
   }
   if (basePages.length === 0) {
