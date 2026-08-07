@@ -15,9 +15,9 @@
  * ⚠️ 状态：本文件为【目标规格 + 审计】。当前 Step 2 代码跑此 Gate 时，横纸型 4 格会 FAIL（差距审计）。
  *   竖纸型 4 格（Step 2 已确认正确）PASS。
  *   ── 标记 ──
- *     [UI-PROVEN] 用户 UI 验证确认
+ *     [UI-PROVEN] 用户 UI 验证确认（横票+横纸型，本 Gate 硬断言，当前 Step2 不及格=差距）
  *     [STEP2-KEEP] Step 2 已确认、本轮不变
- *     [DERIVED]   由横票行对称推导，待 UI 验证（Step 3 修码前需用户确认）
+ *     [PENDING-UI] 竖票+横纸型 两格：横票行不可镜像，符号待 UI 实测，标记 TODO 不编码
  *
  * 运行：node --test test/rotation3LayerGate.test.mjs
  */
@@ -106,19 +106,15 @@ test('M6 [UI-PROVEN] 横票 + 横纸型 + 横向 → layout=-90', () => {
   assert.equal(want, -90)
 })
 
-test('M7 [DERIVED] 竖票 + 横纸型 + 纵向 → layout=-90（待 UI 确认）', () => {
-  const got = layoutOf(PORT_CONTENT, 0, LAND_PAPER, 'portrait')
-  const want = intendedLayout('portrait', 'landscape', 'portrait')
-  assert.equal(got, want)
-  assert.equal(want, -90)
-})
-
-test('M8 [DERIVED] 竖票 + 横纸型 + 横向 → layout=+90（待 UI 确认）', () => {
-  const got = layoutOf(PORT_CONTENT, 0, LAND_PAPER, 'landscape')
-  const want = intendedLayout('portrait', 'landscape', 'landscape')
-  assert.equal(got, want)
-  assert.equal(want, 90)
-})
+// ── M7 / M8：竖票 + 横纸型，符号待 UI 验证，现在不能编码（用户 2026-08-07 指令）──
+//   横票行已由 UI 证明（+90/-90），但竖票在横纸型下不一定与横票数学对称：
+//   竖票本身是 portrait 方向、横纸型是 landscape 形状，物理坐标转换方向需实测，
+//   不能因横票成立就镜像。推导曾给 -90/+90，但不可靠，故标记 TODO，待用户在 UI 实测下列两 case 后回填：
+//     Case M7: 竖向发票 + 横向纸张类型 + 纵向 → 观察 A.顺时针90 / B.逆时针90 / C.0
+//     Case M8: 竖向发票 + 横向纸张类型 + 横向 → 观察 A.顺时针90 / B.逆时针90 / C.0
+//   回填时同步修正 intendedLayout 的 landscape 分支与 Step 3 resolver 补回的 PSO 层。
+test.todo('M7 [PENDING-UI] 竖票 + 横纸型 + 纵向 → 符号待 UI 验证（推导曾给 -90，不可靠，不编码）')
+test.todo('M8 [PENDING-UI] 竖票 + 横纸型 + 横向 → 符号待 UI 验证（推导曾给 +90，不可靠，不编码）')
 
 // ════════════════════════════════════════════════════════════════
 // 组合校验：最终视觉 = contentRotation + layoutRotation（无双旋转）
