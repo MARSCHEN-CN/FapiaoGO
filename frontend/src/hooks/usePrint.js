@@ -88,6 +88,7 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
   const [printProgress, setPrintProgress] = useState({})
   const [printFiles, setPrintFiles] = useState([])
   const [alertModal, setAlertModal] = useState(null)
+  const [dimsVersion, setDimsVersion] = useState(0)
   // 当前直接打印的 jobId
   const [currentJobId, setCurrentJobId] = useState(null)
   // 打印确认弹窗
@@ -574,7 +575,42 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
       console.error('[usePrint] 构建打印预览描述失败:', err)
       return null
     }
-  }, [printPlanInput, previewFile])
+  }, [printPlanInput, previewFile, dimsVersion])
+
+  // Commit 3 fix: PrintPreview placement 需要文件尺寸（_pdfPageWidth/Height）。
+  // RE 路径文件不预载这些字段，此处通过 IPC 读取 PDF 首页尺寸。
+  useEffect(() => {
+    const needDims = files.filter(f =>
+      f && f.printPath && !(f._pdfPageWidth > 0 && f._pdfPageHeight > 0)
+    )
+    if (needDims.length === 0) return
+
+    let cancelled = false
+    const load = async () => {
+      const ipc = electronAPIRef.current?.ipcRenderer
+      if (!ipc) return
+      for (const f of needDims) {
+        if (cancelled) break
+        try {
+          const fd = await ipc.invoke('read-file', f.printPath)
+          if (cancelled || !fd?.success) continue
+          // 用 pdf.js 获取首页尺寸（轻量，不需要渲染）
+          const { getOrLoadPdfDocument } = await import('../renderers.js')
+          const pdfDoc = await getOrLoadPdfDocument(new Uint8Array(fd.data))
+          if (cancelled || !pdfDoc) continue
+          const page = await pdfDoc.getPage(1)
+          const vp = page.getViewport({ scale: 1, rotation: 0 })
+          f._pdfPageWidth = Math.round(vp.width)
+          f._pdfPageHeight = Math.round(vp.height)
+          await page.cleanup()
+          console.log('[usePrint dims loaded] fileKey=%s size=%dx%d', f.key?.slice(-20), f._pdfPageWidth, f._pdfPageHeight)
+        } catch (_) {}
+      }
+      if (!cancelled) setDimsVersion(v => v + 1)
+    }
+    load()
+    return () => { cancelled = true }
+  }, [files, electronAPIRef, setDimsVersion])
 
   // ── 打印前确认弹窗 ──
   const handlePrintShowConfirm = useCallback(() => {
