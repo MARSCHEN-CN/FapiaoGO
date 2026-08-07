@@ -252,12 +252,12 @@ test('PM-12 (Gate 1): 横票(609pt≈214.9×139mm)+A4竖 → renderTransformMM�
   assert.ok(t.translateX < 210 && t.translateY < 297, `translate(${t.translateX},${t.translateY}) 在 A4 mm 视框内`)
 })
 
-test('PM-13 (Gate 2): 横票+A4横方向 → rotation=0（renderTransform 落在交换后的显示坐标系）', () => {
+test('PM-13 (Gate 2): 横票+A4横方向 → rotation=270(≡-90)（Commit 2-H v2：A4+landscape 即横纸型+横方向放倒，renderTransform 落在交换后的显示坐标系）', () => {
   const files = [mkDim('LAND', 609, 394)]
   const plan = buildPrintExecutionPlan(files, { filter: SOURCE_FILE_FILTER, settings: { landscape: true } })
   const m = buildPrintPreviewModel(plan, { files, settings: { landscape: true } })
   const t = m.pages[0].slots[0].placement.renderTransformMM
-  assert.equal(normDeg(t.rotationDeg), 0, '横票+横方向 → fitRotation=0')
+  assert.equal(normDeg(t.rotationDeg), 270, '横票+横方向 → fitRotation=-90(270) [Commit 2-H v2]')
   // 显示坐标系：landscape viewBox=297×210，translate 应落在 [0,297]×[0,210]
   assert.ok(t.translateX < 297 && t.translateY < 210, `translate(${t.translateX},${t.translateY}) 在 landscape mm 视框内`)
 })
@@ -283,8 +283,8 @@ test('PM-15: 四案例旋转矩阵（renderTransformMM.rotationDeg 归一化）'
   }
   // 案例1: 横票 + A4竖 + 竖 → 逆时针90 → 270
   assert.equal(normDeg(build(609, 394, {}).rotationDeg), 270, '横票+A4竖+竖 → 逆时针90')
-  // 案例2: 横票 + A4竖 + 横 → 0
-  assert.equal(normDeg(build(609, 394, { landscape: true }).rotationDeg), 0, '横票+A4竖+横 → 0')
+  // 案例2: 横票 + A4横方向(landscape:true → 横纸型) + 横 → -90(270) [Commit 2-H v2：横纸型+横方向放倒]
+  assert.equal(normDeg(build(609, 394, { landscape: true }).rotationDeg), 270, '横票+A4横方向 → -90(270) [Commit 2-H v2]')
   // 案例3: 竖票 + A4竖 + 横 → 顺时针90 → 90
   assert.equal(normDeg(build(394, 609, { landscape: true }).rotationDeg), 90, '竖票+A4竖+横 → 顺时针90')
   // 案例4: 横票 + 横纸型(240×140) + 纵 → 0（Commit 2-H：横向纸型下 orientationFit 恒为 0，用户纵不再补偿旋转）

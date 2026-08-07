@@ -43,15 +43,15 @@ test('T2 纯数学：横票+A4竖纸+切横方向 → shapeFit=-90 orientFit=+90
   assert.equal(r.renderRotation, 0)
 })
 
-test('T3a 纯数学：横纸型+横票+横方向 → 全 0', () => {
+test('T3a 纯数学：横纸型+横票+横方向 → orientationFit=-90, renderRotation=270(≡-90)', () => {
   const r = resolveContentPlacement({
     contentPhysicalSize: LAND_FILE, contentRotation: 0,
     paperSize: A4L, paperOrientation: 'landscape', margins,
   })
   assert.equal(r.shapeFitRotation, 0)
-  assert.equal(r.orientationFitRotation, 0)
-  assert.equal(r.fitRotation, 0)
-  assert.equal(r.renderRotation, 0)
+  assert.equal(r.orientationFitRotation, -90)  // Commit 2-H v2：横纸+横方向 → 放倒 -90
+  assert.equal(r.fitRotation, -90)
+  assert.equal(r.renderRotation, 270)
 })
 
 test('T3b 纯数学：横纸型+横票+切纵方向 → renderRotation=0（Commit 2-H：横向纸型下 orientationFit 恒为 0，用户纵不补偿旋转）', () => {
@@ -86,13 +86,13 @@ test('T1 端到端：横票+A4纵方向 → thumbnailUrl 无 content_rotation + 
   assert.ok(Math.abs(s.placement.renderTransform.imageHeight - 1641.67) < 0.5, `imageHeight=${s.placement.renderTransform.imageHeight}≈1641.67(394pt×300/72)`)
 })
 
-test('T2 端到端：横票+A4切横方向 → 无 content_rotation + rotationDeg=0', () => {
+test('T2 端到端：横票+A4切横方向 → 无 content_rotation + rotationDeg=270(≡-90)（Commit 2-H v2：横纸型+横方向放倒）', () => {
   const files = [mk('LAND')]
   const plan = buildPrintExecutionPlan(files, { filter: SOURCE_FILE_FILTER, settings: { landscape: true } })
   const m = buildPrintPreviewModel(plan, { files, settings: { landscape: true } })
   const s = m.pages[0].slots[0]
   assert.equal(s.thumbnailUrl.includes('content_rotation'), false)
-  assert.equal(s.placement.renderTransform.rotationDeg, 0, 'rotationDeg=0（恢复横向）')
+  assert.equal(s.placement.renderTransform.rotationDeg, 270, 'rotationDeg=270(≡-90) [Commit 2-H v2：横纸型+横方向放倒]')
 })
 
 test('情况B 守卫：Resolver 对原始 609×394 + contentRotation=90 → 单次旋转 effectiveContentSize=394×609', () => {

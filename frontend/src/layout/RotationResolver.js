@@ -223,7 +223,19 @@ export function resolveContentPlacement({
   //   语义核心：用户最终看到的是「内容方向匹配纸面方向」，横向纸型下该匹配已由 Stage 1 保证。
   let orientationFitRotation = computeLayoutRotation(shapeAdjustedOrientation, paperOrientation)
   if (paperShapeOrientation === 'landscape') {
-    orientationFitRotation = 0
+    // 横向纸型 orientationFit 明确表（Commit 2-H v2，2026-08-07）：
+    //   横票+横方向 → -90（把横票放倒到横向纸张坐标系，用户"横向"是打印输出方向要求，非内容方向）
+    //   横票+纵方向 → 0（不旋转）
+    //   竖票两行   → 与原 computeLayoutRotation(landscape, paperOrientation) 语义一致
+    //                （content===user 时 -90，否则 0），即"待现有规则"保持不变。
+    //   —— 覆盖 0da69e1 的 blanket=0（过度屏蔽，导致横纸+横方向漏转 -90、横纸+纵方向漏转 -90）。
+    const landscapeOrientFit = {
+      'landscape|landscape': -90,
+      'landscape|portrait': 0,
+      'portrait|landscape': 0,
+      'portrait|portrait': -90,
+    }
+    orientationFitRotation = landscapeOrientFit[`${contentOrientation}|${paperOrientation}`]
   }
   // fitRotation = 原始值(-90/0/90)，renderRotation = 归一化(0/90/180/270)
   const fitRotation = shapeFitRotation + orientationFitRotation

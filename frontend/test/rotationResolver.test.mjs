@@ -165,7 +165,7 @@ describe('resolveContentPlacement', () => {
     assert.equal(r.contentOrientation, 'landscape')  // 旋转后内容是横的
   })
 
-  it('Case 5: contentRotation=0 横内容 + 横纸 → fitRotation=0, finalRotation=0', () => {
+  it('Case 5: contentRotation=0 横内容 + 横纸 → fitRotation=-90, finalRotation=270（Commit 2-H v2：横纸+横方向放倒）', () => {
     const A4_LANDSCAPE = { widthMM: 297, heightMM: 210 }
     const r = resolveContentPlacement({
       contentPhysicalSize: { width: 1400, height: 1000 },
@@ -173,8 +173,8 @@ describe('resolveContentPlacement', () => {
       paperSize: A4_LANDSCAPE,
       dpi: 300,
     })
-    assert.equal(r.fitRotation, 0)
-    assert.equal(normalizeRotation(r.contentRotation + r.fitRotation), 0)
+    assert.equal(r.fitRotation, -90)
+    assert.equal(normalizeRotation(r.contentRotation + r.fitRotation), 270)
     assert.equal(r.contentOrientation, 'landscape')
     assert.equal(r.paperOrientation, 'landscape')
   })
@@ -351,7 +351,7 @@ describe('resolveContentPlacement', () => {
 
   // ── Commit 2-E Gate: 二阶段纸面适配矩阵 ──
   // 验证 shapeAdjustedOrientation + orientationFitRotation 显式中转
-  it('Gate E1: 横票+横纸型+横向 → renderRotation=0', () => {
+  it('Gate E1: 横票+横纸型+横向 → renderRotation=270(≡-90)（Commit 2-H v2：横纸+横方向放倒）', () => {
     const r = resolveContentPlacement({
       contentPhysicalSize: { width: 1400, height: 1000 },  // 横向
       contentRotation: 0,
@@ -360,8 +360,8 @@ describe('resolveContentPlacement', () => {
     })
     assert.equal(r.shapeFitRotation, 0)      // 横内容+横纸型=匹配
     assert.equal(r.shapeAdjustedOrientation, 'landscape')
-    assert.equal(r.orientationFitRotation, 0) // 横向=横向
-    assert.equal(r.renderRotation, 0)
+    assert.equal(r.orientationFitRotation, -90) // Commit 2-H v2：横纸+横方向 → 放倒 -90
+    assert.equal(r.renderRotation, 270)         // normalize(-90)
   })
 
   it('Gate E2: 横票+横纸型+纵向 → renderRotation=0（Commit 2-H 修复：横向纸型下 orientationFit 恒为 0，用户纵向不再补偿旋转）', () => {

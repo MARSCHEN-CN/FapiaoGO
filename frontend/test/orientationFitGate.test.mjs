@@ -1,20 +1,18 @@
 /**
- * OrientationFit Gate（Commit 2-H，2026-08-07）
+ * OrientationFit Gate（Commit 2-H v2，2026-08-07）
  *
- * 锁定「横向纸型下 orientationFit 权限边界」：
- *   - orientationFit 仅作用于【竖向纸型】；横向纸型（landscape paperShape）下恒为 0。
- *   - 触发条件不是 paperShapeOrientation != paperOrientation，否则横纸+用户纵向会误补偿 -90。
+ * 横向纸型 orientationFit 明确表（覆盖 0da69e1 的 blanket=0 过度屏蔽）：
+ *   | 内容 | 纸型  | 用户方向 | orientationFit | fitRotation |
+ *   | 横票 | 横纸  | 横向   | -90             | -90         |  ← 放倒到横向纸张坐标系
+ *   | 横票 | 横纸  | 纵向   | 0               | 0           |
+ *   | 横票 | A4竖 | 横向   | 90              | 0           |  ← 竖向纸型保持现状
+ *   | 横票 | A4竖 | 纵向   | 0               | -90         |  ← 竖向纸型保持现状
+ *   | 竖票 | 横纸  | 横向   | 0               | 90          |  ← 待现有规则（computeLayoutRotation）
+ *   | 竖票 | 横纸  | 纵向   | -90             | 0           |  ← 待现有规则
+ *   | 竖票 | A4竖 | 横向   | 90              | 90          |  ← 竖向纸型保持现状
+ *   | 竖票 | A4竖 | 纵向   | 0               | 0           |  ← 竖向纸型保持现状
  *
- * 矩阵（修复横纸 orientationFit 反相 bug）：
- *   | 内容 | 纸型  | 用户方向 | 期望 fitRotation |
- *   | 横票 | A4竖 | 纵向   | -90              |
- *   | 横票 | A4竖 | 横向   | 0                |
- *   | 横票 | 横纸  | 横向   | 0                |
- *   | 横票 | 横纸  | 纵向   | 0                |  ← 本次修复点
- *   | 竖票 | 横纸  | 横向   | 90（Stage1 保持） |
- *   | 竖票 | 横纸  | 纵向   | 90（Stage1 保持） |
- *
- * 前两个竖纸 case 必须保持现状（不动 Fit Engine）。
+ * 关键约束：竖向纸型(3/4/7/8)结果必须与上轮修复前完全一致；只修横向纸型(1/2/5/6)。
  */
 import test from 'node:test'
 import assert from 'node:assert/strict'
@@ -36,64 +34,90 @@ function resolve(content, paper, orient) {
   })
 }
 
-test('Gate-1 横票+A4竖+用户纵向 → fitRotation=-90（Stage1 生效，orientFit=0）', () => {
-  const r = resolve(LAND_CONTENT, A4, 'portrait')
-  assert.equal(r.shapeFitRotation, -90)
-  assert.equal(r.orientationFitRotation, 0)
+test('M1 横票+横纸+横向 → fitRotation=-90（orientationFit=-90，放倒到横向纸张坐标系）', () => {
+  const r = resolve(LAND_CONTENT, LAND, 'landscape')
+  assert.equal(r.shapeFitRotation, 0)
+  assert.equal(r.orientationFitRotation, -90)
   assert.equal(r.fitRotation, -90)
 })
 
-test('Gate-2 横票+A4竖+用户横向 → fitRotation=0（Stage1+Stage2 抵消）', () => {
-  const r = resolve(LAND_CONTENT, A4, 'landscape')
-  assert.equal(r.shapeFitRotation, -90)
-  assert.equal(r.orientationFitRotation, 90)
-  assert.equal(r.fitRotation, 0)
-})
-
-test('Gate-3 横票+横纸+用户横向 → fitRotation=0（Stage1=0，orientFit 被横纸边界归零）', () => {
-  const r = resolve(LAND_CONTENT, LAND, 'landscape')
-  assert.equal(r.shapeFitRotation, 0)
-  assert.equal(r.orientationFitRotation, 0)
-  assert.equal(r.fitRotation, 0)
-})
-
-test('Gate-4 横票+横纸+用户纵向 → fitRotation=0（★修复点：orientFit 必须=0，不得补偿-90）', () => {
+test('M2 横票+横纸+纵向 → fitRotation=0（orientationFit=0，不旋转）', () => {
   const r = resolve(LAND_CONTENT, LAND, 'portrait')
   assert.equal(r.shapeFitRotation, 0)
   assert.equal(r.orientationFitRotation, 0)
   assert.equal(r.fitRotation, 0)
 })
 
-test('Gate-5 竖票+横纸+用户横向 → fitRotation=90（Stage1 保持，orientFit=0）', () => {
+test('M3 横票+A4竖+横向 → fitRotation=0（竖向纸型保持现状：shapeFit=-90, orientFit=90）', () => {
+  const r = resolve(LAND_CONTENT, A4, 'landscape')
+  assert.equal(r.shapeFitRotation, -90)
+  assert.equal(r.orientationFitRotation, 90)
+  assert.equal(r.fitRotation, 0)
+})
+
+test('M4 横票+A4竖+纵向 → fitRotation=-90（竖向纸型保持现状：shapeFit=-90, orientFit=0）', () => {
+  const r = resolve(LAND_CONTENT, A4, 'portrait')
+  assert.equal(r.shapeFitRotation, -90)
+  assert.equal(r.orientationFitRotation, 0)
+  assert.equal(r.fitRotation, -90)
+})
+
+test('M5 竖票+横纸+横向 → fitRotation=90（待现有规则：shapeFit=90, orientFit=0）', () => {
   const r = resolve(PORT_CONTENT, LAND, 'landscape')
   assert.equal(r.shapeFitRotation, 90)
   assert.equal(r.orientationFitRotation, 0)
   assert.equal(r.fitRotation, 90)
 })
 
-test('Gate-6 竖票+横纸+用户纵向 → fitRotation=90（Stage1 保持，orientFit=0，不影响竖票逻辑）', () => {
+test('M6 竖票+横纸+纵向 → fitRotation=0（待现有规则：shapeFit=90, orientFit=-90）', () => {
   const r = resolve(PORT_CONTENT, LAND, 'portrait')
   assert.equal(r.shapeFitRotation, 90)
-  assert.equal(r.orientationFitRotation, 0)
+  assert.equal(r.orientationFitRotation, -90)
+  assert.equal(r.fitRotation, 0)
+})
+
+test('M7 竖票+A4竖+横向 → fitRotation=90（竖向纸型保持现状：shapeFit=0, orientFit=90）', () => {
+  const r = resolve(PORT_CONTENT, A4, 'landscape')
+  assert.equal(r.shapeFitRotation, 0)
+  assert.equal(r.orientationFitRotation, 90)
   assert.equal(r.fitRotation, 90)
 })
 
-test('回归守卫：任意用户方向 + 横向纸型 → orientationFitRotation 恒为 0', () => {
-  for (const orient of ['portrait', 'landscape']) {
-    for (const content of [LAND_CONTENT, PORT_CONTENT]) {
-      const r = resolve(content, LAND, orient)
+test('M8 竖票+A4竖+纵向 → fitRotation=0（竖向纸型保持现状：shapeFit=0, orientFit=0）', () => {
+  const r = resolve(PORT_CONTENT, A4, 'portrait')
+  assert.equal(r.shapeFitRotation, 0)
+  assert.equal(r.orientationFitRotation, 0)
+  assert.equal(r.fitRotation, 0)
+})
+
+test('回归守卫：横向纸型 orientationFit 精确匹配明确表（无 blanket 屏蔽）', () => {
+  const table = {
+    'landscape|landscape': -90,
+    'landscape|portrait': 0,
+    'portrait|landscape': 0,
+    'portrait|portrait': -90,
+  }
+  for (const [content, paper] of [[LAND_CONTENT, LAND], [PORT_CONTENT, LAND]]) {
+    const co = content.width > content.height ? 'landscape' : 'portrait'
+    for (const orient of ['landscape', 'portrait']) {
+      const r = resolve(content, paper, orient)
       assert.equal(
         r.orientationFitRotation,
-        0,
-        `横纸+${orient}+${content.width > content.height ? '横票' : '竖票'} 应使 orientFit=0`,
+        table[`${co}|${orient}`],
+        `横纸+${co}+${orient} 应匹配明确表`,
       )
     }
   }
 })
 
-test('回归守卫：竖向纸型（A4）保持原有 orientFit 行为（不被横纸边界影响）', () => {
+test('回归守卫：竖向纸型(A4) orientationFit 行为与横向纸型修正前完全一致', () => {
+  // 竖向纸型不走明确表，仍用原 computeLayoutRotation(paperShape=portrait, paperOrientation)
   const portrait = resolve(LAND_CONTENT, A4, 'portrait')
-  assert.equal(portrait.orientationFitRotation, 0) // 横纸型逻辑不污染 A4
+  assert.equal(portrait.orientationFitRotation, 0) // 横票+A4竖+纵
   const landscape = resolve(LAND_CONTENT, A4, 'landscape')
-  assert.equal(landscape.orientationFitRotation, 90) // 横纸型逻辑不污染 A4
+  assert.equal(landscape.orientationFitRotation, 90) // 横票+A4竖+横
+  const keep1 = resolve(PORT_CONTENT, A4, 'portrait')
+  assert.equal(keep1.orientationFitRotation, 0) // 竖票+A4竖+纵
+  const keep2 = resolve(PORT_CONTENT, A4, 'landscape')
+  assert.equal(keep2.orientationFitRotation, 90) // 竖票+A4竖+横
 })
