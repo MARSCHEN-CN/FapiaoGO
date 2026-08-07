@@ -85,7 +85,11 @@ const SlotImage = memo(({ slot }) => {
                   opacity: loaded ? 1 : 0,
                   transition: 'opacity 0.2s ease-in',
                 }}
-                onLoad={() => setLoaded(true)}
+                onLoad={(e) => {
+                  setLoaded(true)
+                  const nw = e?.target?.naturalWidth, nh = e?.target?.naturalHeight
+                  if (nw && nh) console.log('[DIAG-15 thumb natural] w=%d h=%d fileKey=%s', nw, nh, (slot.fileId || '').slice(-20))
+                }}
                 onError={() => {
                   console.warn('[PrintPreviewCanvas] 缩略图加载失败:', slot.source)
                   setError(true)
