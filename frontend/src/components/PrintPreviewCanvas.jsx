@@ -49,13 +49,13 @@ const SlotImage = memo(({ slot }) => {
   // 三段式 SVG transform 字符串（Commit 2-B）
   const svgTransform = t
     ? `translate(${t.translateX},${t.translateY}) scale(${t.scale}) rotate(${t.rotationDeg},${t.rotationCx},${t.rotationCy})`
+    : null
 
   // [DIAG-13] SVG renderTransform 消费
   if (t && t.rotationDeg !== 0) {
     console.log('[DIAG-13 slotImage SVG] rotationDeg=%d svgTransform=%s slotRotation=%d',
       t.rotationDeg, svgTransform, slot.rotation)
   }
-    : null
 
   return (
     <g>
