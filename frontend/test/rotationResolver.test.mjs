@@ -304,9 +304,41 @@ describe('resolveContentPlacement', () => {
     assert.equal(r.contentRotation + r.fitRotation, 0, '用户90+fit-90=0')
     // renderTransform 只施加 fitRotation（正常化为 270 = -90）
     assert.equal(rt.rotationDeg, normalizeRotation(r.fitRotation), 'renderTransform fitRotation=270')
-    // 布局旋转后，imageWidth 交换
-    assert.equal(rt.imageWidth, 1000, 'fitRotated后宽=有效高1000')
-    assert.equal(rt.imageHeight, 1400, 'fitRotated后高=有效宽1400')
+    // 缩略图已 bake contentRotation=90 → 自然尺寸=有效内容(1400×1000)；SVG 只施加 fitRotation
+    assert.equal(rt.imageWidth, 1400, 'image=有效内容宽(用户旋转后自然尺寸)')
+    assert.equal(rt.imageHeight, 1000, 'image=有效内容高')
+  })
+
+  it('Case 13: renderTransform 几何守卫 — 旋转后 image 不拉伸且包围盒=placedRect', () => {
+    // 横票 609×394 + contentRotation=0 + A4 portrait → fitRotation=-90
+    const r = resolveContentPlacement({
+      contentSize: { width: 609, height: 394 },
+      contentRotation: 0,
+      paperSize: A4_PORTRAIT,
+      margins: { left: 3, right: 3, top: 3, bottom: 3 },
+      dpi: 300,
+    })
+    const rt = r.renderTransform
+    // 1) 不拉伸：image 尺寸=有效内容自然尺寸（非旋转包围盒）
+    assert.equal(rt.imageWidth, r.effectiveContentSize.width)
+    assert.equal(rt.imageHeight, r.effectiveContentSize.height)
+    // 2) 4 角经 transform 后包围盒 == placedRect（容差 1px）
+    const a = (rt.rotationDeg * Math.PI) / 180
+    const cos = Math.cos(a), sin = Math.sin(a)
+    const tf = (x, y) => {
+      const x1 = rt.rotationCx + (x - rt.rotationCx) * cos - (y - rt.rotationCy) * sin
+      const y1 = rt.rotationCy + (x - rt.rotationCx) * sin + (y - rt.rotationCy) * cos
+      return [rt.translateX + rt.scale * x1, rt.translateY + rt.scale * y1]
+    }
+    const corners = [[0, 0], [rt.imageWidth, 0], [0, rt.imageHeight], [rt.imageWidth, rt.imageHeight]].map(([x, y]) => tf(x, y))
+    const xs = corners.map((c) => c[0]), ys = corners.map((c) => c[1])
+    const minX = Math.min(...xs), maxX = Math.max(...xs)
+    const minY = Math.min(...ys), maxY = Math.max(...ys)
+    const tol = 1
+    assert.ok(Math.abs((minX + maxX) / 2 - (r.placedRect.x + r.placedRect.w / 2)) <= tol, 'bbox 中心 X = placedRect 中心')
+    assert.ok(Math.abs((minY + maxY) / 2 - (r.placedRect.y + r.placedRect.h / 2)) <= tol, 'bbox 中心 Y = placedRect 中心')
+    assert.ok(Math.abs((maxX - minX) - r.placedRect.w) <= tol, 'bbox 宽 = placedRect.w')
+    assert.ok(Math.abs((maxY - minY) - r.placedRect.h) <= tol, 'bbox 高 = placedRect.h')
   })
 
   it('rejects invalid paperSize', () => {

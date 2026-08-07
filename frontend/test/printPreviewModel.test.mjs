@@ -7,7 +7,7 @@
  *   - merge4 (4 文件)      → 1 page / 4 slots 横向（强制 landscape，轴交换）
  *   - 一普二专            → extraPages 展开进 pages
  *   - custom 纸           → 尺寸来自 settings.customPaper
- *   - rotation            → slot.rotation 透传
+ *   - _deprecatedRotation → slot.rotation 兼容别名透传
  *   - 非法输入            → valid:false（未知纸张 / 边距超出）
  *
  * 数值锚点（与生产 computePaperLayout 公式同构的守卫）：
@@ -57,7 +57,7 @@ test('PM-01: single A4 portrait → 1 page / 1 slot = 整页安全区（mm 锚�
   assert.ok(near(s.width, D.widthMM), `slot.width=${s.width} vs ${D.widthMM}`)
   assert.ok(near(s.height, D.heightMM), `slot.height=${s.height} vs ${D.heightMM}`)
   assert.equal(s.source, 'A.pdf', 'source=文件名（files 映射）')
-  assert.equal(s.rotation, 0)
+  assert.equal(s._deprecatedRotation, 0)
 })
 
 test('PM-02: merge2 → 2 slots 竖向等分（等高、末位收口）', () => {
@@ -166,7 +166,7 @@ test('PM-06: rotation 透传', () => {
     fileRotations: { A: 90 },
   })
   const m = buildPrintPreviewModel(plan, { files, settings: {}, fileRotations: { A: 90 } })
-  assert.equal(m.pages[0].slots[0].rotation, 90)
+  assert.equal(m.pages[0].slots[0]._deprecatedRotation, 90)
 })
 
 test('PM-07: 非法输入 → valid:false（未知纸张 / 边距超出 / plan 缺失）', () => {

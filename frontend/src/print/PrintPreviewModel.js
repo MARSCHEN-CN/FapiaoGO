@@ -173,10 +173,10 @@ export function buildPrintPreviewModel(plan, { files = [], settings = {}, curren
             slotDef.fileId, userRotation, { hasDim: !!(f && f._pdfPageWidth > 0) })
         }
 
-        // 三层旋转模型（Commit 1→2）：RotationResolver 替换旧 computeAutoRotation
-        //   contentRotation = 用户旋转（来自 slotDef.rotation）
-        //   layoutRotation  = 内容适配纸张的自动旋转
-        //   finalRotation   = contentRotation + layoutRotation
+        // 三层旋转模型（Commit 1→2→3）：RotationResolver 替换旧 computeAutoRotation
+        //   contentRotation = 用户旋转（来自 slotDef.rotation），Viewer 唯一拥有
+        //   fitRotation     = Resolver 计算的内容→纸张适配旋转（PrintPreview 拥有）
+        //   renderRotation  = fitRotation 归一化，由 Canvas 施加（Printer 只执行）
         let effectiveRotation = userRotation
         let placementResult = null  // resolveContentPlacement 输出（有尺寸时填充）
         const contentDims = f ? getContentDimensions(f) : null
@@ -222,7 +222,7 @@ export function buildPrintPreviewModel(plan, { files = [], settings = {}, curren
           height: round2(s.height * PX_TO_MM),
           source: f?.name || slotDef.fileId || `#${i + 1}`,
           // deprecated（保留兼容）→ 新消费者请用 contentRotation / fitRotation
-          rotation: effectiveRotation,
+          _deprecatedRotation: effectiveRotation,
           contentRotation: placementResult?.contentRotation ?? userRotation,
           fitRotation: placementResult?.fitRotation ?? 0,
           // 布局结果（Commit 2 新增，PrintPreviewCanvas 消费）
@@ -271,7 +271,7 @@ export function buildPrintPreviewModel(plan, { files = [], settings = {}, curren
         s._diag.rotationDeg, p.orientation)
     } else {
       console.log('[DIAG-11 no placement] slotRotation=%d hasThumb=%s paperOrientation=%s',
-        s.rotation, !!s.thumbnailUrl, p.orientation)
+        s._deprecatedRotation, !!s.thumbnailUrl, p.orientation)
     }
   }
   if (basePages.length === 0) {
@@ -294,7 +294,7 @@ export function buildPrintPreviewModel(plan, { files = [], settings = {}, curren
             slots: [{
               ...slot,
               pageIndex: p,
-              thumbnailUrl: getThumbnailUrl(f, p, slot.contentRotation || slot.rotation || 0),
+              thumbnailUrl: getThumbnailUrl(f, p, slot.contentRotation || slot._deprecatedRotation || 0),
             }],
           })
         }
@@ -307,7 +307,7 @@ export function buildPrintPreviewModel(plan, { files = [], settings = {}, curren
           const f = fileById.get(slot.fileId)
           return {
             ...slot,
-            thumbnailUrl: getThumbnailUrl(f, 0, slot.contentRotation || slot.rotation || 0),
+            thumbnailUrl: getThumbnailUrl(f, 0, slot.contentRotation || slot._deprecatedRotation || 0),
             pageIndex: 0,
           }
         }),

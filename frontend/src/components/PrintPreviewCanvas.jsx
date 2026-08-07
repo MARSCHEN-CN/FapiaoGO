@@ -15,7 +15,7 @@
  * Commit 2-A→2-C（旋转架构迁移）：
  *   - 已删除 CSS transform:rotate() —— 旋转语义上移到 RotationResolver。
  *   - 缩略图直接填充槽位区域，不再自行计算旋转前 bounding box。
- *   - slot.rotation 保留为 deprecated alias（= contentRotation + fitRotation）。
+ *   - slot._deprecatedRotation 保留为 deprecated alias（= contentRotation + fitRotation），勿消费。
  *
  * @module components/PrintPreviewCanvas
  */
@@ -54,7 +54,7 @@ const SlotImage = memo(({ slot }) => {
   // [DIAG-13] SVG renderTransform 消费
   if (t && t.rotationDeg !== 0) {
     console.log('[DIAG-13 slotImage SVG] rotationDeg=%d svgTransform=%s slotRotation=%d',
-      t.rotationDeg, svgTransform, slot.rotation)
+      t.rotationDeg, svgTransform, slot._deprecatedRotation)
   }
 
   return (

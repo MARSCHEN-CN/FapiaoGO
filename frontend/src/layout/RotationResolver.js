@@ -139,7 +139,7 @@ export function computeLayoutRotation(contentOrientation, paperOrientation) {
  * 输出完整的布局描述。
  *
  * @param {Object} input
- * @param {{width:number, height:number}} input.contentSize  - 旋转后内容尺寸（px，resolveContentBounds 输出）
+ * @param {{width:number, height:number}} input.contentSize  - 原始内容尺寸（px，旋转前；contentRotation 由本函数内部施加，请勿预旋转后传入）
  * @param {number}              input.contentRotation         - 用户旋转角（0/90/180/270）
  * @param {{widthMM:number, heightMM:number}} input.paperSize - 纸张尺寸（mm）
  * @param {'portrait'|'landscape'} [input.paperOrientation]    - 纸张方向（不传则自动从 paperSize 推导）
@@ -277,20 +277,20 @@ export function resolveContentPlacement({
     offset: { x: offsetX, y: offsetY },
     placedRect: { x: offsetX, y: offsetY, w: scaledW, h: scaledH },
 
-    // SVG renderTransform（Commit 2-B→2-C 改名）
-    //   translate(ox,oy) → 定位到纸面坐标
-    //   scale(s)         → fit 缩放
-    //   rotate(deg,cx,cy)→ fitRotation 归一化值（contentRotation 已 bake 到缩略图）
-    //   消费方只需把 transform 直接作为 SVG <g> 属性，image 尺寸=imageWidth×imageHeight
+    // SVG renderTransform（Commit 2-B→2-C 改名；Audit-3 修复像素级拉伸）
+    //   缩略图 = contentRotation 已 bake 的自然尺寸（effectiveContentSize），不被二次旋转。
+    //   <image> 以自然尺寸(imageWidth×imageHeight)绘制，绕自身中心 rotate(fitRotation)，
+    //   再 scale(fit) 并居中到可用区中心。三段式：translate(居中) scale(fit) rotate(fitRotation, 内容中心)。
+    //   —— 严禁把 imageWidth/Height 设为旋转后包围盒尺寸（preserveAspectRatio=none 会拉伸内容）。
     renderTransform: {
-      translateX: offsetX,
-      translateY: offsetY,
+      translateX: mL + availableW / 2 - (effectiveContentW * scale) / 2,
+      translateY: mT + availableH / 2 - (effectiveContentH * scale) / 2,
       scale,
       rotationDeg: renderRotation,
-      rotationCx: placedContentW / 2,
-      rotationCy: placedContentH / 2,
-      imageWidth: placedContentW,
-      imageHeight: placedContentH,
+      rotationCx: effectiveContentW / 2,
+      rotationCy: effectiveContentH / 2,
+      imageWidth: effectiveContentW,
+      imageHeight: effectiveContentH,
     },
   }
 }
