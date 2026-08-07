@@ -191,8 +191,12 @@ export function buildPrintPreviewModel(plan, { files = [], settings = {}, curren
         if (contentDims && contentDims.width > 0 && contentDims.height > 0) {
           // Commit 3 fix: 传原始尺寸 + contentRotation，由 resolveContentPlacement 内部计算 effectiveContentSize。
           // resolveContentBounds 在这里不再需要（已内化到 Resolver 的二阶段模型中）。
-          const paperW_mm = layout.paperRect.w * PX_TO_MM
-          const paperH_mm = layout.paperRect.h * PX_TO_MM
+          // 纸面尺寸按「显示方向」取（landscape 交换 W/H），使 renderTransform 落在
+          // 与 SVG viewBox（同样按方向交换，PrintPreviewCanvas.jsx:159-160）一致的显示坐标系；
+          // paperOrientation 已表达用户方向，两段式 fitRotation 语义不变（旋转矩阵不受影响）。
+          const isPageLandscape = page.orientation === 'landscape'
+          const paperW_mm = (isPageLandscape ? layout.paperRect.h : layout.paperRect.w) * PX_TO_MM
+          const paperH_mm = (isPageLandscape ? layout.paperRect.w : layout.paperRect.h) * PX_TO_MM
           const marginLeft_mm = mL * PX_TO_MM
           const marginRight_mm = mR * PX_TO_MM
           const marginTop_mm = mT * PX_TO_MM
@@ -231,9 +235,23 @@ export function buildPrintPreviewModel(plan, { files = [], settings = {}, curren
             offset: { x: placementResult.offset.x, y: placementResult.offset.y },
             placedRect: { ...placementResult.placedRect },
             canvasSize: { ...placementResult.canvasSize },
-            // SVG renderTransform（Commit 2-B 新增）
-            //   消费方直接作为 <g transform="..."> 属性
+            // SVG renderTransform（Commit 2-B 新增，px@PREVIEW_DPI，Resolver 原始输出）。
+            //   仅供打印/导出等需 px 的消费者；预览 Canvas 必须改用下方 renderTransformMM。
             renderTransform: { ...placementResult.renderTransform },
+            // Commit 2-F-1：px → mm 单位隔离。SVG viewBox 是 mm，Resolver 输出是 px@PREVIEW_DPI。
+            // 在此一次性换算，Canvas 永不感知 DPI（300/150/96/600 任意切换都不影响预览几何）。
+            // 字段语义：contentBoxWidth/Height = 内容在「纸面 mm 坐标系」下的包围盒尺寸（mm），
+            //   非真实像素（缩略图非 300DPI 栅格），勿误用于像素级测量。
+            renderTransformMM: {
+              translateX: round2(placementResult.renderTransform.translateX * PX_TO_MM),
+              translateY: round2(placementResult.renderTransform.translateY * PX_TO_MM),
+              scale: placementResult.renderTransform.scale,
+              rotationDeg: placementResult.renderTransform.rotationDeg,
+              rotationCx: round2(placementResult.renderTransform.rotationCx * PX_TO_MM),
+              rotationCy: round2(placementResult.renderTransform.rotationCy * PX_TO_MM),
+              contentBoxWidth: round2(placementResult.renderTransform.imageWidth * PX_TO_MM),
+              contentBoxHeight: round2(placementResult.renderTransform.imageHeight * PX_TO_MM),
+            },
           } : null,
           previewTransform: { rotation: effectiveRotation },
           thumbnailUrl: getThumbnailUrl(f, 0, userRotation),

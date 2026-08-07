@@ -225,3 +225,68 @@ test('PM-10: currentSelection 定位 → currentPageIndex 指向选中文件页'
   // pages = [A-0, A-1, B] → 选中 B → index 2
   assert.equal(m.currentPageIndex, 2)
 })
+
+// ── Commit 2-F-1：px → mm 单位隔离（renderTransformMM） ──
+// Resolver 输出 px@PREVIEW_DPI；PrintPreviewCanvas SVG viewBox 是 mm。
+// PrintPreviewModel 在此一次性换算，Canvas 永不感知 DPI。
+// 另：landscape 页 Resolver 收「显示方向」纸尺寸 → renderTransform 落在与 viewBox 一致的显示坐标系。
+const mkDim = (key, w, h, over = {}) => mk(key, { _pdfPageWidth: w, _pdfPageHeight: h, ...over })
+const normDeg = (d) => ((d % 360) + 360) % 360
+
+test('PM-12 (Gate 1): 横票+A4竖 → renderTransformMM≈51.6×33.3mm, rotation≡-90, 居中安全区', () => {
+  const files = [mkDim('LAND', 609, 394)]
+  const plan = buildPrintExecutionPlan(files, { filter: SOURCE_FILE_FILTER, settings: {} })
+  const m = buildPrintPreviewModel(plan, { files, settings: {} })
+  const s = m.pages[0].slots[0]
+  const t = s.placement.renderTransformMM
+  assert.ok(t, 'placement.renderTransformMM 存在')
+  assert.ok(near(t.contentBoxWidth, 51.6, 0.1), `contentBoxWidth=${t.contentBoxWidth} ≈51.6mm`)
+  assert.ok(near(t.contentBoxHeight, 33.3, 0.1), `contentBoxHeight=${t.contentBoxHeight} ≈33.3mm`)
+  assert.equal(normDeg(t.rotationDeg), 270, `rotationDeg=${t.rotationDeg} ≡ -90（逆时针90）`)
+  // 居中：placedRect 中心(px) → mm 应≈纸中心(105,148.5)（0 边距）
+  const pr = s.placement.placedRect
+  const cx = (pr.x + pr.w / 2) * (25.4 / 300)
+  const cy = (pr.y + pr.h / 2) * (25.4 / 300)
+  assert.ok(near(cx, 105, 0.5) && near(cy, 148.5, 0.5), `中心(${cx.toFixed(1)},${cy.toFixed(1)})≈纸中心(105,148.5)`)
+  // 数值应为 mm 量级（绝非 px 量级），证明单位隔离生效
+  assert.ok(t.translateX < 210 && t.translateY < 297, `translate(${t.translateX},${t.translateY}) 在 A4 mm 视框内`)
+})
+
+test('PM-13 (Gate 2): 横票+A4横方向 → rotation=0（renderTransform 落在交换后的显示坐标系）', () => {
+  const files = [mkDim('LAND', 609, 394)]
+  const plan = buildPrintExecutionPlan(files, { filter: SOURCE_FILE_FILTER, settings: { landscape: true } })
+  const m = buildPrintPreviewModel(plan, { files, settings: { landscape: true } })
+  const t = m.pages[0].slots[0].placement.renderTransformMM
+  assert.equal(normDeg(t.rotationDeg), 0, '横票+横方向 → fitRotation=0')
+  // 显示坐标系：landscape viewBox=297×210，translate 应落在 [0,297]×[0,210]
+  assert.ok(t.translateX < 297 && t.translateY < 210, `translate(${t.translateX},${t.translateY}) 在 landscape mm 视框内`)
+})
+
+test('PM-14 (Gate 3): 用户旋转90 → thumbnail bake content_rotation=90，Canvas rotation=fitRotation（不含 contentRotation，无双旋转）', () => {
+  const files = [mkDim('LAND', 609, 394, { docId: 'docL' })]
+  const plan = buildPrintExecutionPlan(files, { filter: SOURCE_FILE_FILTER, settings: {}, fileRotations: { LAND: 90 } })
+  const m = buildPrintPreviewModel(plan, { files, settings: {}, fileRotations: { LAND: 90 }, backendUrl: 'http://localhost:5000' })
+  const s = m.pages[0].slots[0]
+  assert.ok(s.thumbnailUrl.includes('content_rotation=90'), '缩略图 bake contentRotation=90')
+  // 横票 contentRotation=90 → 有效内容变竖(portrait) → 竖纸 fit=0 → Canvas rotation=0（不重复 contentRotation）
+  const t = s.placement.renderTransformMM
+  assert.equal(normDeg(t.rotationDeg), 0, 'Canvas rotation=fitRotation=0（无双旋转）')
+})
+
+test('PM-15: 四案例旋转矩阵（renderTransformMM.rotationDeg 归一化）', () => {
+  const build = (w, h, settings) => {
+    const f = [mkDim('A', w, h)]
+    return buildPrintPreviewModel(
+      buildPrintExecutionPlan(f, { filter: SOURCE_FILE_FILTER, settings }),
+      { files: f, settings },
+    ).pages[0].slots[0].placement.renderTransformMM
+  }
+  // 案例1: 横票 + A4竖 + 竖 → 逆时针90 → 270
+  assert.equal(normDeg(build(609, 394, {}).rotationDeg), 270, '横票+A4竖+竖 → 逆时针90')
+  // 案例2: 横票 + A4竖 + 横 → 0
+  assert.equal(normDeg(build(609, 394, { landscape: true }).rotationDeg), 0, '横票+A4竖+横 → 0')
+  // 案例3: 竖票 + A4竖 + 横 → 顺时针90 → 90
+  assert.equal(normDeg(build(394, 609, { landscape: true }).rotationDeg), 90, '竖票+A4竖+横 → 顺时针90')
+  // 案例4: 横票 + 横纸型(240×140) + 纵 → 逆时针90 → 270
+  assert.equal(normDeg(build(609, 394, { paperSize: 'Custom', customPaper: { widthMM: 240, heightMM: 140 } }).rotationDeg), 270, '横票+横纸型+纵 → 逆时针90')
+})

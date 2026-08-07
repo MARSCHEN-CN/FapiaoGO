@@ -16,6 +16,8 @@
  *   - 已删除 CSS transform:rotate() —— 旋转语义上移到 RotationResolver。
  *   - 缩略图直接填充槽位区域，不再自行计算旋转前 bounding box。
  *   - slot._deprecatedRotation 保留为 deprecated alias（= contentRotation + fitRotation），勿消费。
+ *   - Commit 2-F-1：只消费 placement.renderTransformMM（mm 坐标系），Canvas 永不感知 DPI。
+ *     原始 px 字段（renderTransform）仅供打印/导出，预览禁止消费。
  *
  * @module components/PrintPreviewCanvas
  */
@@ -28,11 +30,11 @@ const ORIENT_LABEL = { portrait: '纵向', landscape: '横向' }
  * 单个发票缩略图槽位渲染（内部组件，方便管理加载状态）
  * 纯内容：缩略图 + 槽位边框；不叠加任何标签/序号信息（打印预览 = 现实打印内容）。
  *
- * Commit 2-B: 消费 placement.renderTransform（RotationResolver 计算的三段式 SVG transform）。
- *   translate(ox,oy) → 定位到纸面坐标
- *   scale(s)         → fit 缩放
- *   rotate(deg,cx,cy)→ 绕内容中心旋转
- *   无 placement 时 fallback 到 slot fill（文件无尺寸数据时）。
+ * Commit 2-B→2-F-1: 消费 placement.renderTransformMM（PrintPreviewModel 已做 px→mm 隔离，mm 坐标系）。
+ *   translate(ox,oy) → 定位到纸面坐标（mm）
+ *   scale(s)         → fit 缩放（无量纲）
+ *   rotate(deg,cx,cy)→ 绕内容中心旋转（cx/cy 为 mm）
+ *   无 placement 时 fallback 到 slot fill（文件无尺寸数据时，slot.x/y/w/h 已是 mm）。
  */
 const SlotImage = memo(({ slot }) => {
   const [loaded, setLoaded] = useState(false)
@@ -44,7 +46,8 @@ const SlotImage = memo(({ slot }) => {
   }, [slot.thumbnailUrl])
 
   const hasThumbnail = !!slot.thumbnailUrl && !error
-  const t = slot.placement?.renderTransform
+  // Commit 2-F-1：只消费 mm 坐标系的 renderTransformMM，Canvas 不感知 DPI。
+  const t = slot.placement?.renderTransformMM
 
   // 三段式 SVG transform 字符串（Commit 2-B）
   const svgTransform = t
@@ -75,8 +78,8 @@ const SlotImage = memo(({ slot }) => {
                 href={slot.thumbnailUrl}
                 x="0"
                 y="0"
-                width={t.imageWidth}
-                height={t.imageHeight}
+                width={t.contentBoxWidth}
+                height={t.contentBoxHeight}
                 preserveAspectRatio="none"
                 style={{
                   opacity: loaded ? 1 : 0,
@@ -90,7 +93,7 @@ const SlotImage = memo(({ slot }) => {
               />
               {!loaded && (
                 <rect
-                  x="0" y="0" width={t.imageWidth} height={t.imageHeight}
+                  x="0" y="0" width={t.contentBoxWidth} height={t.contentBoxHeight}
                   fill="var(--accent-soft)" fillOpacity="0.3"
                   rx="0.5"
                 />
@@ -98,7 +101,7 @@ const SlotImage = memo(({ slot }) => {
             </>
           ) : (
             <rect
-              x="0" y="0" width={t.imageWidth} height={t.imageHeight}
+              x="0" y="0" width={t.contentBoxWidth} height={t.contentBoxHeight}
               fill="var(--accent-soft)" fillOpacity="0.2"
               rx="0.5"
             />
