@@ -189,7 +189,8 @@ export function buildPrintPreviewModel(plan, { files = [], settings = {}, curren
           )
         }
         if (contentDims && contentDims.width > 0 && contentDims.height > 0) {
-          const rotatedSize = resolveContentBounds(contentDims, userRotation)
+          // Commit 3 fix: 传原始尺寸 + contentRotation，由 resolveContentPlacement 内部计算 effectiveContentSize。
+          // resolveContentBounds 在这里不再需要（已内化到 Resolver 的二阶段模型中）。
           const paperW_mm = layout.paperRect.w * PX_TO_MM
           const paperH_mm = layout.paperRect.h * PX_TO_MM
           const marginLeft_mm = mL * PX_TO_MM
@@ -198,8 +199,8 @@ export function buildPrintPreviewModel(plan, { files = [], settings = {}, curren
           const marginBottom_mm = mB * PX_TO_MM
           // 纸面尺寸不变：不因内容旋转而旋转纸面
           placementResult = resolveContentPlacement({
-            contentSize: rotatedSize,
-            contentRotation: userRotation,
+            contentSize: contentDims,       // 原始尺寸（未旋转）
+            contentRotation: userRotation, // Resolver 内部 apply contentRotation
             paperSize: { widthMM: paperW_mm, heightMM: paperH_mm },
             paperOrientation: page.orientation,
             margins: {
