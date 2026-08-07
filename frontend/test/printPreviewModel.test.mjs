@@ -292,19 +292,28 @@ test('PM-15: 四案例旋转矩阵（renderTransformMM.rotationDeg 归一化）'
 })
 
 // ── Commit 2-G：fit scale 占满安全区（PDF points → px@dpi 归一化后量级正确） ──
-test('PM-16 (Gate 1 补充): 小内容(160×100mm)→ scale=1 不放大，placedRect≈160×100 居中', () => {
+test('PM-16 (Gate 1 修正): 小内容(160×100mm)→ scale>1 放大填充安全区，居中不越界', () => {
   // 模拟用户内容物理尺寸 160×100mm（PDF points = 160*72/25.4 ≈ 454）
   const files = [mkDim('SMALL', Math.round(160 * 72 / 25.4), Math.round(100 * 72 / 25.4))]
   const plan = buildPrintExecutionPlan(files, { filter: SOURCE_FILE_FILTER, settings: {} })
   const m = buildPrintPreviewModel(plan, { files, settings: {} })
   const s = m.pages[0].slots[0]
   const pl = s.placement
-  assert.ok(near(pl.scale, 1, 1e-6), `scale=${pl.scale} 应为 1（内容小于安全区不放大）`)
-  const wMM = pl.placedRect.w * (25.4 / 300)
-  const hMM = pl.placedRect.h * (25.4 / 300)
-  // 横票(160×100) 经 fitRotation=-90 旋转后，placedRect 为 100×160（面积/中心守恒）
-  assert.ok(near(wMM, 100, 0.5), `placedRect.w=${wMM.toFixed(1)}mm ≈ 100（旋转后宽=原高）`)
-  assert.ok(near(hMM, 160, 0.5), `placedRect.h=${hMM.toFixed(1)}mm ≈ 160（旋转后高=原宽）`)
+  // 排版对象语义：小内容放大填充安全区（旧版被 Math.min(...,1) 封顶=1，Commit 2-G-1 已修正）
+  assert.ok(pl.scale > 1, `scale=${pl.scale} 应 >1（放大填充，非原尺寸）`)
+  const cs = pl.canvasSize
+  // 放大后不超出纸张
+  assert.ok(pl.placedRect.x >= -1 && pl.placedRect.y >= -1, 'placedRect 不越纸左上')
+  assert.ok(pl.placedRect.x + pl.placedRect.w <= cs.width + 1, 'placedRect 不越纸右')
+  assert.ok(pl.placedRect.y + pl.placedRect.h <= cs.height + 1, 'placedRect 不越纸下')
+  // 居中
+  const cx = pl.placedRect.x + pl.placedRect.w / 2
+  const cy = pl.placedRect.y + pl.placedRect.h / 2
+  assert.ok(Math.abs(cx - cs.width / 2) <= 2, `水平居中 cx=${cx.toFixed(0)}≈${cs.width / 2}`)
+  assert.ok(Math.abs(cy - cs.height / 2) <= 2, `垂直居中 cy=${cy.toFixed(0)}≈${cs.height / 2}`)
+  // 放大填充：至少一维占满纸张 ≥85%
+  const fill = Math.max(pl.placedRect.w / cs.width, pl.placedRect.h / cs.height)
+  assert.ok(fill > 0.85, `放大填充比例=${fill.toFixed(2)} 应 >0.85`)
 })
 
 test('PM-17 (Gate 2 大内容): 大票(300×400mm)+10mm边距 → scale<1 等比缩小碰边停止', () => {

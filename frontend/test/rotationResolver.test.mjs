@@ -119,8 +119,8 @@ describe('resolveContentPlacement', () => {
     assert.equal(normalizeRotation(r.contentRotation + r.fitRotation), 0)
     assert.equal(r.contentOrientation, 'portrait')
     assert.equal(r.paperOrientation, 'portrait')
-    // scale 应 ∈ (0, 1]（内容尺寸较小，不放大，scale=1）
-    assert.ok(r.scale > 0 && r.scale <= 1)
+    // scale 应为正有限值（Commit 2-G-1 起允许 >1 放大填充安全区）
+    assert.ok(r.scale > 0 && Number.isFinite(r.scale), 'scale 为正有限（可>1 放大）')
     // available 宽 = 2480-6mm*2 ≈ 2339px（默认 margin=3mm → 35px each side）
   })
 
@@ -268,7 +268,7 @@ describe('resolveContentPlacement', () => {
   })
 
   it('Case 11: renderTransform — translate+scale+rotate 三段式数值锚点', () => {
-    // 竖内容 1000×1400 + A4 portrait + 0° → 居中，scale≤1，rotation=0
+    // 竖内容 1000×1400 + A4 portrait + 0° → 居中，scale 可>1（放大填充），rotation=0
     const r = resolveContentPlacement({
       contentPhysicalSize: { width: 1000, height: 1400 },
       contentRotation: 0,
@@ -279,7 +279,7 @@ describe('resolveContentPlacement', () => {
     const rt = r.renderTransform
     assert.ok(rt, 'renderTransform must exist')
     assert.equal(rt.rotationDeg, 0, '竖内容+竖纸→不旋转')
-    assert.ok(rt.scale > 0 && rt.scale <= 1, 'scale∈(0,1]')
+    assert.ok(rt.scale > 0 && Number.isFinite(rt.scale), 'scale 为正有限（可>1 放大）')
     assert.ok(rt.translateX > 0, 'translateX>0（边距内）')
     assert.ok(rt.translateY > 0, 'translateY>0（边距内）')
     // rotation center = 内容中心

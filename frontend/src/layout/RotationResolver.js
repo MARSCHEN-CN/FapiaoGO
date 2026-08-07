@@ -161,7 +161,7 @@ export function computeLayoutRotation(contentOrientation, paperOrientation) {
  *   // 几何（px@dpi）
  *   canvasSize: {width:number, height:number},  // 最终画布尺寸（纸张 px + 方向适配）
  *   availableRect: {x:number, y:number, w:number, h:number},  // 安全区（px，已扣除 margins）
- *   scale: number,                   // fit scale = min(availableW / contentW, availableH / contentH)
+ *   scale: number,                   // fit scale = min(availableW / placedContentW, availableH / placedContentH)，可 >1（放大填充安全区）
  *   offset: {x:number, y:number},    // 居中偏移（px，locatedLayout 下内容左上角位置）
  *   placedRect: {x:number, y:number, w:number, h:number},  // 缩放居中后内容在画布上的位置
  * }}
@@ -232,12 +232,18 @@ export function resolveContentPlacement({
     throw new Error(`RotationResolver: 安全边距超出纸张尺寸 (paper=${paperSize.widthMM}x${paperSize.heightMM}mm, available=${availableW}x${availableH}px)`)
   }
 
-  // fit scale（只缩小不放大——内容小于安全区时保持原尺寸）
-  const scale = Math.min(
-    1,
+  // fit scale（排版对象语义：可放大可缩小，最大化填充安全区）
+  //   PrintPreview 中发票是「可布局对象」，目标 = 等比 fit 到 availableRect 边界（不超出安全边距）。
+  //   与 Viewer（查看对象，保持真实比例、不消费 fit scale）语义严格不同。
+  //   ⚠️ 顺序约束：scale 必须在 fitRotation 之后计算（placedContentW/H 已是旋转后尺寸），
+  //      禁止先 scale 再旋转（否则放大后包围盒再次改变 → 布局破裂）。
+  const scaleRaw = Math.min(
     availableW / placedContentW,
     availableH / placedContentH,
   )
+  // 非法值保护：防御 contentW/H 或 availableW/H 为 0 的极端边界，避免 SVG scale=Infinity/NaN。
+  // （正常路径 inputs 已校验正数；此 guard 为未来代码路径兜底，回退 scale=1 不产生无限变换。）
+  const scale = Number.isFinite(scaleRaw) && scaleRaw > 0 ? scaleRaw : 1
 
   // 居中偏移
   const scaledW = roundPx(placedContentW * scale)
