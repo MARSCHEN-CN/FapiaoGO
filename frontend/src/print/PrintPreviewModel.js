@@ -180,6 +180,14 @@ export function buildPrintPreviewModel(plan, { files = [], settings = {}, curren
         let effectiveRotation = userRotation
         let placementResult = null  // resolveContentPlacement 输出（有尺寸时填充）
         const contentDims = f ? getContentDimensions(f) : null
+        // [DIAG-14] getContentDimensions 返回值
+        if (f) {
+          console.log('[DIAG-14 contentDims] fileKey=%s dims=%o hasPdfPage=%d',
+            slotDef.fileId?.slice(-20),
+            contentDims ? `${contentDims.width}x${contentDims.height}` : 'null',
+            f._pdfPageWidth || 0
+          )
+        }
         if (contentDims && contentDims.width > 0 && contentDims.height > 0) {
           const rotatedSize = resolveContentBounds(contentDims, userRotation)
           const paperW_mm = layout.paperRect.w * PX_TO_MM
