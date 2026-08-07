@@ -2,11 +2,11 @@
  * RotationResolver 单元测试 — 三层旋转模型验证（2026-08-06）
  *
  * 测试用例（用户定稿）：
- *   1. 竖内容 + 竖纸 → fitRotation=0, finalRotation=0
- *   2. 横内容 + 竖纸 → fitRotation=-90, finalRotation=-90
- *   3. 竖内容 + 横纸 → fitRotation=+90, finalRotation=+90
+ *   1. 竖内容 + 竖纸 → layoutRotation=0, finalRotation=0
+ *   2. 横内容 + 竖纸 → layoutRotation=-90, finalRotation=270
+ *   3. 竖内容 + 横纸 → layoutRotation=-90, finalRotation=270（Step 2 统一：方向不匹配统一 -90）
  *   4. contentRotation=90 + 竖内容 + 竖纸 → finalRotation=90
- *   5. contentRotation=90 + 竖纸（原横内容）→ 此时旋转后内容为横，fitRotation=-90，finalRotation=0
+ *   5. contentRotation=90 + 竖纸（原横内容）→ 此时旋转后内容为横，layoutRotation=-90，finalRotation=0
  *   6. 安全边距 → scale 计算正确
  *   7. 居中 → offset 非负且居中
  */
@@ -98,8 +98,8 @@ describe('computeLayoutRotation', () => {
   it('landscape + portrait → -90', () => {
     assert.equal(computeLayoutRotation('landscape', 'portrait'), -90)
   })
-  it('portrait + landscape → 90', () => {
-    assert.equal(computeLayoutRotation('portrait', 'landscape'), 90)
+  it('portrait + landscape → -90', () => {
+    assert.equal(computeLayoutRotation('portrait', 'landscape'), -90)
   })
 })
 
@@ -115,8 +115,8 @@ describe('resolveContentPlacement', () => {
       paperSize: A4_PORTRAIT,
       dpi: 300,
     })
-    assert.equal(r.fitRotation, 0)
-    assert.equal(normalizeRotation(r.contentRotation + r.fitRotation), 0)
+    assert.equal(r.layoutRotation, 0)
+    assert.equal(normalizeRotation(r.contentRotation + r.layoutRotation), 0)
     assert.equal(r.contentOrientation, 'portrait')
     assert.equal(r.paperOrientation, 'portrait')
     // scale 应为正有限值（Commit 2-G-1 起允许 >1 放大填充安全区）
@@ -131,13 +131,13 @@ describe('resolveContentPlacement', () => {
       paperSize: A4_PORTRAIT,
       dpi: 300,
     })
-    assert.equal(r.fitRotation, -90)
-    assert.equal(normalizeRotation(r.contentRotation + r.fitRotation), 270)  // 0 + (-90) → 270
+    assert.equal(r.layoutRotation, -90)
+    assert.equal(normalizeRotation(r.contentRotation + r.layoutRotation), 270)  // 0 + (-90) → 270
     assert.equal(r.contentOrientation, 'landscape')
     assert.equal(r.paperOrientation, 'portrait')
   })
 
-  it('Case 3: 竖内容 + 横纸 → fitRotation=+90, finalRotation=90', () => {
+  it('Case 3: 竖内容 + 横纸 → layoutRotation=-90, finalRotation=270（Step 2 统一：方向不匹配统一 -90）', () => {
     const A4_LANDSCAPE = { widthMM: 297, heightMM: 210 }
     const r = resolveContentPlacement({
       contentPhysicalSize: { width: 1000, height: 1400 },
@@ -145,14 +145,14 @@ describe('resolveContentPlacement', () => {
       paperSize: A4_LANDSCAPE,
       dpi: 300,
     })
-    assert.equal(r.fitRotation, 90)
-    assert.equal(normalizeRotation(r.contentRotation + r.fitRotation), 90)
+    assert.equal(r.layoutRotation, -90)
+    assert.equal(normalizeRotation(r.contentRotation + r.layoutRotation), 270)
     assert.equal(r.contentOrientation, 'portrait')
     assert.equal(r.paperOrientation, 'landscape')
   })
 
-  it('Case 4: contentRotation=90 竖内容 → 旋转后横内容 + 竖纸 → fitRotation=-90, finalRotation=0', () => {
-    // 原始竖内容 1000×1400，contentRotation=90 → 有效横内容 + 竖纸 → fitRotation=-90
+  it('Case 4: contentRotation=90 竖内容 → 旋转后横内容 + 竖纸 → layoutRotation=-90, finalRotation=0', () => {
+    // 原始竖内容 1000×1400，contentRotation=90 → 有效横内容 + 竖纸 → layoutRotation=-90
     const r = resolveContentPlacement({
       contentPhysicalSize: { width: 1000, height: 1400 },  // 原始竖内容
       contentRotation: 90,
@@ -160,12 +160,12 @@ describe('resolveContentPlacement', () => {
       dpi: 300,
     })
     assert.equal(r.contentRotation, 90)
-    assert.equal(r.fitRotation, -90)
-    assert.equal(normalizeRotation(r.contentRotation + r.fitRotation), 0)  // 90 + (-90) = 0
+    assert.equal(r.layoutRotation, -90)
+    assert.equal(normalizeRotation(r.contentRotation + r.layoutRotation), 0)  // 90 + (-90) = 0
     assert.equal(r.contentOrientation, 'landscape')  // 旋转后内容是横的
   })
 
-  it('Case 5: contentRotation=0 横内容 + 横纸 → fitRotation=-90, finalRotation=270（Commit 2-H v2：横纸+横方向放倒）', () => {
+  it('Case 5: contentRotation=0 横内容 + 横纸 → layoutRotation=0, finalRotation=0（Step 2：有效横内容==横方向）', () => {
     const A4_LANDSCAPE = { widthMM: 297, heightMM: 210 }
     const r = resolveContentPlacement({
       contentPhysicalSize: { width: 1400, height: 1000 },
@@ -173,8 +173,8 @@ describe('resolveContentPlacement', () => {
       paperSize: A4_LANDSCAPE,
       dpi: 300,
     })
-    assert.equal(r.fitRotation, -90)
-    assert.equal(normalizeRotation(r.contentRotation + r.fitRotation), 270)
+    assert.equal(r.layoutRotation, 0)
+    assert.equal(normalizeRotation(r.contentRotation + r.layoutRotation), 0)
     assert.equal(r.contentOrientation, 'landscape')
     assert.equal(r.paperOrientation, 'landscape')
   })
@@ -242,8 +242,8 @@ describe('resolveContentPlacement', () => {
       dpi: 300,
     })
     assert.equal(r.contentRotation, 180)
-    assert.equal(r.fitRotation, 0)  // 竖内容 + 竖纸
-    assert.equal(normalizeRotation(r.contentRotation + r.fitRotation), 180)
+    assert.equal(r.layoutRotation, 0)  // 竖内容 + 竖纸
+    assert.equal(normalizeRotation(r.contentRotation + r.layoutRotation), 180)
   })
 
   it('Case 10: 270° contentRotation 竖内容 → 旋转后横内容 + 竖纸 → finalRotation=180', () => {
@@ -255,8 +255,8 @@ describe('resolveContentPlacement', () => {
       dpi: 300,
     })
     assert.equal(r.contentRotation, 270)
-    assert.equal(r.fitRotation, -90)
-    assert.equal(normalizeRotation(r.contentRotation + r.fitRotation), 180)  // 270 + (-90) = 180
+    assert.equal(r.layoutRotation, -90)
+    assert.equal(normalizeRotation(r.contentRotation + r.layoutRotation), 180)  // 270 + (-90) = 180
   })
 
   it('rejects invalid contentPhysicalSize', () => {
@@ -301,16 +301,16 @@ describe('resolveContentPlacement', () => {
       dpi: 300,
     })
     const rt = r.renderTransform
-    assert.equal(r.contentRotation + r.fitRotation, 0, '用户90+fit-90=0')
-    // renderTransform 只施加 fitRotation（正常化为 270 = -90）
-    assert.equal(rt.rotationDeg, normalizeRotation(r.fitRotation), 'renderTransform fitRotation=270')
-    // 缩略图已 bake contentRotation=90 → 自然尺寸=有效内容(1400×1000)；SVG 只施加 fitRotation
+    assert.equal(r.contentRotation + r.layoutRotation, 0, '用户90+layout-90=0')
+    // renderTransform 只施加 layoutRotation（正常化为 270 = -90）
+    assert.equal(rt.rotationDeg, normalizeRotation(r.layoutRotation), 'renderTransform layoutRotation=270')
+    // 缩略图已 bake contentRotation=90 → 自然尺寸=有效内容(1400×1000)；SVG 只施加 layoutRotation
     assert.equal(rt.imageWidth, 1400, 'image=有效内容宽(用户旋转后自然尺寸)')
     assert.equal(rt.imageHeight, 1000, 'image=有效内容高')
   })
 
   it('Case 13: renderTransform 几何守卫 — 旋转后 image 不拉伸且包围盒=placedRect', () => {
-    // 横票 609×394 + contentRotation=0 + A4 portrait → fitRotation=-90
+    // 横票 609×394 + contentRotation=0 + A4 portrait → layoutRotation=-90
     const r = resolveContentPlacement({
       contentPhysicalSize: { width: 609, height: 394 },
       contentRotation: 0,
@@ -349,22 +349,22 @@ describe('resolveContentPlacement', () => {
     }), /paperSize/)
   })
 
-  // ── Commit 2-E Gate: 二阶段纸面适配矩阵 ──
-  // 验证 shapeAdjustedOrientation + orientationFitRotation 显式中转
-  it('Gate E1: 横票+横纸型+横向 → renderRotation=270(≡-90)（Commit 2-H v2：横纸+横方向放倒）', () => {
+  // ── Step 2 Gate: 统一纸张匹配模型（用户旋转与纸张匹配严格分层）──
+  it('Gate E1: 横票+横纸型(LANDSCAPE)+横向 → layoutRotation=0, renderRotation=0（有效横内容==横方向）', () => {
     const r = resolveContentPlacement({
       contentPhysicalSize: { width: 1400, height: 1000 },  // 横向
       contentRotation: 0,
       paperSize: LANDSCAPE_PAPER,  // 297×210 横向纸型
       dpi: 300,
     })
-    assert.equal(r.shapeFitRotation, 0)      // 横内容+横纸型=匹配
-    assert.equal(r.shapeAdjustedOrientation, 'landscape')
-    assert.equal(r.orientationFitRotation, -90) // Commit 2-H v2：横纸+横方向 → 放倒 -90
-    assert.equal(r.renderRotation, 270)         // normalize(-90)
+    assert.equal(r.contentOrientation, 'landscape')
+    assert.equal(r.paperOrientation, 'landscape')
+    assert.equal(r.layoutRotation, 0)            // 有效横内容 == 横方向
+    assert.equal(r.renderRotation, 0)            // normalize(0)
+    assert.equal(r.renderRotation, r.layoutRotation)
   })
 
-  it('Gate E2: 横票+横纸型+纵向 → renderRotation=0（Commit 2-H 修复：横向纸型下 orientationFit 恒为 0，用户纵向不再补偿旋转）', () => {
+  it('Gate E2: 横票+横纸型+纵向 → layoutRotation=-90, renderRotation=270（有效横内容≠纵方向，统一 -90）', () => {
     const r = resolveContentPlacement({
       contentPhysicalSize: { width: 1400, height: 1000 },
       contentRotation: 0,
@@ -372,26 +372,26 @@ describe('resolveContentPlacement', () => {
       paperOrientation: 'portrait',  // 用户选纵向
       dpi: 300,
     })
-    assert.equal(r.shapeFitRotation, 0)
-    assert.equal(r.shapeAdjustedOrientation, 'landscape')
-    assert.equal(r.orientationFitRotation, 0)  // Commit 2-H: 横向纸型下 orientationFit 恒为 0
-    assert.equal(r.renderRotation, 0)
+    assert.equal(r.contentOrientation, 'landscape')
+    assert.equal(r.paperOrientation, 'portrait')
+    assert.equal(r.layoutRotation, -90)  // 方向不匹配
+    assert.equal(r.renderRotation, 270)
   })
 
-  it('Gate E3: 横票+竖纸型(A4)+竖向 → renderRotation=270', () => {
+  it('Gate E3: 横票+竖纸型(A4)+竖向 → layoutRotation=-90, renderRotation=270', () => {
     const r = resolveContentPlacement({
       contentPhysicalSize: { width: 1400, height: 1000 },
       contentRotation: 0,
       paperSize: A4_PORTRAIT,
       dpi: 300,
     })
-    assert.equal(r.shapeFitRotation, -90)  // 横内容+竖纸型=不匹配
-    assert.equal(r.shapeAdjustedOrientation, 'portrait')
-    assert.equal(r.orientationFitRotation, 0) // 竖=竖
+    assert.equal(r.contentOrientation, 'landscape')
+    assert.equal(r.paperOrientation, 'portrait')
+    assert.equal(r.layoutRotation, -90)  // 有效横内容 ≠ 纵方向
     assert.equal(r.renderRotation, 270)  // normalize(-90)
   })
 
-  it('Gate E4: 横票+竖纸型(A4)+横向 → renderRotation=0', () => {
+  it('Gate E4: 横票+竖纸型(A4)+横向 → layoutRotation=0, renderRotation=0（有效横内容==横方向）', () => {
     const r = resolveContentPlacement({
       contentPhysicalSize: { width: 1400, height: 1000 },
       contentRotation: 0,
@@ -399,9 +399,9 @@ describe('resolveContentPlacement', () => {
       paperOrientation: 'landscape',  // 用户选横向
       dpi: 300,
     })
-    assert.equal(r.shapeFitRotation, -90)
-    assert.equal(r.shapeAdjustedOrientation, 'portrait')
-    assert.equal(r.orientationFitRotation, 90)  // 竖→横
-    assert.equal(r.renderRotation, 0)  // -90+90=0
+    assert.equal(r.contentOrientation, 'landscape')
+    assert.equal(r.paperOrientation, 'landscape')
+    assert.equal(r.layoutRotation, 0)  // 有效横内容 == 横方向
+    assert.equal(r.renderRotation, 0)
   })
 })

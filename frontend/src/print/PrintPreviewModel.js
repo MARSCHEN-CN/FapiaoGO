@@ -245,7 +245,7 @@ export function buildPrintPreviewModel(plan, { files = [], settings = {}, curren
             dpi: PREVIEW_DPI,
           })
           effectiveRotation = normalizeRotation(
-            (placementResult.contentRotation || 0) + (placementResult.fitRotation || 0)
+            (placementResult.contentRotation || 0) + (placementResult.layoutRotation || 0)
           )
         }
         return {
@@ -257,7 +257,7 @@ export function buildPrintPreviewModel(plan, { files = [], settings = {}, curren
           // deprecated（保留兼容）→ 新消费者请用 contentRotation / fitRotation
           _deprecatedRotation: effectiveRotation,
           contentRotation: placementResult?.contentRotation ?? userRotation,
-          fitRotation: placementResult?.fitRotation ?? 0,
+          layoutRotation: placementResult?.layoutRotation ?? 0,
           // 布局结果（Commit 2 新增，PrintPreviewCanvas 消费）
           placement: placementResult ? {
             scale: placementResult.scale,
@@ -288,7 +288,7 @@ export function buildPrintPreviewModel(plan, { files = [], settings = {}, curren
           // [DIAG] renderTransform 语义验证（无条件）
           _diag: placementResult ? {
             contentRotation: placementResult.contentRotation,
-            fitRotation: placementResult.fitRotation,
+            layoutRotation: placementResult.layoutRotation,
             effectiveSize: placementResult.effectiveContentSize,
             rotationDeg: placementResult.renderTransform.rotationDeg,
           } : null,
@@ -313,8 +313,8 @@ export function buildPrintPreviewModel(plan, { files = [], settings = {}, curren
     const p = basePages[0]
     const s = p.slots[0]
     if (s._diag) {
-      console.log('[DIAG-11 rotation matrix] contentRotation=%d fitRotation=%d effectiveSize=%s rotationDeg=%d paperOrientation=%s',
-        s._diag.contentRotation, s._diag.fitRotation, s._diag.effectiveSize,
+      console.log('[DIAG-11 rotation matrix] contentRotation=%d layoutRotation=%d effectiveSize=%s rotationDeg=%d paperOrientation=%s',
+        s._diag.contentRotation, s._diag.layoutRotation, s._diag.effectiveSize,
         s._diag.rotationDeg, p.orientation)
     } else {
       console.log('[DIAG-11 no placement] slotRotation=%d hasThumb=%s paperOrientation=%s',

@@ -1,7 +1,7 @@
 /**
  * 临时审计脚本：验证用户给出的 3 个固定案例（rotation-refactor 分支）
  * 验证点：
- *   1. resolveContentPlacement 纯数学模型（fitRotation / renderRotation）
+ *   1. resolveContentPlacement 纯数学模型（layoutRotation / renderRotation）
  *   2. PrintPreviewModel 端到端：thumbnailUrl 仅带 contentRotation（不双旋转）
  *      slot.placement.renderTransform 不拉伸 + rotationDeg 与模型一致
  * 运行：node --test test/_audit3_verify.mjs
@@ -21,48 +21,44 @@ const LAND_FILE = { width: 609, height: 394 }
 const margins = { left: 3, right: 3, top: 3, bottom: 3 }
 
 // ── 纯数学：resolveContentPlacement ──
-test('T1 纯数学：横票+contentRotation=0+A4竖纸+纵方向 → shapeFit=-90 orientFit=0 renderRotation=270(≡-90)', () => {
+test('T1 纯数学：横票+contentRotation=0+A4竖纸+纵方向 → layoutRotation=-90, renderRotation=270(≡-90)', () => {
   const r = resolveContentPlacement({
     contentPhysicalSize: LAND_FILE, contentRotation: 0,
     paperSize: A4, paperOrientation: 'portrait', margins,
   })
-  assert.equal(r.shapeFitRotation, -90, 'shapeFitRotation')
-  assert.equal(r.orientationFitRotation, 0, 'orientationFitRotation')
-  assert.equal(r.fitRotation, -90, 'fitRotation')
+  assert.equal(r.contentOrientation, 'landscape', '有效内容方向=横(用户未旋转)')
+  assert.equal(r.layoutRotation, -90, 'layoutRotation = 有效内容方向 vs 用户方向')
   assert.equal(r.renderRotation, 270, 'renderRotation = normalize(-90) = 270（视觉≡-90）')
 })
 
-test('T2 纯数学：横票+A4竖纸+切横方向 → shapeFit=-90 orientFit=+90 renderRotation=0', () => {
+test('T2 纯数学：横票+A4竖纸+切横方向 → layoutRotation=0（有效横内容==横方向）', () => {
   const r = resolveContentPlacement({
     contentPhysicalSize: LAND_FILE, contentRotation: 0,
     paperSize: A4, paperOrientation: 'landscape', margins,
   })
-  assert.equal(r.shapeFitRotation, -90)
-  assert.equal(r.orientationFitRotation, 90)
-  assert.equal(r.fitRotation, 0)
+  assert.equal(r.contentOrientation, 'landscape')
+  assert.equal(r.layoutRotation, 0, '有效横内容 + 横方向 → 匹配')
   assert.equal(r.renderRotation, 0)
 })
 
-test('T3a 纯数学：横纸型+横票+横方向 → orientationFit=-90, renderRotation=270(≡-90)', () => {
+test('T3a 纯数学：横纸型+横票+横方向 → layoutRotation=0, renderRotation=0（Step 2 统一模型：有效横内容==横方向）', () => {
   const r = resolveContentPlacement({
     contentPhysicalSize: LAND_FILE, contentRotation: 0,
     paperSize: A4L, paperOrientation: 'landscape', margins,
   })
-  assert.equal(r.shapeFitRotation, 0)
-  assert.equal(r.orientationFitRotation, -90)  // Commit 2-H v2：横纸+横方向 → 放倒 -90
-  assert.equal(r.fitRotation, -90)
-  assert.equal(r.renderRotation, 270)
+  assert.equal(r.contentOrientation, 'landscape')
+  assert.equal(r.layoutRotation, 0)
+  assert.equal(r.renderRotation, 0)
 })
 
-test('T3b 纯数学：横纸型+横票+切纵方向 → renderRotation=0（Commit 2-H：横向纸型下 orientationFit 恒为 0，用户纵不补偿旋转）', () => {
+test('T3b 纯数学：横纸型+横票+切纵方向 → layoutRotation=-90, renderRotation=270（Step 2：有效横内容≠纵方向）', () => {
   const r = resolveContentPlacement({
     contentPhysicalSize: LAND_FILE, contentRotation: 0,
     paperSize: A4L, paperOrientation: 'portrait', margins,
   })
-  assert.equal(r.shapeFitRotation, 0)
-  assert.equal(r.orientationFitRotation, 0)  // Commit 2-H: 横向纸型下 orientationFit 恒为 0
-  assert.equal(r.fitRotation, 0)
-  assert.equal(r.renderRotation, 0)
+  assert.equal(r.contentOrientation, 'landscape')
+  assert.equal(r.layoutRotation, -90)
+  assert.equal(r.renderRotation, 270)
 })
 
 // ── 端到端：PrintPreviewModel ──
@@ -92,7 +88,7 @@ test('T2 端到端：横票+A4切横方向 → 无 content_rotation + rotationDe
   const m = buildPrintPreviewModel(plan, { files, settings: { landscape: true } })
   const s = m.pages[0].slots[0]
   assert.equal(s.thumbnailUrl.includes('content_rotation'), false)
-  assert.equal(s.placement.renderTransform.rotationDeg, 270, 'rotationDeg=270(≡-90) [Commit 2-H v2：横纸型+横方向放倒]')
+  assert.equal(s.placement.renderTransform.rotationDeg, 0, 'rotationDeg=0(有效横内容==横方向)[Step 2 统一模型]')
 })
 
 test('情况B 守卫：Resolver 对原始 609×394 + contentRotation=90 → 单次旋转 effectiveContentSize=394×609', () => {

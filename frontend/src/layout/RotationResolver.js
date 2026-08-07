@@ -16,19 +16,21 @@
  *      职责：把用户旋转动作物化为内容几何。Viewer 拥有旋转权限。
  *
  *   2. FitResolve（本文件后半）：
- *      输入 effectiveOrientation + paperSize → 输出 fitRotation（-90/0/+90）
- *      职责：纸面适配——当内容方向≠纸张方向时，计算所需的补偿旋转。
- *      fitRotation 不改变 contentRotation，只影响最终 placement 的 transform。
+ *      输入 effectiveContentOrientation + paperOrientation → 输出 layoutRotation（-90/0）
+ *      职责：纸面适配——比较【用户旋转后的有效内容方向】vs 用户纸方向，计算唯一匹配旋转。
+ *      layoutRotation 不改变 contentRotation（thumbnail 已 bake），只影响最终 placement 的 transform。
  *
- * ## 核心公式
+ * ## 核心公式（Step 2 统一模型）
  *
  *   effectiveContentW = contentRotated ? contentPhysicalSize.h : contentPhysicalSize.w
  *   effectiveContentH = contentRotated ? contentPhysicalSize.w : contentPhysicalSize.h
+ *   effectiveContentOrientation = detectContentOrientation(effectiveContentW, effectiveContentH)
  *
- *   fitRotation =
- *     0   : 内容方向 == 纸张方向
- *     -90 : 内容横向 + 纸张纵向
- *     +90 : 内容纵向 + 纸张横向
+ *   layoutRotation =
+ *     0   : effectiveContentOrientation == paperOrientation
+ *     -90 : 方向不匹配（横内容塞竖纸 / 竖内容塞横纸 同约定）
+ *
+ *   最终视觉 = contentRotation(烤入缩略图) + layoutRotation(SVG transform)，二者串行不互相修正。
  *
  * ## 与旧 Policy A 的区别
  *
@@ -114,22 +116,26 @@ export function getContentDimensions(file) {
 }
 
 /**
- * Layer 2：打印布局旋转（自动适配）。
+ * Layer 2：打印布局旋转（纸张匹配，自动适配）。
  *
- * 规则（用户定稿）：
+ * Step 2（2026-08-07）统一模型：用户旋转与纸张匹配严格分层。
+ *   - contentOrientation 必须是【用户旋转后】的有效内容方向（由 resolveContentPlacement 内部计算）。
+ *   - 比较有效内容方向 vs 用户纸方向（paperOrientation），决定唯一的纸张匹配旋转。
+ * 规则：
  *   - 内容方向 == 纸张方向 → 0（不额外旋转）
- *   - 横向内容 + 纵向纸张 → -90（逆时针转内容塞入竖纸）
- *   - 纵向内容 + 横向纸张 → +90（顺时针转内容塞入横纸）
+ *   - 方向不匹配          → -90（逆时针 90° 对齐方向；横内容塞竖纸 / 竖内容塞横纸 同此约定）
  *
- * @param {'portrait'|'landscape'} contentOrientation - 旋转后内容的天然方向
- * @param {'portrait'|'landscape'} paperOrientation   - 纸张方向
- * @returns {number} layoutRotation（0 | -90 | 90）
+ * ⚠️ 约定：任何方向不匹配统一 -90（不再区分 +90），因为 thumbnail 已 bake contentRotation，
+ *   SVG 只施加 layoutRotation；-90 使最终视觉 = contentRotation(烤入) + (-90) 正确对齐。
+ *
+ * @param {'portrait'|'landscape'} contentOrientation - 用户旋转后的有效内容方向
+ * @param {'portrait'|'landscape'} paperOrientation   - 用户选择的纸张方向
+ * @returns {number} layoutRotation（0 | -90）
  */
 export function computeLayoutRotation(contentOrientation, paperOrientation) {
   if (contentOrientation === paperOrientation) return 0
-  if (contentOrientation === 'landscape' && paperOrientation === 'portrait') return -90
-  if (contentOrientation === 'portrait' && paperOrientation === 'landscape') return 90
-  return 0
+  // 方向不匹配：统一逆时针 90°（Step 2 统一模型，横内容塞竖纸 / 竖内容塞横纸 同约定）
+  return -90
 }
 
 /**
@@ -148,15 +154,16 @@ export function computeLayoutRotation(contentOrientation, paperOrientation) {
  * @param {{left?:number, right?:number, top?:number, bottom?:number}} [input.margins] - 安全边距（mm，默认 0）
  * @param {number} [input.dpi=300]                            - 渲染 DPI
  * @returns {{
- *   // Layer 1 透传
+ *   // Layer 1 透传（内容世界）
  *   contentRotation: number,         // 用户旋转（0/90/180/270）
- *   contentSize: {width:number, height:number},  // 旋转后内容尺寸（px）
- *   contentOrientation: 'portrait'|'landscape',  // 旋转后内容方向
+ *   contentPhysicalSize: {width:number, height:number},  // 原始内容尺寸（px，旋转前）
+ *   contentOrientation: 'portrait'|'landscape',  // 有效内容方向 = 用户旋转后（Stage 1 物化）
+ *   effectiveContentSize: {width:number, height:number}, // 用户旋转后的内容尺寸（px）
  *
- *   // Layer 2 派生
- *   layoutRotation: number,          // 布局旋转（0|-90|90）
- *   finalRotation: number,           // 最终旋转 = contentRotation + layoutRotation（归一化 0/90/180/270）
- *   paperOrientation: 'portrait'|'landscape',   // 纸张方向
+ *   // Layer 2 派生（纸张匹配，Step 2 统一模型）
+ *   paperOrientation: 'portrait'|'landscape',   // 用户选择的纸张方向
+ *   layoutRotation: number,          // 唯一适配旋转（0 | -90），有效内容方向 vs 用户纸方向
+ *   renderRotation: number,          // 归一化(layoutRotation)；SVG 施加旋转，thumbnail 已 bake contentRotation
  *
  *   // 几何（px@dpi）
  *   canvasSize: {width:number, height:number},  // 最终画布尺寸（纸张 px + 方向适配）
@@ -195,11 +202,12 @@ export function resolveContentPlacement({
   const contentOrientation = detectContentOrientation({ width: effectiveContentW, height: effectiveContentH })
 
   // ── Layer 2：纸张世界 ──
-  // 两个独立变量：
-  //   paperShapeOrientation = 纸张物理形状（A4→portrait, 297×210→landscape）
-  //   paperOrientation      = 用户选择的最终方向（portrait/landscape 切换）
-  const paperShapeOrientation = detectPaperOrientation(paperSize)
-  const paperOrientation = paperOrientInput || paperShapeOrientation
+  // Step 2（2026-08-07）：用户旋转与纸张匹配严格分层。
+  //   contentOrientation 已是【用户旋转后】的有效内容方向（见 Layer 1）。
+  //   纸张匹配只比较 effectiveContentOrientation vs 用户纸方向(paperOrientation)，
+  //   不再引入 paperShapeOrientation / shapeFit / orientationFit / landscape 特殊表。
+  //   物理纸型仅用于画布尺寸与可用区（paperW/H 直接取 paperSize），不参与旋转决策。
+  const paperOrientation = paperOrientInput || detectPaperOrientation(paperSize)
   const paperW = roundPx(paperSize.widthMM * pxPerMm)
   const paperH = roundPx(paperSize.heightMM * pxPerMm)
   const toPx = (mm) => roundPx((Number(mm) || 0) * pxPerMm)
@@ -208,39 +216,13 @@ export function resolveContentPlacement({
   const mT = toPx(margins.top)
   const mB = toPx(margins.bottom)
 
-  // ── 纸面适配旋转（二阶段 Fit，Commit 2-E）──
-  // Stage 1: shapeFitRotation — 内容方向 vs 纸张物理形状
-  //   横内容 + A4(竖形纸) → -90；竖内容 + A4(竖形纸) → 0
-  // Stage 2: orientationFitRotation — shape-adjusted 方向 → 用户方向
-  //   shapeAdjustedOrientation: 内容经 shapeFit 后的方向（= paperShapeOrientation）
-  const shapeFitRotation = computeLayoutRotation(contentOrientation, paperShapeOrientation)
-  // shape-adjusted 方向：shapeFit 后内容已经匹配纸型 → ≡ paperShapeOrientation
-  const shapeAdjustedOrientation = paperShapeOrientation
-  // Stage 2 权限边界（Commit 2-H，2026-08-07）：
-  //   横向纸型本身是「横向承载空间」，Stage 1 已完成内容承载；用户方向在横向纸型上的切换
-  //   （横↔纵）不再驱动内容旋转。若按 paperShapeOrientation != paperOrientation 触发，则
-  //   横纸+用户纵向会误补偿 -90（Case 4 bug）。故：orientationFit 仅作用于【竖向纸型】。
-  //   语义核心：用户最终看到的是「内容方向匹配纸面方向」，横向纸型下该匹配已由 Stage 1 保证。
-  let orientationFitRotation = computeLayoutRotation(shapeAdjustedOrientation, paperOrientation)
-  if (paperShapeOrientation === 'landscape') {
-    // 横向纸型 orientationFit 明确表（Commit 2-H v2，2026-08-07）：
-    //   横票+横方向 → -90（把横票放倒到横向纸张坐标系，用户"横向"是打印输出方向要求，非内容方向）
-    //   横票+纵方向 → 0（不旋转）
-    //   竖票两行   → 与原 computeLayoutRotation(landscape, paperOrientation) 语义一致
-    //                （content===user 时 -90，否则 0），即"待现有规则"保持不变。
-    //   —— 覆盖 0da69e1 的 blanket=0（过度屏蔽，导致横纸+横方向漏转 -90、横纸+纵方向漏转 -90）。
-    const landscapeOrientFit = {
-      'landscape|landscape': -90,
-      'landscape|portrait': 0,
-      'portrait|landscape': 0,
-      'portrait|portrait': -90,
-    }
-    orientationFitRotation = landscapeOrientFit[`${contentOrientation}|${paperOrientation}`]
-  }
-  // fitRotation = 原始值(-90/0/90)，renderRotation = 归一化(0/90/180/270)
-  const fitRotation = shapeFitRotation + orientationFitRotation
-  const renderRotation = normalizeRotation(fitRotation)
-  const fitRotated = isRotated(Math.abs(fitRotation))
+  // 布局旋转 = 有效内容方向 vs 用户纸方向（唯一适配旋转，Stage 2）。
+  //   方向匹配 → 0；方向不匹配 → -90（逆时针 90° 对齐方向）。
+  // 注：thumbnail 已 bake contentRotation，故 layoutRotation 仅承载纸张匹配；
+  //   最终视觉 = contentRotation(烤入缩略图) + layoutRotation(SVG)，二者串行、不互相修正。
+  const layoutRotation = computeLayoutRotation(contentOrientation, paperOrientation)
+  const renderRotation = normalizeRotation(layoutRotation)
+  const fitRotated = isRotated(Math.abs(layoutRotation))
   const placedContentW = fitRotated ? effectiveContentH : effectiveContentW
   const placedContentH = fitRotated ? effectiveContentW : effectiveContentH
 
@@ -278,24 +260,18 @@ export function resolveContentPlacement({
     // Layer 1：内容世界（Viewer 拥有旋转权限）
     contentRotation: cr,
     contentPhysicalSize: { width: contentPhysicalSize.width, height: contentPhysicalSize.height },
+    // 有效内容方向 = 用户旋转后（Stage 1 物化），供 Stage 2 纸张匹配消费
     contentOrientation,
 
     // 有效内容尺寸（content-rotated，供消费者直接使用）
     effectiveContentSize: { width: effectiveContentW, height: effectiveContentH },
 
     // Layer 2：纸面适配（PrintPreview 拥有纸张权限）
-    //   纸张物理形状（A4→portrait, 297×210→landscape）
-    paperShapeOrientation,
-    //   用户选择的最终方向
+    //   用户选择的纸张方向（不传则按 paperSize 物理形状推导）
     paperOrientation,
-    //   Stage 1: 内容 vs 纸张物理形状
-    shapeFitRotation,
-    //   Stage 1 后的内容方向（= paperShapeOrientation，显式中转）
-    shapeAdjustedOrientation,
-    //   PaperShape → UserOrientation 的旋转
-    orientationFitRotation,
-    //   总适配旋转 = shapeFitRotation + orientationFitRotation
-    fitRotation,
+    //   唯一适配旋转 = 有效内容方向 vs 用户纸方向（Step 2 统一模型）
+    layoutRotation,
+    //   SVG 施加旋转 = 归一化(layoutRotation)；thumbnail 已 bake contentRotation，故不含 content。
     renderRotation,
 
     // 几何
@@ -307,8 +283,8 @@ export function resolveContentPlacement({
 
     // SVG renderTransform（Commit 2-B→2-C 改名；Audit-3 修复像素级拉伸）
     //   缩略图 = contentRotation 已 bake 的自然尺寸（effectiveContentSize），不被二次旋转。
-    //   <image> 以自然尺寸(imageWidth×imageHeight)绘制，绕自身中心 rotate(fitRotation)，
-    //   再 scale(fit) 并居中到可用区中心。三段式：translate(居中) scale(fit) rotate(fitRotation, 内容中心)。
+    //   <image> 以自然尺寸(imageWidth×imageHeight)绘制，绕自身中心 rotate(layoutRotation)，
+    //   再 scale(fit) 并居中到可用区中心。三段式：translate(居中) scale(fit) rotate(layoutRotation, 内容中心)。
     //   —— 严禁把 imageWidth/Height 设为旋转后包围盒尺寸（preserveAspectRatio=none 会拉伸内容）。
     renderTransform: {
       translateX: mL + availableW / 2 - (effectiveContentW * scale) / 2,

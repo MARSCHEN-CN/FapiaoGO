@@ -50,7 +50,7 @@ for (const [name, paper] of Object.entries(PAPERS)) {
   })
 }
 
-// ── Gate A：A4 横票 → A4 竖纸 → fitRotation=-90 + scale>1 + 居中安全区 ──
+// ── Gate A：A4 横票 → A4 竖纸 → layoutRotation=-90 + scale>1 + 居中安全区 ──
 test('Gate A: A4 横票(1180×825) + A4 竖纸 + 10mm → fitRotation=-90, scale>1, 居中', () => {
   const r = resolveContentPlacement({
     contentPhysicalSize: SMALL_LANDSCAPE,
@@ -60,7 +60,7 @@ test('Gate A: A4 横票(1180×825) + A4 竖纸 + 10mm → fitRotation=-90, scale
     margins: MARGIN_10,
     dpi: DPI,
   })
-  assert.equal(r.fitRotation, -90, '横内容+竖纸 → fitRotation=-90')
+  assert.equal(r.layoutRotation, -90, '横内容+竖纸 → layoutRotation=-90')
   assert.equal(r.renderRotation, 270, 'renderRotation 归一化=270(≡-90)')
   assert.ok(r.scale > 1, `scale=${r.scale} 应 >1（放大填充）`)
 
