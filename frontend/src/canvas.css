@@ -317,7 +317,7 @@
   transform: translateX(-50%);
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 14px;
   user-select: none;
   flex-shrink: 0; /* 防止被挤压 */
   z-index: 10; /* 确保浮在其他元素之上 */
@@ -327,20 +327,22 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: 32px;
+  height: 32px;
   border: none;
   border-radius: 6px;
   background: transparent;
-  color: var(--text-2);
+  color: var(--text-1);
   cursor: pointer;
   transition: all 150ms ease;
+  font-weight: 600;
+  font-size: 15px;
 }
 
 /* 首页/末页按钮：略小的宽度 */
 .page-nav-btn-first,
 .page-nav-btn-last {
-  width: 24px;
+  width: 28px;
 }
 
 .page-nav-btn:hover:not(:disabled) {
@@ -358,8 +360,9 @@
 }
 
 .page-nav-indicator {
-  font-size: 13px;
-  color: var(--text-2);
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-1);
   font-variant-numeric: tabular-nums;
   line-height: 1;
   letter-spacing: 0.5px;
@@ -372,7 +375,7 @@
   grid-template-columns: 1fr auto 1fr;
   align-items: center;
   gap: 0;
-  min-width: 56px; /* 保证双位数页码时不抖动：如 "9 / 9" → "10 / 10" */
+  min-width: 64px; /* 保证双位数页码时不抖动：如 "9 / 9" → "10 / 10" */
 }
 
 .page-nav-cur {
@@ -399,13 +402,14 @@
 
 /* 页码输入框 */
 .page-nav-input {
-  width: 32px;
-  padding: 2px 4px;
+  width: 38px;
+  padding: 3px 4px;
   border: 1px solid var(--border-light, #e5e7eb);
   border-radius: 4px;
   background: var(--surface, #fff);
   color: var(--text-1);
-  font-size: 13px;
+  font-size: 15px;
+  font-weight: 600;
   font-family: inherit;
   font-variant-numeric: tabular-nums;
   text-align: center;

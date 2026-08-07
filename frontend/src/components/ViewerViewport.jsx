@@ -174,10 +174,14 @@ function ViewerViewportInner({
   // Architecture Law D1：强制使用图片加载后的真实物理尺寸 (naturalDims) 作为基准。
   // 移除对 PageMeta.width/height 的依赖，因为 PageMeta 可能被业务逻辑（如打印排版）
   // 修改为逻辑尺寸（如 A5 纸的尺寸），而非图片的真实像素。
-  // 只有图片的 naturalWidth/Height 能保证“如实展示”，确保 fitScale 计算基准一致。
+  // 只有图片的 naturalWidth/Height 能保证"如实展示"，确保 fitScale 计算基准一致。
   // 如果图片尚未加载，回退到 PageMeta，但这只是临时状态，加载完成后会立即纠正。
   const baseW = naturalDims ? naturalDims.width : (page ? page.width : 0)
   const baseH = naturalDims ? naturalDims.height : (page ? page.height : 0)
+  // dims：视觉尺寸（旋转后），仅用于 fitScale / fitWidthScale 计算
+  // baseDims：布局尺寸（原始宽高比），用于 wrapper 布局和 img 填充
+  // 分离原因：CSS transform 不参与 layout flow，wrapper 必须保持原始宽高比，
+  // 使 objectFit:contain 能完美填充，旋转仅由 CSS rotate 负责视觉变换。
   const dims = rotatedDimensions(baseW, baseH, effRotation)
 
   // Architecture Law D1：使用有效测量尺寸。
@@ -346,11 +350,12 @@ function ViewerViewportInner({
   // 视觉像素不变（布局×scale ≡ 原布局×transform scale），仅滚动范围修正。
   const transformStr = buildTransformString({ panX, panY, scale: 1, rotation: effRotation })
 
-  // 尺寸是否已知（PageMeta 有值，或图片已加载拿到自然尺寸）。
-  // 未知时先隐藏图片并显示占位，避免以错误尺寸闪现。
-  const dimsKnown = dims.width > 0 && dims.height > 0
-  const layoutW = dims.width ? `${dims.width * renderScale}px` : 'auto'
-  const layoutH = dims.height ? `${dims.height * renderScale}px` : 'auto'
+  // 布局尺寸使用 baseDims（原始宽高比），而非 rotatedDims（视觉宽高比）。
+  // CSS transform 不参与 layout flow — wrapper 保持原始宽高比，
+  // 使 objectFit:contain 能完美填充，旋转仅由 CSS rotate 负责视觉变换。
+  const dimsKnown = baseW > 0 && baseH > 0
+  const layoutW = baseW ? `${baseW * renderScale}px` : 'auto'
+  const layoutH = baseH ? `${baseH * renderScale}px` : 'auto'
 
   return (
     <div

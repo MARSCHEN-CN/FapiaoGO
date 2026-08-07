@@ -21,6 +21,10 @@ const DEFAULT_CONFIG = {
   enterpriseUpdateUrl: '',
   fallbackSource: 'official',
 
+  // GitHub 自动更新（双源检查）
+  githubOwner: 'MARSCHEN-CN',
+  githubRepo: 'FapiaoGO',
+
   // 未来: Print, Preview, 许可证等也放这里
 }
 

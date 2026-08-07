@@ -75,7 +75,7 @@ const FIELD_LABELS = {
   xsfmc: '销售方名称', xsfsh: '销售方税号',
   amountJe: '发票金额', amountSe: '发票税额',
   amountHj: '价税合计', amountHjDx: '价税合计大写',
-  note: '备注', skr: '收款人', fhr: '复核人', kpr: '开票人',
+  note: '备注', kpr: '开票人',
   cus: '自定义内容',
 }
 

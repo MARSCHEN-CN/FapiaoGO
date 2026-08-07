@@ -59,8 +59,6 @@ function getFieldText(fieldKey, invoiceFields, fieldIndex, fieldDef) {
     case 'amountHj': return sanitizeFilenamePart(invoiceFields.amountHj)
     case 'amountHjDx': return sanitizeFilenamePart(invoiceFields.amountHjDx)
     case 'note': return sanitizeFilenamePart(invoiceFields.note)
-    case 'skr': return sanitizeFilenamePart(invoiceFields.skr)
-    case 'fhr': return sanitizeFilenamePart(invoiceFields.fhr)
     case 'kpr': return sanitizeFilenamePart(invoiceFields.kpr)
     case 'cus': return sanitizeFilenamePart(fieldDef?.customText)
     default: return ''

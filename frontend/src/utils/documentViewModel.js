@@ -28,6 +28,7 @@
  */
 
 import { invoiceDocumentsToRows } from './invoiceDocumentViewModel.js'
+import { groupFilesByDocument } from './groupDocuments.js'
 import { detectDuplicateInvoices, isFailedFile, isPreviousYearFile } from '../utils.js'
 
 /**
@@ -123,10 +124,11 @@ export function buildDocumentViewModel(files, invoiceDocs = null) {
     const remainingFiles = (Array.isArray(files) ? files : []).filter(
       (f) => f && f.key && !coveredKeys.has(f.key),
     )
-    // Invoice Entity Boundary Contract §七:
-    //   降级路径禁止文档聚合。未被 InvoiceDocument 覆盖的 page-level file
-    //   各自独立展示为 UnassembledImportItem，不做 groupFilesByDocument。
-    const remainingRows = remainingFiles.map((f) => ({
+    // 未被 InvoiceDocument 覆盖的 page-level file：
+    // 使用 groupFilesByDocument 聚合多页文件，确保同票多页不被拆分。
+    // 单页文件（不满足多页条件）保持独立展示。
+    const groupedRemaining = groupFilesByDocument(remainingFiles)
+    const remainingRows = groupedRemaining.map((f) => ({
       ...f,
       originalName: f.originalName !== undefined ? f.originalName : f.name,
       documentId: f.documentId || f.docId,
@@ -134,10 +136,12 @@ export function buildDocumentViewModel(files, invoiceDocs = null) {
     documents = [...invoiceRows, ...remainingRows]
   } else {
     // 降级路径（session.documents 为空时的 fallback）：
-    // Invoice Entity Boundary Contract §七:
-    //   不做文档聚合。每个 page-level file 独立展示。
-    //   不调 groupFilesByInstance / groupFilesByDocument。
-    documents = (Array.isArray(files) ? files : []).map((f) => ({
+    // 使用 groupFilesByDocument 按 instanceId + sourceDocId 聚合多页文件，
+    // 确保同票多页不被拆成独立行。单页文件（无 sourceDocId / 无 totalPages / 无 pageNum）
+    // 保持独立展示——groupFilesByDocument 的严格闸门（三条件同时满足才参与分组）
+    // 会自动过滤掉不满足条件的文件。
+    const grouped = groupFilesByDocument(Array.isArray(files) ? files : [])
+    documents = grouped.map((f) => ({
       ...f,
       originalName: f.originalName !== undefined ? f.originalName : f.name,
       documentId: f.documentId || f.docId,

@@ -226,15 +226,14 @@ export function detectDuplicateInvoices(files) {
     if (file.status !== 'parsed') return
 
     const invoiceNumber = file.invoiceNumber || ''
+    
+    // 核心规则：根据发票号码判定重复。无发票号的文件不参与重复判定。
+    if (!invoiceNumber) return
 
-    // 需要有效的身份键才进行分组（Invoice Entity Boundary Contract §四）
-    // invoiceDocumentId > 领域键 > invoiceNumber（仅回退）
-    const key = file.invoiceDocumentId || file.documentId || file.invoiceNumber || ''
-
-    if (!duplicates.has(key)) {
-      duplicates.set(key, [])
+    if (!duplicates.has(invoiceNumber)) {
+      duplicates.set(invoiceNumber, [])
     }
-    duplicates.get(key).push(file)
+    duplicates.get(invoiceNumber).push(file)
   })
 
   // 只保留有重复（数量>1）的组

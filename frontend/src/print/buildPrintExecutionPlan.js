@@ -44,6 +44,143 @@ export const MERGE_FILE_FILTER = (f) => {
 }
 
 /**
+ * normalizePrintSources — 将 page-level 文件选择转换为 source-level 打印目标
+ *
+ * 核心职责：
+ *   - 识别多页文档（通过 sourceDocId + instanceId 聚合）
+ *   - 判断是否为完整文档选择（所有页面都被选中）
+ *   - 完整文档选择 → 合并为单个 Source 打印目标
+ *   - 部分页面选择 → 保持逐页模式
+ *
+ * 设计原则：
+ *   - 不修改 buildPrintExecutionPlan 的内部逻辑
+ *   - 只在输入层做 Document→PrintSource 的转换
+ *   - 使用领域字段（sourceDocId/instanceId/pageNum/totalPages），不依赖 UI 层字段
+ *
+ * @module print/normalizePrintSources
+ */
+
+/**
+ * 判断文件是否为多页文档的一页（仅 PDF 格式支持源文件聚合打印）
+ * OFD 格式不支持源文件打印，需逐页渲染，因此不参与聚合
+ * @param {Object} file - 文件对象
+ * @returns {boolean}
+ */
+function isMultiPageDocumentFile(file) {
+  if (!file) return false
+  if (file.fileFormat === 'ofd') return false
+  return !!(
+    file.sourceDocId != null &&
+    file.totalPages != null &&
+    file.totalPages > 1 &&
+    file.pageNum != null
+  )
+}
+
+/**
+ * 构建分组键：instanceId + sourceDocId 复合键
+ * @param {Object} f - 文件对象
+ * @returns {string}
+ */
+function makeSourceGroupKey(f) {
+  const instanceId = f?.instanceId || ''
+  const sourceDocId = f?.sourceDocId || ''
+  if (instanceId && sourceDocId) {
+    return `${instanceId}::${sourceDocId}`
+  }
+  return sourceDocId || instanceId || ''
+}
+
+/**
+ * 归一化打印源：将 page-level 文件选择转换为 source-level 打印目标
+ *
+ * 转换逻辑：
+ *   1. 按 source identity 分组（instanceId + sourceDocId）
+ *   2. 对每个分组检查是否为完整选择
+ *      - 完整选择：合并为单个 source 打印目标
+ *      - 部分选择：保持逐页模式
+ *   3. 单页文件：保持原样
+ *
+ * @param {Array<Object>} files - page-level 文件数组
+ * @returns {Array<Object>} normalized 后的文件数组（可能包含聚合的 source 目标）
+ */
+export function normalizePrintSources(files) {
+  if (!Array.isArray(files) || files.length === 0) return files || []
+
+  // Pass 1: 按 source identity 分组
+  const sourceGroups = new Map()
+  const nonMultiPageFiles = []
+
+  for (const f of files) {
+    if (!f) continue
+
+    if (!isMultiPageDocumentFile(f)) {
+      nonMultiPageFiles.push(f)
+      continue
+    }
+
+    const groupKey = makeSourceGroupKey(f)
+    if (!groupKey) {
+      nonMultiPageFiles.push(f)
+      continue
+    }
+
+    let group = sourceGroups.get(groupKey)
+    if (!group) {
+      group = {
+        key: groupKey,
+        totalPages: f.totalPages,
+        pages: [],
+        seenPageNums: new Set(),
+      }
+      sourceGroups.set(groupKey, group)
+    }
+
+    // 避免重复页面
+    if (!group.seenPageNums.has(f.pageNum)) {
+      group.seenPageNums.add(f.pageNum)
+      group.pages.push(f)
+    }
+  }
+
+  // Pass 2: 构建结果
+  const result = []
+
+  // 添加多页文档（完整选择 → 聚合为 source 目标）
+  for (const [key, group] of sourceGroups) {
+    // 按页码排序
+    group.pages.sort((a, b) => (a.pageNum ?? 0) - (b.pageNum ?? 0))
+
+    const isCompleteSelection = group.seenPageNums.size >= group.totalPages
+
+    if (isCompleteSelection) {
+      // 完整选择：聚合为单个 source 打印目标
+      const representative = group.pages[0]
+      result.push({
+        ...representative,
+        key: `__source_${key}`,  // 唯一标识
+        _sourceGroupKey: key,
+        _isAggregatedSource: true,
+        _aggregatedPages: group.pages,
+        _aggregatedPageCount: group.pages.length,
+      })
+    } else {
+      // 部分选择：保持逐页模式
+      for (const page of group.pages) {
+        result.push(page)
+      }
+    }
+  }
+
+  // 添加非多页文件
+  for (const f of nonMultiPageFiles) {
+    result.push(f)
+  }
+
+  return result
+}
+
+/**
  * 打印会话上下文 → Plan 输入（Preview 与 Execute 唯一共享入口）。
  *
  * 冻结边界（打印预览 = PrintExecutionPlan 的可视化，非第二个预览器）：
@@ -70,7 +207,16 @@ export function createPrintPlanInput(files, settings = {}, fileRotations = {}, p
   const filter = isMergeMode(settings.mergeMode)
     ? MERGE_FILE_FILTER
     : SOURCE_FILE_FILTER
-  return { files, options: { filter, settings, fileRotations, placements } }
+
+  // ⭐ 新增：在 source 模式下，先对文件进行归一化
+  //   多页文档完整选择 → 聚合为单个 source 打印目标
+  //   多页文档部分选择 → 保持逐页模式
+  //   单页文件 → 保持原样
+  const normalizedFiles = isMergeMode(settings.mergeMode)
+    ? files  // merge 模式暂不处理，后续按需扩展
+    : normalizePrintSources(files)
+
+  return { files: normalizedFiles, options: { filter, settings, fileRotations, placements } }
 }
 
 /**
