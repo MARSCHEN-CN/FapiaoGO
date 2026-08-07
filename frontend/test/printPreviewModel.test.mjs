@@ -233,17 +233,17 @@ test('PM-10: currentSelection 定位 → currentPageIndex 指向选中文件页'
 const mkDim = (key, w, h, over = {}) => mk(key, { _pdfPageWidth: w, _pdfPageHeight: h, ...over })
 const normDeg = (d) => ((d % 360) + 360) % 360
 
-test('PM-12 (Gate 1): 横票+A4竖 → renderTransformMM≈51.6×33.3mm, rotation≡-90, 居中安全区', () => {
+test('PM-12 (Gate 1): 横票(609pt≈214.9×139mm)+A4竖 → renderTransformMM≈214.9×139mm, rotation≡-90, 居中安全区', () => {
   const files = [mkDim('LAND', 609, 394)]
   const plan = buildPrintExecutionPlan(files, { filter: SOURCE_FILE_FILTER, settings: {} })
   const m = buildPrintPreviewModel(plan, { files, settings: {} })
   const s = m.pages[0].slots[0]
   const t = s.placement.renderTransformMM
   assert.ok(t, 'placement.renderTransformMM 存在')
-  assert.ok(near(t.contentBoxWidth, 51.6, 0.1), `contentBoxWidth=${t.contentBoxWidth} ≈51.6mm`)
-  assert.ok(near(t.contentBoxHeight, 33.3, 0.1), `contentBoxHeight=${t.contentBoxHeight} ≈33.3mm`)
+  assert.ok(near(t.contentBoxWidth, 214.9, 0.5), `contentBoxWidth=${t.contentBoxWidth} ≈214.9mm（609pt×25.4/72）`)
+  assert.ok(near(t.contentBoxHeight, 139.0, 0.5), `contentBoxHeight=${t.contentBoxHeight} ≈139.0mm（394pt×25.4/72）`)
   assert.equal(normDeg(t.rotationDeg), 270, `rotationDeg=${t.rotationDeg} ≡ -90（逆时针90）`)
-  // 居中：placedRect 中心(px) → mm 应≈纸中心(105,148.5)（0 边距）
+  // 居中：placedRect 中心(px) → mm 应≈纸中心(105,148.5)（对称边距）
   const pr = s.placement.placedRect
   const cx = (pr.x + pr.w / 2) * (25.4 / 300)
   const cy = (pr.y + pr.h / 2) * (25.4 / 300)
@@ -289,4 +289,33 @@ test('PM-15: 四案例旋转矩阵（renderTransformMM.rotationDeg 归一化）'
   assert.equal(normDeg(build(394, 609, { landscape: true }).rotationDeg), 90, '竖票+A4竖+横 → 顺时针90')
   // 案例4: 横票 + 横纸型(240×140) + 纵 → 逆时针90 → 270
   assert.equal(normDeg(build(609, 394, { paperSize: 'Custom', customPaper: { widthMM: 240, heightMM: 140 } }).rotationDeg), 270, '横票+横纸型+纵 → 逆时针90')
+})
+
+// ── Commit 2-G：fit scale 占满安全区（PDF points → px@dpi 归一化后量级正确） ──
+test('PM-16 (Gate 1 补充): 小内容(160×100mm)→ scale=1 不放大，placedRect≈160×100 居中', () => {
+  // 模拟用户内容物理尺寸 160×100mm（PDF points = 160*72/25.4 ≈ 454）
+  const files = [mkDim('SMALL', Math.round(160 * 72 / 25.4), Math.round(100 * 72 / 25.4))]
+  const plan = buildPrintExecutionPlan(files, { filter: SOURCE_FILE_FILTER, settings: {} })
+  const m = buildPrintPreviewModel(plan, { files, settings: {} })
+  const s = m.pages[0].slots[0]
+  const pl = s.placement
+  assert.ok(near(pl.scale, 1, 1e-6), `scale=${pl.scale} 应为 1（内容小于安全区不放大）`)
+  const wMM = pl.placedRect.w * (25.4 / 300)
+  const hMM = pl.placedRect.h * (25.4 / 300)
+  // 横票(160×100) 经 fitRotation=-90 旋转后，placedRect 为 100×160（面积/中心守恒）
+  assert.ok(near(wMM, 100, 0.5), `placedRect.w=${wMM.toFixed(1)}mm ≈ 100（旋转后宽=原高）`)
+  assert.ok(near(hMM, 160, 0.5), `placedRect.h=${hMM.toFixed(1)}mm ≈ 160（旋转后高=原宽）`)
+})
+
+test('PM-17 (Gate 2 大内容): 大票(300×400mm)+10mm边距 → scale<1 等比缩小碰边停止', () => {
+  const files = [mkDim('BIG', Math.round(300 * 72 / 25.4), Math.round(400 * 72 / 25.4))]
+  const plan = buildPrintExecutionPlan(files, { filter: SOURCE_FILE_FILTER, settings: { marginLeft: 10, marginRight: 10, marginTop: 10, marginBottom: 10 } })
+  const m = buildPrintPreviewModel(plan, { files, settings: { marginLeft: 10, marginRight: 10, marginTop: 10, marginBottom: 10 } })
+  const s = m.pages[0].slots[0]
+  const pl = s.placement
+  assert.ok(pl.scale < 1, `scale=${pl.scale} 应 <1（内容超出安全区，等比缩小）`)
+  const wMM = pl.placedRect.w * (25.4 / 300)
+  const hMM = pl.placedRect.h * (25.4 / 300)
+  // 可用区 190×277mm；300mm 宽内容 → scale=190/300=0.633 先触顶宽度边
+  assert.ok(near(wMM, 190, 1), `缩放后碰边：w=${wMM.toFixed(1)}mm ≈ 190（可用宽）`)
 })

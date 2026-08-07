@@ -12,7 +12,7 @@
  * ## 两层 Resolver
  *
  *   1. ContentResolve（本文件前半）：
- *      输入 contentRotation + contentSize → 输出 effectiveContentSize + effectiveOrientation
+ *      输入 contentRotation + contentPhysicalSize（px@dpi）→ 输出 effectiveContentSize + effectiveOrientation
  *      职责：把用户旋转动作物化为内容几何。Viewer 拥有旋转权限。
  *
  *   2. FitResolve（本文件后半）：
@@ -22,8 +22,8 @@
  *
  * ## 核心公式
  *
- *   effectiveContentW = contentRotated ? contentSize.h : contentSize.w
- *   effectiveContentH = contentRotated ? contentSize.w : contentSize.h
+ *   effectiveContentW = contentRotated ? contentPhysicalSize.h : contentPhysicalSize.w
+ *   effectiveContentH = contentRotated ? contentPhysicalSize.w : contentPhysicalSize.h
  *
  *   fitRotation =
  *     0   : 内容方向 == 纸张方向
@@ -139,7 +139,9 @@ export function computeLayoutRotation(contentOrientation, paperOrientation) {
  * 输出完整的布局描述。
  *
  * @param {Object} input
- * @param {{width:number, height:number}} input.contentSize  - 原始内容尺寸（px，旋转前；contentRotation 由本函数内部施加，请勿预旋转后传入）
+ * @param {{width:number, height:number}} input.contentPhysicalSize - 物理内容尺寸（**px@dpi，与纸张渲染空间一致**；旋转前原始尺寸）。
+ *   ⚠️ PDF points（pdf.js getViewport({scale:1}) 返回 1/72"）必须 ×dpi/72 归一化为 px@dpi 后传入（调用方负责，见 PrintPreviewModel.fileContentPx）；
+ *   image/OFD 天然像素直接传入（同样按 px@dpi 处理）。contentRotation 由本函数内部施加，请勿预旋转后传入。
  * @param {number}              input.contentRotation         - 用户旋转角（0/90/180/270）
  * @param {{widthMM:number, heightMM:number}} input.paperSize - 纸张尺寸（mm）
  * @param {'portrait'|'landscape'} [input.paperOrientation]    - 纸张方向（不传则自动从 paperSize 推导）
@@ -165,7 +167,7 @@ export function computeLayoutRotation(contentOrientation, paperOrientation) {
  * }}
  */
 export function resolveContentPlacement({
-  contentSize,
+  contentPhysicalSize,
   contentRotation,
   paperSize,
   paperOrientation: paperOrientInput,
@@ -173,8 +175,8 @@ export function resolveContentPlacement({
   dpi = 300,
 }) {
   // ── 校验 ──
-  if (!contentSize?.width || !contentSize?.height) {
-    throw new Error('RotationResolver: contentSize 需含正数 width/height')
+  if (!contentPhysicalSize?.width || !contentPhysicalSize?.height) {
+    throw new Error('RotationResolver: contentPhysicalSize 需含正数 width/height（px@dpi）')
   }
   if (!paperSize?.widthMM || !paperSize?.heightMM) {
     throw new Error('RotationResolver: paperSize 需含正数 widthMM/heightMM')
@@ -188,8 +190,8 @@ export function resolveContentPlacement({
   // Commit 3 fix: 先用 contentRotation 旋转原始尺寸，再检测方向。
   // 原横票+用户旋转90° → 有效竖内容 → 竖纸=匹配(layout=0)、横纸=需旋转(layout=-90)
   const contentRotated = isRotated(Math.abs(cr))
-  const effectiveContentW = contentRotated ? contentSize.height : contentSize.width
-  const effectiveContentH = contentRotated ? contentSize.width : contentSize.height
+  const effectiveContentW = contentRotated ? contentPhysicalSize.height : contentPhysicalSize.width
+  const effectiveContentH = contentRotated ? contentPhysicalSize.width : contentPhysicalSize.height
   const contentOrientation = detectContentOrientation({ width: effectiveContentW, height: effectiveContentH })
 
   // ── Layer 2：纸张世界 ──
@@ -249,7 +251,7 @@ export function resolveContentPlacement({
   return {
     // Layer 1：内容世界（Viewer 拥有旋转权限）
     contentRotation: cr,
-    contentSize: { width: contentSize.width, height: contentSize.height },
+    contentPhysicalSize: { width: contentPhysicalSize.width, height: contentPhysicalSize.height },
     contentOrientation,
 
     // 有效内容尺寸（content-rotated，供消费者直接使用）

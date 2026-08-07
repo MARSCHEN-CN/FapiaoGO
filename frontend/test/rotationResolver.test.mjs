@@ -110,7 +110,7 @@ describe('resolveContentPlacement', () => {
 
   it('Case 1: 竖内容 + 竖纸 → fitRotation=0, finalRotation=0', () => {
     const r = resolveContentPlacement({
-      contentSize: { width: 1000, height: 1400 },
+      contentPhysicalSize: { width: 1000, height: 1400 },
       contentRotation: 0,
       paperSize: A4_PORTRAIT,
       dpi: 300,
@@ -126,7 +126,7 @@ describe('resolveContentPlacement', () => {
 
   it('Case 2: 横内容 + 竖纸 → fitRotation=-90, finalRotation=270', () => {
     const r = resolveContentPlacement({
-      contentSize: { width: 1400, height: 1000 },
+      contentPhysicalSize: { width: 1400, height: 1000 },
       contentRotation: 0,
       paperSize: A4_PORTRAIT,
       dpi: 300,
@@ -140,7 +140,7 @@ describe('resolveContentPlacement', () => {
   it('Case 3: 竖内容 + 横纸 → fitRotation=+90, finalRotation=90', () => {
     const A4_LANDSCAPE = { widthMM: 297, heightMM: 210 }
     const r = resolveContentPlacement({
-      contentSize: { width: 1000, height: 1400 },
+      contentPhysicalSize: { width: 1000, height: 1400 },
       contentRotation: 0,
       paperSize: A4_LANDSCAPE,
       dpi: 300,
@@ -154,7 +154,7 @@ describe('resolveContentPlacement', () => {
   it('Case 4: contentRotation=90 竖内容 → 旋转后横内容 + 竖纸 → fitRotation=-90, finalRotation=0', () => {
     // 原始竖内容 1000×1400，contentRotation=90 → 有效横内容 + 竖纸 → fitRotation=-90
     const r = resolveContentPlacement({
-      contentSize: { width: 1000, height: 1400 },  // 原始竖内容
+      contentPhysicalSize: { width: 1000, height: 1400 },  // 原始竖内容
       contentRotation: 90,
       paperSize: A4_PORTRAIT,
       dpi: 300,
@@ -168,7 +168,7 @@ describe('resolveContentPlacement', () => {
   it('Case 5: contentRotation=0 横内容 + 横纸 → fitRotation=0, finalRotation=0', () => {
     const A4_LANDSCAPE = { widthMM: 297, heightMM: 210 }
     const r = resolveContentPlacement({
-      contentSize: { width: 1400, height: 1000 },
+      contentPhysicalSize: { width: 1400, height: 1000 },
       contentRotation: 0,
       paperSize: A4_LANDSCAPE,
       dpi: 300,
@@ -185,7 +185,7 @@ describe('resolveContentPlacement', () => {
     const availableW = Math.round((210 - 2 * 10) * pxPerMm)  // ≈ 2244px
     const availableH = Math.round((297 - 2 * 10) * pxPerMm)  // ≈ 3272px
     const r = resolveContentPlacement({
-      contentSize: { width: availableW * 2, height: availableH * 2 },  // 内容远大于安全区
+      contentPhysicalSize: { width: availableW * 2, height: availableH * 2 },  // 内容远大于安全区
       contentRotation: 0,
       paperSize: A4_PORTRAIT,
       margins: { left: 10, right: 10, top: 10, bottom: 10 },
@@ -204,7 +204,7 @@ describe('resolveContentPlacement', () => {
 
   it('Case 7: offset is centered (non-negative, content within available)', () => {
     const r = resolveContentPlacement({
-      contentSize: { width: 1000, height: 1400 },
+      contentPhysicalSize: { width: 1000, height: 1400 },
       contentRotation: 0,
       paperSize: A4_PORTRAIT,
       dpi: 300,
@@ -223,7 +223,7 @@ describe('resolveContentPlacement', () => {
 
   it('Case 8: canvasSize = paper size (paper does NOT rotate)', () => {
     const r = resolveContentPlacement({
-      contentSize: { width: 1400, height: 1000 },
+      contentPhysicalSize: { width: 1400, height: 1000 },
       contentRotation: 90,  // 旋转后横内容
       paperSize: A4_PORTRAIT,
       dpi: 300,
@@ -236,7 +236,7 @@ describe('resolveContentPlacement', () => {
 
   it('Case 9: 180° contentRotation', () => {
     const r = resolveContentPlacement({
-      contentSize: { width: 1000, height: 1400 },  // 180 不交换尺寸
+      contentPhysicalSize: { width: 1000, height: 1400 },  // 180 不交换尺寸
       contentRotation: 180,
       paperSize: A4_PORTRAIT,
       dpi: 300,
@@ -249,7 +249,7 @@ describe('resolveContentPlacement', () => {
   it('Case 10: 270° contentRotation 竖内容 → 旋转后横内容 + 竖纸 → finalRotation=180', () => {
     // 原始竖内容 1000×1400，contentRotation=270(= -90) → 有效横内容 + 竖纸
     const r = resolveContentPlacement({
-      contentSize: { width: 1000, height: 1400 },  // 原始竖内容
+      contentPhysicalSize: { width: 1000, height: 1400 },  // 原始竖内容
       contentRotation: 270,
       paperSize: A4_PORTRAIT,
       dpi: 300,
@@ -259,18 +259,18 @@ describe('resolveContentPlacement', () => {
     assert.equal(normalizeRotation(r.contentRotation + r.fitRotation), 180)  // 270 + (-90) = 180
   })
 
-  it('rejects invalid contentSize', () => {
+  it('rejects invalid contentPhysicalSize', () => {
     assert.throws(() => resolveContentPlacement({
-      contentSize: { width: 0, height: 0 },
+      contentPhysicalSize: { width: 0, height: 0 },
       contentRotation: 0,
       paperSize: A4_PORTRAIT,
-    }), /contentSize/)
+    }), /contentPhysicalSize/)
   })
 
   it('Case 11: renderTransform — translate+scale+rotate 三段式数值锚点', () => {
     // 竖内容 1000×1400 + A4 portrait + 0° → 居中，scale≤1，rotation=0
     const r = resolveContentPlacement({
-      contentSize: { width: 1000, height: 1400 },
+      contentPhysicalSize: { width: 1000, height: 1400 },
       contentRotation: 0,
       paperSize: A4_PORTRAIT,
       margins: { left: 3, right: 3, top: 3, bottom: 3 },
@@ -294,7 +294,7 @@ describe('resolveContentPlacement', () => {
     // 原始竖内容 1000×1400，contentRotation=90 → 有效横内容 + 竖纸 → fitRotation=-90
     // 缩略图已 bake contentRotation（?content_rotation=90），SVG 只施加 fitRotation
     const r = resolveContentPlacement({
-      contentSize: { width: 1000, height: 1400 },  // 原始竖内容
+      contentPhysicalSize: { width: 1000, height: 1400 },  // 原始竖内容
       contentRotation: 90,
       paperSize: A4_PORTRAIT,
       margins: { left: 3, right: 3, top: 3, bottom: 3 },
@@ -312,7 +312,7 @@ describe('resolveContentPlacement', () => {
   it('Case 13: renderTransform 几何守卫 — 旋转后 image 不拉伸且包围盒=placedRect', () => {
     // 横票 609×394 + contentRotation=0 + A4 portrait → fitRotation=-90
     const r = resolveContentPlacement({
-      contentSize: { width: 609, height: 394 },
+      contentPhysicalSize: { width: 609, height: 394 },
       contentRotation: 0,
       paperSize: A4_PORTRAIT,
       margins: { left: 3, right: 3, top: 3, bottom: 3 },
@@ -343,7 +343,7 @@ describe('resolveContentPlacement', () => {
 
   it('rejects invalid paperSize', () => {
     assert.throws(() => resolveContentPlacement({
-      contentSize: { width: 100, height: 100 },
+      contentPhysicalSize: { width: 100, height: 100 },
       contentRotation: 0,
       paperSize: {},
     }), /paperSize/)
@@ -353,7 +353,7 @@ describe('resolveContentPlacement', () => {
   // 验证 shapeAdjustedOrientation + orientationFitRotation 显式中转
   it('Gate E1: 横票+横纸型+横向 → renderRotation=0', () => {
     const r = resolveContentPlacement({
-      contentSize: { width: 1400, height: 1000 },  // 横向
+      contentPhysicalSize: { width: 1400, height: 1000 },  // 横向
       contentRotation: 0,
       paperSize: LANDSCAPE_PAPER,  // 297×210 横向纸型
       dpi: 300,
@@ -366,7 +366,7 @@ describe('resolveContentPlacement', () => {
 
   it('Gate E2: 横票+横纸型+纵向 → renderRotation=-90(270)', () => {
     const r = resolveContentPlacement({
-      contentSize: { width: 1400, height: 1000 },
+      contentPhysicalSize: { width: 1400, height: 1000 },
       contentRotation: 0,
       paperSize: LANDSCAPE_PAPER,
       paperOrientation: 'portrait',  // 用户选纵向
@@ -380,7 +380,7 @@ describe('resolveContentPlacement', () => {
 
   it('Gate E3: 横票+竖纸型(A4)+竖向 → renderRotation=270', () => {
     const r = resolveContentPlacement({
-      contentSize: { width: 1400, height: 1000 },
+      contentPhysicalSize: { width: 1400, height: 1000 },
       contentRotation: 0,
       paperSize: A4_PORTRAIT,
       dpi: 300,
@@ -393,7 +393,7 @@ describe('resolveContentPlacement', () => {
 
   it('Gate E4: 横票+竖纸型(A4)+横向 → renderRotation=0', () => {
     const r = resolveContentPlacement({
-      contentSize: { width: 1400, height: 1000 },
+      contentPhysicalSize: { width: 1400, height: 1000 },
       contentRotation: 0,
       paperSize: A4_PORTRAIT,
       paperOrientation: 'landscape',  // 用户选横向

@@ -34,6 +34,32 @@ const PX_TO_MM = 25.4 / PREVIEW_DPI
 
 const round2 = (v) => Math.round(v * 100) / 100
 
+/**
+ * 文件原始尺寸 → 渲染空间物理尺寸（px@PREVIEW_DPI），统一作为 RotationResolver.contentPhysicalSize。
+ *
+ * 根因（Commit 2-G 修复）：pdf.js getViewport({scale:1}) 返回 **PDF points (1/72")**，
+ * 而 RotationResolver 纸面坐标 paperW = paperSize.widthMM * (dpi/25.4) 是 **px@dpi**。
+ * 直接把 points 当 px@dpi 传 → 内容缩小 300/72≈4.167× → scale 封顶=1 → 发票不占满安全区。
+ * 故 PDF points 必须 × dpi/72 归一到 px@dpi；image/OFD 天然 px 直接当 px@dpi（与纸面渲染空间一致）。
+ *
+ * @param {object} f - 文件对象
+ * @returns {{width:number,height:number}|null}
+ */
+export function fileContentPx(f) {
+  if (!f) return null
+  if (f._pdfPageWidth > 0 && f._pdfPageHeight > 0) {
+    // PDF points (1/72") → px@PREVIEW_DPI
+    return { width: f._pdfPageWidth * PREVIEW_DPI / 72, height: f._pdfPageHeight * PREVIEW_DPI / 72 }
+  }
+  const w = f._imageWidth || f.previewWidth || 0
+  const h = f._imageHeight || f.previewHeight || 0
+  if (w > 0 && h > 0) {
+    // 图片/OFD：天然像素按 px@PREVIEW_DPI 处理（与纸面渲染空间一致）
+    return { width: w, height: h }
+  }
+  return null
+}
+
 // 与 config.js PAPER_REGISTRY（L102-109）同步的内联纸张表（mm）。
 // config.js 依赖 vite import.meta.env 不可在纯 node 加载；新增纸型须两处同步（守卫测试锁定）。
 const PAPER_MM = {
@@ -179,16 +205,19 @@ export function buildPrintPreviewModel(plan, { files = [], settings = {}, curren
         //   renderRotation  = fitRotation 归一化，由 Canvas 施加（Printer 只执行）
         let effectiveRotation = userRotation
         let placementResult = null  // resolveContentPlacement 输出（有尺寸时填充）
-        const contentDims = f ? getContentDimensions(f) : null
-        // [DIAG-14] getContentDimensions 返回值
+        // 原始尺寸（PDF points / 天然 px，仅诊断）；contentPx = 归一化到 px@PREVIEW_DPI（供 Resolver）
+        const rawDims = f ? getContentDimensions(f) : null
+        const contentPx = f ? fileContentPx(f) : null
+        // [DIAG-14] 尺寸归一化核对（PDF points → px@dpi）
         if (f) {
-          console.log('[DIAG-14 contentDims] fileKey=%s dims=%o hasPdfPage=%d',
+          console.log('[DIAG-14 contentDims] fileKey=%s raw=%o contentPx=%o pdfPage=%d',
             slotDef.fileId?.slice(-20),
-            contentDims ? `${contentDims.width}x${contentDims.height}` : 'null',
+            rawDims ? `${rawDims.width}x${rawDims.height}` : 'null',
+            contentPx ? `${Math.round(contentPx.width)}x${Math.round(contentPx.height)}` : 'null',
             f._pdfPageWidth || 0
           )
         }
-        if (contentDims && contentDims.width > 0 && contentDims.height > 0) {
+        if (contentPx && contentPx.width > 0 && contentPx.height > 0) {
           // Commit 3 fix: 传原始尺寸 + contentRotation，由 resolveContentPlacement 内部计算 effectiveContentSize。
           // resolveContentBounds 在这里不再需要（已内化到 Resolver 的二阶段模型中）。
           // 纸面尺寸按「显示方向」取（landscape 交换 W/H），使 renderTransform 落在
@@ -203,7 +232,7 @@ export function buildPrintPreviewModel(plan, { files = [], settings = {}, curren
           const marginBottom_mm = mB * PX_TO_MM
           // 纸面尺寸不变：不因内容旋转而旋转纸面
           placementResult = resolveContentPlacement({
-            contentSize: contentDims,       // 原始尺寸（未旋转）
+            contentPhysicalSize: contentPx,   // 已归一化到 px@PREVIEW_DPI（PDF points×dpi/72）
             contentRotation: userRotation, // Resolver 内部 apply contentRotation
             paperSize: { widthMM: paperW_mm, heightMM: paperH_mm },
             paperOrientation: page.orientation,

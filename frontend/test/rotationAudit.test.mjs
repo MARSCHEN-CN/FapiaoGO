@@ -23,7 +23,7 @@ const margins = { left: 3, right: 3, top: 3, bottom: 3 }
 // ── 纯数学：resolveContentPlacement ──
 test('T1 纯数学：横票+contentRotation=0+A4竖纸+纵方向 → shapeFit=-90 orientFit=0 renderRotation=270(≡-90)', () => {
   const r = resolveContentPlacement({
-    contentSize: LAND_FILE, contentRotation: 0,
+    contentPhysicalSize: LAND_FILE, contentRotation: 0,
     paperSize: A4, paperOrientation: 'portrait', margins,
   })
   assert.equal(r.shapeFitRotation, -90, 'shapeFitRotation')
@@ -34,7 +34,7 @@ test('T1 纯数学：横票+contentRotation=0+A4竖纸+纵方向 → shapeFit=-9
 
 test('T2 纯数学：横票+A4竖纸+切横方向 → shapeFit=-90 orientFit=+90 renderRotation=0', () => {
   const r = resolveContentPlacement({
-    contentSize: LAND_FILE, contentRotation: 0,
+    contentPhysicalSize: LAND_FILE, contentRotation: 0,
     paperSize: A4, paperOrientation: 'landscape', margins,
   })
   assert.equal(r.shapeFitRotation, -90)
@@ -45,7 +45,7 @@ test('T2 纯数学：横票+A4竖纸+切横方向 → shapeFit=-90 orientFit=+90
 
 test('T3a 纯数学：横纸型+横票+横方向 → 全 0', () => {
   const r = resolveContentPlacement({
-    contentSize: LAND_FILE, contentRotation: 0,
+    contentPhysicalSize: LAND_FILE, contentRotation: 0,
     paperSize: A4L, paperOrientation: 'landscape', margins,
   })
   assert.equal(r.shapeFitRotation, 0)
@@ -56,7 +56,7 @@ test('T3a 纯数学：横纸型+横票+横方向 → 全 0', () => {
 
 test('T3b 纯数学：横纸型+横票+切纵方向 → renderRotation=270(≡-90)', () => {
   const r = resolveContentPlacement({
-    contentSize: LAND_FILE, contentRotation: 0,
+    contentPhysicalSize: LAND_FILE, contentRotation: 0,
     paperSize: A4L, paperOrientation: 'portrait', margins,
   })
   assert.equal(r.shapeFitRotation, 0)
@@ -81,9 +81,9 @@ test('T1 端到端：横票+A4纵方向 → thumbnailUrl 无 content_rotation + 
   assert.equal(s.thumbnailUrl.includes('content_rotation'), false, 'rotation=0 → 缩略图无 content_rotation 参数')
   assert.equal(s.contentRotation, 0, 'slot.contentRotation 透传用户旋转')
   assert.equal(s.placement.renderTransform.rotationDeg, 270, 'rotationDeg=270(≡-90)')
-  // 不拉伸：image 尺寸=原始 609×394（非旋转包围盒）
-  assert.equal(s.placement.renderTransform.imageWidth, 609, 'imageWidth=原始宽(不拉伸)')
-  assert.equal(s.placement.renderTransform.imageHeight, 394, 'imageHeight=原始高(不拉伸)')
+  // 不拉伸：image 尺寸=原始 609×394 points 归一化后 = 2537.5×1641.67 px@300（非旋转包围盒）
+  assert.ok(Math.abs(s.placement.renderTransform.imageWidth - 2537.5) < 0.5, `imageWidth=${s.placement.renderTransform.imageWidth}≈2537.5(609pt×300/72)`)
+  assert.ok(Math.abs(s.placement.renderTransform.imageHeight - 1641.67) < 0.5, `imageHeight=${s.placement.renderTransform.imageHeight}≈1641.67(394pt×300/72)`)
 })
 
 test('T2 端到端：横票+A4切横方向 → 无 content_rotation + rotationDeg=0', () => {
@@ -98,7 +98,7 @@ test('T2 端到端：横票+A4切横方向 → 无 content_rotation + rotationDe
 test('情况B 守卫：Resolver 对原始 609×394 + contentRotation=90 → 单次旋转 effectiveContentSize=394×609', () => {
   // PrintPreviewModel 传入的是 getContentDimensions(f) = 原始 609×394（非缩略图旋转后尺寸）
   const r = resolveContentPlacement({
-    contentSize: { width: 609, height: 394 },
+    contentPhysicalSize: { width: 609, height: 394 },
     contentRotation: 90,
     paperSize: A4, paperOrientation: 'portrait', margins,
   })
@@ -107,7 +107,7 @@ test('情况B 守卫：Resolver 对原始 609×394 + contentRotation=90 → 单�
   assert.equal(r.effectiveContentSize.height, 609)
   // 反证：若误传已旋转 394×609 + contentRotation=90 → 双旋转成 609×394（绝不允许，证明必须传原始尺寸）
   const bad = resolveContentPlacement({
-    contentSize: { width: 394, height: 609 },
+    contentPhysicalSize: { width: 394, height: 609 },
     contentRotation: 90,
     paperSize: A4, paperOrientation: 'portrait', margins,
   })
