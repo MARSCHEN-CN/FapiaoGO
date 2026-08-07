@@ -287,8 +287,8 @@ test('PM-15: 四案例旋转矩阵（renderTransformMM.rotationDeg 归一化）'
   assert.equal(normDeg(build(609, 394, { landscape: true }).rotationDeg), 0, '横票+A4竖+横 → 0')
   // 案例3: 竖票 + A4竖 + 横 → 顺时针90 → 90
   assert.equal(normDeg(build(394, 609, { landscape: true }).rotationDeg), 90, '竖票+A4竖+横 → 顺时针90')
-  // 案例4: 横票 + 横纸型(240×140) + 纵 → 逆时针90 → 270
-  assert.equal(normDeg(build(609, 394, { paperSize: 'Custom', customPaper: { widthMM: 240, heightMM: 140 } }).rotationDeg), 270, '横票+横纸型+纵 → 逆时针90')
+  // 案例4: 横票 + 横纸型(240×140) + 纵 → 0（Commit 2-H：横向纸型下 orientationFit 恒为 0，用户纵不再补偿旋转）
+  assert.equal(normDeg(build(609, 394, { paperSize: 'Custom', customPaper: { widthMM: 240, heightMM: 140 } }).rotationDeg), 0, '横票+横纸型+纵 → 0（Commit 2-H 修复）')
 })
 
 // ── Commit 2-G：fit scale 占满安全区（PDF points → px@dpi 归一化后量级正确） ──

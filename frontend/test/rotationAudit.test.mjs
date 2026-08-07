@@ -54,15 +54,15 @@ test('T3a 纯数学：横纸型+横票+横方向 → 全 0', () => {
   assert.equal(r.renderRotation, 0)
 })
 
-test('T3b 纯数学：横纸型+横票+切纵方向 → renderRotation=270(≡-90)', () => {
+test('T3b 纯数学：横纸型+横票+切纵方向 → renderRotation=0（Commit 2-H：横向纸型下 orientationFit 恒为 0，用户纵不补偿旋转）', () => {
   const r = resolveContentPlacement({
     contentPhysicalSize: LAND_FILE, contentRotation: 0,
     paperSize: A4L, paperOrientation: 'portrait', margins,
   })
   assert.equal(r.shapeFitRotation, 0)
-  assert.equal(r.orientationFitRotation, -90)
-  assert.equal(r.fitRotation, -90)
-  assert.equal(r.renderRotation, 270)
+  assert.equal(r.orientationFitRotation, 0)  // Commit 2-H: 横向纸型下 orientationFit 恒为 0
+  assert.equal(r.fitRotation, 0)
+  assert.equal(r.renderRotation, 0)
 })
 
 // ── 端到端：PrintPreviewModel ──

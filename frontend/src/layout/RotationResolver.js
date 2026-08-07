@@ -216,7 +216,15 @@ export function resolveContentPlacement({
   const shapeFitRotation = computeLayoutRotation(contentOrientation, paperShapeOrientation)
   // shape-adjusted 方向：shapeFit 后内容已经匹配纸型 → ≡ paperShapeOrientation
   const shapeAdjustedOrientation = paperShapeOrientation
-  const orientationFitRotation = computeLayoutRotation(shapeAdjustedOrientation, paperOrientation)
+  // Stage 2 权限边界（Commit 2-H，2026-08-07）：
+  //   横向纸型本身是「横向承载空间」，Stage 1 已完成内容承载；用户方向在横向纸型上的切换
+  //   （横↔纵）不再驱动内容旋转。若按 paperShapeOrientation != paperOrientation 触发，则
+  //   横纸+用户纵向会误补偿 -90（Case 4 bug）。故：orientationFit 仅作用于【竖向纸型】。
+  //   语义核心：用户最终看到的是「内容方向匹配纸面方向」，横向纸型下该匹配已由 Stage 1 保证。
+  let orientationFitRotation = computeLayoutRotation(shapeAdjustedOrientation, paperOrientation)
+  if (paperShapeOrientation === 'landscape') {
+    orientationFitRotation = 0
+  }
   // fitRotation = 原始值(-90/0/90)，renderRotation = 归一化(0/90/180/270)
   const fitRotation = shapeFitRotation + orientationFitRotation
   const renderRotation = normalizeRotation(fitRotation)

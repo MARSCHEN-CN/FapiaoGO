@@ -364,7 +364,7 @@ describe('resolveContentPlacement', () => {
     assert.equal(r.renderRotation, 0)
   })
 
-  it('Gate E2: 横票+横纸型+纵向 → renderRotation=-90(270)', () => {
+  it('Gate E2: 横票+横纸型+纵向 → renderRotation=0（Commit 2-H 修复：横向纸型下 orientationFit 恒为 0，用户纵向不再补偿旋转）', () => {
     const r = resolveContentPlacement({
       contentPhysicalSize: { width: 1400, height: 1000 },
       contentRotation: 0,
@@ -374,8 +374,8 @@ describe('resolveContentPlacement', () => {
     })
     assert.equal(r.shapeFitRotation, 0)
     assert.equal(r.shapeAdjustedOrientation, 'landscape')
-    assert.equal(r.orientationFitRotation, -90)  // 横→纵
-    assert.equal(r.renderRotation, 270)  // normalize(-90)
+    assert.equal(r.orientationFitRotation, 0)  // Commit 2-H: 横向纸型下 orientationFit 恒为 0
+    assert.equal(r.renderRotation, 0)
   })
 
   it('Gate E3: 横票+竖纸型(A4)+竖向 → renderRotation=270', () => {
