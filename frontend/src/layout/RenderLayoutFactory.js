@@ -151,6 +151,10 @@ export function buildRenderCommand(paperLayout, documentState, slotRect = null) 
   )
   // 有效纸张是否横向：直接由 PaperOrientation Fact 派生，根除旧 totalRot 推导的 180° bug。
   const paperLandscape = paperOrientation === 'landscape'
+  // B1 修复：geometry swap 必须基于「有效方向 ≠ 原生形状」，而非「有效方向 === landscape」。
+  // 旧逻辑硬编码基础纸型恒为竖向，导致 Voucher240x140 等原生横向纸型 UI/几何恒相反。
+  const nativeLandscape = paperRect.w > paperRect.h
+  const needSwap = paperLandscape !== nativeLandscape
 
   // 内容内禀尺寸
   const natW = documentState?.pageSize?.w || 0
@@ -167,14 +171,14 @@ export function buildRenderCommand(paperLayout, documentState, slotRect = null) 
   // 旋转后的内容包围盒（90/270 交换 natW/natH；0/180 不交换）由 createPlacement 统一产出，
   // 不再本地重算（D2-1：createPlacement 成为唯一几何 owner）。
 
-  // 有效 usableRect：paperLandscape 时按新纸坐标重生（margins 物理值不变，仅 w/h 依据新纸重算）。
+  // 有效 usableRect：needSwap 时按新纸坐标重生（margins 物理值不变，仅 w/h 依据新纸重算）。
   //   margins 属于 Paper 坐标（Top 仍是物理上边、Left 仍是物理左边），绝不随内容旋转。
   const naturalUsable = paperLayout.usableRect || { x: 0, y: 0, w: contentRect.w, h: contentRect.h }
   const mL = naturalUsable.x
   const mT = naturalUsable.y
   const mR = paperRect.w - naturalUsable.w - mL
   const mB = paperRect.h - naturalUsable.h - mT
-  const usableRect = paperLandscape
+  const usableRect = needSwap
     ? { x: mL, y: mT, w: paperRect.h - mL - mR, h: paperRect.w - mT - mB }
     : naturalUsable
 
@@ -199,8 +203,8 @@ export function buildRenderCommand(paperLayout, documentState, slotRect = null) 
     rotation: contentRotation,
   })
 
-  // 有效纸张像素尺寸（paperLandscape 时交换），供 Renderer 直接使用，无需再次 swap。
-  const effPaperRect = paperLandscape
+  // 有效纸张像素尺寸（needSwap 时交换），供 Renderer 直接使用，无需再次 swap。
+  const effPaperRect = needSwap
     ? { w: paperRect.h, h: paperRect.w }
     : { w: paperRect.w, h: paperRect.h }
 
@@ -212,8 +216,8 @@ export function buildRenderCommand(paperLayout, documentState, slotRect = null) 
 
   const outClip = hasSlot
     ? { x: targetRect.x, y: targetRect.y, width: targetRect.width, height: targetRect.height }
-    : paperLandscape
-      ? { x: 0, y: 0, width: paperRect.h, height: paperRect.w }
+        : needSwap
+          ? { x: 0, y: 0, width: paperRect.h, height: paperRect.w }
       : {
           x: clipRect?.x ?? 0,
           y: clipRect?.y ?? 0,

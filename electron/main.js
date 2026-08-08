@@ -463,9 +463,11 @@ ipcMain.handle('generate-print-pdf', async (_event, { canvasBuffer, paperSize, o
     customPaper: customPaper || null,
   })
 
-  // Swap dimensions for landscape: PDF MediaBox must be landscape (w > h)
-  const isLandscape = orientation === 'landscape'
-  if (isLandscape) {
+  // B1 修复：PDF MediaBox 必须反映「有效纸方向 = orientation」，
+  // swap 基于 orientation ≠ 原生形状（避免 Voucher240x140 等原生横向纸型 UI/几何恒相反）。
+  const nativeLandscape = widthMM > heightMM
+  const needSwap = (orientation === 'landscape') !== nativeLandscape
+  if (needSwap) {
     ;[widthMM, heightMM] = [heightMM, widthMM]
   }
 
