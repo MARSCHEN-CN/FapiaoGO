@@ -682,6 +682,9 @@
   color: var(--text-3);
   letter-spacing: 0.02em;
   font-variant-numeric: tabular-nums;
+  /* 让发票号/失败原因占据剩余空间并吸收溢出，配合 .fc-failed-reason 的省略号 */
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .fc-amount {
@@ -690,6 +693,9 @@
   font-weight: 600;
   color: var(--text);
   font-variant-numeric: tabular-nums;
+  /* 金额/“解析失败”标签禁止被压缩或换行，确保始终完整横向显示 */
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .fc-failed { color: #ef4444 !important; font-size: 11px; opacity: 0.85; }
