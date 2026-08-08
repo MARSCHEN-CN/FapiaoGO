@@ -179,7 +179,13 @@ export function buildPrintPreviewModel(plan, { files = [], settings = {}, curren
     // 票位几何：横向在横向物理可用区重算（margins 不随内容旋转），纵向用自然可用区。
     // 可用区非正（边距超出）→ 返回 null，由调用方统一判定 invalid。
     const usable = isLandscape ? landUsable : layout.usableRect
-    if (usable.w <= 0 || usable.h <= 0) return null
+    if (usable.w <= 0 || usable.h <= 0) {
+      // [DIAG-16] pageToModel 返回 null 的根因（边距超出纸张 → 无有效预览页）
+      console.log('[DIAG-16 pageToModel null] fileKey=%s isLandscape=%s usable=%dx%d paperW=%d paperH=%d',
+        page.slots[0]?.fileId?.slice(-20) || '?', isLandscape, Math.round(usable.w), Math.round(usable.h),
+        Math.round(layout.paperRect.w), Math.round(layout.paperRect.h))
+      return null
+    }
     const slots = computeTicketSlots({ usableRect: usable }, page.slots.length)
 
     const widthMM = (isLandscape ? layout.paperRect.h : layout.paperRect.w) * PX_TO_MM
@@ -316,10 +322,14 @@ export function buildPrintPreviewModel(plan, { files = [], settings = {}, curren
       console.log('[DIAG-11 rotation matrix] contentRotation=%d layoutRotation=%d effectiveSize=%s rotationDeg=%d paperOrientation=%s',
         s._diag.contentRotation, s._diag.layoutRotation, s._diag.effectiveSize,
         s._diag.rotationDeg, p.orientation)
-    } else {
-      console.log('[DIAG-11 no placement] slotRotation=%d hasThumb=%s paperOrientation=%s',
-        s._deprecatedRotation, !!s.thumbnailUrl, p.orientation)
-    }
+  } else {
+    console.log('[DIAG-11 no placement] slotRotation=%d hasThumb=%s paperOrientation=%s',
+      s._deprecatedRotation, !!s.thumbnailUrl, p.orientation)
+  }
+  } else {
+    // [DIAG-11 empty] basePages 为空（所有 pageToModel 返回 null）→ 外层 valid:false
+    console.log('[DIAG-11 empty] planPages=%d firstPageOrientation=%s reason=无有效预览页(边距可能超出纸张)',
+      plan.pages.length, plan.pages[0]?.orientation || '?')
   }
   if (basePages.length === 0) {
     return { valid: false, reason: '边距超出纸张尺寸（打印内容无可用区域）', pages: [], currentPageIndex: 0 }
