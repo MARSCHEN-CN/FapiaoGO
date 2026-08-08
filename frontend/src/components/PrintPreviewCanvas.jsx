@@ -54,8 +54,8 @@ const SlotImage = memo(({ slot }) => {
     ? `translate(${t.translateX},${t.translateY}) scale(${t.scale}) rotate(${t.rotationDeg},${t.rotationCx},${t.rotationCy})`
     : null
 
-  // [DIAG-13] SVG renderTransform 消费
-  if (t && t.rotationDeg !== 0) {
+  // [DIAG-13] SVG renderTransform 消费（无条件：rotationDeg=0 也打印，便于确认无旋转分支）
+  if (t) {
     console.log('[DIAG-13 slotImage SVG] rotationDeg=%d svgTransform=%s slotRotation=%d',
       t.rotationDeg, svgTransform, slot._deprecatedRotation)
   }
