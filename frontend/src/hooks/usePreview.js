@@ -241,10 +241,12 @@ export function usePreview({ files, settings, electronAPIRef }) {
       pageSize: { w: pageW, h: pageH },
       pageOrientation: getDocNaturalOrientation({ w: pageW, h: pageH }),
       sourceType: loadedFile._fileFormat || 'pdf',
-      // ⚠️ pageNum 是 0-based（buildFileObj 保留后端 page_index），转换为 1-based 用于展示
+      // [M1-c D20/C8 · frozen] pageNum 是 1-based SOURCE evidence
+      //   (app.py split_pdf emit / fileHelpers.buildFileObj)。1-based Source →
+      //   1-based render locator 是 IDENTITY，不需要 ±1。禁止再补 +1。
       //    不要在消费者代码里检查 pageNum 真假值——改用 src/layout/docFacts.js 的
       //    shouldAppendPageSuffix(doc)（检查 pageCount>1）。
-      pageNum: (loadedFile.pageNum ?? 0) + 1,
+      pageNum: loadedFile.pageNum ?? 1,
     }
   }
 
@@ -1308,7 +1310,9 @@ export function usePreview({ files, settings, electronAPIRef }) {
           //   非拆页文件（无 sourceDocId）：用 docId
           const isParsedSplitPage = !!(fObj.sourceDocId && fObj.docId !== fObj.sourceDocId)
           const effectiveDocId = isParsedSplitPage ? fObj.sourceDocId : fObj.docId
-          const pageForPreview = (fObj.pageNum ?? 0) + 1
+          // [M1-c D20/C8 · frozen] fObj.pageNum 已是 1-based SOURCE evidence；
+          // 1-based Source → 1-based render locator (?page=) 是 IDENTITY，禁止 +1。
+          const pageForPreview = fObj.pageNum ?? 1
           _previewImageUrl = buildPreviewUrl(effectiveDocId, pageForPreview)
           return { ...fObj, _previewImageUrl, _fileFormat: fmt }
         }
@@ -1355,7 +1359,9 @@ export function usePreview({ files, settings, electronAPIRef }) {
           //   非拆页文件（无 sourceDocId）：用 docId
           const isParsedSplitPage = !!(fObj.sourceDocId && fObj.docId !== fObj.sourceDocId)
           const effectiveDocId = isParsedSplitPage ? fObj.sourceDocId : fObj.docId
-          const pageForPreview = (fObj.pageNum ?? 0) + 1
+          // [M1-c D20/C8 · frozen] fObj.pageNum 已是 1-based SOURCE evidence；
+          // 1-based Source → 1-based render locator (?page=) 是 IDENTITY，禁止 +1。
+          const pageForPreview = fObj.pageNum ?? 1
           _previewImageUrl = buildPreviewUrl(effectiveDocId, pageForPreview)
           // 从后端 metadata 获取页面尺寸用于 DocumentState（确定性高，不依赖图片加载）
           if (!fObj._pdfPageWidth && !fObj._imageWidth) {
@@ -1596,10 +1602,12 @@ export function usePreview({ files, settings, electronAPIRef }) {
       contentRotation: effectiveRotation, // Legacy 迁移：旧 fileRotations 作为 contentRotation 来源
       rotation: effectiveRotation, // [LEGACY 镜像] = contentRotation
       sourceType: loadedFile._fileFormat || 'pdf',
-      // ⚠️ pageNum 是 0-based（buildFileObj 保留后端 page_index），转换为 1-based 用于展示
+      // [M1-c D20/C8 · frozen] pageNum 是 1-based SOURCE evidence
+      //   (app.py split_pdf emit / fileHelpers.buildFileObj)。1-based Source →
+      //   1-based render locator 是 IDENTITY，不需要 ±1。禁止再补 +1。
       //    不要在消费者代码里检查 pageNum 真假值——改用 src/layout/docFacts.js 的
       //    shouldAppendPageSuffix(doc)（检查 pageCount>1）。
-      pageNum: (loadedFile.pageNum ?? 0) + 1,
+      pageNum: loadedFile.pageNum ?? 1,
     }
     // 🔴 V17 不变式：缓存身份必须包含每一个影响 RenderCommand 的 Fact。
     //    paperLandscape 由 PaperOrientation Fact 驱动绘制（renderCommand.paperLandscape），
