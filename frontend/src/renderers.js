@@ -1450,8 +1450,6 @@ export async function switchPreviewFile(pdfDoc, pageNum = 1, signal, rotation = 
     const baseViewport = page.getViewport({ scale: 1, rotation: 0 })
     const baseW = baseViewport.width
     const baseH = baseViewport.height
-    console.log('[ROT-DIAG] switchPreviewFile | rotation=%d baseW=%d baseH=%d content=%dx%d paper=%dx%d',
-      rotation, Math.round(baseW), Math.round(baseH), Math.round(contentW), Math.round(contentH), paperW, paperH)
     // 旋转感知栅格化比例：让 source 像素 ≈ 落盘像素（1:1，画质等同旧 switchPreviewFile）。
     // 仅决定 PDF 采样分辨率，落盘几何仍由 createPlacement → drawRenderCommand 计算（非 Renderer 重算）。
     const fitScale = (baseW > 0 && baseH > 0)

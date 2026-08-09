@@ -49,9 +49,6 @@ export default memo(function PreviewCanvas({ previewFile, previewCanvas, preview
         lastVersionRef.current === previewRenderVersion) {
       return
     }
-    console.log('[ROT-DIAG] PreviewCanvas redraw | version=%d canvasSize=%dx%d lastVersion=%d lastSourceSame=%s',
-      previewRenderVersion, previewCanvas.width, previewCanvas.height,
-      lastVersionRef.current, lastSourceRef.current === previewCanvas)
     lastNodeRef.current = node
     lastSourceRef.current = previewCanvas
     lastGrayscaleRef.current = grayscale

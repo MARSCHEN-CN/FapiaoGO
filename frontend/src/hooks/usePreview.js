@@ -365,8 +365,6 @@ export function usePreview({ files, settings, electronAPIRef }) {
     const key = targetKey || previewFileRef.current?.key
     if (!key) return
     const deg = ((fileRotations[key] || 0) + 90) % 360
-    console.log('[ROT-DIAG] rotate | targetKey=%s key=%s deg=%d | previewFile.key=%s',
-      targetKey, key, deg, previewFileRef.current?.key)
     setFileRotations(prev => ({ ...prev, [key]: deg }))
     // 🔧 P1 修复：同步 documentStateRef，L2 缓存命中路径（doLoadPreview 内 buildRenderCommand
     //    `paperLayout, documentStateRef.current`，无 previewRotation 显式覆盖）才能拿到最新 rotation。
@@ -382,20 +380,16 @@ export function usePreview({ files, settings, electronAPIRef }) {
     if (!factKey) return
     const api = electronAPIRef.current
     if (!api) return
-    // 🔧 根治：rotation=0 时清除持久记录而非写入 0（避免 stale 记录在 re-import 时复活）
-    if (deg === 0) {
-      if (api.clearDocFacts) {
-        api.clearDocFacts(factKey).catch(() => {})
-      }
-    } else {
-      if (api.saveDocFacts) {
-        api.saveDocFacts(factKey, {
-          // ⚠️ 必须保留 requestedPaperOrientation：主进程 save-doc-facts 整体覆盖 map[factKey]，
-          //    缺该字段会被归一化成 'portrait'，冲掉纸张方向记录。
-          requestedPaperOrientation: requestedPaperOrientationRef.current,
-          contentRotation: deg,
-        }).catch((e) => console.warn('[Rotation] saveDocFacts failed:', e))
-      }
+    // 统一 saveDocFacts（含 deg=0）：与旧代码语义一致，保留 requestedPaperOrientation 记录。
+    // 旋转回 0° 会把 stale 的 contentRotation=90 覆盖成 0，同样根治 re-import 复活问题，
+    // 但不像 clearDocFacts 那样把整条记录（含用户手动选的纸张方向）删除。
+    if (api.saveDocFacts) {
+      api.saveDocFacts(factKey, {
+        // ⚠️ 必须保留 requestedPaperOrientation：主进程 save-doc-facts 整体覆盖 map[factKey]，
+        //    缺该字段会被归一化成 'portrait'，冲掉纸张方向记录。
+        requestedPaperOrientation: requestedPaperOrientationRef.current,
+        contentRotation: deg,
+      }).catch((e) => console.warn('[Rotation] saveDocFacts failed:', e))
     }
   }, [fileRotations, electronAPIRef])
 
@@ -689,8 +683,6 @@ export function usePreview({ files, settings, electronAPIRef }) {
     const mergeRotations = mergePair?.map(m => `${m?.key}:${fileRotations[m?.key] || 0}`).join(',') || ''
     const paperFrag = paperKeyFragment(paper)
     const renderKey = `${previewFile.key}-${paperSize}-${isLandscape}-${currentRotation}-${settings.mergeMode || ''}-${mergePair?.map(m => m?.key).join(',') || ''}-${mergeRotations}-m${settings.marginLeft}_${settings.marginRight}_${settings.marginTop}_${settings.marginBottom}-${paperFrag}-re${reBlockedDocId || ''}`
-    console.log('[ROT-DIAG] render | fileKey=%s previewRotation=%d currentRotation=%d skipRender=%s fileRotations=%o',
-      previewFile.key?.slice(-24), previewRotation, currentRotation, skipRenderRef.current, fileRotations)
     // ⚡ Commit B：移除 Effect 层的 renderKey 守卫。此守卫曾阻塞整个 Effect
     // （RE/Canvas/probe/Loading 生命周期全部被阻断），导致导入后卡 Loading。
     // renderKey 的去重职责应下沉到 Canvas 渲染内部（renderToCanvas），
@@ -1577,8 +1569,6 @@ export function usePreview({ files, settings, electronAPIRef }) {
     //    异步未完成/失败（P2），loadDocFacts 读到旧值 → 旋转丢失（验收场景失败）。
     const memoryRotation = fileRotationsRef.current[loadedFile.key]
     const effectiveRotation = memoryRotation != null ? memoryRotation : init.contentRotation
-    console.log('[ROT-DIAG] restore | fileKey=%s memory=%s init=%s effective=%s | fileRotationsRef=%o',
-      loadedFile.key?.slice(-24), memoryRotation, init.contentRotation, effectiveRotation, fileRotationsRef.current)
     // 恢复 contentRotation 到实时镜象（fileRotations），保证 previewRotation / L2 / full cache 一致
     setFileRotations(prev => ({ ...prev, [loadedFile.key]: effectiveRotation }))
     rotation = effectiveRotation // 修正上方 rotation（cacheKey 用）
