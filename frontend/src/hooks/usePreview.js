@@ -76,6 +76,8 @@ export function usePreview({ files, settings, electronAPIRef }) {
   const [showRightArrow, setShowRightArrow] = useState(false)
 
   // ── Commit C：纸张方向 Fact（自动/横向/纵向），per doc_id 持久化 ──
+  // 🔧 2026-08-09 产品决策：旋转/纸张方向不跨重启保留——主进程启动清空 DocFacts.json，
+  //    本持久化仅服务会话内（切换文件恢复 + L2 缓存键一致），重启后全部回 auto。
   const [requestedPaperOrientation, setRequestedPaperOrientation] = useState('portrait')
   const [autoActive, setAutoActive] = useState(true)
   const requestedPaperOrientationRef = useRef('portrait')
@@ -399,6 +401,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
   // ── Commit C：纸张方向切换（自动/横向/纵向）──
   // 自动 = 删除持久记录，方向回落文档天然方向（下次加载重新推导并写回）；
   // 横向/纵向 = 覆盖持久记录。contentRotation 保持不变（来自当前 Fact）。
+  // 🔧 2026-08-09：持久层仅会话内有效（主进程启动清空 DocFacts.json，不跨重启保留）。
   const handlePaperOrientationChange = useCallback((mode) => {
     const f = previewFileRef.current
     // 4.1.5：写入键严格用 Document 身份 docId，不回退 path/key
@@ -1551,8 +1554,10 @@ export function usePreview({ files, settings, electronAPIRef }) {
     // getDocNaturalOrientation 对空/零尺寸返回 null（拒绝数学偶然）；null 时回落 contentOrient/portrait
     const naturalOrientation = (docW > 0 && docH > 0) ? getDocNaturalOrientation({ w: docW, h: docH }) : null
 
-    // ── Commit C：按 doc_id 加载方向 Fact（Initialize Once + 持久化）──
-    // 4.1.5：读取优先用 Document 身份 docId（稳定跨重启）；迁移期回退旧 path/key 落盘键（只读不写旧键）。
+    // ── Commit C：按 doc_id 加载方向 Fact ──
+    // 4.1.5：读取优先用 Document 身份 docId（内容哈希，稳定）；迁移期回退旧 path/key 落盘键（只读不写旧键）。
+    // 🔧 2026-08-09 产品决策：旋转/纸张方向不跨重启保留——主进程启动清空 DocFacts.json，
+    //    本读取/写回仅服务**会话内**（切换文件恢复 + L2 缓存键一致）；重启后持久层为空 → auto 推导。
     const docId = loadedFile.identity?.docId || loadedFile.docId || ''
     const factCandidates = [docId, loadedFile.path, loadedFile.key].filter(Boolean)
     let loadedFacts = null
@@ -1567,7 +1572,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
     } catch (_) { /* 无持久层（Web 模式）退化为 natural 推导 */ }
     const init = computeInitialDocFacts(loadedFacts, naturalOrientation)
     // 🔧 P0 修复：内存优先。fileRotations 是会话内旋转权威（用户本会话操作过即生效），
-    //    持久层 DocFacts 仅用于「内存无该 file.key 记录」时的跨会话恢复。
+    //    持久层 DocFacts 仅用于「内存无该 file.key 记录」时的会话内恢复。
     //    旧逻辑无条件用 init.contentRotation 覆盖内存 → 旋转后切文件再切回，若 saveDocFacts
     //    异步未完成/失败（P2），loadDocFacts 读到旧值 → 旋转丢失（验收场景失败）。
     const memoryRotation = fileRotationsRef.current[loadedFile.key]
@@ -1594,8 +1599,9 @@ export function usePreview({ files, settings, electronAPIRef }) {
       pageCount: loadedFile._pdfPageCount || 1,
       pageSize: { w: docW, h: docH },
       pageOrientation: docOrientation,
-      // 【Page Placement Pipeline Fact】纸张方向：Initialize Once（首次加载即定）。
-      // 持久层存在时以记录为准（用户选择或 Auto 推导值均已落盘）；不存在时以文档天然方向初始化。
+      // 【Page Placement Pipeline Fact】纸张方向：加载时确定。
+      // 持久层（会话内）有记录则以记录为准；无记录时以文档天然方向初始化。
+      // 🔧 2026-08-09：不跨重启保留（主进程启动清空 DocFacts.json），重启后回 auto。
       requestedPaperOrientation: init.requestedPaperOrientation,
       // 🔧 P0 修复：用 effectiveRotation（内存优先）而非 init.contentRotation。
       //    documentStateRef 是 L2 缓存命中路径 buildRenderCommand 的直接输入（无 previewRotation

@@ -1088,6 +1088,9 @@ ipcMain.handle('load-excel-export-columns', async () => {
 // 落盘到 userData/DocFacts.json（map: factKey -> {requestedPaperOrientation, contentRotation}）
 // factKey = docId(内容哈希) || path(图片落盘路径)
 // "自动" = 持久层无该 factKey 记录。
+// 🔧 2026-08-09 产品决策：旋转/纸张方向**不跨重启保留**——
+//   app.whenReady() 启动时清空本文件（见上方 BOOT 段），每次启动从 auto 推导开始；
+//   本 IPC 仅服务**会话内**（切换文件恢复 / L2 缓存键一致）。
 // ============================
 const docFactsPath = path.join(app.getPath('userData'), 'DocFacts.json')
 

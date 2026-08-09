@@ -1,7 +1,13 @@
-// 纯函数模块：文档方向 Fact 的 Initialize Once 推导。
+// 纯函数模块：文档方向 Fact 的推导。
 // 无 DOM / 无 electron 依赖，可在 node 下直接单测。
-// 对应 Commit C：纸张方向(paperOrientation) 与 内容旋转(contentRotation)
+// 对应 Commit C：纸张方向(requestedPaperOrientation) 与 内容旋转(contentRotation)
 // 作为两个独立 Fact，按 doc_id 持久化；"自动" = 持久层无记录。
+//
+// 🔧 语义更新（2026-08-09 产品决策）：旋转/纸张方向**不跨重启保留**。
+//   Electron 主进程每次启动清空 DocFacts.json（electron/main.js app.whenReady），
+//   因此本模块的「持久化」仅服务**会话内**（写回记录供本会话切换文件恢复）；
+//   重启后持久层为空 → 所有文件从 auto 推导开始（contentRotation=0, 自然方向）。
+//   hasRecord 分支仍保留，用于会话内切文件时复用刚写入的记录。
 
 export function normalizeRotation(deg) {
   const r = Math.round(Number(deg) || 0) % 360
@@ -10,21 +16,23 @@ export function normalizeRotation(deg) {
 
 /**
  * 推导文档加载时的初始方向 Fact。
- * @param {null|{paperOrientation?:string, contentRotation?:number}} loadedFacts 持久层记录（无则 null）
+ * @param {null|{requestedPaperOrientation?:string, paperOrientation?:string, contentRotation?:number}} loadedFacts 持久层记录（无则 null）
  * @param {('portrait'|'landscape'|null)} naturalOrientation 文档天然方向（由页面/图片尺寸推导）
- * @returns {{paperOrientation:string, contentRotation:number, isAuto:boolean, shouldPersist:boolean}}
- *   - 有合法记录 → 返回记录值，isAuto=false，shouldPersist=false（不重复写）
- *   - 无记录 → 返回天然方向 + contentRotation=0，isAuto=true，shouldPersist=true（Initialize Once 写回）
+ * @returns {{requestedPaperOrientation:string, contentRotation:number, isAuto:boolean, shouldPersist:boolean}}
+ *   - 有合法记录 → 返回记录值，isAuto=false，shouldPersist=false（会话内复用，不重复写）
+ *   - 无记录 → 返回天然方向 + contentRotation=0，isAuto=true，shouldPersist=true（写回供会话内复用）
  */
 export function computeInitialDocFacts(loadedFacts, naturalOrientation) {
+  // 向后兼容：旧持久记录用 paperOrientation，新记录用 requestedPaperOrientation（Commit 1-A 语义改名）
+  const loadedOrientation = loadedFacts?.requestedPaperOrientation ?? loadedFacts?.paperOrientation
   const hasRecord =
     loadedFacts &&
     typeof loadedFacts === 'object' &&
-    (loadedFacts.paperOrientation === 'portrait' || loadedFacts.paperOrientation === 'landscape')
+    (loadedOrientation === 'portrait' || loadedOrientation === 'landscape')
 
   if (hasRecord) {
     return {
-      paperOrientation: loadedFacts.paperOrientation,
+      requestedPaperOrientation: loadedOrientation,
       contentRotation: normalizeRotation(loadedFacts.contentRotation),
       isAuto: false,
       shouldPersist: false,
@@ -33,7 +41,7 @@ export function computeInitialDocFacts(loadedFacts, naturalOrientation) {
 
   const natural = naturalOrientation === 'landscape' ? 'landscape' : 'portrait'
   return {
-    paperOrientation: natural,
+    requestedPaperOrientation: natural,
     contentRotation: 0,
     isAuto: true,
     shouldPersist: true,
