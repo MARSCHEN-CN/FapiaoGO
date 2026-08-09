@@ -1085,7 +1085,7 @@ ipcMain.handle('load-excel-export-columns', async () => {
 
 // ============================
 // 文档方向 Fact 持久化（Commit C）：per doc_id 的纸张方向 + 内容旋转
-// 落盘到 userData/DocFacts.json（map: factKey -> {paperOrientation, contentRotation}）
+// 落盘到 userData/DocFacts.json（map: factKey -> {requestedPaperOrientation, contentRotation}）
 // factKey = docId(内容哈希) || path(图片落盘路径)
 // "自动" = 持久层无该 factKey 记录。
 // ============================
@@ -1118,7 +1118,7 @@ ipcMain.handle('load-doc-facts', async (event, factKey) => {
   const rec = map[factKey]
   if (!rec) return null
   return {
-    paperOrientation: rec.paperOrientation === 'landscape' ? 'landscape' : 'portrait',
+    requestedPaperOrientation: (rec.requestedPaperOrientation ?? rec.paperOrientation) === 'landscape' ? 'landscape' : 'portrait',
     contentRotation: normalizeDocRotation(rec.contentRotation || 0),
   }
 })
@@ -1127,7 +1127,7 @@ ipcMain.handle('save-doc-facts', async (event, factKey, facts) => {
   if (!factKey || !facts) return { success: false, error: 'invalid args' }
   const map = await readDocFacts()
   map[factKey] = {
-    paperOrientation: facts.paperOrientation === 'landscape' ? 'landscape' : 'portrait',
+    requestedPaperOrientation: (facts.requestedPaperOrientation ?? facts.paperOrientation) === 'landscape' ? 'landscape' : 'portrait',
     contentRotation: normalizeDocRotation(facts.contentRotation || 0),
   }
   await writeDocFacts(map)
@@ -1242,6 +1242,19 @@ if (!gotTheLock) {
 
   app.whenReady().then(async () => {
     logger.init()  // 初始化日志模块
+
+    // 🔧 产品决策（2026-08-09）：旋转 / 纸张方向选择不跨重启保留。
+    // 启动时清空 DocFacts.json（旋转/纸张方向持久层），每次启动从 auto 推导开始
+    // （contentRotation=0, requestedPaperOrientation=文档自然方向）。
+    // 会话内旋转/方向仍有效（内存 fileRotations 驱动展示区），重启后回到默认。
+    // ENOENT（首次启动无文件）静默忽略；其余失败仅告警不阻塞启动。
+    try {
+      await fs.promises.unlink(docFactsPath)
+      console.log('[BOOT] DocFacts.json cleared: rotation/orientation not persisted across restarts')
+    } catch (err) {
+      if (err.code !== 'ENOENT') console.warn('[BOOT] clear DocFacts.json failed:', err.message)
+    }
+
     // 预热 Python 环境检测（移至 app ready 后）：fire-and-forget，不阻塞窗口创建
     pdfMargin.checkPythonEnv().catch(() => {})
 
