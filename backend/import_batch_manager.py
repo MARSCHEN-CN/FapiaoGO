@@ -983,10 +983,16 @@ class ImportBatchManager:
         should_flush = False
         
         # 解析页面信息
-        # page_num 已由 _parse_page_info 解析为 0-based（与 /split_pdf 的 page_index、
-        # 前端的 pageNum、PageResultStore 的 0-based 契约一致）。Commit 4.1 之前这里曾做
-        # `page_num - 1` 归一化（误当作 1-based），导致批量多页导入首两页在 store 落同一
-        # key=0 互相覆盖、assembly 永不触发、首页数据丢失。现直接用 0-based page_num。
+        # [M1-c · frozen] Channel B `page_num` 是 0-based BY DESIGN（Commit 4.1/4.3 为
+        #   批量导入通道归一，与 PageResultStore.page_num 的 0-based 契约一致）。
+        # ⚠️ 不要把 Channel B 的 0-based 与下列 1-based 通道混为一谈（这是 M1 长期潜伏的根因）：
+        #     - `/split_pdf.page_index`  是 1-based SOURCE transport（M1-a 事实表 D1，勿改 0-based）
+        #     - 前端 `fileObj.pageNum`   是 1-based SOURCE evidence（M1-c D5 / Pass 1 已声明）
+        #   两者属不同通道/域；Channel B 的 0-based 与它们「不一致」，正确做法是各通道声明各自
+        #   base，而非强求统一（裁决「谁是什么」，不是「大家都变成什么」）。
+        # 历史背景：Commit 4.1 之前这里曾对 0-based 的 page_num 做 `page_num - 1`（误当 1-based），
+        #   导致批量多页导入首两页在 store 落同一 key=0 互相覆盖、assembly 永不触发、首页数据丢失。
+        #   现直接用 0-based page_num（运行时语义不变，本注释仅纠正错误声明）。
         page_num, total_pages = self._parse_page_info(metrics, bucket_key)
 
         # 加入 PageResultStore
