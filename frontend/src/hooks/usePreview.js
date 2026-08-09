@@ -364,6 +364,13 @@ export function usePreview({ files, settings, electronAPIRef }) {
     if (!key) return
     const deg = ((fileRotations[key] || 0) + 90) % 360
     setFileRotations(prev => ({ ...prev, [key]: deg }))
+    // 🔧 P1 修复：同步 documentStateRef，L2 缓存命中路径（doLoadPreview 内 buildRenderCommand
+    //    `paperLayout, documentStateRef.current`，无 previewRotation 显式覆盖）才能拿到最新 rotation。
+    //    仅当旋转的是当前预览文件时同步；否则 documentStateRef 属其他文件，不可污染。
+    if (previewFileRef.current?.key === key && documentStateRef.current) {
+      documentStateRef.current.contentRotation = deg
+      documentStateRef.current.rotation = deg // [LEGACY 镜像] = contentRotation
+    }
     // 持久化 contentRotation（纸张方向 Fact 之一），requestedPaperOrientation 取当前 Fact
     // 4.1.5：写入键严格用 Document 身份 docId，不回退 path/key（uiKey 永不入持久层）
     const f = previewFileRef.current
@@ -379,9 +386,11 @@ export function usePreview({ files, settings, electronAPIRef }) {
     } else {
       if (api.saveDocFacts) {
         api.saveDocFacts(factKey, {
+          // ⚠️ 必须保留 requestedPaperOrientation：主进程 save-doc-facts 整体覆盖 map[factKey]，
+          //    缺该字段会被归一化成 'portrait'，冲掉纸张方向记录。
           requestedPaperOrientation: requestedPaperOrientationRef.current,
           contentRotation: deg,
-        }).catch(() => {})
+        }).catch((e) => console.warn('[Rotation] saveDocFacts failed:', e))
       }
     }
   }, [fileRotations, electronAPIRef])
@@ -1550,15 +1559,23 @@ export function usePreview({ files, settings, electronAPIRef }) {
       }
     } catch (_) { /* 无持久层（Web 模式）退化为 natural 推导 */ }
     const init = computeInitialDocFacts(loadedFacts, naturalOrientation)
+    // 🔧 P0 修复：内存优先。fileRotations 是会话内旋转权威（用户本会话操作过即生效），
+    //    持久层 DocFacts 仅用于「内存无该 file.key 记录」时的跨会话恢复。
+    //    旧逻辑无条件用 init.contentRotation 覆盖内存 → 旋转后切文件再切回，若 saveDocFacts
+    //    异步未完成/失败（P2），loadDocFacts 读到旧值 → 旋转丢失（验收场景失败）。
+    const memoryRotation = fileRotationsRef.current[loadedFile.key]
+    const effectiveRotation = memoryRotation != null ? memoryRotation : init.contentRotation
     // 恢复 contentRotation 到实时镜象（fileRotations），保证 previewRotation / L2 / full cache 一致
-    setFileRotations(prev => ({ ...prev, [loadedFile.key]: init.contentRotation }))
-    rotation = init.contentRotation // 修正上方 rotation（cacheKey 用）
+    setFileRotations(prev => ({ ...prev, [loadedFile.key]: effectiveRotation }))
+    rotation = effectiveRotation // 修正上方 rotation（cacheKey 用）
     applyRequestedPaperOrientation(init.requestedPaperOrientation, init.isAuto)
     if (init.shouldPersist) {
       try {
         const api = electronAPIRef.current
-        // 写入严格用 docId（不回退 path/key），无 docId 时跳过落盘
-        if (docId && api && api.saveDocFacts) await api.saveDocFacts(docId, { requestedPaperOrientation: init.requestedPaperOrientation, contentRotation: init.contentRotation })
+        // 写入严格用 docId（不回退 path/key），无 docId 时跳过落盘。
+        // 🔧 P0 配套：写 effectiveRotation（内存优先值）。若用户已旋转（内存=90）但持久层
+        //    无记录（保存失败），此处把内存状态固化，避免把 90 冲成 init 推导的 0。
+        if (docId && api && api.saveDocFacts) await api.saveDocFacts(docId, { requestedPaperOrientation: init.requestedPaperOrientation, contentRotation: effectiveRotation })
       } catch (_) { /* 忽略落盘失败，不影响预览 */ }
     }
 
@@ -1573,8 +1590,11 @@ export function usePreview({ files, settings, electronAPIRef }) {
       // 【Page Placement Pipeline Fact】纸张方向：Initialize Once（首次加载即定）。
       // 持久层存在时以记录为准（用户选择或 Auto 推导值均已落盘）；不存在时以文档天然方向初始化。
       requestedPaperOrientation: init.requestedPaperOrientation,
-      contentRotation: init.contentRotation, // Legacy 迁移：旧 fileRotations 作为 contentRotation 来源
-      rotation: init.contentRotation, // [LEGACY 镜像] = contentRotation
+      // 🔧 P0 修复：用 effectiveRotation（内存优先）而非 init.contentRotation。
+      //    documentStateRef 是 L2 缓存命中路径 buildRenderCommand 的直接输入（无 previewRotation
+      //    显式覆盖），若仍写 init 值，旋转后切回文件 L2 spec 用陈旧角度。
+      contentRotation: effectiveRotation, // Legacy 迁移：旧 fileRotations 作为 contentRotation 来源
+      rotation: effectiveRotation, // [LEGACY 镜像] = contentRotation
       sourceType: loadedFile._fileFormat || 'pdf',
       // ⚠️ pageNum 是 0-based（buildFileObj 保留后端 page_index），转换为 1-based 用于展示
       //    不要在消费者代码里检查 pageNum 真假值——改用 src/layout/docFacts.js 的
