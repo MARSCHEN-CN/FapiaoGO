@@ -1,0 +1,916 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Control-bar 眼睛按钮 + 右侧边栏 - 方案对比</title>
+<style>
+:root {
+  --bg: oklch(0.975 0.002 240);
+  --white: #ffffff;
+  --sidebar-bg: color-mix(in srgb, #ffffff 98%, #3b6cf5 2%);
+  --surface: oklch(0.99 0.003 240);
+  --border: oklch(0.86 0.008 240);
+  --border-light: #e6e9f0;
+  --hover-bg: #e8ecf4;
+  --float-bg: rgba(255, 255, 255, 0.82);
+  --float-bg-hover: rgba(255, 255, 255, 0.94);
+  --float-border: rgba(0, 0, 0, 0.06);
+  --float-border-hover: rgba(0, 0, 0, 0.10);
+  --float-shadow: 0 2px 12px rgba(0,0,0,0.07), 0 0 0 0.5px rgba(0,0,0,0.04);
+  --float-shadow-hover: 0 4px 16px rgba(0,0,0,0.10), 0 0 0 0.5px rgba(0,0,0,0.06);
+  --float-blur: blur(16px);
+  --accent: #4f7cff;
+  --accent-soft: rgba(79,124,255,0.10);
+  --text: oklch(0.18 0.015 240);
+  --text-2: oklch(0.38 0.012 240);
+  --text-3: oklch(0.52 0.01 240);
+  --text-4: oklch(0.66 0.008 240);
+  --r-sm: 7px; --r-md: 9px; --r-lg: 12px; --r-xl: 16px;
+  --ease: cubic-bezier(0.4,0,0.2,1);
+  --ease-spring: cubic-bezier(0.34,1.0,0.64,1);
+  --t-fast: 0.15s; --t-normal: 0.25s; --t-slow: 0.35s;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, "Microsoft YaHei", "PingFang SC", "Segoe UI", sans-serif;
+  background: #1a1d2e;
+  color: var(--text);
+  min-height: 100vh;
+  padding: 28px 32px;
+}
+.page-title { color: #e3e5ed; font-size: 22px; font-weight: 600; margin-bottom: 6px; }
+.page-sub { color: #6f7389; font-size: 13px; margin-bottom: 28px; }
+.proposals-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(460px, 1fr));
+  gap: 24px;
+  max-width: 1500px;
+}
+.proposal-card {
+  background: #0f1117;
+  border-radius: var(--r-xl);
+  padding: 20px;
+  border: 1px solid rgba(255,255,255,0.06);
+}
+.proposal-label {
+  color: #e3e5ed; font-size: 15px; font-weight: 600; margin-bottom: 4px;
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+}
+.proposal-tag {
+  font-size: 11px; padding: 2px 8px; border-radius: 10px;
+  font-weight: 500;
+}
+.tag-blue { background: var(--accent-soft); color: var(--accent); }
+.tag-green { background: rgba(22,163,74,0.12); color: #4ade80; }
+.tag-orange { background: rgba(217,119,6,0.12); color: #fb923c; }
+.tag-purple { background: rgba(124,58,237,0.12); color: #a78bfa; }
+.tag-gold { background: rgba(234,179,8,0.14); color: #fbbf24; }
+.proposal-desc { color: #6f7389; font-size: 12px; margin-bottom: 14px; line-height: 1.6; }
+
+/* Mock window shell */
+.mock-window {
+  background: var(--bg); border-radius: var(--r-lg); overflow: hidden;
+  height: 400px; position: relative; box-shadow: 0 16px 48px rgba(0,0,0,0.4);
+  display: flex; flex-direction: column;
+}
+.mock-topbar {
+  height: 40px; flex-shrink: 0; background: var(--white);
+  border-bottom: 1px solid var(--border-light);
+  display: flex; align-items: center; padding: 0 14px; gap: 8px;
+}
+.mtd { width: 10px; height: 10px; border-radius: 50%; }
+.mtt { font-size: 12px; color: var(--text-2); margin-left: 4px; }
+.mts { flex: 1; }
+.mtb {
+  width: 24px; height: 24px; border-radius: 6px; background: transparent;
+  border: none; color: var(--text-3); display: flex; align-items: center;
+  justify-content: center; cursor: pointer;
+}
+.mtb:hover { background: var(--hover-bg); color: var(--text); }
+
+.mock-body { flex: 1; display: flex; min-height: 0; position: relative; }
+
+.mock-leftbar {
+  width: 110px; flex-shrink: 0; background: var(--sidebar-bg);
+  border-right: 1px solid var(--border-light); padding: 10px 8px;
+  display: flex; flex-direction: column; gap: 3px;
+}
+.mfi {
+  padding: 6px 8px; border-radius: 6px; font-size: 11px; color: var(--text-2);
+  cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.mfi.active { background: var(--accent-soft); color: var(--accent); font-weight: 500; }
+.mfi:hover:not(.active) { background: var(--hover-bg); }
+
+.mock-main { flex: 1; display: flex; flex-direction: column; min-width: 0; position: relative; overflow: hidden; }
+
+/* Control bar */
+.mock-cb {
+  flex-shrink: 0; display: grid; grid-template-columns: 1fr auto 1fr;
+  align-items: center; width: 100%; padding: 6px 14px;
+  position: relative; z-index: 5;
+  background: linear-gradient(to bottom, rgba(255,255,255,0.92), rgba(255,255,255,0.6));
+}
+.mock-zc {
+  display: inline-flex; align-items: center; gap: 2px; grid-column: 2;
+  justify-self: center; padding: 3px; background: var(--float-bg);
+  backdrop-filter: var(--float-blur); border-radius: var(--r-lg);
+  box-shadow: var(--float-shadow); border: 1px solid var(--float-border);
+}
+.mtb2 {
+  width: 28px; height: 28px; border: none; background: transparent; border-radius: 8px;
+  color: var(--text-2); display: flex; align-items: center; justify-content: center;
+  cursor: pointer; transition: all var(--t-fast) var(--ease);
+}
+.mtb2:hover { background: var(--hover-bg); color: var(--text); }
+.mtb2.on { color: var(--accent); background: var(--accent-soft); }
+.mzl {
+  padding: 0 10px; font-size: 12px; font-weight: 500; color: var(--text);
+  min-width: 44px; text-align: center; font-variant-numeric: tabular-nums;
+}
+.msep { width: 1px; height: 16px; background: rgba(0,0,0,0.08); margin: 0 2px; }
+.mock-rc { grid-column: 3; justify-self: end; display: flex; align-items: center; gap: 4px; }
+
+/* Eye button */
+.eye-btn {
+  width: 30px; height: 30px; border: none; background: transparent; border-radius: 8px;
+  color: var(--text-2); display: flex; align-items: center; justify-content: center;
+  cursor: pointer; transition: all var(--t-fast) var(--ease); position: relative;
+}
+.eye-btn:hover { background: var(--hover-bg); color: var(--text); }
+.eye-btn.active { color: var(--accent); background: var(--accent-soft); }
+.eye-btn.active::after {
+  content: ''; position: absolute; bottom: -6px; left: 50%; transform: translateX(-50%);
+  width: 14px; height: 2px; background: var(--accent); border-radius: 1px;
+}
+
+/* Canvas */
+.mock-canvas {
+  flex: 1; background: var(--bg); position: relative; overflow: hidden;
+  display: flex; align-items: center; justify-content: center;
+}
+.mock-paper {
+  width: 130px; height: 175px; background: #fff; border-radius: 4px;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.04), 0 8px 20px rgba(0,0,0,0.08);
+  position: relative; transition: all var(--t-slow) var(--ease);
+}
+.mock-paper::before {
+  content: ''; position: absolute; inset: 14px 12px;
+  background: repeating-linear-gradient(0deg, var(--border-light) 0, var(--border-light) 1px, transparent 1px, transparent 12px);
+  opacity: 0.5;
+}
+.mock-paper::after {
+  content: ''; position: absolute; top: 20px; left: 12px; right: 40px; height: 8px;
+  background: var(--accent); opacity: 0.3; border-radius: 2px;
+}
+
+/* Status bar */
+.mock-sb {
+  flex-shrink: 0; height: 26px; display: flex; align-items: center; padding: 0 14px;
+  background: var(--white); border-top: 1px solid var(--border-light);
+  font-size: 11px; color: var(--text-3); position: relative;
+}
+.mock-pn {
+  position: absolute; left: 50%; transform: translateX(-50%);
+  font-weight: 600; color: var(--text);
+}
+
+svg { display: block; }
+button svg { width: 16px; height: 16px; }
+
+/* ===================================================================
+   SCHEME A — Dock sidebar (squeeze)
+   =================================================================== */
+.scheme-a .mock-main { flex-direction: row; }
+.scheme-a .m-center { flex: 1; display: flex; flex-direction: column; min-width: 0; transition: all var(--t-slow) var(--ease); }
+.scheme-a .m-right {
+  width: 0; flex-shrink: 0; background: var(--white);
+  border-left: 1px solid transparent; overflow: hidden;
+  transition: width var(--t-slow) var(--ease), border-color var(--t-slow) var(--ease);
+  display: flex; flex-direction: column;
+}
+.scheme-a.open .m-right { width: 180px; border-left-color: var(--border-light); }
+.scheme-a .m-r-tabs { display: flex; border-bottom: 1px solid var(--border-light); flex-shrink: 0; }
+.scheme-a .m-r-tab {
+  flex: 1; padding: 8px 0; text-align: center; font-size: 11px; color: var(--text-3);
+  cursor: pointer; border-bottom: 2px solid transparent; transition: all var(--t-fast);
+}
+.scheme-a .m-r-tab.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 500; }
+.scheme-a .m-r-body { flex: 1; overflow-y: auto; padding: 10px 12px; }
+.scheme-a .mp-row { padding: 6px 0; border-bottom: 1px solid var(--border-light); font-size: 11px; }
+.scheme-a .mp-k { color: var(--text-3); margin-bottom: 2px; }
+.scheme-a .mp-v { color: var(--text); font-weight: 500; }
+
+/* ===================================================================
+   SCHEME B — Overlay drawer
+   =================================================================== */
+.scheme-b .m-right {
+  position: absolute; top: 0; right: 0; bottom: 0; width: 200px;
+  background: var(--float-bg); backdrop-filter: var(--float-blur);
+  border-left: 1px solid var(--float-border);
+  box-shadow: -8px 0 24px rgba(0,0,0,0.08);
+  transform: translateX(100%); transition: transform var(--t-slow) var(--ease-spring);
+  z-index: 20; display: flex; flex-direction: column;
+}
+.scheme-b.open .m-right { transform: translateX(0); }
+.scheme-b .m-overlay {
+  position: absolute; inset: 0; background: rgba(0,0,0,0.12);
+  opacity: 0; pointer-events: none; transition: opacity var(--t-slow); z-index: 15;
+}
+.scheme-b.open .m-overlay { opacity: 1; pointer-events: auto; }
+.scheme-b .m-r-head {
+  padding: 10px 14px; font-size: 12px; font-weight: 600; color: var(--text);
+  border-bottom: 1px solid var(--float-border); flex-shrink: 0;
+  display: flex; align-items: center; gap: 8px;
+}
+.scheme-b .m-x {
+  margin-left: auto; width: 22px; height: 22px; border: none; background: transparent;
+  border-radius: 4px; color: var(--text-3); cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+}
+.scheme-b .m-x:hover { background: var(--hover-bg); color: var(--text); }
+.scheme-b .m-r-body { flex: 1; padding: 12px 14px; overflow-y: auto; }
+.scheme-b .mic {
+  background: var(--white); border: 1px solid var(--border-light);
+  border-radius: var(--r-md); padding: 10px; margin-bottom: 8px;
+}
+.scheme-b .mit { font-size: 11px; font-weight: 600; color: var(--text); margin-bottom: 6px; }
+.scheme-b .mir { display: flex; justify-content: space-between; font-size: 11px; padding: 3px 0; }
+.scheme-b .mik { color: var(--text-3); }
+.scheme-b .miv { color: var(--text); font-weight: 500; }
+
+/* ===================================================================
+   SCHEME C — Thumbnail strip
+   =================================================================== */
+.scheme-c .mock-main { flex-direction: row; }
+.scheme-c .m-center { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.scheme-c .m-right {
+  width: 0; flex-shrink: 0; background: var(--surface);
+  border-left: 1px solid transparent; overflow: hidden;
+  transition: width var(--t-normal) var(--ease);
+  display: flex; flex-direction: column;
+}
+.scheme-c.open .m-right { width: 130px; border-left-color: var(--border-light); }
+.scheme-c .m-r-head {
+  padding: 8px 10px; font-size: 11px; font-weight: 600; color: var(--text);
+  border-bottom: 1px solid var(--border-light); text-align: center; flex-shrink: 0;
+}
+.scheme-c .m-r-body {
+  flex: 1; padding: 8px; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 6px; align-items: center;
+}
+.scheme-c .mthumb {
+  width: 82px; aspect-ratio: 0.707; background: #fff; border-radius: 3px;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.08); border: 2px solid transparent;
+  cursor: pointer; position: relative; flex-shrink: 0; transition: all var(--t-fast);
+}
+.scheme-c .mthumb.active { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.scheme-c .mthumb-num {
+  position: absolute; bottom: -16px; left: 50%; transform: translateX(-50%);
+  font-size: 10px; color: var(--text-3); font-weight: 500;
+}
+.scheme-c .mtsp { height: 18px; flex-shrink: 0; }
+.scheme-c .mmb {
+  width: 100%; padding: 8px; background: var(--white); border-radius: var(--r-sm);
+  border: 1px solid var(--border-light); margin-top: 4px;
+}
+.scheme-c .mml { font-size: 10px; color: var(--text-3); margin-bottom: 2px; }
+.scheme-c .mmv { font-size: 12px; font-weight: 600; color: var(--text); }
+
+/* ===================================================================
+   SCHEME D — Floating popover menu
+   =================================================================== */
+.scheme-d .m-fp {
+  position: absolute; top: 38px; right: 14px; width: 190px;
+  background: var(--float-bg); backdrop-filter: var(--float-blur);
+  border: 1px solid var(--float-border); border-radius: var(--r-lg);
+  box-shadow: var(--float-shadow-hover); z-index: 30;
+  opacity: 0; transform: translateY(-6px) scale(0.96);
+  transform-origin: top right; pointer-events: none;
+  transition: all var(--t-normal) var(--ease-spring); overflow: hidden;
+}
+.scheme-d.open .m-fp { opacity: 1; transform: translateY(0) scale(1); pointer-events: auto; }
+.scheme-d .m-fp-head {
+  padding: 8px 12px; font-size: 11px; font-weight: 600; color: var(--text);
+  border-bottom: 1px solid var(--float-border);
+  display: flex; align-items: center; gap: 6px;
+}
+.scheme-d .m-fp-dot {
+  width: 6px; height: 6px; border-radius: 50%; background: #22c55e;
+  box-shadow: 0 0 6px rgba(34,197,94,0.5);
+}
+.scheme-d .m-fp-body { padding: 6px 6px 8px; max-height: 220px; overflow-y: auto; }
+.scheme-d .m-fp-sec {
+  font-size: 10px; color: var(--text-4); text-transform: uppercase;
+  letter-spacing: 0.5px; padding: 6px 8px 2px; font-weight: 600;
+}
+.scheme-d .m-fp-item {
+  display: flex; align-items: center; gap: 8px; padding: 6px 8px;
+  border-radius: 6px; cursor: pointer; transition: background var(--t-fast);
+  font-size: 11px; color: var(--text-2);
+}
+.scheme-d .m-fp-item:hover { background: var(--accent-soft); color: var(--accent); }
+.scheme-d .m-fpi {
+  width: 20px; height: 20px; border-radius: 5px; background: var(--surface);
+  border: 1px solid var(--border-light);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 10px; flex-shrink: 0;
+}
+.scheme-d .m-fp-item.checked { color: var(--accent); }
+.scheme-d .m-fp-item.checked .m-fpi { border-color: var(--accent); background: var(--accent-soft); }
+.scheme-d .m-fp-arr {
+  position: absolute; top: -5px; right: 18px; width: 10px; height: 10px;
+  background: var(--float-bg); border-left: 1px solid var(--float-border);
+  border-top: 1px solid var(--float-border); transform: rotate(45deg);
+}
+
+/* ===================================================================
+   SCHEME E — A+D COMBO (eye -> popover menu -> open dock OR quick view)
+   =================================================================== */
+.scheme-e .mock-main { flex-direction: row; }
+.scheme-e .m-center { flex: 1; display: flex; flex-direction: column; min-width: 0; transition: all var(--t-slow) var(--ease); }
+
+/* Popover (D-style) */
+.scheme-e .m-fp {
+  position: absolute; top: 38px; right: 14px; width: 200px;
+  background: var(--float-bg); backdrop-filter: var(--float-blur);
+  border: 1px solid var(--float-border); border-radius: var(--r-lg);
+  box-shadow: var(--float-shadow-hover); z-index: 30;
+  opacity: 0; transform: translateY(-6px) scale(0.96);
+  transform-origin: top right; pointer-events: none;
+  transition: all var(--t-normal) var(--ease-spring); overflow: hidden;
+}
+.scheme-e.menu-open .m-fp { opacity: 1; transform: translateY(0) scale(1); pointer-events: auto; }
+.scheme-e .m-fp-arr {
+  position: absolute; top: -5px; right: 18px; width: 10px; height: 10px;
+  background: var(--float-bg); border-left: 1px solid var(--float-border);
+  border-top: 1px solid var(--float-border); transform: rotate(45deg);
+}
+.scheme-e .m-fp-head {
+  padding: 8px 12px; font-size: 11px; font-weight: 600; color: var(--text);
+  border-bottom: 1px solid var(--float-border);
+  display: flex; align-items: center; gap: 6px;
+}
+.scheme-e .m-fp-body { padding: 6px 6px 8px; }
+.scheme-e .m-fp-item {
+  display: flex; align-items: center; gap: 9px; padding: 8px 10px;
+  border-radius: 7px; cursor: pointer; transition: all var(--t-fast);
+  font-size: 12px; color: var(--text-2);
+}
+.scheme-e .m-fp-item:hover { background: var(--accent-soft); color: var(--accent); }
+.scheme-e .m-fp-item.primary { color: var(--accent); }
+.scheme-e .m-fp-item.danger { color: #dc2626; }
+.scheme-e .m-fp-item.danger:hover { background: rgba(220,38,38,0.08); color: #dc2626; }
+.scheme-e .m-fpi {
+  width: 24px; height: 24px; border-radius: 6px; background: var(--surface);
+  border: 1px solid var(--border-light);
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+}
+.scheme-e .m-fp-item.primary .m-fpi { background: var(--accent-soft); border-color: rgba(79,124,255,0.25); }
+.scheme-e .m-fpi svg { width: 14px; height: 14px; }
+.scheme-e .m-fp-txt { display: flex; flex-direction: column; gap: 1px; }
+.scheme-e .m-fp-t { font-weight: 500; font-size: 12px; line-height: 1.2; }
+.scheme-e .m-fp-s { font-size: 10px; color: var(--text-3); line-height: 1.2; }
+.scheme-e .m-fp-item:hover .m-fp-s { color: var(--text-2); }
+.scheme-e .m-fp-div { height: 1px; background: var(--float-border); margin: 4px 4px; }
+.scheme-e .m-fp-check {
+  margin-left: auto; width: 16px; height: 16px;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--accent);
+}
+
+/* Dock sidebar (A-style) */
+.scheme-e .m-right {
+  width: 0; flex-shrink: 0; background: var(--white);
+  border-left: 1px solid transparent; overflow: hidden;
+  transition: width var(--t-slow) var(--ease), border-color var(--t-slow) var(--ease);
+  display: flex; flex-direction: column;
+}
+.scheme-e.dock-open .m-right { width: 200px; border-left-color: var(--border-light); }
+.scheme-e .m-r-head {
+  padding: 10px 14px; font-size: 12px; font-weight: 600; color: var(--text);
+  border-bottom: 1px solid var(--border-light); flex-shrink: 0;
+  display: flex; align-items: center; justify-content: space-between;
+}
+.scheme-e .m-r-x {
+  width: 22px; height: 22px; border: none; background: transparent;
+  border-radius: 4px; color: var(--text-3); cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+}
+.scheme-e .m-r-x:hover { background: var(--hover-bg); color: var(--text); }
+.scheme-e .m-r-tabs { display: flex; border-bottom: 1px solid var(--border-light); flex-shrink: 0; }
+.scheme-e .m-r-tab {
+  flex: 1; padding: 7px 0; text-align: center; font-size: 11px; color: var(--text-3);
+  cursor: pointer; border-bottom: 2px solid transparent; transition: all var(--t-fast);
+}
+.scheme-e .m-r-tab.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 500; }
+.scheme-e .m-r-body { flex: 1; overflow-y: auto; padding: 10px 12px; }
+.scheme-e .mp-row { padding: 7px 0; border-bottom: 1px solid var(--border-light); font-size: 11px; }
+.scheme-e .mp-k { color: var(--text-3); margin-bottom: 2px; font-size: 10px; }
+.scheme-e .mp-v { color: var(--text); font-weight: 500; font-size: 12px; }
+.scheme-e .mp-v.hi { color: var(--accent); font-weight: 600; }
+
+/* Eye button states for E */
+.scheme-e .eye-btn.menu-active { color: var(--accent); background: var(--accent-soft); }
+.scheme-e .eye-btn.dock-active { color: var(--accent); background: var(--accent-soft); }
+.scheme-e .eye-btn.dock-active::after {
+  content: ''; position: absolute; bottom: -6px; left: 50%; transform: translateX(-50%);
+  width: 14px; height: 2px; background: var(--accent); border-radius: 1px;
+}
+
+.hint { margin-top: 10px; font-size: 11px; color: #484b5e; text-align: center; }
+.hint b { color: #8a8fa5; }
+
+.legend {
+  display: flex; gap: 16px; margin-bottom: 20px; flex-wrap: wrap;
+}
+.legend-item {
+  display: flex; align-items: center; gap: 6px; font-size: 12px; color: #8a8fa5;
+}
+.legend-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+}
+</style>
+</head>
+<body>
+
+<h1 class="page-title">Control-bar 眼睛按钮 + 右侧边栏 方案对比</h1>
+<p class="page-sub">点击每个窗口右上角的眼睛图标体验交互。新增的方案 E 是 A+D 组合。</p>
+
+<div class="legend">
+  <div class="legend-item"><div class="legend-dot" style="background:#4f7cff"></div>点击可交互</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#fbbf24"></div>新增方案</div>
+</div>
+
+<div class="proposals-grid">
+
+  <!-- ============ A ============ -->
+  <div class="proposal-card">
+    <div class="proposal-label">A · Dock 式侧边栏<span class="proposal-tag tag-blue">推荐</span></div>
+    <div class="proposal-desc">侧边栏作为主布局一部分，展开时挤压画布区域（类似 VS Code / Figma Inspector）。画布自动重新居中，不遮挡内容。</div>
+    <div class="mock-window scheme-a" data-scheme="a">
+      <div class="mock-topbar">
+        <div class="mtd" style="background:#ff5f57"></div>
+        <div class="mtd" style="background:#febc2e"></div>
+        <div class="mtd" style="background:#28c840"></div>
+        <span class="mtt">发票打印助手</span><div class="mts"></div>
+      </div>
+      <div class="mock-body">
+        <div class="mock-leftbar">
+          <div class="mfi active">发票-001.pdf</div>
+          <div class="mfi">发票-002.pdf</div>
+          <div class="mfi">发票-003.pdf</div>
+          <div class="mfi">发票-004.pdf</div>
+        </div>
+        <div class="mock-main">
+          <div class="m-center">
+            <div class="mock-cb">
+              <div></div>
+              <div class="mock-zc">
+                <button class="mtb2" title="编辑字段">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                </button>
+                <div class="msep"></div>
+                <button class="mtb2"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="8" y1="11" x2="14" y2="11"/></svg></button>
+                <span class="mzl">100%</span>
+                <button class="mtb2"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg></button>
+              </div>
+              <div class="mock-rc">
+                <button class="eye-btn tg" title="详情面板">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                </button>
+              </div>
+            </div>
+            <div class="mock-canvas"><div class="mock-paper"></div></div>
+            <div class="mock-sb"><span>就绪</span><span class="mock-pn">1 / 4</span></div>
+          </div>
+          <div class="m-right">
+            <div class="m-r-tabs">
+              <div class="m-r-tab active" data-tab>详情</div>
+              <div class="m-r-tab" data-tab>字段</div>
+              <div class="m-r-tab" data-tab>打印</div>
+            </div>
+            <div class="m-r-body">
+              <div class="mp-row"><div class="mp-k">文件名</div><div class="mp-v">发票-001.pdf</div></div>
+              <div class="mp-row"><div class="mp-k">发票号码</div><div class="mp-v">12345678</div></div>
+              <div class="mp-row"><div class="mp-k">开票日期</div><div class="mp-v">2025-08-07</div></div>
+              <div class="mp-row"><div class="mp-k">金额</div><div class="mp-v" style="color:var(--accent)">¥ 1,234.56</div></div>
+              <div class="mp-row"><div class="mp-k">纸张</div><div class="mp-v">A4</div></div>
+              <div class="mp-row"><div class="mp-k">页数</div><div class="mp-v">1</div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="hint">点击眼睛 → 面板从右侧滑出挤压画布，<b>再次点击收回</b></div>
+  </div>
+
+  <!-- ============ B ============ -->
+  <div class="proposal-card">
+    <div class="proposal-label">B · 浮层抽屉<span class="proposal-tag tag-orange">临时查看</span></div>
+    <div class="proposal-desc">毛玻璃抽屉浮于画布之上，不改变主布局。带半透明遮罩，点击遮罩/关闭按钮收起。</div>
+    <div class="mock-window scheme-b" data-scheme="b">
+      <div class="mock-topbar">
+        <div class="mtd" style="background:#ff5f57"></div><div class="mtd" style="background:#febc2e"></div><div class="mtd" style="background:#28c840"></div>
+        <span class="mtt">发票打印助手</span><div class="mts"></div>
+      </div>
+      <div class="mock-body">
+        <div class="mock-leftbar">
+          <div class="mfi active">发票-001.pdf</div><div class="mfi">发票-002.pdf</div><div class="mfi">发票-003.pdf</div>
+        </div>
+        <div class="mock-main">
+          <div class="mock-cb">
+            <div></div>
+            <div class="mock-zc">
+              <button class="mtb2"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
+              <div class="msep"></div>
+              <button class="mtb2"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="8" y1="11" x2="14" y2="11"/></svg></button>
+              <span class="mzl">100%</span>
+              <button class="mtb2"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg></button>
+            </div>
+            <div class="mock-rc">
+              <button class="eye-btn tg" title="快速预览">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+              </button>
+            </div>
+          </div>
+          <div class="mock-canvas">
+            <div class="mock-paper"></div>
+          </div>
+          <div class="mock-sb"><span>就绪</span><span class="mock-pn">1 / 4</span></div>
+          <div class="m-overlay tg"></div>
+          <div class="m-right">
+            <div class="m-r-head">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+              快速预览
+              <button class="m-x tg"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+            </div>
+            <div class="m-r-body">
+              <div class="mic"><div class="mit">发票信息</div>
+                <div class="mir"><span class="mik">号码</span><span class="miv">12345678</span></div>
+                <div class="mir"><span class="mik">代码</span><span class="miv">04400190</span></div>
+                <div class="mir"><span class="mik">日期</span><span class="miv">2025-08-07</span></div>
+              </div>
+              <div class="mic"><div class="mit">金额</div>
+                <div class="mir"><span class="mik">不含税</span><span class="miv">¥ 1,092.53</span></div>
+                <div class="mir"><span class="mik">税额</span><span class="miv">¥ 142.03</span></div>
+                <div class="mir"><span class="mik">合计</span><span class="miv" style="color:var(--accent);font-weight:600">¥ 1,234.56</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="hint">点击眼睛 → 抽屉浮于画布上，<b>点遮罩/关闭按钮收起</b></div>
+  </div>
+
+  <!-- ============ C ============ -->
+  <div class="proposal-card">
+    <div class="proposal-label">C · 缩略图导航面板<span class="proposal-tag tag-green">多页浏览</span></div>
+    <div class="proposal-desc">窄面板（130px），内部展示多页缩略图 + 元信息。对画布挤压小，适合多页快速跳转。</div>
+    <div class="mock-window scheme-c" data-scheme="c">
+      <div class="mock-topbar">
+        <div class="mtd" style="background:#ff5f57"></div><div class="mtd" style="background:#febc2e"></div><div class="mtd" style="background:#28c840"></div>
+        <span class="mtt">发票打印助手</span><div class="mts"></div>
+      </div>
+      <div class="mock-body">
+        <div class="mock-leftbar">
+          <div class="mfi active">发票-001.pdf</div><div class="mfi">发票-002.pdf</div><div class="mfi">发票-003.pdf</div>
+        </div>
+        <div class="mock-main">
+          <div class="m-center">
+            <div class="mock-cb">
+              <div></div>
+              <div class="mock-zc">
+                <button class="mtb2"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
+                <div class="msep"></div>
+                <button class="mtb2"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="8" y1="11" x2="14" y2="11"/></svg></button>
+                <span class="mzl">100%</span>
+                <button class="mtb2"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg></button>
+              </div>
+              <div class="mock-rc">
+                <button class="eye-btn tg" title="页面概览">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                </button>
+              </div>
+            </div>
+            <div class="mock-canvas"><div class="mock-paper"></div></div>
+            <div class="mock-sb"><span>就绪</span><span class="mock-pn">1 / 4</span></div>
+          </div>
+          <div class="m-right">
+            <div class="m-r-head">页面</div>
+            <div class="m-r-body">
+              <div class="mthumb active" data-thumb><span class="mthumb-num">1</span></div><div class="mtsp"></div>
+              <div class="mthumb" data-thumb><span class="mthumb-num">2</span></div><div class="mtsp"></div>
+              <div class="mthumb" data-thumb><span class="mthumb-num">3</span></div><div class="mtsp"></div>
+              <div class="mthumb" data-thumb><span class="mthumb-num">4</span></div>
+              <div class="mmb" style="margin-top:14px"><div class="mml">总页数</div><div class="mmv">4 页</div></div>
+              <div class="mmb"><div class="mml">合计金额</div><div class="mmv" style="color:var(--accent)">¥ 4,938</div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="hint">点击眼睛 → 窄面板滑出，<b>缩略图可点击切换</b></div>
+  </div>
+
+  <!-- ============ D ============ -->
+  <div class="proposal-card">
+    <div class="proposal-label">D · 浮动菜单面板<span class="proposal-tag tag-purple">快捷操作</span></div>
+    <div class="proposal-desc">从眼睛按钮下方弹出的小面板，带小三角指向按钮。最轻量，零布局影响，点外部自动关闭。</div>
+    <div class="mock-window scheme-d" data-scheme="d">
+      <div class="mock-topbar">
+        <div class="mtd" style="background:#ff5f57"></div><div class="mtd" style="background:#febc2e"></div><div class="mtd" style="background:#28c840"></div>
+        <span class="mtt">发票打印助手</span><div class="mts"></div>
+      </div>
+      <div class="mock-body">
+        <div class="mock-leftbar">
+          <div class="mfi active">发票-001.pdf</div><div class="mfi">发票-002.pdf</div><div class="mfi">发票-003.pdf</div>
+        </div>
+        <div class="mock-main">
+          <div class="mock-cb">
+            <div></div>
+            <div class="mock-zc">
+              <button class="mtb2"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
+              <div class="msep"></div>
+              <button class="mtb2"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="8" y1="11" x2="14" y2="11"/></svg></button>
+              <span class="mzl">100%</span>
+              <button class="mtb2"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg></button>
+            </div>
+            <div class="mock-rc">
+              <button class="eye-btn tg" title="视图选项">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+              </button>
+            </div>
+          </div>
+          <div class="mock-canvas">
+            <div class="mock-paper"></div>
+            <div class="m-fp">
+              <div class="m-fp-arr"></div>
+              <div class="m-fp-head"><div class="m-fp-dot"></div>视图选项</div>
+              <div class="m-fp-body">
+                <div class="m-fp-sec">显示</div>
+                <div class="m-fp-item"><div class="m-fpi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg></div>显示网格</div>
+                <div class="m-fp-item checked"><div class="m-fpi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg></div>显示标尺</div>
+                <div class="m-fp-item checked"><div class="m-fpi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg></div>缩略图栏</div>
+                <div class="m-fp-sec">布局</div>
+                <div class="m-fp-item checked"><div class="m-fpi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/></svg></div>单页</div>
+                <div class="m-fp-item"><div class="m-fpi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="18" rx="1"/><rect x="14" y="3" width="7" height="18" rx="1"/></svg></div>双页</div>
+              </div>
+            </div>
+          </div>
+          <div class="mock-sb"><span>就绪</span><span class="mock-pn">1 / 4</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="hint">点击眼睛 → 从按钮下方弹出浮层，<b>点外部关闭</b></div>
+  </div>
+
+  <!-- ============ E — A+D COMBO ============ -->
+  <div class="proposal-card">
+    <div class="proposal-label">E · A+D 组合（眼睛菜单 + 可停靠面板）<span class="proposal-tag tag-gold">NEW</span></div>
+    <div class="proposal-desc">
+      <b>第一次点击眼睛</b>：弹出 D 式小菜单（"详情面板 / 快速预览 / 视图选项"等入口）。<br>
+      <b>选择"详情面板"</b>：展开 A 式 Dock 侧边栏，此时眼睛按钮变蓝并常驻高亮。<br>
+      <b>Dock 展开时再次点眼睛</b>：菜单里第一项变为"收起详情面板"，一键收回。<br>
+      轻量操作（视图开关）走浮层，重度信息（字段详情）走停靠面板，两者共存。
+    </div>
+    <div class="mock-window scheme-e" data-scheme="e">
+      <div class="mock-topbar">
+        <div class="mtd" style="background:#ff5f57"></div><div class="mtd" style="background:#febc2e"></div><div class="mtd" style="background:#28c840"></div>
+        <span class="mtt">发票打印助手</span><div class="mts"></div>
+      </div>
+      <div class="mock-body">
+        <div class="mock-leftbar">
+          <div class="mfi active">发票-001.pdf</div>
+          <div class="mfi">发票-002.pdf</div>
+          <div class="mfi">发票-003.pdf</div>
+          <div class="mfi">发票-004.pdf</div>
+        </div>
+        <div class="mock-main">
+          <div class="m-center">
+            <div class="mock-cb">
+              <div></div>
+              <div class="mock-zc">
+                <button class="mtb2" title="编辑字段">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                </button>
+                <div class="msep"></div>
+                <button class="mtb2"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="8" y1="11" x2="14" y2="11"/></svg></button>
+                <span class="mzl">100%</span>
+                <button class="mtb2"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg></button>
+              </div>
+              <div class="mock-rc">
+                <button class="eye-btn" id="eyeE" title="视图与面板">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                </button>
+              </div>
+            </div>
+            <div class="mock-canvas">
+              <div class="mock-paper"></div>
+              <!-- Floating popover menu (D-style) -->
+              <div class="m-fp" id="fpE">
+                <div class="m-fp-arr"></div>
+                <div class="m-fp-head">
+                  <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/></svg>
+                  视图
+                </div>
+                <div class="m-fp-body">
+                  <!-- Toggle dock item — text changes based on dock state -->
+                  <div class="m-fp-item primary" id="dockToggle">
+                    <div class="m-fpi">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" id="dockIcon"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="15" y1="3" x2="15" y2="21"/></svg>
+                    </div>
+                    <div class="m-fp-txt">
+                      <div class="m-fp-t" id="dockLabel">展开详情面板</div>
+                      <div class="m-fp-s" id="dockSub">查看发票字段与属性</div>
+                    </div>
+                    <div class="m-fp-check" id="dockCheck" style="display:none">
+                      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+                    </div>
+                  </div>
+                  <div class="m-fp-div"></div>
+                  <div class="m-fp-item" data-toggle="grid">
+                    <div class="m-fpi"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg></div>
+                    <div class="m-fp-txt"><div class="m-fp-t">显示网格</div></div>
+                  </div>
+                  <div class="m-fp-item" data-toggle="ruler">
+                    <div class="m-fpi"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 3H3v18h18V3zM3 9h3M3 15h3M9 3v3M15 3v3M9 21v-3M15 21v-3M21 9h-3M21 15h-3"/></svg></div>
+                    <div class="m-fp-txt"><div class="m-fp-t">显示标尺</div></div>
+                  </div>
+                  <div class="m-fp-item" data-toggle="thumb">
+                    <div class="m-fpi"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg></div>
+                    <div class="m-fp-txt"><div class="m-fp-t">缩略图栏</div></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="mock-sb"><span>就绪</span><span class="mock-pn">1 / 4</span></div>
+          </div>
+          <!-- Dock sidebar (A-style) -->
+          <div class="m-right">
+            <div class="m-r-head">
+              <span>详情</span>
+              <button class="m-r-x" id="dockCloseE">
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              </button>
+            </div>
+            <div class="m-r-tabs">
+              <div class="m-r-tab active" data-etab>字段</div>
+              <div class="m-r-tab" data-etab>预览</div>
+              <div class="m-r-tab" data-etab>打印</div>
+            </div>
+            <div class="m-r-body">
+              <div class="mp-row"><div class="mp-k">文件名</div><div class="mp-v">发票-001.pdf</div></div>
+              <div class="mp-row"><div class="mp-k">发票号码</div><div class="mp-v">12345678</div></div>
+              <div class="mp-row"><div class="mp-k">发票代码</div><div class="mp-v">04400190</div></div>
+              <div class="mp-row"><div class="mp-k">开票日期</div><div class="mp-v">2025-08-07</div></div>
+              <div class="mp-row"><div class="mp-k">购买方</div><div class="mp-v">某某科技有限公司</div></div>
+              <div class="mp-row"><div class="mp-k">金额</div><div class="mp-v hi">¥ 1,234.56</div></div>
+              <div class="mp-row"><div class="mp-k">税额</div><div class="mp-v">¥ 142.03</div></div>
+              <div class="mp-row"><div class="mp-k">价税合计</div><div class="mp-v hi">¥ 1,376.59</div></div>
+              <div class="mp-row"><div class="mp-k">纸张</div><div class="mp-v">A4 · 纵向</div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="hint"><b>交互流程</b>：点眼睛 → 弹出菜单 → 点"展开详情面板" → Dock 滑出；Dock 打开后点眼睛可收回</div>
+  </div>
+
+</div>
+
+<script>
+// Generic toggle for A, B, C
+document.querySelectorAll('.mock-window:not(.scheme-e)').forEach(win => {
+  win.querySelectorAll('.tg').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      win.classList.toggle('open');
+      const eye = win.querySelector('.eye-btn');
+      if (eye) eye.classList.toggle('active');
+    });
+  });
+  // Tabs (A)
+  win.querySelectorAll('.m-r-tab').forEach(t => {
+    t.addEventListener('click', () => {
+      t.parentElement.querySelectorAll('.m-r-tab').forEach(x => x.classList.remove('active'));
+      t.classList.add('active');
+    });
+  });
+  // Thumbs (C)
+  win.querySelectorAll('.mthumb').forEach(th => {
+    th.addEventListener('click', () => {
+      th.parentElement.querySelectorAll('.mthumb').forEach(x => x.classList.remove('active'));
+      th.classList.add('active');
+    });
+  });
+  // Click outside closes D
+  if (win.classList.contains('scheme-d')) {
+    win.addEventListener('click', e => {
+      if (!win.classList.contains('open')) return;
+      if (!e.target.closest('.m-fp') && !e.target.closest('.eye-btn')) {
+        win.classList.remove('open');
+        win.querySelector('.eye-btn').classList.remove('active');
+      }
+    });
+  }
+});
+
+// Scheme E — A+D combo logic
+(() => {
+  const win = document.querySelector('.scheme-e');
+  if (!win) return;
+  const eye = document.getElementById('eyeE');
+  const fp = document.getElementById('fpE');
+  const dockToggle = document.getElementById('dockToggle');
+  const dockLabel = document.getElementById('dockLabel');
+  const dockSub = document.getElementById('dockSub');
+  const dockCheck = document.getElementById('dockCheck');
+  const dockIcon = document.getElementById('dockIcon');
+  const dockClose = document.getElementById('dockCloseE');
+
+  let menuOpen = false;
+  let dockOpen = false;
+
+  function setMenu(v) {
+    menuOpen = v;
+    win.classList.toggle('menu-open', v);
+    eye.classList.toggle('menu-active', v && !dockOpen);
+  }
+  function setDock(v) {
+    dockOpen = v;
+    win.classList.toggle('dock-open', v);
+    eye.classList.toggle('dock-active', v);
+    eye.classList.toggle('menu-active', menuOpen && !v);
+    // Update toggle menu item
+    dockLabel.textContent = v ? '收起详情面板' : '展开详情面板';
+    dockSub.textContent = v ? '收回右侧属性栏' : '查看发票字段与属性';
+    dockCheck.style.display = v ? 'flex' : 'none';
+    dockIcon.innerHTML = v
+      ? '<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>'
+      : '<rect x="3" y="3" width="18" height="18" rx="2"/><line x1="15" y1="3" x2="15" y2="21"/>';
+  }
+
+  eye.addEventListener('click', e => {
+    e.stopPropagation();
+    setMenu(!menuOpen);
+  });
+  dockClose.addEventListener('click', e => {
+    e.stopPropagation();
+    setDock(false);
+    setMenu(false);
+  });
+  dockToggle.addEventListener('click', e => {
+    e.stopPropagation();
+    setDock(!dockOpen);
+    setMenu(false);
+  });
+  // Toggle items in popover (visual only)
+  win.querySelectorAll('[data-toggle]').forEach(item => {
+    item.addEventListener('click', e => {
+      e.stopPropagation();
+      item.classList.toggle('checked');
+      const fpi = item.querySelector('.m-fpi');
+      if (item.classList.contains('checked')) {
+        fpi.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>';
+        fpi.style.borderColor = 'rgba(79,124,255,0.25)';
+        fpi.style.background = 'var(--accent-soft)';
+      } else {
+        fpi.style.borderColor = '';
+        fpi.style.background = '';
+        const map = {
+          grid: '<rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/>',
+          ruler: '<path d="M21 3H3v18h18V3zM3 9h3M3 15h3M9 3v3M15 3v3M9 21v-3M15 21v-3M21 9h-3M21 15h-3"/>',
+          thumb: '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>'
+        };
+        fpi.innerHTML = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">${map[item.dataset.toggle]}</svg>`;
+      }
+    });
+  });
+  // Tabs in E dock
+  win.querySelectorAll('.m-r-tab').forEach(t => {
+    t.addEventListener('click', () => {
+      t.parentElement.querySelectorAll('.m-r-tab').forEach(x => x.classList.remove('active'));
+      t.classList.add('active');
+    });
+  });
+  // Click outside closes menu
+  win.addEventListener('click', e => {
+    if (!menuOpen) return;
+    if (!e.target.closest('.m-fp') && !e.target.closest('.eye-btn')) {
+      setMenu(false);
+    }
+  });
+  // ESC closes menu/dock
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') {
+      if (menuOpen) setMenu(false);
+    }
+  });
+})();
+</script>
+
+</body>
+</html>
