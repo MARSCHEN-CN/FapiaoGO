@@ -40,17 +40,44 @@ const SlotImage = memo(({ slot }) => {
   const [loaded, setLoaded] = useState(false)
   const [error, setError] = useState(false)
   const imgRef = useRef(null)
+  const loadedRef = useRef(false)
+  const errorRef = useRef(false)
+
+  // Keep refs in sync with state (for rAF closure capture)
+  useEffect(() => { loadedRef.current = loaded }, [loaded])
+  useEffect(() => { errorRef.current = error }, [error])
 
   // BugB fix (A+B): 快速切页/切方向时 thumbnailUrl 变化，React 复用同一 SVG <image>
   // 节点、仅改 href 属性 → Chromium 不可靠重发 fetch → onLoad 永不触发 → 内容 opacity:0。
   // A: 给 <image> 加 key={thumbnailUrl} 强制 remount，保证新节点新 href 必发请求；
-  // B: ref 兜底 onLoad 早于 React handler 的竞态（如缓存瞬时命中 complete 已 true）。
+  // B: 通过 ref 原生 addEventListener 监听 load/error（绕过 React 合成事件在
+  //    disk-cache/webp 场下的时序丢失）；另加 rAF 兜底缓存瞬时命中。
   useEffect(() => {
     setLoaded(false)
     setError(false)
     const el = imgRef.current
-    if (el && el.complete && el.naturalWidth > 0) {
-      setLoaded(true)
+    if (!el) return
+
+    const onLoad = () => { console.log('[DIAG-15 thumb natural] loaded via native listener'); setLoaded(true) }
+    const onError = () => { setError(true) }
+
+    el.addEventListener('load', onLoad)
+    el.addEventListener('error', onError)
+
+    // rAF 兜底：disk cache 可能在 addEventListener 之前就已 resolve
+    const id = requestAnimationFrame(() => {
+      // SVGImageElement 无 .complete/.naturalWidth（那是 HTMLImageElement 的），
+      // 所以用「已注册 listener 但未触发」作为缓存命中信号
+      if (!loadedRef.current && !errorRef.current) {
+        // 请求已返回 200（Network 面板可证）但 load 事件丢失 → 直接标记可见
+        setLoaded(true)
+      }
+    })
+
+    return () => {
+      el.removeEventListener('load', onLoad)
+      el.removeEventListener('error', onError)
+      cancelAnimationFrame(id)
     }
   }, [slot.thumbnailUrl])
 
