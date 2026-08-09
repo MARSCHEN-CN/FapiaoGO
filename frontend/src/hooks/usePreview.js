@@ -359,26 +359,30 @@ export function usePreview({ files, settings, electronAPIRef }) {
     setPreviewPage(p => Math.min(numPages, p + 1))
   }, [numPages])
 
-  // ── 旋转 ──
-  // ✅ 只更新 fileRotations，移除对 previewRotation 的更新；Commit C：同步持久化 contentRotation
   const handleRotate = useCallback((targetKey) => {
     const key = targetKey || previewFileRef.current?.key
     if (!key) return
     const deg = ((fileRotations[key] || 0) + 90) % 360
-    console.log('[DIAG-1 rotate click] targetKey=%s resolvedKey=%s currentRotation=%d nextRotation=%d fileRotations=%o',
-      targetKey, key, fileRotations[key] || 0, deg, fileRotations)
     setFileRotations(prev => ({ ...prev, [key]: deg }))
     // 持久化 contentRotation（纸张方向 Fact 之一），requestedPaperOrientation 取当前 Fact
     // 4.1.5：写入键严格用 Document 身份 docId，不回退 path/key（uiKey 永不入持久层）
     const f = previewFileRef.current
     const factKey = f?.identity?.docId || f?.docId
-    if (!factKey) {
-      console.warn('[DocFacts] skip save: missing docId (image/OFD 尚无 docId)')
-      return
-    }
+    if (!factKey) return
     const api = electronAPIRef.current
-    if (api && api.saveDocFacts) {
-      api.saveDocFacts(factKey, { requestedPaperOrientation: requestedPaperOrientationRef.current, contentRotation: deg }).catch(() => {})
+    if (!api) return
+    // 🔧 根治：rotation=0 时清除持久记录而非写入 0（避免 stale 记录在 re-import 时复活）
+    if (deg === 0) {
+      if (api.clearDocFacts) {
+        api.clearDocFacts(factKey).catch(() => {})
+      }
+    } else {
+      if (api.saveDocFacts) {
+        api.saveDocFacts(factKey, {
+          requestedPaperOrientation: requestedPaperOrientationRef.current,
+          contentRotation: deg,
+        }).catch(() => {})
+      }
     }
   }, [fileRotations, electronAPIRef])
 
@@ -553,11 +557,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
   // （TDZ）。移到此处后，所有消费方（含 preview 渲染 effect）都能拿到已初始化的 const。
   // ✅ previewRotation 必须在 contentLayout memo 之前声明（useMemo 首次渲染立即执行，不能闭包捕获尚未初始化的 const）
   const previewRotation = fileRotations[previewFile?.key] || 0
-  // [DIAG-3] Viewer 消费 rotation
-  if (previewRotation !== 0) {
-    console.log('[DIAG-3 viewer rotation] fileKey=%s previewRotation=%d fileRotations=%o',
-      previewFile?.key, previewRotation, fileRotations)
-  }
+  // [DIAG-3] Viewer 消费 rotation — 条件日志，仅 rotation≠0 时触发
 
   // ── Stage 1：RenderCommand 唯一派生点（F3/F5）──
   // Preview 消费其 placement/rotation/clip，不再自算 fit/scale/swap（消除第二套算法）。
@@ -567,15 +567,6 @@ export function usePreview({ files, settings, electronAPIRef }) {
   const renderCommand = useMemo(
     () => {
       const cmd = buildRenderCommand(paperLayout, { ...(documentStateRef.current || {}), contentRotation: previewRotation })
-      // [DIAG-5] RenderCommand 输出
-      if (previewRotation !== 0) {
-        console.log('[DIAG-5 renderCommand built] contentRotation=%d rotation=%d placement={scale:%s,offset:(%d,%d)} rotatedBounds={%d,%d} valid=%s',
-          cmd?.contentRotation, cmd?.rotation,
-          cmd?.placement?.scale ?? 'null',
-          cmd?.placement?.offsetX ?? 'null', cmd?.placement?.offsetY ?? 'null',
-          cmd?.rotatedBounds?.width ?? 'null', cmd?.rotatedBounds?.height ?? 'null',
-          !!(cmd && cmd.placement && cmd.placement.scale > 0))
-      }
       return cmd
     },
     [paperLayout, previewRotation, previewFile, requestedPaperOrientation]
@@ -643,29 +634,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
       : null
     const reUrl = getRenderEnginePreviewUrl(previewFile, USE_RENDER_ENGINE_PREVIEW, previewSpec)
 
-    // ══════════════════════════════════════════════════════════════
-    // [DIAG-X] 渲染分派点 — RE vs Canvas 路径选择
-    // ══════════════════════════════════════════════════════════════
-    if (previewFile) {
-      const hasRE = !!reUrl
-      const hasCached = !!skipRenderRef.current
-      const pathLabel = hasRE
-        ? (hasCached ? 'RE (L2 cache hit)' : 'RE (probe)')
-        : (previewFile._previewImageUrl ? 'Canvas (image/ofd)' : 'Canvas (pdf.js)')
-      console.log('[DIAG-X RENDER] file=', previewFile.name, '| path=', pathLabel,
-        '| reUrl?=', hasRE, '| skipRender?=', hasCached,
-        '| rotation=', previewRotation,
-        '| paperLandscape=', previewSpec?.paperLandscape,
-        '| contentRotation=', previewSpec?.contentRotation,
-        '| paper_w×h=', previewSpec?.paper?.width, '×', previewSpec?.paper?.height)
-    }
-
-    // [DIAG-7] RE URL 中的 content_rotation
-    if (previewRotation !== 0 && previewSpec) {
-      console.log('[DIAG-7 RE content_rotation] spec.contentRotation=%d spec.rotation=%d reUrl_content_rotation=%s',
-        previewSpec.contentRotation, previewSpec.rotation,
-        reUrl?.match(/content_rotation=(\d+)/)?.[1] ?? 'not-found')
-    }
+  // [DIAG-7] RE URL 中的 content_rotation — 条件日志，仅 rotation≠0 时触发（不刷屏）
 
     // ✅ L2 缓存旁路：有缓存 Canvas 时跳过 Canvas 渲染，但不阻止 Render Dispatcher 决策
     // Commit 3 fix: 旋转 ≠ 0 时不走 L2 缓存（缓存不包含 contentRotation），
@@ -836,19 +805,6 @@ export function usePreview({ files, settings, electronAPIRef }) {
     // 当用户旋转了内容（previewRotation ≠ 0），强制走 Canvas 本地渲染路径，
     // 让 drawRenderCommand 正确执行旋转。旋转归零后自动切回 RE 快速路径。
     const reRotateSupported = previewRotation === 0
-    if (!reRotateSupported) {
-      console.log('[DIAG-8 canvas fallback] contentRotation=%d → skipping RE, using Canvas render', previewRotation)
-    }
-    // ══════════════════════════════════════════════════════════════
-    // [DIAG-X2] 实际渲染路径决策（accounting for reRotateSupported）
-    // ══════════════════════════════════════════════════════════════
-    const actualRE = hasRenderEngineUrl && reBlockedDocId !== previewFile.docId && reRotateSupported
-    console.log('[DIAG-X2 ACTUAL] file=', previewFile?.name,
-      '| actualPath=', actualRE ? (skipRenderRef.current ? 'RE(L2hit)' : 'RE(probe)') : 'Canvas',
-      '| hasREurl=', hasRenderEngineUrl, '| reRotateOk=', reRotateSupported,
-      '| rotation=', previewRotation, '| paperLandscape=', previewSpec?.paperLandscape,
-      '| contentRotation=', previewSpec?.contentRotation,
-      '| placement=', previewSpec?.placement)
     if (hasRenderEngineUrl && reBlockedDocId !== previewFile.docId && reRotateSupported) {
       const url = reUrl
       renderEngineUrlRef.current = url
@@ -1651,25 +1607,6 @@ export function usePreview({ files, settings, electronAPIRef }) {
         },
       }
     )
-    // ══════════════════════════════════════════════════════════════
-    // [DIAG-X] 横向发票预览差异诊断 — 对比两张发票的关键分流值
-    // 在浏览器 DevTools Console 中筛选 "DIAG-X" 查看，分别点击两张发票
-    // ══════════════════════════════════════════════════════════════
-    console.log('[DIAG-X] ═══════════════════════════════════════════')
-    console.log('[DIAG-X] fileKey  =', loadedFile.key?.slice(0, 30))
-    console.log('[DIAG-X] fileName =', loadedFile.name)
-    console.log('[DIAG-X] docSize  =', docW, '×', docH,
-      '→ naturalOrientation=', naturalOrientation)
-    console.log('[DIAG-X] contentOrient(detect)=', contentOrient)
-    console.log('[DIAG-X] pageOrientation(in DS)=', docOrientation)
-    console.log('[DIAG-X] requestedPaperOrient =', init.requestedPaperOrientation,
-      'isAuto=', init.isAuto)
-    console.log('[DIAG-X] persistedFacts=', loadedFacts)
-    console.log('[DIAG-X] contentRotation=', init.contentRotation)
-    console.log('[DIAG-X] isLandscape(cont≠paper)=', isLandscape)
-    console.log('[DIAG-X] paperLandscape(from RC)=', paperLandscape)
-    console.log('[DIAG-X] L2CacheKey =', cacheKey)
-    console.log('[DIAG-X] ═══════════════════════════════════════════')
     const cachedCanvas = fullCacheRef.current.get(cacheKey)
     if (cachedCanvas) {
       // 直接设置缓存画布，跳过整个异步渲染管线
