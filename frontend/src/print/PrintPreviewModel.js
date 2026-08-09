@@ -352,13 +352,24 @@ export function buildPrintPreviewModel(plan, { files = [], settings = {}, curren
       if (pageCount <= 1) {
         expandedPages.push(page)
       } else {
+        // Bug A-2/A-3 fix: 聚合源（_aggregatedPages 存在）中每物理页是独立拆分文件，
+        // 各有自己的 docId 和 key。展开时须消费 _aggregatedPages[p] 的 identity
+        // （pageFile.docId → 正确的缩略图；pageFile.key → currentSelection 可匹配），
+        // 而非继续用聚合代表页 f.docId + page=N（会把第二页指到第一页的单页文件）。
+        const isAggregated = !!(f._aggregatedPages)
         for (let p = 0; p < pageCount; p++) {
+          const pageFile = isAggregated ? f._aggregatedPages[p] : f
           expandedPages.push({
             ...page,
             slots: [{
               ...slot,
-              pageIndex: p,
-              thumbnailUrl: getThumbnailUrl(f, p, slot.contentRotation || slot._deprecatedRotation || 0),
+              pageIndex: isAggregated ? 0 : p,
+              thumbnailUrl: getThumbnailUrl(
+                pageFile,
+                isAggregated ? 0 : p,
+                slot.contentRotation || slot._deprecatedRotation || 0,
+              ),
+              fileId: pageFile.key,
             }],
           })
         }
