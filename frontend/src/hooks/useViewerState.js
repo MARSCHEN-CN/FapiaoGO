@@ -310,8 +310,14 @@ export function useViewerState({ document, containerSize, initialPage = 0, conte
   // ─── 6B-1.1：换文档边界（document.id 变化） ───
   // 两级语义分离：
   //   同票翻页（goToPage）→ 保留 zoom/mode/rotation，pan 归零（连续阅读）。
-  //   换文档（resetForDocument）→ 全部回默认：page=0 / fit / zoom=100 / rotation=0 / pan=0,0
+  //   换文档（resetForDocument）→ 全部回默认：page=0 / fit / zoom=100 / pan=0,0
   //     （打开一份新文件，与 Edge/Adobe 桌面阅读器行为一致）。
+  // 🔧 修复（2026-08-09）：**不再重置 viewRotation**。viewRotation 的唯一权威来源是
+  //   contentRotation（= previewRotation = fileRotations[file.key]），由上方 L101-105 的
+  //   同步 effect 全权管理。若此处 setViewRotation(0)，React effect 按注册顺序执行：
+  //   同步 effect（setViewRotation(cr)）先跑 → resetForDocument（setViewRotation(0)）后跑
+  //   → 切文件时 viewRotation 恒被重置为 0 → 旋转 A 90° 后切 B 再切回 A，展示区回到 0°
+  //   （验收场景失败）。移除后：切文件由 contentRotation 同步恢复正确旋转。
   // 6B-4.3：不重置 fitScale。resetForDocument 在 useEffect 中执行，晚于
   //   ViewerViewport 的 onFitScaleChange effect（child→parent 顺序）。
   //   若清零 fitScale，会覆写 ViewerViewport 刚上报的正确值，且因本地 fitScale
@@ -324,7 +330,7 @@ export function useViewerState({ document, containerSize, initialPage = 0, conte
     setZoom(100)
     setPanX(0)
     setPanY(0)
-    setViewRotation(0)
+    // setViewRotation(0) 已移除：见上方修复说明，viewRotation 由 contentRotation 同步管理
   }, [])
 
   return {
