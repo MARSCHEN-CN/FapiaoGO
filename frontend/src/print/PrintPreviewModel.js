@@ -363,11 +363,11 @@ export function buildPrintPreviewModel(plan, { files = [], settings = {}, curren
             ...page,
             slots: [{
               ...slot,
-              pageIndex: isAggregated ? 0 : p,
+              pageIndex: p,
               thumbnailUrl: getThumbnailUrl(
                 pageFile,
                 isAggregated ? 0 : p,
-                slot.contentRotation || slot._deprecatedRotation || 0,
+                slot.contentRotation,
               ),
               fileId: pageFile.key,
             }],
@@ -382,7 +382,7 @@ export function buildPrintPreviewModel(plan, { files = [], settings = {}, curren
           const f = fileById.get(slot.fileId)
           return {
             ...slot,
-            thumbnailUrl: getThumbnailUrl(f, 0, slot.contentRotation || slot._deprecatedRotation || 0),
+            thumbnailUrl: getThumbnailUrl(f, 0, slot.contentRotation),
             pageIndex: 0,
           }
         }),

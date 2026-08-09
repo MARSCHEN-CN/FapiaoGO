@@ -90,7 +90,7 @@ test('Case 2 (Bug A-2): 聚合源第二页应使用 A_p2.docId?page=1', () => {
 test('Case 3 (Bug A-3a): currentSelection=A_p1.key → currentPageIndex=0', () => {
   const model = buildModelForFilesWithSelection(
     [A_P1, A_P2, B],
-    { fileId: A_P1.key, pageIndex: 0 },
+    { fileId: A_P1.key, pageIndex: A_P1.pageNum },
   )
   assert.equal(model.currentPageIndex, 0, 'A_p1 应对应 expandedPages[0]')
 })
@@ -100,7 +100,7 @@ test('Case 3 (Bug A-3a): currentSelection=A_p1.key → currentPageIndex=0', () =
 test('Case 4 (Bug A-3a): currentSelection=A_p2.key → currentPageIndex=1', () => {
   const model = buildModelForFilesWithSelection(
     [A_P1, A_P2, B],
-    { fileId: A_P2.key, pageIndex: 0 },
+    { fileId: A_P2.key, pageIndex: A_P2.pageNum },
   )
   assert.equal(model.currentPageIndex, 1, 'A_p2 应对应 expandedPages[1]（不在 0）')
 })
@@ -110,7 +110,7 @@ test('Case 4 (Bug A-3a): currentSelection=A_p2.key → currentPageIndex=1', () =
 test('Case 5 (Bug A-3a): currentSelection=B.key → currentPageIndex=2', () => {
   const model = buildModelForFilesWithSelection(
     [A_P1, A_P2, B],
-    { fileId: B.key, pageIndex: 0 },
+    { fileId: B.key, pageIndex: B.pageNum ?? 0 },
   )
   assert.equal(model.currentPageIndex, 2, 'B 应对应 expandedPages[2]（非聚合文件保序可用）')
 })
