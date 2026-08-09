@@ -175,25 +175,29 @@ export function buildPrintPreviewModel(plan, { files = [], settings = {}, curren
   }
 
   const pageToModel = (page) => {
-    const isLandscape = page.orientation === 'landscape'
+    // B1 修复：swap 触发必须基于「requested ≠ paperShape」，而非「requested === landscape」。
+    // 旧逻辑硬编码「基础纸型恒为竖向」，导致 Voucher240x140 等原生横向纸型 UI/几何恒相反。
+    const requested = page.orientation
+    const paperShapeOrientation = layout.paperRect.w > layout.paperRect.h ? 'landscape' : 'portrait'
+    const needSwap = requested !== paperShapeOrientation
     // 票位几何：横向在横向物理可用区重算（margins 不随内容旋转），纵向用自然可用区。
     // 可用区非正（边距超出）→ 返回 null，由调用方统一判定 invalid。
-    const usable = isLandscape ? landUsable : layout.usableRect
+    const usable = needSwap ? landUsable : layout.usableRect
     if (usable.w <= 0 || usable.h <= 0) {
       // [DIAG-16] pageToModel 返回 null 的根因（边距超出纸张 → 无有效预览页）
-      console.log('[DIAG-16 pageToModel null] fileKey=%s isLandscape=%s usable=%dx%d paperW=%d paperH=%d',
-        page.slots[0]?.fileId?.slice(-20) || '?', isLandscape, Math.round(usable.w), Math.round(usable.h),
+      console.log('[DIAG-16 pageToModel null] fileKey=%s needSwap=%s usable=%dx%d paperW=%d paperH=%d',
+        page.slots[0]?.fileId?.slice(-20) || '?', needSwap, Math.round(usable.w), Math.round(usable.h),
         Math.round(layout.paperRect.w), Math.round(layout.paperRect.h))
       return null
     }
     const slots = computeTicketSlots({ usableRect: usable }, page.slots.length)
 
-    const widthMM = (isLandscape ? layout.paperRect.h : layout.paperRect.w) * PX_TO_MM
-    const heightMM = (isLandscape ? layout.paperRect.w : layout.paperRect.h) * PX_TO_MM
+    const widthMM = (needSwap ? layout.paperRect.h : layout.paperRect.w) * PX_TO_MM
+    const heightMM = (needSwap ? layout.paperRect.w : layout.paperRect.h) * PX_TO_MM
 
     return {
       paper: page.paper?.size || settings.paperSize || 'A4',
-      orientation: page.orientation,
+      requestedPaperOrientation: page.orientation,
       paperSizeMM: { widthMM: round2(widthMM), heightMM: round2(heightMM) },
       slots: slots.map((s, i) => {
         const slotDef = page.slots[i] || {}
@@ -226,12 +230,13 @@ export function buildPrintPreviewModel(plan, { files = [], settings = {}, curren
         if (contentPx && contentPx.width > 0 && contentPx.height > 0) {
           // Commit 3 fix: 传原始尺寸 + contentRotation，由 resolveContentPlacement 内部计算 effectiveContentSize。
           // resolveContentBounds 在这里不再需要（已内化到 Resolver 的二阶段模型中）。
-          // 纸面尺寸按「显示方向」取（landscape 交换 W/H），使 renderTransform 落在
-          // 与 SVG viewBox（同样按方向交换，PrintPreviewCanvas.jsx:159-160）一致的显示坐标系；
-          // paperOrientation 已表达用户方向，两段式 fitRotation 语义不变（旋转矩阵不受影响）。
-          const isPageLandscape = page.orientation === 'landscape'
-          const paperW_mm = (isPageLandscape ? layout.paperRect.h : layout.paperRect.w) * PX_TO_MM
-          const paperH_mm = (isPageLandscape ? layout.paperRect.w : layout.paperRect.h) * PX_TO_MM
+          // Commit 3（B2 修复）：本处 needSwap 归一化的产物**就是最终 physical paper**，
+          //   Resolver 只收这一个纸张事实源、方向自行从几何派生，不再额外接收 orientation 标签
+          //   （否则会出现「外部 swap → Resolver 内部二次解释方向」的双重 swap）。
+          //   纸张坐标链：requestedPaperOrientation → needSwap → physicalPaper → physicalPaperOrientation。
+          //   与 SVG viewBox（同样按方向交换，PrintPreviewCanvas.jsx:159-160）落在同一显示坐标系。
+      const paperW_mm = (needSwap ? layout.paperRect.h : layout.paperRect.w) * PX_TO_MM
+      const paperH_mm = (needSwap ? layout.paperRect.w : layout.paperRect.h) * PX_TO_MM
           const marginLeft_mm = mL * PX_TO_MM
           const marginRight_mm = mR * PX_TO_MM
           const marginTop_mm = mT * PX_TO_MM
@@ -240,8 +245,7 @@ export function buildPrintPreviewModel(plan, { files = [], settings = {}, curren
           placementResult = resolveContentPlacement({
             contentPhysicalSize: contentPx,   // 已归一化到 px@PREVIEW_DPI（PDF points×dpi/72）
             contentRotation: userRotation, // Resolver 内部 apply contentRotation
-            paperSize: { widthMM: paperW_mm, heightMM: paperH_mm },
-            paperOrientation: page.orientation,
+            physicalPaper: { widthMM: paperW_mm, heightMM: paperH_mm },
             margins: {
               left: marginLeft_mm,
               right: marginRight_mm,
@@ -319,12 +323,12 @@ export function buildPrintPreviewModel(plan, { files = [], settings = {}, curren
     const p = basePages[0]
     const s = p.slots[0]
     if (s._diag) {
-      console.log('[DIAG-11 rotation matrix] contentRotation=%d layoutRotation=%d effectiveSize=%s rotationDeg=%d paperOrientation=%s',
+      console.log('[DIAG-11 rotation matrix] contentRotation=%d layoutRotation=%d effectiveSize=%s rotationDeg=%d requestedPaperOrientation=%s',
         s._diag.contentRotation, s._diag.layoutRotation, s._diag.effectiveSize,
-        s._diag.rotationDeg, p.orientation)
+        s._diag.rotationDeg, p.requestedPaperOrientation)
   } else {
-    console.log('[DIAG-11 no placement] slotRotation=%d hasThumb=%s paperOrientation=%s',
-      s._deprecatedRotation, !!s.thumbnailUrl, p.orientation)
+    console.log('[DIAG-11 no placement] slotRotation=%d hasThumb=%s requestedPaperOrientation=%s',
+      s._deprecatedRotation, !!s.thumbnailUrl, p.requestedPaperOrientation)
   }
   } else {
     // [DIAG-11 empty] basePages 为空（所有 pageToModel 返回 null）→ 外层 valid:false
@@ -341,7 +345,10 @@ export function buildPrintPreviewModel(plan, { files = [], settings = {}, curren
     if (page.slots.length === 1) {
       const slot = page.slots[0]
       const f = fileById.get(slot.fileId)
-      const pageCount = f?.pageCount || 1
+      // Bug A fix: 聚合 source 的真实物理页数由 normalizePrintSources 写入 _aggregatedPageCount；
+      // 页级拆分文件自带 totalPages；普通多页单文件在 pageCount。按优先级取，缺省 1。
+      // 旧逻辑只读 f.pageCount（聚合 source 默认恒为 1）→ 同票多页在预览被塌缩为 1 页。
+      const pageCount = f?._aggregatedPageCount || f?.totalPages || f?.pageCount || 1
       if (pageCount <= 1) {
         expandedPages.push(page)
       } else {
