@@ -39,10 +39,19 @@ const ORIENT_LABEL = { portrait: '纵向', landscape: '横向' }
 const SlotImage = memo(({ slot }) => {
   const [loaded, setLoaded] = useState(false)
   const [error, setError] = useState(false)
+  const imgRef = useRef(null)
 
+  // BugB fix (A+B): 快速切页/切方向时 thumbnailUrl 变化，React 复用同一 SVG <image>
+  // 节点、仅改 href 属性 → Chromium 不可靠重发 fetch → onLoad 永不触发 → 内容 opacity:0。
+  // A: 给 <image> 加 key={thumbnailUrl} 强制 remount，保证新节点新 href 必发请求；
+  // B: ref 兜底 onLoad 早于 React handler 的竞态（如缓存瞬时命中 complete 已 true）。
   useEffect(() => {
     setLoaded(false)
     setError(false)
+    const el = imgRef.current
+    if (el && el.complete && el.naturalWidth > 0) {
+      setLoaded(true)
+    }
   }, [slot.thumbnailUrl])
 
   const hasThumbnail = !!slot.thumbnailUrl && !error
@@ -75,6 +84,8 @@ const SlotImage = memo(({ slot }) => {
           {hasThumbnail ? (
             <>
               <image
+                key={slot.thumbnailUrl}
+                ref={imgRef}
                 href={slot.thumbnailUrl}
                 x="0"
                 y="0"
@@ -117,6 +128,8 @@ const SlotImage = memo(({ slot }) => {
           {hasThumbnail ? (
             <>
               <image
+                key={slot.thumbnailUrl}
+                ref={imgRef}
                 href={slot.thumbnailUrl}
                 x={slot.x}
                 y={slot.y}
@@ -342,7 +355,7 @@ const PrintPreviewCanvas = memo(({ preview, marginSettings }) => {
           viewBox={`0 0 ${widthMM} ${heightMM}`}
           width="100%"
           role="img"
-          aria-label={`打印预览：${page.paper} ${ORIENT_LABEL[page.orientation] || ''} ${slotCount} 票`}
+          aria-label={`打印预览：${page.paper} ${ORIENT_LABEL[page.requestedPaperOrientation] || ''} ${slotCount} 票`}
         >
           {/* 纸张背景（白底模拟纸面；viewBox 画布本身透明） */}
           <rect x="0" y="0" width={widthMM} height={heightMM} rx="1.5" fill="#fff" stroke="var(--border-light)" strokeWidth="0.6" />
