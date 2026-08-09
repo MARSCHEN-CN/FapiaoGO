@@ -334,16 +334,30 @@ const PreviewPageNav = ({ current, total, onPrev, onNext, onJump }) => {
  */
 const PrintPreviewCanvas = memo(({ preview, marginSettings }) => {
   const [current, setCurrent] = useState(0)
+  const initialized = useRef(false)
 
   const pages = preview && preview.valid ? preview.pages : []
   const total = pages.length
 
-  // 当 preview 模型变化时（如纸张/合并模式切换），同步到目标页
+  // Bug A-3b: 模型重建时（如切换纸张方向）保留用户当前预览页，
+  // 不无条件回退到 preview.currentPageIndex（后者固定于初始 previewFile）。
+  // 仅首次有效模型加载时同步；后续重建若当前页在新 page 范围内则保持，否则 fallback。
   useEffect(() => {
-    if (preview?.valid && typeof preview.currentPageIndex === 'number') {
-      setCurrent(Math.min(preview.currentPageIndex, total - 1))
+    if (preview?.valid && total > 0) {
+      if (!initialized.current) {
+        // 首次进入预览：从模型定位（previewFile 决定的 currentSelection）
+        setCurrent(Math.min(preview.currentPageIndex, total - 1))
+        initialized.current = true
+      } else {
+        // 纸张/合并模式切换重建：保持用户翻到的当前页
+        setCurrent((prev) => {
+          if (prev >= 0 && prev < total) return prev
+          return Math.min(preview.currentPageIndex, total - 1)
+        })
+      }
     } else {
       setCurrent(0)
+      initialized.current = false
     }
   }, [preview, total])
 
