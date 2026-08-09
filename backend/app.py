@@ -983,6 +983,10 @@ def split_pdf():
                             "created_at": now,
                             "last_used": now,
                         }
+                    # [M1-c D1 · frozen] page_index is 1-based SOURCE transport (legacy evidence).
+                    # Do NOT convert to 0-based here; canonical 0-based lives in
+                    # SourcePageIdentity.sourcePageIndex (not yet built). Matches M1-a
+                    # fact table (emit = i + 1). See M1b-Boundary-Audit / M1c-Base-Declaration-Inventory.
                     pages.append({
                         "page_index": page_num,
                         "page_id": page_id,

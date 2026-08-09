@@ -45,9 +45,12 @@ export function buildFileObj(file, name, path, previewImage = null, docId = null
     // IS-4.2：文档实例身份。单文件默认 = key；多页 PDF 由 processPdfFile 传入共享 UUID。
     // Step 1 仅生产、暂不消费；消费端迁移（DocumentStore/addDocument/PRS）在后续步骤接入。
     instanceId: instanceId || key,
-    // 多页 PDF 拆页后，每个分页项携带其在原文档中的真实页码。
+    // [M1-c D5 · frozen] pageNum = 1-based SOURCE transport (legacy evidence, echoes /split_pdf.page_index).
+    //   domain: Source · base: 1-based · DO NOT read as 0-based. Canonical 0-based is
+    //   SourcePageIdentity.sourcePageIndex (not yet built); keep 1-based until migration completes.
+    // 多页 PDF 拆页后，每个分页项携带其在原文档中的真实（1-based）页码。
     // 预览 URL 必须用它而非硬编码 1，否则所有分页都显示第 1 页（串线）。
-    // 使用 ?? 而非 ||，保留 pageNum=0 作为合法的首页页码
+    // 使用 ?? 而非 ||，保留 caller 传入的 0/null 不被强制为 1（注：生产恒 1-based，0 仅测试夹具）
     pageNum: pageNum ?? null,
     identity,
     // 预计算 searchText，确保所有文件（含未解析或解析失败的）都能快速搜索
@@ -130,6 +133,7 @@ export async function processPdfFile(file, getPathFn) {
           const pageName = buildSplitPageName(file.name, page.page_index)
           const pageFile = new File([blob], pageName, { type: 'application/pdf' })
 
+          // [M1-c D5] pass the 1-based Source transport page_index unchanged (no 0-based conversion here)
           const fileObj = buildFileObj(pageFile, pageName, getPathFn(file), null, data.doc_id, page.page_index, null, instanceId)
           // [Identity Bridge] 透传父 PDF 物理身份，供批量导入路径携带 source_doc_id，
           // 使后端 assembly 能将同票多页归入同一 doc（修复同票多页被拆成独立发票）。
