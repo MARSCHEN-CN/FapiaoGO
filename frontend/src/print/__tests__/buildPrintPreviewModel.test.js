@@ -47,9 +47,11 @@ function buildModelForFilesWithSelection(rawFiles, selection, settings = { paper
 
 // ── fixtures ──
 // 拆分页使用不同 docId（真实场景：拆分后的每页独立 sha256）
-const A_P1 = makePage({ key: 'A_p1', instanceId: 'inst-A', sourceDocId: 'docA', pageNum: 0, totalPages: 2, docId: 'docA_p1', name: 'A-1' })
-const A_P2 = makePage({ key: 'A_p2', instanceId: 'inst-A', sourceDocId: 'docA', pageNum: 1, totalPages: 2, docId: 'docA_p2', name: 'A-2' })
-const B    = makePage({ key: 'B', sourceDocId: 'docB', pageNum: 0, totalPages: 1, docId: 'docB', name: 'B' })
+// 拆分页 pageNum 是 1-based（/split_pdf.page_index，M1 frozen D1/D5 contract）
+const A_P1 = makePage({ key: 'A_p1', instanceId: 'inst-A', sourceDocId: 'docA', pageNum: 1, totalPages: 2, docId: 'docA_p1', name: 'A-1' })
+const A_P2 = makePage({ key: 'A_p2', instanceId: 'inst-A', sourceDocId: 'docA', pageNum: 2, totalPages: 2, docId: 'docA_p2', name: 'A-2' })
+// 单页文件 pageNum 为 null（非拆分页，无页码概念）
+const B    = makePage({ key: 'B', sourceDocId: 'docB', pageNum: null, totalPages: 1, docId: 'docB', name: 'B' })
 
 // ── Case 1: 计数 & 页序 ──
 
@@ -90,7 +92,7 @@ test('Case 2 (Bug A-2): 聚合源第二页应使用 A_p2.docId?page=1', () => {
 test('Case 3 (Bug A-3a): currentSelection=A_p1.key → currentPageIndex=0', () => {
   const model = buildModelForFilesWithSelection(
     [A_P1, A_P2, B],
-    { fileId: A_P1.key, pageIndex: A_P1.pageNum },
+    { fileId: A_P1.key, pageIndex: 0 },  // 0-based internal
   )
   assert.equal(model.currentPageIndex, 0, 'A_p1 应对应 expandedPages[0]')
 })
@@ -100,7 +102,7 @@ test('Case 3 (Bug A-3a): currentSelection=A_p1.key → currentPageIndex=0', () =
 test('Case 4 (Bug A-3a): currentSelection=A_p2.key → currentPageIndex=1', () => {
   const model = buildModelForFilesWithSelection(
     [A_P1, A_P2, B],
-    { fileId: A_P2.key, pageIndex: A_P2.pageNum },
+    { fileId: A_P2.key, pageIndex: 1 },  // A_p2.pageNum(2) normalized to 0-based=1
   )
   assert.equal(model.currentPageIndex, 1, 'A_p2 应对应 expandedPages[1]（不在 0）')
 })
@@ -110,7 +112,7 @@ test('Case 4 (Bug A-3a): currentSelection=A_p2.key → currentPageIndex=1', () =
 test('Case 5 (Bug A-3a): currentSelection=B.key → currentPageIndex=2', () => {
   const model = buildModelForFilesWithSelection(
     [A_P1, A_P2, B],
-    { fileId: B.key, pageIndex: B.pageNum ?? 0 },
+    { fileId: B.key, pageIndex: 0 },  // B.pageNum=null → (null??1)-1 =0
   )
   assert.equal(model.currentPageIndex, 2, 'B 应对应 expandedPages[2]（非聚合文件保序可用）')
 })

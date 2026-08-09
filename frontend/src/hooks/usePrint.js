@@ -570,9 +570,11 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
   const printPreviewModel = useMemo(() => {
     try {
       const plan = buildPrintExecutionPlan(printPlanInput.files, printPlanInput.options)
-      // 当前选中页定位（用于预览从当前选中页开始）
+      // 当前选中页定位（用于预览从当前选中页开始）。
+      // previewFile.pageNum 是 1-based source transport（/split_pdf.page_index），
+      // 而 slot.pageIndex 在模型内为 0-based → 在此归一化。
       const currentSelection = previewFile
-        ? { fileId: previewFile.key, pageIndex: previewFile.pageNum ?? 0 }
+        ? { fileId: previewFile.key, pageIndex: (previewFile.pageNum ?? 1) - 1 }
         : null
       return buildPrintPreviewModel(plan, {
         files: printPlanInput.files,
