@@ -76,13 +76,13 @@ export function usePreview({ files, settings, electronAPIRef }) {
   const [showRightArrow, setShowRightArrow] = useState(false)
 
   // ── Commit C：纸张方向 Fact（自动/横向/纵向），per doc_id 持久化 ──
-  const [paperOrientation, setPaperOrientation] = useState('portrait')
+  const [requestedPaperOrientation, setRequestedPaperOrientation] = useState('portrait')
   const [autoActive, setAutoActive] = useState(true)
-  const paperOrientationRef = useRef('portrait')
-  const applyPaperOrientation = useCallback((v, isAuto) => {
-    paperOrientationRef.current = v
-    if (documentStateRef.current) documentStateRef.current.paperOrientation = v
-    setPaperOrientation(v)
+  const requestedPaperOrientationRef = useRef('portrait')
+  const applyRequestedPaperOrientation = useCallback((v, isAuto) => {
+    requestedPaperOrientationRef.current = v
+    if (documentStateRef.current) documentStateRef.current.requestedPaperOrientation = v
+    setRequestedPaperOrientation(v)
     setAutoActive(!!isAuto)
   }, [])
 
@@ -368,7 +368,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
     console.log('[DIAG-1 rotate click] targetKey=%s resolvedKey=%s currentRotation=%d nextRotation=%d fileRotations=%o',
       targetKey, key, fileRotations[key] || 0, deg, fileRotations)
     setFileRotations(prev => ({ ...prev, [key]: deg }))
-    // 持久化 contentRotation（纸张方向 Fact 之一），paperOrientation 取当前 Fact
+    // 持久化 contentRotation（纸张方向 Fact 之一），requestedPaperOrientation 取当前 Fact
     // 4.1.5：写入键严格用 Document 身份 docId，不回退 path/key（uiKey 永不入持久层）
     const f = previewFileRef.current
     const factKey = f?.identity?.docId || f?.docId
@@ -378,7 +378,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
     }
     const api = electronAPIRef.current
     if (api && api.saveDocFacts) {
-      api.saveDocFacts(factKey, { paperOrientation: paperOrientationRef.current, contentRotation: deg }).catch(() => {})
+      api.saveDocFacts(factKey, { requestedPaperOrientation: requestedPaperOrientationRef.current, contentRotation: deg }).catch(() => {})
     }
   }, [fileRotations, electronAPIRef])
 
@@ -395,14 +395,14 @@ export function usePreview({ files, settings, electronAPIRef }) {
       const ds = documentStateRef.current
       const nat = ds?.pageSize ? getDocNaturalOrientation(ds.pageSize) : null
       const natural = nat || 'portrait'
-      applyPaperOrientation(natural, true)
+      applyRequestedPaperOrientation(natural, true)
       if (factKey && api && api.clearDocFacts) api.clearDocFacts(factKey).catch(() => {})
       return
     }
     if (mode !== 'portrait' && mode !== 'landscape') return
-    applyPaperOrientation(mode, false)
+    applyRequestedPaperOrientation(mode, false)
     if (factKey && api && api.saveDocFacts) {
-      api.saveDocFacts(factKey, { paperOrientation: mode, contentRotation: fileRotations[f?.key] || 0 }).catch(() => {})
+      api.saveDocFacts(factKey, { requestedPaperOrientation: mode, contentRotation: fileRotations[f?.key] || 0 }).catch(() => {})
     }
   }, [electronAPIRef, fileRotations])
 
@@ -578,7 +578,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
       }
       return cmd
     },
-    [paperLayout, previewRotation, previewFile, paperOrientation]
+    [paperLayout, previewRotation, previewFile, requestedPaperOrientation]
   )
   // renderCommand 就绪（placement.scale>0）才用 Factory 派生；否则回退旧 bitmap 拟合，行为不变。
   const renderCommandReady = !!(renderCommand && renderCommand.placement && renderCommand.placement.scale > 0)
@@ -642,6 +642,23 @@ export function usePreview({ files, settings, electronAPIRef }) {
         })
       : null
     const reUrl = getRenderEnginePreviewUrl(previewFile, USE_RENDER_ENGINE_PREVIEW, previewSpec)
+
+    // ══════════════════════════════════════════════════════════════
+    // [DIAG-X] 渲染分派点 — RE vs Canvas 路径选择
+    // ══════════════════════════════════════════════════════════════
+    if (previewFile) {
+      const hasRE = !!reUrl
+      const hasCached = !!skipRenderRef.current
+      const pathLabel = hasRE
+        ? (hasCached ? 'RE (L2 cache hit)' : 'RE (probe)')
+        : (previewFile._previewImageUrl ? 'Canvas (image/ofd)' : 'Canvas (pdf.js)')
+      console.log('[DIAG-X RENDER] file=', previewFile.name, '| path=', pathLabel,
+        '| reUrl?=', hasRE, '| skipRender?=', hasCached,
+        '| rotation=', previewRotation,
+        '| paperLandscape=', previewSpec?.paperLandscape,
+        '| contentRotation=', previewSpec?.contentRotation,
+        '| paper_w×h=', previewSpec?.paper?.width, '×', previewSpec?.paper?.height)
+    }
 
     // [DIAG-7] RE URL 中的 content_rotation
     if (previewRotation !== 0 && previewSpec) {
@@ -1081,7 +1098,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
     const isMerge = isMergeMode(settings.mergeMode)
     // 🆕 V17：容器方向由 paperLandscape 决定（纸随内容），不再读 renderCommand.rotation
     // 🆕 合并模式：容器方向必须跟随「强制纸张方向」(merge2/3=竖向, merge4=横向)，
-    //    不依赖 paperOrientation 状态（可能为单文件模式遗留的 landscape），否则 2/3 票被错误翻成横向。
+    //    不依赖 requestedPaperOrientation 状态（可能为单文件模式遗留的 landscape），否则 2/3 票被错误翻成横向。
     const mergeForcedLandscape = isMerge ? getForcedLandscape(settings.mergeMode, false) : false
     const swapped = (renderCommandReady && !isMerge)
       ? !!renderCommand.paperLandscape
@@ -1570,12 +1587,12 @@ export function usePreview({ files, settings, electronAPIRef }) {
     // 恢复 contentRotation 到实时镜象（fileRotations），保证 previewRotation / L2 / full cache 一致
     setFileRotations(prev => ({ ...prev, [loadedFile.key]: init.contentRotation }))
     rotation = init.contentRotation // 修正上方 rotation（cacheKey 用）
-    applyPaperOrientation(init.paperOrientation, init.isAuto)
+    applyRequestedPaperOrientation(init.requestedPaperOrientation, init.isAuto)
     if (init.shouldPersist) {
       try {
         const api = electronAPIRef.current
         // 写入严格用 docId（不回退 path/key），无 docId 时跳过落盘
-        if (docId && api && api.saveDocFacts) await api.saveDocFacts(docId, { paperOrientation: init.paperOrientation, contentRotation: init.contentRotation })
+        if (docId && api && api.saveDocFacts) await api.saveDocFacts(docId, { requestedPaperOrientation: init.requestedPaperOrientation, contentRotation: init.contentRotation })
       } catch (_) { /* 忽略落盘失败，不影响预览 */ }
     }
 
@@ -1589,7 +1606,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
       pageOrientation: docOrientation,
       // 【Page Placement Pipeline Fact】纸张方向：Initialize Once（首次加载即定）。
       // 持久层存在时以记录为准（用户选择或 Auto 推导值均已落盘）；不存在时以文档天然方向初始化。
-      paperOrientation: init.paperOrientation,
+      requestedPaperOrientation: init.requestedPaperOrientation,
       contentRotation: init.contentRotation, // Legacy 迁移：旧 fileRotations 作为 contentRotation 来源
       rotation: init.contentRotation, // [LEGACY 镜像] = contentRotation
       sourceType: loadedFile._fileFormat || 'pdf',
@@ -1624,6 +1641,25 @@ export function usePreview({ files, settings, electronAPIRef }) {
         },
       }
     )
+    // ══════════════════════════════════════════════════════════════
+    // [DIAG-X] 横向发票预览差异诊断 — 对比两张发票的关键分流值
+    // 在浏览器 DevTools Console 中筛选 "DIAG-X" 查看，分别点击两张发票
+    // ══════════════════════════════════════════════════════════════
+    console.log('[DIAG-X] ═══════════════════════════════════════════')
+    console.log('[DIAG-X] fileKey  =', loadedFile.key?.slice(0, 30))
+    console.log('[DIAG-X] fileName =', loadedFile.name)
+    console.log('[DIAG-X] docSize  =', docW, '×', docH,
+      '→ naturalOrientation=', naturalOrientation)
+    console.log('[DIAG-X] contentOrient(detect)=', contentOrient)
+    console.log('[DIAG-X] pageOrientation(in DS)=', docOrientation)
+    console.log('[DIAG-X] requestedPaperOrient =', init.requestedPaperOrientation,
+      'isAuto=', init.isAuto)
+    console.log('[DIAG-X] persistedFacts=', loadedFacts)
+    console.log('[DIAG-X] contentRotation=', init.contentRotation)
+    console.log('[DIAG-X] isLandscape(cont≠paper)=', isLandscape)
+    console.log('[DIAG-X] paperLandscape(from RC)=', paperLandscape)
+    console.log('[DIAG-X] L2CacheKey =', cacheKey)
+    console.log('[DIAG-X] ═══════════════════════════════════════════')
     const cachedCanvas = fullCacheRef.current.get(cacheKey)
     if (cachedCanvas) {
       // 直接设置缓存画布，跳过整个异步渲染管线
@@ -2064,7 +2100,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
       previewImgDims,
       previewLoading,
       previewRotation,
-      paperOrientation,
+      requestedPaperOrientation,
       autoActive,
       fileRotations,
       showLeftArrow,
