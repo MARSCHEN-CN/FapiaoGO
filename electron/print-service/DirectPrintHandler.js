@@ -12,6 +12,7 @@
 const fs = require('fs');
 const path = require('path');
 const { TEMP_DIR } = require('../temp-manager');
+const pdfMargin = require('./pdf-margin-processor');
 
 // 直接打印支持的文件扩展名
 const DIRECT_PRINT_EXTENSIONS = ['.pdf', '.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif'];
@@ -107,6 +108,44 @@ async function handle(filePath, settings) {
     return { success: false, error: `Failed to copy file: ${err.message}` };
   }
 
+  // ── 边距处理（与打印预览一致的语义：内容缩小 + 四周留白） ──
+  const marginL = Number(settings?.marginLeft) || 0
+  const marginR = Number(settings?.marginRight) || 0
+  const marginT = Number(settings?.marginTop) || 0
+  const marginB = Number(settings?.marginBottom) || 0
+  const hasMargins = pdfMargin.hasMargins(settings)
+  let marginsApplied = false
+
+  console.log('[DirectPrintHandler] margin fields: L=%d R=%d T=%d B=%d hasMargins=%s',
+    marginL, marginR, marginT, marginB, hasMargins)
+
+  if (hasMargins) {
+    try {
+      const isImage = ext.toLowerCase() !== '.pdf'
+      const orient = settings?.landscape ? 'landscape' : 'portrait'
+      console.log('[DirectPrintHandler] Applying margins via pdf-margin-processor (isImage=%s, orient=%s)',
+        isImage, orient)
+
+      const marginResult = await pdfMargin.process(destPath, {
+        left: marginL,
+        right: marginR,
+        top: marginT,
+        bottom: marginB,
+      }, isImage, orient)
+
+      if (marginResult.path && marginResult.path !== destPath) {
+        console.log('[DirectPrintHandler] Margin applied successfully:', marginResult.path)
+        destPath = marginResult.path
+        marginsApplied = true
+      } else {
+        console.log('[DirectPrintHandler] Margin processing returned original file (no change or fallback)')
+      }
+    } catch (marginErr) {
+      console.warn('[DirectPrintHandler] Margin processing failed, falling back to original:', marginErr.message)
+      // 边距处理失败不阻断打印，继续用原始文件
+    }
+  }
+
   const printJob = {
     id: jobId,
     type: 'direct',
@@ -121,6 +160,9 @@ async function handle(filePath, settings) {
     scaleFactor: settings?.scaleFactor || 100,
     collate: settings?.collate || true,
     customPaper: settings?.customPaper || null,
+    // 边距已 bake 进 PDF 内容时，禁止 SumatraPDF 再做 fit 缩放（否则二次缩放破坏边距精度）
+    scale: marginsApplied ? 'noscale' : 'fit',
+    marginsApplied,
   };
 
   // ========== [DEBUG] 链路追踪 ==========

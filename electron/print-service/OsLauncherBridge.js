@@ -266,7 +266,8 @@ function decidePrintSpec(job) {
     paper: paperName,
     paperkind: job.paperkind != null ? job.paperkind : undefined,
     orientation,
-    scale: 'fit',
+    // 若 job 明确指定了 scale（如边距已 bake 进 PDF 时用 noscale），优先使用
+    scale: job.scale || 'fit',
     grayscale: job.grayscale || false,
     center: true,
   };

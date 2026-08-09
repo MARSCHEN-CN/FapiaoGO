@@ -404,46 +404,76 @@ function AppContent() {
   // nextPreviewFile 计算基于删除前的快照，可能为 null 或指向同样将被删除的分页，
   // 导致 files=[] 但 previewFile 仍持有旧文件 → 空状态页上残留旧 viewer。
   //
-  // 反应式修复：只要 previewFile 的 key 不再存在于 files（任何删除路径），
+  // 反应式修复：只要 previewFile 对应的所有页面 key 都不再存在于 files（任何删除路径），
   // 立即释放展示状态。DocumentViewer 随 previewFile=null 卸载（ViewerState
   // 是 useState，卸载即丢弃，无需手动 reset）。
+  //
+  // ⚠ FIX: 必须用完整 files 列表判断，不能用 displayFiles（搜索过滤后的列表）。
+  // 搜索过滤只是视觉筛选，不等于文件被删除；用 displayFiles 会导致"搜索无结果时
+  // 预览区直接变空"的 Bug。
   useEffect(() => {
     if (!previewFile) return
-    if (displayFiles.some((f) => f.key === previewFile.key)) return
+    // 收集预览条目对应的所有页面 key：
+    //   - InvoiceDocument: _pageKeys
+    //   - groupFilesByDocument 聚合行: _isDocumentGroup + _pages
+    //   - 普通 page-level 文件: key
+    const pageKeys = previewFile._pageKeys && previewFile._pageKeys.length > 0
+      ? previewFile._pageKeys
+      : (previewFile._isDocumentGroup && Array.isArray(previewFile._pages))
+        ? previewFile._pages.map(p => p.key)
+        : [previewFile.key]
+    // 只要还有任何一个页面存在于真实文件列表中，就不清理预览
+    const stillExists = pageKeys.some(k => files.some(f => f.key === k))
+    if (stillExists) return
     cleanupPreviewUrl()
     setPreviewFile(null)
-  }, [displayFiles, previewFile, cleanupPreviewUrl, setPreviewFile])
+  }, [files, previewFile, cleanupPreviewUrl, setPreviewFile])
 
-  // DocumentStore 生命周期 GC：displayFiles 中无任何条目引用的 docId → 回收 Document。
+  // DocumentStore 生命周期 GC：全量 files + documentView 中无任何条目引用的 docId → 回收 Document。
   // 覆盖单删/分组删/清空/删失败文件等全部路径，防止 Store 残留。
-  // FIX: 遍历 displayFiles（document 级别），同时收集物理 docId（resolveDocId）
-  // 和业务 documentId（InvoiceDocument 聚合条目上的 documentId）。
-  // 之前只遍历原始 page-level files + resolveDocId，导致多页 InvoiceDocument 的业务
-  // docId（格式为 `${sourceDocId}_inv_${invoiceNumber}`）被误判为无引用而立即删除，
-  // 使得 DisplayAdapter 通过 documentId 查找时永远得到 null，缩略图栏无法显示。
+  //
+  // ⚠ FIX: 必须用全量数据（files + documentView.documents）做引用判定，
+  // 不能用 displayFiles（搜索过滤后）。搜索无结果时 displayFiles 为空，
+  // 会误把所有已注册文档都 GC 掉——清除搜索后文档得重新注册，造成闪屏和延迟。
+  //
+  // 收集两类引用 ID：
+  //   1. 物理 docId：来自 page-level files 的 f.docId（resolveDocId）
+  //   2. 业务 documentId：来自 InvoiceDocument 的 f.documentId
+  //      （格式如 `${sourceDocId}_inv_${invoiceNumber}`，指向多页装配文档）
   useEffect(() => {
     const referenced = new Set()
-    for (const f of displayFiles) {
+
+    // 1. 从全量 page-level files 收集物理 docId
+    for (const f of files) {
       const physicalDocId = resolveDocId(f)
       if (physicalDocId) referenced.add(physicalDocId)
-      // 业务 docId：group 条目上的 documentId 指向多页 InvoiceDocument
-      const bizDocId = f.documentId
-      if (bizDocId) referenced.add(bizDocId)
     }
+
+    // 2. 从 InvoiceDocument 装配结果收集业务 documentId
+    if (documentView?.documents?.length) {
+      for (const doc of documentView.documents) {
+        const bizDocId = doc.documentId
+        if (bizDocId) referenced.add(bizDocId)
+        // 同时收集 InvoiceDocument 上的物理 docId（如果有）
+        const physDocId = resolveDocId(doc)
+        if (physDocId) referenced.add(physDocId)
+      }
+    }
+
     const registered = getRegisteredDocIds()
 
     // Race condition guard：导入期间，文档注册（DocumentStore，同步）先于
     // files 状态更新（queueUpdate 经 requestIdleCallback/setTimeout，异步 100-200ms）。
-    // 若 displayFiles 有条目但均无 docId（referenced 为空），而 DocumentStore 中已注册文档，
-    // 这是过渡态——跳过 GC，等 files 状态更新后 displayFiles 变化触发 GC 重跑。
-    // files 真正清空（清空操作）时 displayFiles.length === 0，GC 正常执行。
-    if (displayFiles.length > 0 && referenced.size === 0 && registered.length > 0) {
+    // 若 files 有条目但均无 docId（referenced 为空），而 DocumentStore 中已注册文档，
+    // 这是过渡态——跳过 GC，等 files 状态更新后重跑。
+    // files 真正清空（清空操作）时 files.length === 0，GC 正常执行。
+    if (files.length > 0 && referenced.size === 0 && registered.length > 0) {
       return
     }
 
     const toRemove = registered.filter(id => !referenced.has(id))
     for (const docId of toRemove) removeDocument(docId)
-  }, [displayFiles])
+  }, [files, documentView])
 
   const removeFailedFiles = useCallback((removeSource = false) => {
     const liveFiles = filesRef.current

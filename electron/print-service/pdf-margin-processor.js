@@ -30,6 +30,16 @@ if (!fs.existsSync(PYTHON_SCRIPT)) {
 const DEFAULT_TIMEOUT = 60_000  // 子进程超时（毫秒）
 const ENV_CHECK_TTL = 30_000    // 环境检查缓存有效期
 
+// ⚠️ DEBUG 开关：开启后边距处理后的 PDF 会复制一份到桌面，便于人工验证
+// 打印文件名格式: margin_debug_<时间戳>_L<left>R<right>T<top>B<bottom>.pdf
+const DEBUG_SAVE_TO_DESKTOP = true
+// 桌面目录（Windows）
+function _getDesktopPath() {
+  return process.env.USERPROFILE
+    ? path.join(process.env.USERPROFILE, 'Desktop')
+    : null
+}
+
 // ============================
 // 核心函数
 // ============================
@@ -128,7 +138,8 @@ async function _doCheckPythonEnv() {
   let pythonCmd = null
   
   if (isDev) {
-    pythonCmd = path.join(__dirname, '../backend/venv/Scripts/python.exe')
+    // dev 模式：backend 在项目根目录（../../backend/，相对于 electron/print-service/）
+    pythonCmd = path.join(__dirname, '../../backend/venv/Scripts/python.exe')
     console.log('[PDF_MARGIN] Development mode: using venv Python:', pythonCmd)
   } else {
     pythonCmd = path.join(process.resourcesPath, 'backend/venv/Scripts/python.exe')
@@ -284,6 +295,22 @@ async function process(inputPath, margins, isImage, orientation, timeout = DEFAU
         if (result.success && fs.existsSync(result.path)) {
           console.log('[PDF_MARGIN] Done in %dms: %s (orient=%s)',
             elapsed, result.path, result.orientation || '?')
+
+          // ── DEBUG：复制处理后的 PDF 到桌面，方便人工验证边距是否生效 ──
+          if (DEBUG_SAVE_TO_DESKTOP) {
+            try {
+              const desktopPath = _getDesktopPath()
+              if (desktopPath && fs.existsSync(desktopPath)) {
+                const debugName = `margin_debug_${timestamp}_L${m.left}R${m.right}T${m.top}B${m.bottom}.pdf`
+                const debugPath = path.join(desktopPath, debugName)
+                fs.copyFileSync(result.path, debugPath)
+                console.log('[PDF_MARGIN] DEBUG: 已复制到桌面 →', debugPath)
+              }
+            } catch (debugErr) {
+              console.warn('[PDF_MARGIN] DEBUG 保存失败:', debugErr.message)
+            }
+          }
+
           resolve({
             path: result.path,
             orientation: result.orientation || null,

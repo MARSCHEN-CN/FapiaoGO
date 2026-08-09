@@ -9,7 +9,14 @@
       "canvasData": {
         "x": 0,
         "y": 0,
-        "group": 0
+        "group": 0,
+        "layoutSnapshot": {
+          "version": 1,
+          "contentHeight": 900,
+          "viewportWidth": 1440,
+          "sourceHash": "fnv1a-532d2b10",
+          "measuredAt": 1786283569852
+        }
       },
       "devMetadata": {
         "htmlSrc": "pages/calculator.html",

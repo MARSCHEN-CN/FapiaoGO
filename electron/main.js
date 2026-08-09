@@ -547,6 +547,9 @@ ipcMain.handle('print-source-file', async (_event, { target, settings, pipeline 
           settings.contentOrientation = marginResult.orientation
           console.log('[print-source-file] Updated contentOrientation to:', marginResult.orientation)
         }
+        // 边距已 bake 进 PDF，禁止 SumatraPDF 再 fit 缩放（否则二次缩放破坏边距精度）
+        settings.fit = 'none'
+        console.log('[print-source-file] Set fit=none (noscale) since margins are baked in')
       } else {
         console.log('[print-source-file] Margin processing returned original file (no change or fallback)')
       }
