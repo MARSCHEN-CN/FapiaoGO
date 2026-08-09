@@ -49,7 +49,6 @@ import { removeDocument, getRegisteredDocIds } from './stores/DocumentStore'
 import { clearActiveSession, getActiveSessionId, getSession, removeFilesFromSession, deleteInvoiceDocument, resolveDocumentInstanceKey } from './stores/ImportSessionStore'
 import { resolvePreviewUrl } from './utils/previewResourceResolver'
 import { prefetchPreviewUrls } from './utils/previewPrefetcher'
-import StatusIndicator from './components/StatusIndicator'
 import ActionBar from './components/ActionBar'
 import InvoiceDetail from './components/InvoiceDetail'
 
@@ -146,7 +145,7 @@ function AppContent() {
     previewUrl,
     previewRenderVersion,
     previewLoading,
-    previewRotation, paperOrientation, autoActive, fileRotations, showLeftArrow, showRightArrow,
+    previewRotation, requestedPaperOrientation, autoActive, fileRotations, showLeftArrow, showRightArrow,
     paperLayout, contentLayout, containerSize,
   } = preview.state
 
@@ -1150,7 +1149,7 @@ function AppContent() {
           )}
         </div>
 
-        {/* 4. Status：状态指示器 + 页码导航 */}
+        {/* 4. Status：页码导航（固定高度占位，与 control-bar 对称） */}
         {files.length > 0 && (
         <div className="status-bar">
           {viewerController && viewerController.totalPages > 1 && (
@@ -1162,11 +1161,6 @@ function AppContent() {
               onJump={viewerController.actions.goToPage}
             />
           )}
-          <StatusIndicator
-            paperSize={settings.paperSize}
-            landscape={settings.landscape}
-            extraSpecial={settings.extraSpecial}
-          />
         </div>
         )}
 

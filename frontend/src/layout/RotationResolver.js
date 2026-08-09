@@ -6,7 +6,7 @@
  *   模块            | 可以修改              | 不可修改
  *   ───────────────┼──────────────────────┼──────────────────
  *   Viewer         | contentRotation      | paper
- *   PrintPreview   | paperOrientation     | contentRotation
+ *   PrintPreview   | requestedPaperOrientation     | contentRotation
  *   PrintPipeline  | 执行 placement        | 决定旋转
  *
  * ## 两层 Resolver
@@ -16,8 +16,10 @@
  *      职责：把用户旋转动作物化为内容几何。Viewer 拥有旋转权限。
  *
  *   2. FitResolve（本文件后半）：
- *      输入 effectiveContentOrientation + paperOrientation → 输出 layoutRotation（-90/0）
- *      职责：纸面适配——比较【用户旋转后的有效内容方向】vs 用户纸方向，计算唯一匹配旋转。
+ *      输入 effectiveContentOrientation + physicalPaperOrientation → 输出 layoutRotation（-90/0）
+ *      职责：纸面适配——比较【用户旋转后的有效内容方向】vs 物理纸方向，计算唯一匹配旋转。
+ *      ⚠️ Commit 3（B2 修复）：物理纸方向**只从 physicalPaper 几何派生**，Resolver 不再接受方向标签。
+ *      纸张坐标链：requestedPaperOrientation → needSwap（调用方）→ physicalPaper → physicalPaperOrientation。
  *      layoutRotation 不改变 contentRotation（thumbnail 已 bake），只影响最终 placement 的 transform。
  *
  * ## 核心公式（Step 2 统一模型）
@@ -27,7 +29,7 @@
  *   effectiveContentOrientation = detectContentOrientation(effectiveContentW, effectiveContentH)
  *
  *   layoutRotation =
- *     0   : effectiveContentOrientation == paperOrientation
+ *     0   : effectiveContentOrientation == physicalPaperOrientation
  *     -90 : 方向不匹配（横内容塞竖纸 / 竖内容塞横纸 同约定）
  *
  *   最终视觉 = contentRotation(烤入缩略图) + layoutRotation(SVG transform)，二者串行不互相修正。
@@ -120,7 +122,7 @@ export function getContentDimensions(file) {
  *
  * Step 2（2026-08-07）统一模型：用户旋转与纸张匹配严格分层。
  *   - contentOrientation 必须是【用户旋转后】的有效内容方向（由 resolveContentPlacement 内部计算）。
- *   - 比较有效内容方向 vs 用户纸方向（paperOrientation），决定唯一的纸张匹配旋转。
+ *   - 比较有效内容方向 vs 物理纸方向（physicalPaperOrientation），决定唯一的纸张匹配旋转。
  * 规则：
  *   - 内容方向 == 纸张方向 → 0（不额外旋转）
  *   - 方向不匹配          → -90（逆时针 90° 对齐方向；横内容塞竖纸 / 竖内容塞横纸 同此约定）
@@ -129,11 +131,11 @@ export function getContentDimensions(file) {
  *   SVG 只施加 layoutRotation；-90 使最终视觉 = contentRotation(烤入) + (-90) 正确对齐。
  *
  * @param {'portrait'|'landscape'} contentOrientation - 用户旋转后的有效内容方向
- * @param {'portrait'|'landscape'} paperOrientation   - 用户选择的纸张方向
+ * @param {'portrait'|'landscape'} physicalPaperOrientation - 物理纸张方向（由 physicalPaper 几何派生）
  * @returns {number} layoutRotation（0 | -90）
  */
-export function computeLayoutRotation(contentOrientation, paperOrientation) {
-  if (contentOrientation === paperOrientation) return 0
+export function computeLayoutRotation(contentOrientation, physicalPaperOrientation) {
+  if (contentOrientation === physicalPaperOrientation) return 0
   // 方向不匹配：统一逆时针 90°（Step 2 统一模型，横内容塞竖纸 / 竖内容塞横纸 同约定）
   return -90
 }
@@ -149,8 +151,12 @@ export function computeLayoutRotation(contentOrientation, paperOrientation) {
  *   ⚠️ PDF points（pdf.js getViewport({scale:1}) 返回 1/72"）必须 ×dpi/72 归一化为 px@dpi 后传入（调用方负责，见 PrintPreviewModel.fileContentPx）；
  *   image/OFD 天然像素直接传入（同样按 px@dpi 处理）。contentRotation 由本函数内部施加，请勿预旋转后传入。
  * @param {number}              input.contentRotation         - 用户旋转角（0/90/180/270）
- * @param {{widthMM:number, heightMM:number}} input.paperSize - 纸张尺寸（mm）
- * @param {'portrait'|'landscape'} [input.paperOrientation]    - 纸张方向（不传则自动从 paperSize 推导）
+ * @param {{widthMM:number, heightMM:number}} input.physicalPaper - **最终物理纸张**尺寸（mm）。
+ *   ⚠️ Commit 3（B2 修复）：Resolver 只接受一个可信的纸张物理坐标系，**不再接受 orientation 标签**。
+ *   方向一律由几何派生：`physicalPaperOrientation = widthMM > heightMM ? 'landscape' : 'portrait'`。
+ *   调用方负责在上游完成 `requestedPaperOrientation → needSwap → physicalPaper` 归一化
+ *   （见 PrintPreviewModel.pageToModel 的 needSwap）。禁止把 requested/shape 标签再传进来，
+ *   否则 Resolver 内部会发生「第二次 swap」——这正是 B2 语义分裂的根因。
  * @param {{left?:number, right?:number, top?:number, bottom?:number}} [input.margins] - 安全边距（mm，默认 0）
  * @param {number} [input.dpi=300]                            - 渲染 DPI
  * @returns {{
@@ -161,8 +167,8 @@ export function computeLayoutRotation(contentOrientation, paperOrientation) {
  *   effectiveContentSize: {width:number, height:number}, // 用户旋转后的内容尺寸（px）
  *
  *   // Layer 2 派生（纸张匹配，Step 2 统一模型）
- *   paperOrientation: 'portrait'|'landscape',   // 用户选择的纸张方向
- *   layoutRotation: number,          // 唯一适配旋转（0 | -90），有效内容方向 vs 用户纸方向
+ *   physicalPaperOrientation: 'portrait'|'landscape',    // 物理纸张方向（**仅从 physicalPaper 几何派生**）
+ *   layoutRotation: number,          // 唯一适配旋转（0 | -90），有效内容方向 vs 物理纸方向
  *   renderRotation: number,          // 归一化(layoutRotation)；SVG 施加旋转，thumbnail 已 bake contentRotation
  *
  *   // 几何（px@dpi）
@@ -176,17 +182,28 @@ export function computeLayoutRotation(contentOrientation, paperOrientation) {
 export function resolveContentPlacement({
   contentPhysicalSize,
   contentRotation,
-  paperSize,
-  paperOrientation: paperOrientInput,
+  physicalPaper,
   margins = {},
   dpi = 300,
+  ...legacyInput
 }) {
   // ── 校验 ──
   if (!contentPhysicalSize?.width || !contentPhysicalSize?.height) {
     throw new Error('RotationResolver: contentPhysicalSize 需含正数 width/height（px@dpi）')
   }
-  if (!paperSize?.widthMM || !paperSize?.heightMM) {
-    throw new Error('RotationResolver: paperSize 需含正数 widthMM/heightMM')
+  // Commit 3 契约护栏：拒绝旧的「几何 + 方向标签」双入参。
+  //   静默忽略会制造假绿（Commit 1-A 改名后，旧 `paperOrientation:` 键已被无声吞掉，
+  //   多个审计测试因此在不知情下变成纯几何驱动）。这里 fail-fast 让语义违约立刻暴露。
+  for (const legacyKey of ['paperSize', 'paperOrientation', 'requestedPaperOrientation', 'paperShapeOrientation']) {
+    if (legacyKey in legacyInput) {
+      throw new Error(
+        `RotationResolver: 已废弃入参 '${legacyKey}'（Commit 3 B2 修复）。` +
+        `请在调用方完成 requestedPaperOrientation → needSwap → physicalPaper 归一化后，只传 physicalPaper{widthMM,heightMM}。`
+      )
+    }
+  }
+  if (!physicalPaper?.widthMM || !physicalPaper?.heightMM) {
+    throw new Error('RotationResolver: physicalPaper 需含正数 widthMM/heightMM')
   }
 
   const cr = normalizeRotation(contentRotation)
@@ -202,25 +219,24 @@ export function resolveContentPlacement({
   const contentOrientation = detectContentOrientation({ width: effectiveContentW, height: effectiveContentH })
 
   // ── Layer 2：纸张世界 ──
-  // Step 2（2026-08-07）：用户旋转与纸张匹配严格分层。
-  //   contentOrientation 已是【用户旋转后】的有效内容方向（见 Layer 1）。
-  //   纸张匹配只比较 effectiveContentOrientation vs 用户纸方向(paperOrientation)，
-  //   不再引入 paperShapeOrientation / shapeFit / orientationFit / landscape 特殊表。
-  //   物理纸型仅用于画布尺寸与可用区（paperW/H 直接取 paperSize），不参与旋转决策。
-  const paperOrientation = paperOrientInput || detectPaperOrientation(paperSize)
-  const paperW = roundPx(paperSize.widthMM * pxPerMm)
-  const paperH = roundPx(paperSize.heightMM * pxPerMm)
+  // Commit 3（B2 修复）：Resolver 内部只存在**一个**可信的纸张物理坐标系。
+  //   physicalPaper（调用方已归一化）→ physicalPaperOrientation（纯几何派生）→ 旋转决策 + 画布/可用区。
+  //   旧模型同时相信 paperSize（几何）与 paperOrientation（标签），二者在横向纸型下恒相反 → 语义分裂。
+  //   现在几何是唯一事实源：不可能再出现「外部 swap 后 Resolver 内部二次解释方向」。
+  const physicalPaperOrientation = detectPaperOrientation(physicalPaper)
+  const paperW = roundPx(physicalPaper.widthMM * pxPerMm)
+  const paperH = roundPx(physicalPaper.heightMM * pxPerMm)
   const toPx = (mm) => roundPx((Number(mm) || 0) * pxPerMm)
   const mL = toPx(margins.left)
   const mR = toPx(margins.right)
   const mT = toPx(margins.top)
   const mB = toPx(margins.bottom)
 
-  // 布局旋转 = 有效内容方向 vs 用户纸方向（唯一适配旋转，Stage 2）。
+  // 布局旋转 = 有效内容方向 vs 物理纸方向（唯一适配旋转，Stage 2）。
   //   方向匹配 → 0；方向不匹配 → -90（逆时针 90° 对齐方向）。
   // 注：thumbnail 已 bake contentRotation，故 layoutRotation 仅承载纸张匹配；
   //   最终视觉 = contentRotation(烤入缩略图) + layoutRotation(SVG)，二者串行、不互相修正。
-  const layoutRotation = computeLayoutRotation(contentOrientation, paperOrientation)
+  const layoutRotation = computeLayoutRotation(contentOrientation, physicalPaperOrientation)
   const renderRotation = normalizeRotation(layoutRotation)
   const fitRotated = isRotated(Math.abs(layoutRotation))
   const placedContentW = fitRotated ? effectiveContentH : effectiveContentW
@@ -231,7 +247,7 @@ export function resolveContentPlacement({
   const availableH = paperH - mT - mB
 
   if (availableW <= 0 || availableH <= 0) {
-    throw new Error(`RotationResolver: 安全边距超出纸张尺寸 (paper=${paperSize.widthMM}x${paperSize.heightMM}mm, available=${availableW}x${availableH}px)`)
+    throw new Error(`RotationResolver: 安全边距超出纸张尺寸 (paper=${physicalPaper.widthMM}x${physicalPaper.heightMM}mm, available=${availableW}x${availableH}px)`)
   }
 
   // fit scale（排版对象语义：可放大可缩小，最大化填充安全区）
@@ -267,9 +283,9 @@ export function resolveContentPlacement({
     effectiveContentSize: { width: effectiveContentW, height: effectiveContentH },
 
     // Layer 2：纸面适配（PrintPreview 拥有纸张权限）
-    //   用户选择的纸张方向（不传则按 paperSize 物理形状推导）
-    paperOrientation,
-    //   唯一适配旋转 = 有效内容方向 vs 用户纸方向（Step 2 统一模型）
+    //   物理纸张方向（**唯一事实源 = physicalPaper 几何**，不再接受外部标签）
+    physicalPaperOrientation,
+    //   唯一适配旋转 = 有效内容方向 vs 物理纸方向（Step 2 统一模型）
     layoutRotation,
     //   SVG 施加旋转 = 归一化(layoutRotation)；thumbnail 已 bake contentRotation，故不含 content。
     renderRotation,

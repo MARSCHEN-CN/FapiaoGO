@@ -866,9 +866,13 @@ export function useFileOps({ setFiles, settings, electronAPIRef }) {
                       invoiceDate: doc.invoiceDate,
                       _source: 'backend_assembly', // Step 4: 升级来源标记
                     })
-                    console.log('[ADD DOCUMENT][assembly] patch existing', { instanceKey, pages: doc?.pages?.length })
+                    if (process.env.NODE_ENV === 'development') {
+                      console.log('[ADD DOCUMENT][assembly] patch existing', { instanceKey, pages: doc?.pages?.length })
+                    }
                   } else {
-                    console.log('[ADD DOCUMENT][assembly] new', { instanceKey, pages: doc?.pages?.length, sourceDocId: doc?.sourceDocId })
+                    if (process.env.NODE_ENV === 'development') {
+                      console.log('[ADD DOCUMENT][assembly] new', { instanceKey, pages: doc?.pages?.length, sourceDocId: doc?.sourceDocId })
+                    }
                   }
                   sessionDocsTouched = true
                 }
@@ -894,11 +898,13 @@ export function useFileOps({ setFiles, settings, electronAPIRef }) {
                     if (!doc._pageKeys) doc._pageKeys = [fileObj.key]
                     addDocument(session.id, doc, { silent: true, source: 'fallback' })
                     sessionDocsTouched = true
-                    console.log('[ADD DOCUMENT][gate-reject]', {
-                      id: doc?.id || doc?.docId,
-                      effectiveDocId,
-                      reason: '闸门拒绝：缺少分页标识',
-                    })
+                    if (process.env.NODE_ENV === 'development') {
+                      console.log('[ADD DOCUMENT][gate-reject]', {
+                        id: doc?.id || doc?.docId,
+                        effectiveDocId,
+                        reason: '闸门拒绝：缺少分页标识',
+                      })
+                    }
                   }
                 }
               }
@@ -918,7 +924,9 @@ export function useFileOps({ setFiles, settings, electronAPIRef }) {
                 if (sealedDoc) {
                   const instanceKey = sealedDoc.invoiceDocumentId || sealedDoc.instanceId || sealedDoc.docId || sealedDoc.id
                   sealDocument(session.id, instanceKey)
-                  console.log('[SEAL DOCUMENT][assembly]', { invoiceDocumentId: sealedDoc.invoiceDocumentId, invDocId })
+                  if (process.env.NODE_ENV === 'development') {
+                    console.log('[SEAL DOCUMENT][assembly]', { invoiceDocumentId: sealedDoc.invoiceDocumentId, invDocId })
+                  }
                 }
               }
             }
@@ -944,11 +952,13 @@ export function useFileOps({ setFiles, settings, electronAPIRef }) {
                     if (!doc._pageKeys) doc._pageKeys = [fileObj.key]
                     addDocument(session.id, doc, { silent: true, source: 'fallback' })
                     sessionDocsTouched = true
-                    console.log('[ADD DOCUMENT][fallback]', {
-                      id: doc?.id || doc?.docId,
-                      pages: doc?.pages?.length,
-                      effectiveDocId,
-                    })
+                    if (process.env.NODE_ENV === 'development') {
+                      console.log('[ADD DOCUMENT][fallback]', {
+                        id: doc?.id || doc?.docId,
+                        pages: doc?.pages?.length,
+                        effectiveDocId,
+                      })
+                    }
                   }
                 }
               }
@@ -998,22 +1008,29 @@ export function useFileOps({ setFiles, settings, electronAPIRef }) {
     // 强制刷新所有待处理更新（hydration 结果），再后处理
     flushUpdates()
 
-    // 探针2+3：flush 后状态分布
+    // 探针：flush 后状态分布（计数用于完成提示，诊断输出仅开发环境）
     let successCount = 0
     let errorCount = 0
     setFiles((prev) => {
-      const dist = prev.reduce((a, f) => { a[f.status] = (a[f.status] || 0) + 1; return a }, {})
-      console.log('[ImportScale flush] 状态分布:', dist)
-      successCount = dist.parsed || 0
-      errorCount = dist.error || 0
-      const notDone = prev.filter(
-        (f) => f.status !== 'parsed' && f.status !== 'error' && f.status !== 'cancelled'
-      )
-      if (notDone.length > 0) {
-        console.warn(`[ImportScale before process] ${notDone.length} 个文件未到终态:`,
-          notDone.slice(0, 20).map(f => `${f.name}:${f.status}`))
+      if (process.env.NODE_ENV === 'development') {
+        const dist = prev.reduce((a, f) => { a[f.status] = (a[f.status] || 0) + 1; return a }, {})
+        console.log('[ImportScale flush] 状态分布:', dist)
+        successCount = dist.parsed || 0
+        errorCount = dist.error || 0
+        const notDone = prev.filter(
+          (f) => f.status !== 'parsed' && f.status !== 'error' && f.status !== 'cancelled'
+        )
+        if (notDone.length > 0) {
+          console.warn(`[ImportScale before process] ${notDone.length} 个文件未到终态:`,
+            notDone.slice(0, 20).map(f => `${f.name}:${f.status}`))
+        }
+      } else {
+        for (let i = 0; i < prev.length; i++) {
+          const s = prev[i].status
+          if (s === 'parsed') successCount++
+          else if (s === 'error') errorCount++
+        }
       }
-      // 排序交由 useSort 的 sortSig 变化检测自动触发
       return prev
     })
 

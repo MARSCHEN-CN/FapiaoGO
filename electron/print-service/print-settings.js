@@ -68,7 +68,7 @@ function resolveOrientationCommands(contentOrient, paperOrient, desiredRotation)
  * @param {number} [customPaper.heightMM]
  * @returns {'portrait'|'landscape'}
  */
-function getPaperOrientation(paperId, customPaper) {
+function getPaperShapeOrientation(paperId, customPaper) {
   if (!paperId || paperId === 'Custom') {
     // 自定义纸张：根据用户输入的宽高比判断
     if (customPaper && customPaper.widthMM > 0 && customPaper.heightMM > 0) {
@@ -238,4 +238,4 @@ function buildPrintSettings(ps) {
   return parts.join(',');
 }
 
-module.exports = { buildPrintSettings, normalize, resolveOrientationCommands, getPaperOrientation };
+module.exports = { buildPrintSettings, normalize, resolveOrientationCommands, getPaperShapeOrientation };

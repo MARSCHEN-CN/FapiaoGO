@@ -108,17 +108,32 @@ describe('resolveContentPlacement', () => {
   const A4_PORTRAIT = { widthMM: 210, heightMM: 297 }
   const LANDSCAPE_PAPER = { widthMM: 297, heightMM: 210 }
 
+  /**
+   * Commit 3（B2 修复）：needSwap 归一化 —— 从「纸型原生形状 + 用户请求方向」推导最终 physical paper。
+   * 这一步以前藏在 Resolver 内部（它同时相信几何 paperSize 和标签 paperOrientation），
+   * 现在明确成为调用方职责：requestedPaperOrientation → needSwap → physicalPaper。
+   * 归一化后 detectPaperOrientation(physicalPaper) 恒等于 requestedPaperOrientation，
+   * 因此 layoutRotation / renderRotation 与 Commit 3 之前完全一致。
+   */
+  function toPhysicalPaper(paperShape, requestedPaperOrientation) {
+    const shapeOrientation = paperShape.widthMM > paperShape.heightMM ? 'landscape' : 'portrait'
+    const needSwap = requestedPaperOrientation !== shapeOrientation
+    return needSwap
+      ? { widthMM: paperShape.heightMM, heightMM: paperShape.widthMM }
+      : { widthMM: paperShape.widthMM, heightMM: paperShape.heightMM }
+  }
+
   it('Case 1: 竖内容 + 竖纸 → fitRotation=0, finalRotation=0', () => {
     const r = resolveContentPlacement({
       contentPhysicalSize: { width: 1000, height: 1400 },
       contentRotation: 0,
-      paperSize: A4_PORTRAIT,
+      physicalPaper: A4_PORTRAIT,
       dpi: 300,
     })
     assert.equal(r.layoutRotation, 0)
     assert.equal(normalizeRotation(r.contentRotation + r.layoutRotation), 0)
     assert.equal(r.contentOrientation, 'portrait')
-    assert.equal(r.paperOrientation, 'portrait')
+    assert.equal(r.physicalPaperOrientation, 'portrait')
     // scale 应为正有限值（Commit 2-G-1 起允许 >1 放大填充安全区）
     assert.ok(r.scale > 0 && Number.isFinite(r.scale), 'scale 为正有限（可>1 放大）')
     // available 宽 = 2480-6mm*2 ≈ 2339px（默认 margin=3mm → 35px each side）
@@ -128,13 +143,13 @@ describe('resolveContentPlacement', () => {
     const r = resolveContentPlacement({
       contentPhysicalSize: { width: 1400, height: 1000 },
       contentRotation: 0,
-      paperSize: A4_PORTRAIT,
+      physicalPaper: A4_PORTRAIT,
       dpi: 300,
     })
     assert.equal(r.layoutRotation, -90)
     assert.equal(normalizeRotation(r.contentRotation + r.layoutRotation), 270)  // 0 + (-90) → 270
     assert.equal(r.contentOrientation, 'landscape')
-    assert.equal(r.paperOrientation, 'portrait')
+    assert.equal(r.physicalPaperOrientation, 'portrait')
   })
 
   it('Case 3: 竖内容 + 横纸 → layoutRotation=-90, finalRotation=270（Step 2 统一：方向不匹配统一 -90）', () => {
@@ -142,13 +157,13 @@ describe('resolveContentPlacement', () => {
     const r = resolveContentPlacement({
       contentPhysicalSize: { width: 1000, height: 1400 },
       contentRotation: 0,
-      paperSize: A4_LANDSCAPE,
+      physicalPaper: A4_LANDSCAPE,
       dpi: 300,
     })
     assert.equal(r.layoutRotation, -90)
     assert.equal(normalizeRotation(r.contentRotation + r.layoutRotation), 270)
     assert.equal(r.contentOrientation, 'portrait')
-    assert.equal(r.paperOrientation, 'landscape')
+    assert.equal(r.physicalPaperOrientation, 'landscape')
   })
 
   it('Case 4: contentRotation=90 竖内容 → 旋转后横内容 + 竖纸 → layoutRotation=-90, finalRotation=0', () => {
@@ -156,7 +171,7 @@ describe('resolveContentPlacement', () => {
     const r = resolveContentPlacement({
       contentPhysicalSize: { width: 1000, height: 1400 },  // 原始竖内容
       contentRotation: 90,
-      paperSize: A4_PORTRAIT,
+      physicalPaper: A4_PORTRAIT,
       dpi: 300,
     })
     assert.equal(r.contentRotation, 90)
@@ -170,13 +185,13 @@ describe('resolveContentPlacement', () => {
     const r = resolveContentPlacement({
       contentPhysicalSize: { width: 1400, height: 1000 },
       contentRotation: 0,
-      paperSize: A4_LANDSCAPE,
+      physicalPaper: A4_LANDSCAPE,
       dpi: 300,
     })
     assert.equal(r.layoutRotation, 0)
     assert.equal(normalizeRotation(r.contentRotation + r.layoutRotation), 0)
     assert.equal(r.contentOrientation, 'landscape')
-    assert.equal(r.paperOrientation, 'landscape')
+    assert.equal(r.physicalPaperOrientation, 'landscape')
   })
 
   it('Case 6: 安全边距 10mm → availableRect 缩小，大内容时 scale < 1', () => {
@@ -187,7 +202,7 @@ describe('resolveContentPlacement', () => {
     const r = resolveContentPlacement({
       contentPhysicalSize: { width: availableW * 2, height: availableH * 2 },  // 内容远大于安全区
       contentRotation: 0,
-      paperSize: A4_PORTRAIT,
+      physicalPaper: A4_PORTRAIT,
       margins: { left: 10, right: 10, top: 10, bottom: 10 },
       dpi: 300,
     })
@@ -206,7 +221,7 @@ describe('resolveContentPlacement', () => {
     const r = resolveContentPlacement({
       contentPhysicalSize: { width: 1000, height: 1400 },
       contentRotation: 0,
-      paperSize: A4_PORTRAIT,
+      physicalPaper: A4_PORTRAIT,
       dpi: 300,
     })
     assert.ok(r.offset.x >= r.availableRect.x)
@@ -225,7 +240,7 @@ describe('resolveContentPlacement', () => {
     const r = resolveContentPlacement({
       contentPhysicalSize: { width: 1400, height: 1000 },
       contentRotation: 90,  // 旋转后横内容
-      paperSize: A4_PORTRAIT,
+      physicalPaper: A4_PORTRAIT,
       dpi: 300,
     })
     const pxPerMm = 300 / 25.4
@@ -238,7 +253,7 @@ describe('resolveContentPlacement', () => {
     const r = resolveContentPlacement({
       contentPhysicalSize: { width: 1000, height: 1400 },  // 180 不交换尺寸
       contentRotation: 180,
-      paperSize: A4_PORTRAIT,
+      physicalPaper: A4_PORTRAIT,
       dpi: 300,
     })
     assert.equal(r.contentRotation, 180)
@@ -251,7 +266,7 @@ describe('resolveContentPlacement', () => {
     const r = resolveContentPlacement({
       contentPhysicalSize: { width: 1000, height: 1400 },  // 原始竖内容
       contentRotation: 270,
-      paperSize: A4_PORTRAIT,
+      physicalPaper: A4_PORTRAIT,
       dpi: 300,
     })
     assert.equal(r.contentRotation, 270)
@@ -263,7 +278,7 @@ describe('resolveContentPlacement', () => {
     assert.throws(() => resolveContentPlacement({
       contentPhysicalSize: { width: 0, height: 0 },
       contentRotation: 0,
-      paperSize: A4_PORTRAIT,
+      physicalPaper: A4_PORTRAIT,
     }), /contentPhysicalSize/)
   })
 
@@ -272,7 +287,7 @@ describe('resolveContentPlacement', () => {
     const r = resolveContentPlacement({
       contentPhysicalSize: { width: 1000, height: 1400 },
       contentRotation: 0,
-      paperSize: A4_PORTRAIT,
+      physicalPaper: A4_PORTRAIT,
       margins: { left: 3, right: 3, top: 3, bottom: 3 },
       dpi: 300,
     })
@@ -296,7 +311,7 @@ describe('resolveContentPlacement', () => {
     const r = resolveContentPlacement({
       contentPhysicalSize: { width: 1000, height: 1400 },  // 原始竖内容
       contentRotation: 90,
-      paperSize: A4_PORTRAIT,
+      physicalPaper: A4_PORTRAIT,
       margins: { left: 3, right: 3, top: 3, bottom: 3 },
       dpi: 300,
     })
@@ -314,7 +329,7 @@ describe('resolveContentPlacement', () => {
     const r = resolveContentPlacement({
       contentPhysicalSize: { width: 609, height: 394 },
       contentRotation: 0,
-      paperSize: A4_PORTRAIT,
+      physicalPaper: A4_PORTRAIT,
       margins: { left: 3, right: 3, top: 3, bottom: 3 },
       dpi: 300,
     })
@@ -341,12 +356,27 @@ describe('resolveContentPlacement', () => {
     assert.ok(Math.abs((maxY - minY) - r.placedRect.h) <= tol, 'bbox 高 = placedRect.h')
   })
 
-  it('rejects invalid paperSize', () => {
+  it('rejects invalid physicalPaper', () => {
     assert.throws(() => resolveContentPlacement({
       contentPhysicalSize: { width: 100, height: 100 },
       contentRotation: 0,
-      paperSize: {},
-    }), /paperSize/)
+      physicalPaper: {},
+    }), /physicalPaper/)
+  })
+
+  // Commit 3（B2 修复）契约守卫：Resolver 只接受单一可信纸张坐标系。
+  // 旧的「几何 paperSize + 方向标签 paperOrientation」双入参一律 fail-fast——
+  // 否则调用方在上游做过 needSwap 归一化后，又塞进一个可能与几何矛盾的标签，
+  // Resolver 会做第二次方向解释（正是 P0 横向纸张方向恒相反的根因之一）。
+  it('Commit3 契约：拒绝旧入参 paperSize / paperOrientation / requestedPaperOrientation', () => {
+    for (const legacyKey of ['paperSize', 'paperOrientation', 'requestedPaperOrientation', 'paperShapeOrientation']) {
+      assert.throws(() => resolveContentPlacement({
+        contentPhysicalSize: { width: 100, height: 100 },
+        contentRotation: 0,
+        physicalPaper: A4_PORTRAIT,
+        [legacyKey]: 'portrait',
+      }), new RegExp(legacyKey), `旧入参 ${legacyKey} 应被拒绝`)
+    }
   })
 
   // ── Step 2 Gate: 统一纸张匹配模型（用户旋转与纸张匹配严格分层）──
@@ -354,11 +384,11 @@ describe('resolveContentPlacement', () => {
     const r = resolveContentPlacement({
       contentPhysicalSize: { width: 1400, height: 1000 },  // 横向
       contentRotation: 0,
-      paperSize: LANDSCAPE_PAPER,  // 297×210 横向纸型
+      physicalPaper: LANDSCAPE_PAPER,  // 297×210 横向纸型
       dpi: 300,
     })
     assert.equal(r.contentOrientation, 'landscape')
-    assert.equal(r.paperOrientation, 'landscape')
+    assert.equal(r.physicalPaperOrientation, 'landscape')
     assert.equal(r.layoutRotation, 0)            // 有效横内容 == 横方向
     assert.equal(r.renderRotation, 0)            // normalize(0)
     assert.equal(r.renderRotation, r.layoutRotation)
@@ -368,12 +398,12 @@ describe('resolveContentPlacement', () => {
     const r = resolveContentPlacement({
       contentPhysicalSize: { width: 1400, height: 1000 },
       contentRotation: 0,
-      paperSize: LANDSCAPE_PAPER,
-      paperOrientation: 'portrait',  // 用户选纵向
+      // 用户选纵向 → 横形纸型需 swap → physicalPaper = 210×297
+      physicalPaper: toPhysicalPaper(LANDSCAPE_PAPER, 'portrait'),
       dpi: 300,
     })
     assert.equal(r.contentOrientation, 'landscape')
-    assert.equal(r.paperOrientation, 'portrait')
+    assert.equal(r.physicalPaperOrientation, 'portrait')
     assert.equal(r.layoutRotation, -90)  // 方向不匹配
     assert.equal(r.renderRotation, 270)
   })
@@ -382,11 +412,11 @@ describe('resolveContentPlacement', () => {
     const r = resolveContentPlacement({
       contentPhysicalSize: { width: 1400, height: 1000 },
       contentRotation: 0,
-      paperSize: A4_PORTRAIT,
+      physicalPaper: A4_PORTRAIT,
       dpi: 300,
     })
     assert.equal(r.contentOrientation, 'landscape')
-    assert.equal(r.paperOrientation, 'portrait')
+    assert.equal(r.physicalPaperOrientation, 'portrait')
     assert.equal(r.layoutRotation, -90)  // 有效横内容 ≠ 纵方向
     assert.equal(r.renderRotation, 270)  // normalize(-90)
   })
@@ -395,12 +425,12 @@ describe('resolveContentPlacement', () => {
     const r = resolveContentPlacement({
       contentPhysicalSize: { width: 1400, height: 1000 },
       contentRotation: 0,
-      paperSize: A4_PORTRAIT,
-      paperOrientation: 'landscape',  // 用户选横向
+      // 用户选横向 → 竖形纸型需 swap → physicalPaper = 297×210
+      physicalPaper: toPhysicalPaper(A4_PORTRAIT, 'landscape'),
       dpi: 300,
     })
     assert.equal(r.contentOrientation, 'landscape')
-    assert.equal(r.paperOrientation, 'landscape')
+    assert.equal(r.physicalPaperOrientation, 'landscape')
     assert.equal(r.layoutRotation, 0)  // 有效横内容 == 横方向
     assert.equal(r.renderRotation, 0)
   })

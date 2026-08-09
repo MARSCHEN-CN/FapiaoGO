@@ -93,7 +93,9 @@ function makeGroupKey(f) {
  *   - 非拆分页: 原 fileObj 引用不变（无 _isDocumentGroup 属性）
  */
 export function groupFilesByDocument(files) {
-  console.warn('[DEPRECATED] groupFilesByDocument: 仅允许 Render/Preview/Print，禁止 List/Store/Identity 用途。见 docs/invoice_entity_boundary.md §八。')
+  if (process.env.NODE_ENV === 'development') {
+    console.warn('[DEPRECATED] groupFilesByDocument: 仅允许 Render/Preview/Print，禁止 List/Store/Identity 用途。见 docs/invoice_entity_boundary.md §八。')
+  }
   if (!Array.isArray(files) || files.length === 0) return files || []
 
   // Pass 1: 收集严格满足多页条件的文件，按复合键分区

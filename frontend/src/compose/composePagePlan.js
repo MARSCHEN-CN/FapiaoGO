@@ -49,7 +49,7 @@ export function fileObjToComposePagePlan(item, index = 0, cs = null, forcedOrien
   const documentState = {
     pageSize: { w, h },
     pageOrientation: (w >= h) ? 'landscape' : 'portrait',
-    paperOrientation: forcedOrient,
+    requestedPaperOrientation: forcedOrient,
     rotation,
   }
 

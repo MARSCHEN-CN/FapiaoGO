@@ -302,10 +302,11 @@
 /* ======================== 4. Status Bar（状态区域） ======================== */
 .status-bar {
   flex-shrink: 0;
+  height: 40px;
   display: flex;
   align-items: center;
-  justify-content: flex-start; /* 改为 flex-start，配合 margin-left: auto 使用 */
-  padding: 4px 20px 6px;
+  justify-content: flex-start;
+  padding: 0 20px;
   position: relative;
   z-index: 5;
 }

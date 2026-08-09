@@ -23,8 +23,7 @@ for (const [name, paper] of Object.entries(PAPERS)) {
   const r = resolveContentPlacement({
     contentPhysicalSize: content,
     contentRotation: 0,
-    paperSize: paper,
-    paperOrientation: 'portrait',
+    physicalPaper: paper,
     margins,
     dpi: 300,
   })

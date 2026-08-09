@@ -25,7 +25,7 @@ const path = require('path');
 const fs = require('fs');
 const { detectPdfOrientation: _detectPdfOrientation } = require('../shared/pdf-orientation');
 const { EventEmitter } = require('events');
-const { resolveOrientationCommands, getPaperOrientation } = require('./print-settings');
+const { resolveOrientationCommands, getPaperShapeOrientation } = require('./print-settings');
 
 // detectPdfOrientation 委托到共享模块（带结果缓存，避免重复磁盘读）；
 // 保持原契约：MediaBox||CropBox，未知时默认 portrait
@@ -260,7 +260,7 @@ function decidePrintSpec(job) {
   }
 
   // 纸张方向由所选纸张的宽高比硬编码决定（如 A4 竖向、凭证纸 240×140 横向）
-  const orientation = getPaperOrientation(job.paperSize, job.customPaper);
+  const orientation = getPaperShapeOrientation(job.paperSize, job.customPaper);
 
   return {
     paper: paperName,

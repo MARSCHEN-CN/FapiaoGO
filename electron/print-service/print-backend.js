@@ -23,7 +23,7 @@ const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const { resolvePrintTarget } = require('./print-target');
-const { buildPrintSettings, getPaperOrientation } = require('./print-settings');
+const { buildPrintSettings, getPaperShapeOrientation } = require('./print-settings');
 const { enhanceWithCapability } = require('./printer-capability');
 const { detectPdfOrientation: _detectPdfOrientation } = require('../shared/pdf-orientation')
 
@@ -126,7 +126,7 @@ async function buildSumatraCommand(target, settings) {
 
   // 纸张方向由所选纸张的宽高比硬编码决定（如 A4 竖向、凭证纸 240×140 横向）
   if (contentOrient) {
-    normalizedSettings.paperOrientation = getPaperOrientation(
+    normalizedSettings.paperOrientation = getPaperShapeOrientation(
       normalizedSettings.paper,
       normalizedSettings.customPaper
     );

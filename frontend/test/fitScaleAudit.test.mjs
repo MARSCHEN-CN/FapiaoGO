@@ -35,8 +35,7 @@ for (const [name, paper] of Object.entries(PAPERS)) {
     const r = resolveContentPlacement({
       contentPhysicalSize: SMALL_LANDSCAPE,
       contentRotation: 0,
-      paperSize: paper,
-      paperOrientation: 'portrait',
+      physicalPaper: paper,
       margins: MARGIN_10,
       dpi: DPI,
     })
@@ -55,8 +54,7 @@ test('Gate A: A4 横票(1180×825) + A4 竖纸 + 10mm → fitRotation=-90, scale
   const r = resolveContentPlacement({
     contentPhysicalSize: SMALL_LANDSCAPE,
     contentRotation: 0,
-    paperSize: PAPERS.A4,
-    paperOrientation: 'portrait',
+    physicalPaper: PAPERS.A4,
     margins: MARGIN_10,
     dpi: DPI,
   })
@@ -88,8 +86,7 @@ test('Gate B: 大票(300×400mm) + A5 0边距 → scale<1, 缩小仍不越安全
   const r = resolveContentPlacement({
     contentPhysicalSize: big,
     contentRotation: 0,
-    paperSize: PAPERS.A5,
-    paperOrientation: 'portrait',
+    physicalPaper: PAPERS.A5,
     margins: { left: 0, right: 0, top: 0, bottom: 0 },
     dpi: DPI,
   })
@@ -110,8 +107,7 @@ test('Gate C: content == availableRect → scale ≈ 1', () => {
   const r = resolveContentPlacement({
     contentPhysicalSize: { width: paperW, height: paperH }, // portrait，正好=available
     contentRotation: 0,
-    paperSize: PAPERS.A5,
-    paperOrientation: 'portrait',
+    physicalPaper: PAPERS.A5,
     margins: { left: 0, right: 0, top: 0, bottom: 0 },
     dpi: DPI,
   })
@@ -129,8 +125,7 @@ test('保护: contentPhysicalSize 含 0 → 抛错（无 Infinity 泄漏）', ()
     () => resolveContentPlacement({
       contentPhysicalSize: { width: 0, height: 0 },
       contentRotation: 0,
-      paperSize: PAPERS.A4,
-      paperOrientation: 'portrait',
+      physicalPaper: PAPERS.A4,
       margins: MARGIN_10,
       dpi: DPI,
     }),
@@ -146,8 +141,7 @@ test('架构约束: RotationResolver.scale 仅供 PrintPreview/PrintService（Vi
   const r = resolveContentPlacement({
     contentPhysicalSize: SMALL_LANDSCAPE,
     contentRotation: 0,
-    paperSize: PAPERS.A3,
-    paperOrientation: 'portrait',
+    physicalPaper: PAPERS.A3,
     margins: MARGIN_10,
     dpi: DPI,
   })

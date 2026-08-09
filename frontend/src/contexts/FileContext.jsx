@@ -71,10 +71,33 @@ export function FileProvider({ children }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId, storeSnap])
 
-  const documentView = useMemo(
-    () => buildDocumentViewModel(files, invoiceDocs),
-    [files, invoiceDocs],
-  )
+  // ── P1-C: documentView 内容签名缓存 ──
+  // 排序仅改变 files 数组顺序时，buildDocumentViewModel 的输出内容完全相同
+  // （duplicateGroups 以 invoiceNumber 为键，统计值与顺序无关）。
+  // 通过 order-invariant 签名跳过重复计算，消除第二轮渲染中的 O(n) 重建。
+  const documentViewCache = useRef({ sig: '', result: null })
+
+  const documentView = useMemo(() => {
+    const fileSig = files.length
+      ? files.map(f =>
+          [f.key, f.status, f.invoiceDate || '', f.amount || '',
+           f.invoiceNumber || '', f.docId || '', f.totalPages || '', f.pageNum || '']
+          .join('|')
+        ).sort().join('‖')
+      : ''
+    const docsSig = Array.isArray(invoiceDocs) && invoiceDocs.length
+      ? invoiceDocs.map(d => d.key).sort().join('‖')
+      : ''
+    const combinedSig = fileSig + '#' + docsSig
+
+    if (combinedSig === documentViewCache.current.sig) {
+      return documentViewCache.current.result
+    }
+
+    const result = buildDocumentViewModel(files, invoiceDocs)
+    documentViewCache.current = { sig: combinedSig, result }
+    return result
+  }, [files, invoiceDocs])
 
   // ── P1-A: 稳定派生数据引用（排序仅改变顺序时复用旧 Map 引用，减少 FileCardRow 重渲染） ──
   // 当排序只改变文件顺序（不改变内容）时，previousYearInfo / duplicatePageInfo /

@@ -952,8 +952,8 @@ button.pc-btn.outline,
 
 /* ===== 新版打印确认弹窗（3:2 左右分栏） ===== */
 .pcm-panel--new {
-  width: 960px;
-  height: 690px;
+  width: min(1100px, 94vw);
+  height: min(800px, 92vh);
   max-width: 94vw;
   max-height: 92vh;
   flex-direction: column;
@@ -1041,14 +1041,14 @@ button.pc-btn.outline,
   flex-direction: column;
   gap: 8px;
 }
-/* 纸面区：占满 stage 剩余空间并居中（超高可滚动）。
+/* 纸面区：占满 stage 剩余空间并居中（不滚动，纸面等比完整显示）。
    纸张横竖切换只改变本区内容，不影响底部页码条位置 */
 .pcm-preview-page {
   flex: 1;
   min-height: 0;
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: 8px;
-  overflow: auto;
+  overflow: hidden;
   width: 100%; /* 撑满容器宽：纸面宽度随容器自适应 */
 }
 /* 纸面 SVG：无底色无阴影（viewBox 透明，纯粹显示打印内容 + 安全边距线条）；
@@ -1056,8 +1056,7 @@ button.pc-btn.outline,
 .pcm-preview-page svg {
   display: block;
   width: 100%;
-  height: auto;
-  flex-shrink: 0;
+  height: 100%;
 }
 /* 页码控制（stage 底部固定：高度恒定、始终渲染——单页显示 1/1 禁用态，多页翻页/输入跳转。
    按钮统一 28px（page-nav-btn），不抖动不塌陷） */

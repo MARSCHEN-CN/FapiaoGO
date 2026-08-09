@@ -538,10 +538,19 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
       const contentRotation = fileRotations[f.key] || 0
       const rotated = resolveContentBounds(dims, contentRotation)
       try {
+        // ⚠️ 已知缺陷（Commit 3 之前就存在，本次**刻意不修**，见 Issue P11）：
+        //   1. 入参写的是 `contentSize`，而 Resolver 契约要求 `contentPhysicalSize`
+        //      → 每次调用都在校验处抛错 → 被下面的 catch 静默吞掉
+        //      → `placements` 恒为 {}，本 useMemo 实为死代码。
+        //   2. 这里的 paperSize 是**未经 needSwap 归一化的原生纸型**（settings.customPaper / A4 默认），
+        //      并非 physical paper。修复第 1 点时必须同时补上
+        //      `requestedPaperOrientation → needSwap → physicalPaper` 归一化，
+        //      否则会把 B1 的老 bug 原样带回 Canvas/打印路径。
+        //   按 bisect 纪律：一个问题一个 commit，此处仅同步 Commit 3 的入参改名。
         result[f.key] = resolveContentPlacement({
           contentSize: rotated,
           contentRotation,
-          paperSize,
+          physicalPaper: paperSize,
           margins,
           dpi: PREVIEW_DPI,
         })

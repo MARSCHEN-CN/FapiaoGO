@@ -50,12 +50,14 @@ const A4_LANDSCAPE = { widthMM: 297, heightMM: 210 } // PrintPreviewModel 对 la
 
 const MARGINS = { left: 3, right: 3, top: 3, bottom: 3 }
 
-function run(label, contentPx, paperSize, paperOrientation, contentRotation = 0) {
+// Commit 3（B2 修复）：Resolver 只收 physicalPaper。此处传入的 A4_PORTRAIT / A4_LANDSCAPE
+// 本就是 PrintPreviewModel 交换 W/H 之后的最终物理纸张（见常量注释），且 paperOrientation 恒等于
+// 其几何形状，故丢弃标签为零行为变化。第 4 参保留仅为不改动调用实参位置，实际已被忽略。
+function run(label, contentPx, physicalPaper, _paperOrientation, contentRotation = 0) {
   const r = resolveContentPlacement({
     contentPhysicalSize: { width: contentPx.width, height: contentPx.height },
     contentRotation,
-    paperSize,
-    paperOrientation,
+    physicalPaper,
     margins: MARGINS,
     dpi: PREVIEW_DPI,
   })

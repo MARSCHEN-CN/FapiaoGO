@@ -24,7 +24,7 @@ const margins = { left: 3, right: 3, top: 3, bottom: 3 }
 test('T1 纯数学：横票+contentRotation=0+A4竖纸+纵方向 → layoutRotation=-90, renderRotation=270(≡-90)', () => {
   const r = resolveContentPlacement({
     contentPhysicalSize: LAND_FILE, contentRotation: 0,
-    paperSize: A4, paperOrientation: 'portrait', margins,
+    physicalPaper: A4, margins,
   })
   assert.equal(r.contentOrientation, 'landscape', '有效内容方向=横(用户未旋转)')
   assert.equal(r.layoutRotation, -90, 'layoutRotation = 有效内容方向 vs 用户方向')
@@ -34,7 +34,7 @@ test('T1 纯数学：横票+contentRotation=0+A4竖纸+纵方向 → layoutRotat
 test('T2 纯数学：横票+A4竖纸+切横方向 → layoutRotation=0（有效横内容==横方向）', () => {
   const r = resolveContentPlacement({
     contentPhysicalSize: LAND_FILE, contentRotation: 0,
-    paperSize: A4, paperOrientation: 'landscape', margins,
+    physicalPaper: A4, margins,
   })
   assert.equal(r.contentOrientation, 'landscape')
   assert.equal(r.layoutRotation, 0, '有效横内容 + 横方向 → 匹配')
@@ -44,7 +44,7 @@ test('T2 纯数学：横票+A4竖纸+切横方向 → layoutRotation=0（有效�
 test('T3a 纯数学：横纸型+横票+横方向 → layoutRotation=0, renderRotation=0（Step 2 统一模型：有效横内容==横方向）', () => {
   const r = resolveContentPlacement({
     contentPhysicalSize: LAND_FILE, contentRotation: 0,
-    paperSize: A4L, paperOrientation: 'landscape', margins,
+    physicalPaper: A4L, margins,
   })
   assert.equal(r.contentOrientation, 'landscape')
   assert.equal(r.layoutRotation, 0)
@@ -54,7 +54,7 @@ test('T3a 纯数学：横纸型+横票+横方向 → layoutRotation=0, renderRot
 test('T3b 纯数学：横纸型+横票+切纵方向 → layoutRotation=-90, renderRotation=270（Step 2：有效横内容≠纵方向）', () => {
   const r = resolveContentPlacement({
     contentPhysicalSize: LAND_FILE, contentRotation: 0,
-    paperSize: A4L, paperOrientation: 'portrait', margins,
+    physicalPaper: A4L, margins,
   })
   assert.equal(r.contentOrientation, 'landscape')
   assert.equal(r.layoutRotation, -90)
@@ -96,7 +96,7 @@ test('情况B 守卫：Resolver 对原始 609×394 + contentRotation=90 → 单�
   const r = resolveContentPlacement({
     contentPhysicalSize: { width: 609, height: 394 },
     contentRotation: 90,
-    paperSize: A4, paperOrientation: 'portrait', margins,
+    physicalPaper: A4, margins,
   })
   assert.equal(r.contentRotation, 90)
   assert.equal(r.effectiveContentSize.width, 394, '单次旋转：609×394 → 394×609')
@@ -105,7 +105,7 @@ test('情况B 守卫：Resolver 对原始 609×394 + contentRotation=90 → 单�
   const bad = resolveContentPlacement({
     contentPhysicalSize: { width: 394, height: 609 },
     contentRotation: 90,
-    paperSize: A4, paperOrientation: 'portrait', margins,
+    physicalPaper: A4, margins,
   })
   assert.equal(bad.effectiveContentSize.width, 609, '双旋转会得到 609×394（错误样例，印证 model 必须传原始尺寸）')
 })

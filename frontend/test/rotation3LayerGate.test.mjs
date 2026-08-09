@@ -53,13 +53,15 @@ function intendedLayout(contentOrientation, paperShapeOrientation, paperOrientat
   throw new Error('PENDING-UI: 竖票+横纸型 待 UI 验证')
 }
 
-/** 调 resolver 取 layoutRotation（不改源码，仅读取） */
-function layoutOf(contentPhysicalSize, contentRotation, paperSize, paperOrientation) {
+/** 调 resolver 取 layoutRotation（不改源码，仅读取）
+ *  Commit 3：Resolver 只收 physicalPaper，方向自几何派生。
+ *  第 4 参 _paperOrientation 保留仅为不改调用方位置实参——它在 Commit 1-A 改名后
+ *  就已被 Resolver 静默忽略（本 Gate 实际一直是纯几何驱动），故此处行为零变化。 */
+function layoutOf(contentPhysicalSize, contentRotation, physicalPaper, _paperOrientation) {
   const r = resolveContentPlacement({
     contentPhysicalSize,
     contentRotation,
-    paperSize,
-    paperOrientation,
+    physicalPaper,
     dpi: 300,
   })
   return r.layoutRotation
@@ -127,7 +129,7 @@ test.todo('M8 [PENDING-UI] 竖票 + 横纸型 + 横向 → 符号待 UI 验证�
 // ════════════════════════════════════════════════════════════════
 
 test('C1 [UI-PROVEN] 横票+横纸型+纵向 cr=0 → final=-90（content 单次 + layout）', () => {
-  const r = resolveContentPlacement({ contentPhysicalSize: LAND_CONTENT, contentRotation: 0, paperSize: LAND_PAPER, paperOrientation: 'portrait', dpi: 300 })
+  const r = resolveContentPlacement({ contentPhysicalSize: LAND_CONTENT, contentRotation: 0, physicalPaper: LAND_PAPER, dpi: 300 })
   assert.equal(r.contentOrientation, 'landscape') // ECO 正确物化
   assert.equal(r.layoutRotation, -90)             // 横纸型+纵向 → -90（UI 实测 2026-08-07 第二轮）
   assert.equal(norm(r.contentRotation + r.layoutRotation), 270) // 0 + (-90) = -90 ≡ 270

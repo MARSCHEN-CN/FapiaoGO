@@ -21,7 +21,7 @@ import { resolvePaper } from './layout/resolvePaper.js'
  * @property {number}   pageCount        - 总页数
  * @property {Size}     pageSize         - 文档原始像素尺寸
  * @property {'landscape'|'portrait'} pageOrientation - 文档原始方向（天然），由 getDocNaturalOrientation 推导
- * @property {'landscape'|'portrait'} [paperOrientation] - 【Page Placement Pipeline Fact】有效纸张方向（用户可控）；缺省回落 pageOrientation
+ * @property {'landscape'|'portrait'} [requestedPaperOrientation] - 【Page Placement Pipeline Fact】有效纸张方向（用户可控）；缺省回落 pageOrientation
  * @property {0|90|180|270} [contentRotation] - 【Page Placement Pipeline Fact】内容旋转角（用户可控）；缺省回落 legacy rotation
  * @property {number}   rotation         - [LEGACY] 文件级旋转（/Rotate 或预览旋转），°；最终旋转改用 contentRotation（本字段仅作 legacy 回落兼容，新代码勿依赖）
  * @property {'pdf'|'ofd'|'image'} sourceType - 文档类型

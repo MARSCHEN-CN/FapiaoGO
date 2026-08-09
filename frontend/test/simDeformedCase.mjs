@@ -18,8 +18,8 @@ function run(label, file, paperKey) {
   const r = resolveContentPlacement({
     contentPhysicalSize: file.contentPx,
     contentRotation: file.contentRotation,
-    paperSize: { widthMM: paper.widthMM, heightMM: paper.heightMM },
-    paperOrientation: paper.orientation,
+    // Commit 3：Resolver 只收 physicalPaper；paper.orientation 恒等于 paper 的几何形状，丢弃标签零变化
+    physicalPaper: { widthMM: paper.widthMM, heightMM: paper.heightMM },
     margins: MARGIN,
     dpi: 300,
   })

@@ -74,6 +74,11 @@ export function useSort(setFiles, files, duplicatePageInfo, previousYearInfo) {
 
   // 统一排序触发：sortBy/sortOrder 变化 或 排序相关字段变化（新文件导入/删除/字段修改）
   useEffect(() => {
+    // 文件列表清空时重置签名，防止清空后重新导入相同文件时签名匹配导致跳过排序
+    if (!files.length) {
+      lastSortedSigRef.current = ''
+      return
+    }
     const combinedSig = `${sortBy}|${sortOrder}|${sortSig}`
     if (!sortSig || combinedSig === lastSortedSigRef.current) return
 
