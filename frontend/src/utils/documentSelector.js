@@ -41,7 +41,28 @@ import { groupFilesByDocument, groupFilesByInstance } from './groupDocuments.js'
  */
 export function selectDocumentRows({ invoiceDocs, files, filteredFiles, isSearching }) {
   if (!isSearching && Array.isArray(invoiceDocs) && invoiceDocs.length > 0) {
-    return invoiceDocs
+    // 按 files 顺序重排 invoiceDocs：使 UI 文件列表顺序 = 用户排序后的 files 顺序。
+    // invoiceDocs 来自装配管线（documentView.documents），其顺序不一定反映 files 的当前排序。
+    // 为每个文档找到其在 files 中首个出现页的位置，按该位置排序。
+    const orderMap = new Map()
+    for (let i = 0; i < (files?.length || 0); i++) {
+      const f = files[i]
+      if (!f) continue
+      const id = f.docId || f.sourceDocId
+      if (id && !orderMap.has(id)) {
+        orderMap.set(id, i)
+      }
+      // 同时按 file key 映射（单页文件可能无 docId/sourceDocId）
+      if (f.key && !orderMap.has(f.key)) {
+        orderMap.set(f.key, i)
+      }
+    }
+    const sorted = [...invoiceDocs].sort((a, b) => {
+      const posA = orderMap.get(a.documentId) ?? orderMap.get(a.key) ?? Infinity
+      const posB = orderMap.get(b.documentId) ?? orderMap.get(b.key) ?? Infinity
+      return posA - posB
+    })
+    return sorted
   }
   const source = isSearching ? (filteredFiles || files) : files
   // 修复：使用更强的分组逻辑（instanceId + sourceDocId）作为首选降级方案
