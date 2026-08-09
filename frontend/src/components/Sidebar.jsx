@@ -1,6 +1,6 @@
 import React, { useMemo, useRef, useCallback, useEffect, useState } from 'react'
 import { isMergeMode, resolveStatsMode, getElectronAPI } from '../utils'
-import { groupFilesByDocument } from '../utils/groupDocuments'
+import { selectDocumentRows } from '../utils/documentSelector'
 import { useFileContext } from '../contexts/FileContext'
 import { PUBLIC_BASE, APP_VERSION } from '../config'
 import FileList from './FileList'
@@ -105,10 +105,7 @@ export default React.memo(function Sidebar({
   // 搜索态 / 无装配结果 / 覆盖不完整时回退 groupFilesByDocument，
   // 防止 silent data loss（Document 聚合遗漏 page keys）。
   const displayFiles = useMemo(() => {
-    if (!isSearching && documentView?.documents?.length && documentView?.coverage?.complete) {
-      return documentView.documents
-    }
-    return groupFilesByDocument(isSearching ? filteredFiles : files)
+    return selectDocumentRows({ invoiceDocs: documentView?.documents, files, filteredFiles, isSearching })
   }, [isSearching, filteredFiles, files, documentView])
 
   // ── 统计区动画：仅值变化时触发 countPop ──
