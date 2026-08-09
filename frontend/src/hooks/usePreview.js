@@ -607,9 +607,11 @@ export function usePreview({ files, settings, electronAPIRef }) {
         if (fd?.success) {
           previewFile._pdfData = new Uint8Array(fd.data)
           console.log('[DIAG-9 pdfData loaded] size=%d for canvas rotation render', previewFile._pdfData.length)
-          // 触发重渲染：修改 previewFile 的引用不会自动触发 React update，
-          // 需要通过 setFiles 或 forceUpdate 机制。此处用 state trick。
-          setPreviewRenderVersion(v => v + 1)  // 触发 render effect 重跑
+          // 🔧 触发重渲染：previewFile._pdfData 是直接 mutation，不触发 React。
+          //    旧写法 setPreviewRenderVersion(v+1) 依赖 render effect 的 previewRenderVersion 依赖
+          //    → 渲染完成又 setPreviewRenderVersion → 无限循环（rotation≠0 Canvas 路径必现）。
+          //    改用 setPreviewFile 新引用：render effect 依赖 previewFile → 重跑一次，且不会自触发。
+          setPreviewFile(prev => (prev ? { ...prev } : prev))
         }
       } catch (e) {
         if (!cancelled) console.warn('[DIAG-9 pdfData load failed]', e.message)
@@ -1020,7 +1022,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
   }, [previewFile, mergePair, settings.paperSize, currentRotation, fileRotations, settings.mergeMode,
       settings.marginLeft, settings.marginRight, settings.marginTop, settings.marginBottom,
       settings.customPaper?.widthMM, settings.customPaper?.heightMM, reBlockedDocId,
-      renderCommand, renderCommandReady, previewRenderVersion])
+      renderCommand, renderCommandReady])
 
   // ResizeObserver ✅ 使用 requestAnimationFrame 节流，避免频繁重绘
   // 补充 window resize 监听：当浏览器窗口大小变化时，ResizeObserver
