@@ -839,6 +839,16 @@ export function usePreview({ files, settings, electronAPIRef }) {
     if (!reRotateSupported) {
       console.log('[DIAG-8 canvas fallback] contentRotation=%d → skipping RE, using Canvas render', previewRotation)
     }
+    // ══════════════════════════════════════════════════════════════
+    // [DIAG-X2] 实际渲染路径决策（accounting for reRotateSupported）
+    // ══════════════════════════════════════════════════════════════
+    const actualRE = hasRenderEngineUrl && reBlockedDocId !== previewFile.docId && reRotateSupported
+    console.log('[DIAG-X2 ACTUAL] file=', previewFile?.name,
+      '| actualPath=', actualRE ? (skipRenderRef.current ? 'RE(L2hit)' : 'RE(probe)') : 'Canvas',
+      '| hasREurl=', hasRenderEngineUrl, '| reRotateOk=', reRotateSupported,
+      '| rotation=', previewRotation, '| paperLandscape=', previewSpec?.paperLandscape,
+      '| contentRotation=', previewSpec?.contentRotation,
+      '| placement=', previewSpec?.placement)
     if (hasRenderEngineUrl && reBlockedDocId !== previewFile.docId && reRotateSupported) {
       const url = reUrl
       renderEngineUrlRef.current = url
