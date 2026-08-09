@@ -380,6 +380,7 @@ const PrintConfirmModal = ({
             <div className="pcm-preview-body">
               <PrintPreviewCanvas
                 preview={previewModel}
+                grayscale={settings.grayscale || false}
                 marginSettings={{
                   left: settings.marginLeft ?? 3,
                   right: settings.marginRight ?? 3,

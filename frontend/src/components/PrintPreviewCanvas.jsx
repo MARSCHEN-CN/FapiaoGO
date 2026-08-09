@@ -118,7 +118,7 @@ const SlotImage = memo(({ slot }) => {
                 y="0"
                 width={t.contentBoxWidth}
                 height={t.contentBoxHeight}
-                preserveAspectRatio="none"
+                preserveAspectRatio="xMidYMid meet"
                 style={{
                   opacity: loaded ? 1 : 0,
                   transition: 'opacity 0.2s ease-in',
@@ -332,7 +332,7 @@ const PreviewPageNav = ({ current, total, onPrev, onNext, onJump }) => {
 /**
  * 主预览画布
  */
-const PrintPreviewCanvas = memo(({ preview, marginSettings }) => {
+const PrintPreviewCanvas = memo(({ preview, marginSettings, grayscale = false }) => {
   const [current, setCurrent] = useState(0)
   const initialized = useRef(false)
 
@@ -396,6 +396,7 @@ const PrintPreviewCanvas = memo(({ preview, marginSettings }) => {
           viewBox={`0 0 ${widthMM} ${heightMM}`}
           width="100%"
           role="img"
+          style={grayscale ? { filter: 'grayscale(100%)' } : undefined}
           aria-label={`打印预览：${page.paper} ${ORIENT_LABEL[page.requestedPaperOrientation] || ''} ${slotCount} 票`}
         >
           {/* 纸张背景（白底模拟纸面；viewBox 画布本身透明） */}
