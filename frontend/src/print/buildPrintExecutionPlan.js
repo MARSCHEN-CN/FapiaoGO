@@ -107,21 +107,25 @@ function makeSourceGroupKey(f) {
 export function normalizePrintSources(files) {
   if (!Array.isArray(files) || files.length === 0) return files || []
 
-  // Pass 1: 按 source identity 分组
+  // Pass 1: 按 source identity 分组，同时记录每个分组/文件在原始数组中的首个位置
   const sourceGroups = new Map()
   const nonMultiPageFiles = []
 
+  let globalIndex = 0
+
   for (const f of files) {
-    if (!f) continue
+    if (!f) { globalIndex++; continue }
 
     if (!isMultiPageDocumentFile(f)) {
-      nonMultiPageFiles.push(f)
+      nonMultiPageFiles.push({ file: f, index: globalIndex })
+      globalIndex++
       continue
     }
 
     const groupKey = makeSourceGroupKey(f)
     if (!groupKey) {
-      nonMultiPageFiles.push(f)
+      nonMultiPageFiles.push({ file: f, index: globalIndex })
+      globalIndex++
       continue
     }
 
@@ -132,6 +136,7 @@ export function normalizePrintSources(files) {
         totalPages: f.totalPages,
         pages: [],
         seenPageNums: new Set(),
+        firstIndex: globalIndex,   // Bug A-1: 按首个出现位置保持原始文件列表顺序
       }
       sourceGroups.set(groupKey, group)
     }
@@ -141,12 +146,13 @@ export function normalizePrintSources(files) {
       group.seenPageNums.add(f.pageNum)
       group.pages.push(f)
     }
+    globalIndex++
   }
 
-  // Pass 2: 构建结果
-  const result = []
+  // Pass 2: 构建结果，按 firstIndex/index 排序以保持原始文件列表顺序
+  const items = []
 
-  // 添加多页文档（完整选择 → 聚合为 source 目标）
+  // 多页文档（完整选择 → 聚合为 source 目标；部分选择 → 逐页）
   for (const [key, group] of sourceGroups) {
     // 按页码排序
     group.pages.sort((a, b) => (a.pageNum ?? 0) - (b.pageNum ?? 0))
@@ -156,28 +162,33 @@ export function normalizePrintSources(files) {
     if (isCompleteSelection) {
       // 完整选择：聚合为单个 source 打印目标
       const representative = group.pages[0]
-      result.push({
-        ...representative,
-        key: `__source_${key}`,  // 唯一标识
-        _sourceGroupKey: key,
-        _isAggregatedSource: true,
-        _aggregatedPages: group.pages,
-        _aggregatedPageCount: group.pages.length,
+      items.push({
+        index: group.firstIndex,
+        file: {
+          ...representative,
+          key: `__source_${key}`,  // 唯一标识
+          _sourceGroupKey: key,
+          _isAggregatedSource: true,
+          _aggregatedPages: group.pages,
+          _aggregatedPageCount: group.pages.length,
+        },
       })
     } else {
-      // 部分选择：保持逐页模式
+      // 部分选择：保持逐页模式，位置在分组首出现处
       for (const page of group.pages) {
-        result.push(page)
+        items.push({ index: group.firstIndex, file: page })
       }
     }
   }
 
-  // 添加非多页文件
-  for (const f of nonMultiPageFiles) {
-    result.push(f)
+  // 非多页文件
+  for (const { file, index } of nonMultiPageFiles) {
+    items.push({ index, file })
   }
 
-  return result
+  // 按原始位置排序 → 保持文件列表顺序
+  items.sort((a, b) => a.index - b.index)
+  return items.map((item) => item.file)
 }
 
 /**

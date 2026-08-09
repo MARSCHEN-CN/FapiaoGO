@@ -298,3 +298,47 @@ test('Case 13: createPrintPlanInput 在 merge 模式下跳过 normalizePrintSour
     assert.equal(f._isAggregatedSource, undefined, 'merge 模式下不应该有聚合标记')
   }
 })
+
+// ── Bug A-1: 页序随文件列表 ──
+
+test('Case 14 (Bug A-1): 单页文件在前 → 保持在前', () => {
+  // [B, A_p1, A_p2] → B 应在 A 前面
+  const single = createMockPage({
+    key: 'B', instanceId: undefined, sourceDocId: undefined,
+    totalPages: 1, pageNum: null,
+  })
+  const multi = [
+    createMockPage({ instanceId: 'inst-A', sourceDocId: 'docA', pageNum: 0, totalPages: 2, key: 'A_p1' }),
+    createMockPage({ instanceId: 'inst-A', sourceDocId: 'docA', pageNum: 1, totalPages: 2, key: 'A_p2' }),
+  ]
+
+  const result = normalizePrintSources([single, ...multi])
+  assert.equal(result.length, 2, '1 单页 + 1 聚合 = 2')
+
+  // 单页文件应排在第一位
+  assert.equal(result[0].key, 'B', 'B 应在第 1 位')
+  assert.ok(result[1]._isAggregatedSource, 'A 聚合源应在第 2 位')
+})
+
+test('Case 15 (Bug A-1): 单页文件夹在两个多页文档之间 → 保持中间位置', () => {
+  // [A_p1,A_p2, B, C_p1,C_p2] → 顺序 = A, B, C
+  const docA = [
+    createMockPage({ instanceId: 'inst-A', sourceDocId: 'docA', pageNum: 0, totalPages: 2, key: 'A_p1' }),
+    createMockPage({ instanceId: 'inst-A', sourceDocId: 'docA', pageNum: 1, totalPages: 2, key: 'A_p2' }),
+  ]
+  const single = createMockPage({
+    key: 'B', instanceId: undefined, sourceDocId: undefined,
+    totalPages: 1, pageNum: null,
+  })
+  const docC = [
+    createMockPage({ instanceId: 'inst-C', sourceDocId: 'docC', pageNum: 0, totalPages: 2, key: 'C_p1' }),
+    createMockPage({ instanceId: 'inst-C', sourceDocId: 'docC', pageNum: 1, totalPages: 2, key: 'C_p2' }),
+  ]
+
+  const result = normalizePrintSources([...docA, single, ...docC])
+  assert.equal(result.length, 3, 'A 聚合 + B 单页 + C 聚合 = 3')
+
+  assert.ok(result[0]._isAggregatedSource, 'A 聚合源应在第 1 位')
+  assert.equal(result[1].key, 'B', 'B 单页应在第 2 位（保持在 A 和 C 之间）')
+  assert.ok(result[2]._isAggregatedSource, 'C 聚合源应在第 3 位')
+})
