@@ -375,8 +375,11 @@ export function usePreview({ files, settings, electronAPIRef }) {
     }
     // 持久化 contentRotation（纸张方向 Fact 之一），requestedPaperOrientation 取当前 Fact
     // 4.1.5：写入键严格用 Document 身份 docId，不回退 path/key（uiKey 永不入持久层）
-    const f = previewFileRef.current
-    const factKey = f?.identity?.docId || f?.docId
+    // 🔧 修复（2026-08-09）：factKey 必须取「旋转目标文件」而非 previewFileRef.current——
+    //    从文件列表旋转非当前预览文件时，旧逻辑把旋转值写到当前预览文件的 docId 下，
+    //    污染其持久层记录（contentRotation 残留 90 的根因）。
+    const target = filesRef.current.find(f => f.key === key) || previewFileRef.current
+    const factKey = target?.identity?.docId || target?.docId
     if (!factKey) return
     const api = electronAPIRef.current
     if (!api) return
