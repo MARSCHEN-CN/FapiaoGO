@@ -140,7 +140,13 @@ class InvoiceParseCoordinator:
 
     @staticmethod
     def _extract_page(pdf_bytes: bytes, page_index: int) -> bytes:
-        """从 PDF 中提取单页为独立 PDF bytes"""
+        """从 PDF 中提取单页为独立 PDF bytes
+
+        [M1-c · frozen] page_index = 0-based RENDER/PHYSICAL locator (fitz
+        insert_pdf from_page/to_page); NOT Source Identity; no ±1 conversion.
+        The +1 seen elsewhere is only a human-facing file label, not a locator
+        transform.
+        """
         doc = fitz.open(stream=pdf_bytes, filetype='pdf')
         try:
             new_doc = fitz.open()

@@ -52,7 +52,7 @@ _INVOICE_CODE_RE = re.compile(
 @dataclass
 class PageInfo:
     """单页提取结果（纯数据，不含业务判定）"""
-    page_index: int                       # 页序（0-based）
+    page_index: int                       # [M1-c · frozen] 0-based RENDER/PHYSICAL locator (fitz idx); NOT Source Identity; no ±1 conversion
     invoice_number: Optional[str] = None  # 发票号码（文字层提取）
     invoice_code: Optional[str] = None    # 发票代码
     declared_page: Optional[int] = None   # "第M页"中的 M
