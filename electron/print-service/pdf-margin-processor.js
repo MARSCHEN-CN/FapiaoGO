@@ -32,7 +32,8 @@ const ENV_CHECK_TTL = 30_000    // 环境检查缓存有效期
 
 // ⚠️ DEBUG 开关：开启后边距处理后的 PDF 会复制一份到桌面，便于人工验证
 // 打印文件名格式: margin_debug_<时间戳>_L<left>R<right>T<top>B<bottom>.pdf
-const DEBUG_SAVE_TO_DESKTOP = true
+// 契约 §8.1：默认必须为 false（不得默认往用户桌面写文件）
+const DEBUG_SAVE_TO_DESKTOP = false
 // 桌面目录（Windows）
 function _getDesktopPath() {
   return process.env.USERPROFILE
@@ -188,6 +189,60 @@ async function _doCheckPythonEnv() {
 }
 
 // ============================
+// 目标纸解析（Phase 1-B Step 2 新增）
+// ============================
+
+/**
+ * 从打印 settings 解析目标物理纸尺寸（mm）。
+ *
+ * 优先级：customPaper.widthMM/heightMM → PaperRegistry → A 系列内置表。
+ * 解析失败返回 null（调用方应显式传 paperW_mm/paperH_mm，不应依赖默认纸型）。
+ *
+ * 注意（施工纪律）：这里只解析【纸张尺寸】，绝不把 orientation 传给几何——
+ * 旧「orientation → A4 方向」推断已在 Python 侧废弃（rotation bug 同类风险）。
+ *
+ * @param {object} [settings] - 打印设置（含 paperSize / customPaper）
+ * @returns {{width: number, height: number}|null} mm
+ */
+function resolvePaperMmFromSettings(settings) {
+  if (!settings) return null
+
+  // ① 自定义纸：最高优先级，显式 mm
+  if (settings.customPaper && Number(settings.customPaper.widthMM) > 0 &&
+      Number(settings.customPaper.heightMM) > 0) {
+    return {
+      width: Number(settings.customPaper.widthMM),
+      height: Number(settings.customPaper.heightMM),
+    }
+  }
+
+  const paperName = settings.paperSize || settings.paper || null
+
+  // ② PaperRegistry（项目已有权威纸张表）
+  try {
+    const { PaperRegistryProvider } = require('../shared/PaperRegistryProvider')
+    const dims = PaperRegistryProvider.getEffectivePaperMap()[paperName]
+    if (dims && Number(dims.widthMM) > 0 && Number(dims.heightMM) > 0) {
+      return { width: Number(dims.widthMM), height: Number(dims.heightMM) }
+    }
+  } catch (e) {
+    // PaperRegistry 不可用时落到内置表（不会发生；防御性）
+  }
+
+  // ③ A 系列内置表（纸名大写不敏感）
+  const A_SERIES_MM = {
+    A4: [210, 297], A3: [297, 420], A5: [148, 210],
+    LETTER: [215.9, 279.4], LEGAL: [215.9, 355.6], TABLOID: [279.4, 431.8],
+  }
+  const key = String(paperName || '').toUpperCase()
+  if (A_SERIES_MM[key]) {
+    return { width: A_SERIES_MM[key][0], height: A_SERIES_MM[key][1] }
+  }
+
+  return null
+}
+
+// ============================
 // 边距处理
 // ============================
 
@@ -198,15 +253,19 @@ async function _doCheckPythonEnv() {
  * @param {object} margins - { left, right, top, bottom } 单位 mm
  * @param {boolean} [isImage] - 是否为图片文件。传 true 强制以图片方式处理
  *   （先转 PDF 再加边距）；不传或 undefined 则由 Python 脚本自动判断。
- * @param {string} [orientation] - 页面方向 'portrait' | 'landscape' | 'auto'
- *   不传则由 Python 脚本自动检测图片方向。
- * @param {number} [timeout] - 子进程超时毫秒，默认 60000
+ * @param {string} [orientation] - ⚠️ 已废弃：不再参与几何（Python 侧忽略并告警）。
+ *   保留参数位仅为兼容旧调用方。
+ * @param {object} [opts] - Phase 1-B 新增：
+ *   { paperW_mm, paperH_mm, timeout }
+ *   - paperW_mm/paperH_mm: 目标物理纸尺寸（mm）。PDF 路径缺省时 Python 侧以
+ *     源 MediaBox 兜底（不换纸）；图片路径必填。
+ *   - timeout: 子进程超时毫秒，默认 60000
  * @returns {Promise<{path: string, orientation: string|null}>}
  *   path: 处理后的 PDF 路径。降级或出错时返回原 inputPath。
- *   orientation: 检测到的页面方向（仅图片路径返回），PDF 路径返回 null。
+ *   orientation: 兼容保留（恒 null；方向不再由边距处理决定）。
  *   调用方通过 `result.path !== inputPath` 判断是否实际处理了边距。
  */
-async function process(inputPath, margins, isImage, orientation, timeout = DEFAULT_TIMEOUT) {
+async function process(inputPath, margins, isImage, orientation, opts, timeout = DEFAULT_TIMEOUT) {
   // ── 参数校验 ──
   if (!inputPath || !fs.existsSync(inputPath)) {
     console.warn('[PDF_MARGIN] Input file not found:', inputPath)
@@ -228,6 +287,14 @@ async function process(inputPath, margins, isImage, orientation, timeout = DEFAU
   // 无边距 → 直接返回
   if (m.left === 0 && m.right === 0 && m.top === 0 && m.bottom === 0) {
     return { path: inputPath, orientation: null }
+  }
+
+  // ── Phase 1-B opts：目标纸尺寸（mm）+ 超时 ──
+  const optsObj = (opts && typeof opts === 'object') ? opts : {}
+  const paperW = Number(optsObj.paperW_mm) > 0 ? Number(optsObj.paperW_mm) : null
+  const paperH = Number(optsObj.paperH_mm) > 0 ? Number(optsObj.paperH_mm) : null
+  if (typeof optsObj.timeout === 'number' && optsObj.timeout > 0) {
+    timeout = optsObj.timeout
   }
 
   // ── 检查 Python 环境（同时返回 python 命令名） ──
@@ -260,9 +327,18 @@ async function process(inputPath, margins, isImage, orientation, timeout = DEFAU
       args.push('--is-image')
     }
 
-    // 显式传递 orientation，Python 端 auto 为默认值
-    if (orientation) {
-      args.push('--orientation', orientation)
+    // 目标物理纸尺寸（mm）。PDF 缺省 → Python 以源 MediaBox 兜底；图片必填
+    if (paperW !== null && paperH !== null) {
+      args.push('--paper-width-mm', String(paperW))
+      args.push('--paper-height-mm', String(paperH))
+    }
+
+    // ⚠️ 不再传 --orientation：旧「orientation→纸张方向」推断已在 Python 侧废弃，
+    // 方向不得参与边距几何（rotation bug 同类风险，契约 §1.1 坐标适配层唯一化）。
+    if (paperW === null || paperH === null) {
+      console.warn('[PDF_MARGIN] WARN: 未提供目标纸尺寸 (paperW_mm/paperH_mm)。'
+        + 'PDF 路径将以源 MediaBox 为兜底目标纸；图片路径将拒绝处理。'
+        + 'Phase 1-C 将由调用方从 settings 解析后显式传入。')
     }
 
     const tag = isImage ? ' (image)' : ' (PDF)'
@@ -330,4 +406,4 @@ async function process(inputPath, margins, isImage, orientation, timeout = DEFAU
   })
 }
 
-module.exports = { process, hasMargins, extractMargins, checkPythonEnv }
+module.exports = { process, hasMargins, extractMargins, checkPythonEnv, resolvePaperMmFromSettings }

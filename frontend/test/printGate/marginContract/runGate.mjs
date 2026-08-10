@@ -1,15 +1,18 @@
 /**
  * Margin Contract Gate — 运行器（DEV-only）
  *
- * 三种被测对象（--target）：
- *   production : 调用生产实现 scripts/add-pdf-margins.py（Gate 2 预期 RED，旧代码回归基线）
- *   phase1a    : 调用 Phase 1-A executor scripts/margin_contract.py（预期 GREEN）
+ * 四种被测对象（--target）：
+ *   production : 调用【c7e25fd 快照】的 add-pdf-margins.py（迁移前旧实现，
+ *                永久可复现的 RED 基线——工作区文件已改造成兼容壳，不能再用它测旧行为）
+ *   phase1b    : 调用工作区 scripts/add-pdf-margins.py（Phase 1-B 兼容壳 → margin_contract，预期 GREEN）
+ *   phase1a    : 调用 scripts/margin_contract.py 直接（executor 本体，预期 GREEN）
  *   correct    : 用 makeFixture.py correct 生成的已知正确输出（Gate 基础设施自检，预期 GREEN）
  *
  * 用法:
  *   node runGate.mjs --target production
  *   node runGate.mjs --target correct
  *   node runGate.mjs --target phase1a
+ *   node runGate.mjs --target phase1b
  *   node runGate.mjs --target phase1a --force-pending   # 连 pending 向量（如 V-04 rot90）也跑
  *   node runGate.mjs --target correct --only V-02-asym-tb
  *
@@ -32,14 +35,29 @@ const EXECUTOR = path.join(REPO, 'scripts', 'margin_contract.py')
 const RASTERIZE = path.join(HERE, '..', 'rasterize_pdf.py')
 const OUT = path.join(HERE, '.out')
 
+// ── production RED 基线 = c7e25fd 快照（迁移前旧实现，永久可复现）──
+// 工作区 add-pdf-margins.py 已是兼容壳（Phase 1-B），不再代表旧行为；
+// 旧实现的行为基线从 git 历史提取，保证「7 RED @ INV-1」在任何机器、任何时间可复现。
+const LEGACY_COMMIT = 'c7e25fd'
+const LEGACY_SCRIPT = path.join(OUT, 'legacy', 'add-pdf-margins.py')
+
+function ensureLegacyScript() {
+  if (!fs.existsSync(LEGACY_SCRIPT)) {
+    fs.mkdirSync(path.dirname(LEGACY_SCRIPT), { recursive: true })
+    const src = execFileSync('git', ['show', `${LEGACY_COMMIT}:scripts/add-pdf-margins.py`],
+      { encoding: 'utf8', cwd: REPO })
+    fs.writeFileSync(LEGACY_SCRIPT, src)
+  }
+}
+
 const argv = process.argv.slice(2)
 const getArg = (k, d) => { const i = argv.indexOf(k); return i >= 0 ? argv[i + 1] : d }
 const target = getArg('--target', 'production')
 const only = getArg('--only', null)
 const forcePending = argv.includes('--force-pending')
 
-if (!['production', 'phase1a', 'correct'].includes(target)) {
-  console.error('--target 必须是 production / phase1a / correct'); process.exit(2)
+if (!['production', 'phase1a', 'phase1b', 'correct'].includes(target)) {
+  console.error('--target 必须是 production / phase1a / phase1b / correct'); process.exit(2)
 }
 fs.mkdirSync(OUT, { recursive: true })
 fs.writeFileSync(path.join(OUT, '.gitignore'), '*\n')
@@ -68,7 +86,7 @@ let pending = 0
 
 for (const vec of doc.vectors) {
   if (only && vec.id !== only) continue
-  if (vec.status !== 'active' && !(forcePending && target === 'phase1a')) {
+  if (vec.status !== 'active' && !(forcePending && (target === 'phase1a' || target === 'phase1b'))) {
     pending++
     results.push({ id: vec.id, status: 'PENDING', reason: vec.status, note: vec.notes ?? '' })
     continue
@@ -93,13 +111,28 @@ for (const vec of doc.vectors) {
 
     // ② 产出被测 PDF
     if (target === 'production') {
+      ensureLegacyScript()
       const m = vec.input.margin
-      const out = py(PROD_SCRIPT, [
+      const out = py(LEGACY_SCRIPT, [
         '--input', srcPdf, '--output', outPdf,
         '--left', String(ptToMm(m.left)), '--right', String(ptToMm(m.right)),
         '--top', String(ptToMm(m.top)), '--bottom', String(ptToMm(m.bottom)),
       ])
       rec.productionReturn = out
+    } else if (target === 'phase1b') {
+      const m = vec.input.margin
+      const p = vec.input.paper
+      const rot = vec.input.spec?.contentRotation ?? 0
+      const out = py(PROD_SCRIPT, [
+        '--input', srcPdf, '--output', outPdf,
+        '--left', String(ptToMm(m.left)), '--right', String(ptToMm(m.right)),
+        '--top', String(ptToMm(m.top)), '--bottom', String(ptToMm(m.bottom)),
+        '--paper-width-mm', String(ptToMm(p.widthPt)),
+        '--paper-height-mm', String(ptToMm(p.heightPt)),
+        '--content-rotation', String(rot),
+      ])
+      if (!out.success) throw new Error(`add-pdf-margins(phase1b) failed: ${out.error}`)
+      rec.executorInfo = out.info
     } else if (target === 'phase1a') {
       const m = vec.input.margin
       const p = vec.input.paper
