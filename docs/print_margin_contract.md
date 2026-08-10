@@ -1,4 +1,4 @@
-# Print Margin Contract v1.0（冻结版）
+# Print Margin Contract v1.1（冻结版）
 
 > 状态：**FROZEN**（2026-08-10）。本文件是打印安全边距几何的唯一权威定义。
 > 任何与本文冲突的代码、注释或历史文档一律以本文为准。
@@ -42,11 +42,29 @@
 usableWidth  = paperWidth  - marginLeft - marginRight
 usableHeight = paperHeight - marginTop  - marginBottom
 
-scale = min(usableWidth / contentWidth, usableHeight / contentHeight)
+sx = usableWidth  / contentWidth
+sy = usableHeight / contentHeight
+
+scale = allowUpscale ? min(sx, sy)          ← 允许放大
+                     : min(1, sx, sy)       ← 默认：禁止放大（INV-3）
 
 offsetX = marginLeft   + (usableWidth  - contentWidth  * scale) / 2
 offsetY = marginBottom + (usableHeight - contentHeight * scale) / 2     ← 规范式（原点左下）
 ```
+
+> **默认 `allowUpscale = false`。** 开启放大必须是显式入参，不得由载体/环境推断。
+
+⚠️ **「禁止放大」只是 scale 的上限，不是另一套布局规则。**
+它**只**在 `sx > 1 且 sy > 1`（源页两个方向都小于 usableRect）时才生效。
+只要任一方向超出 usableRect，`min(1, sx, sy)` 自动取到那个 <1 的值，**照常缩小**。
+
+```
+源 300×300，usable 500×500  → min(1, 1.667, 1.667) = 1        保持 300×300 居中   ✅
+源 300×600，usable 500×500  → min(1, 1.667, 0.833) = 0.8333   仍然缩小            ✅
+```
+
+> 禁止未来实现者读成「小图永远不 fit」或「小图走另一条分支」。
+> **分支只有一条：算出 `sx`/`sy`，按上式取 min，其余流程完全相同。**
 
 Top-left 载体适配式（唯一允许的差异）：
 
@@ -61,9 +79,12 @@ margin 数组顺序全项目统一为 **`[left, right, top, bottom]`**，任何�
 
 ### 1.2 不变量（INV）
 
-- **INV-1**：`effectivePageSize(output) == targetPaper`（容差 0.1pt）。任何页面膨胀 = 错误。
+- **INV-1**：输出页 MediaBox **必须等于经 Paper Orientation 与 Rotation Policy 解析后的最终物理输出纸张尺寸**（容差 0.1pt）。任何页面膨胀 = 错误。
+  > INV-1 是**输出端不变量**，只陈述「等于最终纸」，不规定最终纸如何算出。
+  > 具体解析规则由 Rotation Policy 给出（Policy A 定义见 §2.1a）。**Policy 不得反向引用 INV-1**，避免循环定义。
 - **INV-2**：`scaleX == scaleY`（严格等比）。
-- **INV-3**：`scale <= 1.0` 为常态；`scale > 1.0`（放大小内容）需显式开关，默认禁止。
+- **INV-3**：默认 `allowUpscale = false`，此时 `scale <= 1.0` 恒成立；`scale > 1.0`（放大小内容）需**显式开关**。
+  见 §1.1 的 clamp 式——禁止放大是 scale 上限，**不是**另一套布局分支。
 - **INV-4**：几何结果与运行环境无关（img2pdf / pikepdf 是否存在、走哪条载体路径，结果一致）。
 - **INV-5**：margin 在一张物理纸上**只施加一次**。多票/合并轨的 slot 切分发生在 usableRect **之内**，slot 不得各自再套一层 margin。
 - **INV-6**：`margin = 0` 退化为「内容 contain-fit 满纸」，**不是**「跳过处理直接复制」。
@@ -121,6 +142,22 @@ contentWidth, contentHeight = w, h
   （MEMORY 实测锚点：rot0 `L14.3/T16/R10.6/B17` → rot90 `L17/T14.3/R16/B10.6`。）
 - `sourceOrigin` 与 `margin` **同为 paper-space 属性，但绝不合并为一个概念**。
   数值上都曾等于 10mm 纯属巧合。`sourceOrigin` 是纸面构造的内容落点，`margin` 是 usableRect 的扣除量。
+
+### 2.1a Policy A 定义（Rotation Policy 的唯一实现）
+
+> **当 `rotation ∈ {90, 270}` 时，输出纸张宽高按 Policy A 交换；margin 同步参与同一次纸面变换。**
+
+形式化（`paper` 为源纸空间纸张，`m` 为源纸空间边距 `[L,R,T,B]`）：
+
+```
+θ % 180 == 0   →  outputPaper = (paperW, paperH)      m' = [L, R, T, B]
+θ % 180 == 90  →  outputPaper = (paperH, paperW)      m' = 顺时针轮换（见 §2.1）
+```
+
+INV-1 中的「最终物理输出纸张尺寸」即此处的 `outputPaper`。
+
+> 分层纪律：**Policy A 只负责算出 `outputPaper` 与 `m'`，不陈述任何输出端不变量**；
+> INV-1 只负责断言输出等于 `outputPaper`，不复述交换规则。二者单向依赖，不得互引。
 
 ### 2.2 R-1：margin processor 输出恒 `/Rotate == 0`
 
@@ -322,8 +359,10 @@ assert abs(w - paper_w) <= 0.1 and abs(h - paper_h) <= 0.1
 | `V-03-wide` | 宽内容进窄纸，scale 由宽度决定、垂直居中 |
 | `V-04-rot90` | rot90 + 非对称边距，验证 D1 的顺时针轮换。`"status": "pending-a3v2"`（RG-4） |
 | `V-05-zero-margin` | `margin=0` 仍走 contain-fit（INV-6），不得短路复制 |
+| `V-05b-zero-margin-crossfit` | **`margin=0` + 跨纸型**（Letter→A4）。抓的不是 margin 几何，而是 **zero margin ≠ bypass contract**：同纸型下短路复制与正确输出几何全等，只有跨纸型才能被 INV-1 判死 |
 | `V-06-internal-geometry` | 内嵌基准标记，验证 INV-7（相似变换、交比不变） |
 | `V-07-src-rotate` | 源页自带 `/Rotate 90`，验证 §1.4 归一 + R-1 输出归零 |
+| `V-08-no-upscale` | 源页两向均小于 usableRect，`scale` 被 clamp 到 1（INV-3），验证「上限而非另一分支」 |
 
 > 🔴 **期望值禁止由实现生成。** 向量集的 `expect` 必须**手工按 §1.1 公式推导**并写死。
 > 若用当前实现跑一遍生成期望值，测试只能证明「实现等于它自己」，无法证明它符合契约。
@@ -432,6 +471,16 @@ contract vectors  +  geometry gate  +  runtime guard  +  source guard
 3. JS / Python 双侧执行器同时更新并通过同一向量集；
 4. 版本号递增并保留变更记录；
 5. **禁止**在 bugfix commit 中顺带修改本文。
+
+### 11.1 变更记录
+
+| 版本 | 日期 | 变更 | 来源 |
+|---|---|---|---|
+| v1.0 | 2026-08-10 | 初始冻结（Gate 0） | D1/D2/D3 裁决 |
+| **v1.1** | 2026-08-10 | ① §1.1 scale 公式补 `allowUpscale` clamp，并注明「上限≠另一分支」；② INV-1 改为输出端不变量措辞，新增 §2.1a Policy A 定义，二者单向依赖；③ §7.2 补 `V-05b` / `V-08` | Gate 1 审查 ERRATA-1/2/3，用户签署 |
+
+> v1.1 **未推翻任何不变量**，仅消除歧义与补齐向量表。
+> `margin_contract_vectors.json` 的 `expected` 数值**零变更**（v1.1 只把既有向量的判定依据写进契约正文）。
 
 ---
 

@@ -1,7 +1,12 @@
 {
   "$schema": "internal://print-margin-contract/vectors-1.0",
-  "version": "1.0",
-  "contract": "docs/print_margin_contract.md v1.0 (FROZEN 2026-08-10)",
+  "version": "1.0.1",
+  "contract": "docs/print_margin_contract.md v1.1 (FROZEN 2026-08-10)",
+  "changelog": [
+    "1.0 (Gate 1): 初版 9 条向量。",
+    "1.0.1: 契约升 v1.1（ERRATA-1/2/3 签署落地）后的同步更新。向量 expected 数值【零变更】—— v1.1 只是把 V-08 的 clamp 依据与 V-04 的 targetPaper 语义写进契约正文，判定标准本身未变。本次仅改：contract 引用版本、errata 状态、numericAuthority 声明。"
+  ],
+  "numericAuthority": "scaleExact（最简分数字符串）是 scale 的权威值；同级 scale 浮点字段仅为运行期比较便利，不得作为推导依据或回填目标。harness 若具备有理数能力应优先解析 scaleExact。",
   "gate": "Gate 1 (print_margin_contract.md §9)",
   "coordinateSpace": "pdf-user-space",
   "origin": "bottom-left, Y axis up (D3)",
@@ -51,7 +56,8 @@
       "target": "print_margin_contract.md §1.1",
       "issue": "§1.1 公式为 scale = min(uW/cW, uH/cH)，无 clamp；INV-3 却规定默认禁止 scale>1。两者冲突，源页小于 usableRect 时行为未定义。",
       "proposal": "§1.1 改为 scale = allowUpscale ? min(sx, sy) : min(1, sx, sy)，并在 INV-3 注明默认 allowUpscale=false。",
-      "status": "pending-signoff"
+      "status": "applied",
+      "resolution": "用户签署并收紧措辞（contract v1.1 §1.1 + INV-3）：clamp 只是 scale 上限，不是另一套布局规则；仅当 sx>1 且 sy>1 时生效，任一方向超界仍照常缩小。契约中加入两行反例（300x300/usable500 保持原尺寸；300x600/usable500 仍缩到 0.8333），防止实现者读成「小图永远不 fit」或另开分支。"
     },
     {
       "id": "ERRATA-2",
@@ -59,7 +65,8 @@
       "target": "print_margin_contract.md §1.2 INV-1",
       "issue": "INV-1 写 effectivePageSize(output) == targetPaper。若 targetPaper 指源纸空间的纸，则 Policy A 下 rot90 输出必然违反 INV-1（宽高已交换）。",
       "proposal": "INV-1 补一句：targetPaper 指经 Policy A 变换后的输出纸，即 theta%180==90 时为 swap(paper)。",
-      "status": "pending-signoff"
+      "status": "applied",
+      "resolution": "用户签署但【否决】把 swap 规则直接写进 INV-1，理由是会造成 INV-1 <-> Policy A 循环定义。最终落地为分层：INV-1 只陈述『输出 MediaBox == 经 Paper Orientation 与 Rotation Policy 解析后的最终物理输出纸张尺寸（容差 0.1pt）』；swap 规则单独成节 contract v1.1 §2.1a『Policy A 定义』，且 Policy A 不得反向引用 INV-1。单向依赖。"
     },
     {
       "id": "ERRATA-3",
@@ -67,7 +74,8 @@
       "target": "print_margin_contract.md §7.2 向量 id 表",
       "issue": "表中列 V-01..V-07 共 7 条，本文件为 9 条（新增 V-05b 与 V-08）。",
       "proposal": "§7.2 表补入 V-05b-zero-margin-crossfit 与 V-08-no-upscale。",
-      "status": "pending-signoff"
+      "status": "applied",
+      "resolution": "已补入 contract v1.1 §7.2。V-05b 的表述按用户意见改为强调其真实职责：抓的不是 margin 几何，而是『zero margin != bypass contract』这条极易被后续性能优化破坏的边界。"
     },
     {
       "id": "ERRATA-4",
