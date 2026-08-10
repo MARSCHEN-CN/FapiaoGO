@@ -1,23 +1,23 @@
 #!/usr/bin/env node
 /**
- * Placement Bake Production Gate — C-2 Step 4-2b-1（2026-08-10）
+ * Placement Bake Production Gate — C-2 Step 4-2b（2026-08-10）
  *
- * 验证「生产 executor consumption」：main.js print-source-file 真的消费
+ * 验证「生产 executor consumption」：main.js print-source-file 消费
  * settings.placement + settings.executionPaper → placement_bake → Sumatra 执行。
  *
  * 与 A3-03（4-2a DEV Gate）的区别——本 Gate 验证的是【生产接线层】：
  *   1. 真实 production settings 形态（placement + executionPaper + legacy paper/landscape/fit）
  *   2. 调 placement-bake-processor（生产消费层，非直接调脚本）的 hasPlacement / buildBakeSpec
- *   3. Sumatra 用 FIT（4-2b-1 冻结：bake 后仍 fit，不切 noscale——那是 4-2b-2）
- *      验证点：bake 产物 MediaBox==paper 时 fit 是 1:1 no-op，artifact 不二次缩放
- *   4. main.js 接线源码守卫（handler 必须调用 placementBake.process，防回退）
+ *   3. Sumatra 用 NOSCALE（4-2b-2b 生产执行策略：baked PDF → Sumatra 不参与 layout；
+ *      4-2b-1 的 fit 验证已由 4-2b-2a sumatraNoScaleGate 证明 fit==noscale）
+ *   4. main.js 接线源码守卫（handler 必须调用 placementBake.process + bake 成功路径 noscale）
  *
  * 验收断言：
  *   - hasPlacement(PDF) === true；OFD/纸型错位 === false（降级守卫）
  *   - bake 产物：MediaBox/CropBox == 210×297mm、/Rotate=0
- *   - Sumatra fit artifact：竖纸 + 内容四边对称（|L-R|<1.5mm、|T-B|<1.5mm）
- *   - fit 未二次变换：artifact 内容中心与 bake 产物中心偏差 < 2mm
- *   - main.js handler 含 placementBake.process 调用
+ *   - Sumatra noscale artifact：竖纸 + 内容中心 vs bake 产物中心偏差 < 2mm
+ *   - noscale 未二次变换：artifact 逐边增量 vs bake 产物 < 0.5mm
+ *   - main.js handler 含 placementBake.process + scalePolicy:'none'（bake 成功路径）
  *
  * 用法:
  *   node placementBakeProductionGate.mjs                    # 完整端到端（需 Sumatra + Wondershare）
@@ -132,15 +132,24 @@ function checkMainJsWiring() {
     console.error('[4-2B-1-GATE] FAIL: print-source-file handler 未调用 placementBake.process')
     return false
   }
-  // ③ bake 分支必须保留 fit（4-2b-1 不切 noscale——4-2b-2 单独 commit）。
-  //    守卫只匹配【代码形态】：'noscale' 字符串字面量或 scalePolicy 字段操作，
-  //    不匹配注释里的说明文字（如「不切 noscale」）。
+  // ③ bake 成功分支必须 noscale（4-2b-2b，D2）——但 noscale 只在 bake 成功路径
+  //    （条件分支，legacy/pdfMargin 路径不受影响，rollback 极易）。
+  //    bake 分支 = `if (bakeEnabled) {...} else if (hasMargins...)`。
   const bakeBlock = mainJs.match(/if \(bakeEnabled\) \{[\s\S]*?\n    \} else if/)?.[0] || ''
-  if (!bakeBlock || /['"]noscale['"]|scalePolicy/.test(bakeBlock)) {
-    console.error('[4-2B-1-GATE] FAIL: bake 分支不应切 noscale（4-2b-1 保留 fit）')
+  if (!bakeBlock) {
+    console.error('[4-2B-GATE] FAIL: bake 分支不存在')
     return false
   }
-  console.log('[4-2B-1-GATE] ok: main.js 接线存在（require + process 调用 + 保留 fit）')
+  // noscale 必须在 bakeResult.path !== target.filePath（bake 成功）块内：
+  // 切片定位成功块（if 头 → } else），块内须含 scalePolicy:'none'
+  const idx = bakeBlock.indexOf('bakeResult.path !== target.filePath')
+  const elseIdx = bakeBlock.indexOf('} else', idx)
+  const successSlice = (idx >= 0 && elseIdx > idx) ? bakeBlock.slice(idx, elseIdx) : ''
+  if (!/scalePolicy:\s*['"]none['"]/.test(successSlice)) {
+    console.error('[4-2B-GATE] FAIL: bake 成功路径未切 noscale（4-2b-2b 要求）')
+    return false
+  }
+  console.log('[4-2B-GATE] ok: main.js 接线存在（require + process 调用 + bake 成功路径 noscale）')
   return true
 }
 
@@ -200,7 +209,7 @@ function main() {
   // main.js 接线守卫
   if (!checkMainJsWiring()) process.exit(1)
 
-  // ── Step 5: 端到端（bake → Sumatra FIT —— 4-2b-1 不切 noscale）──
+  // ── Step 5: 端到端（bake → Sumatra NOSCALE —— 4-2b-2b 生产执行策略）──
   if (skipPrint) {
     console.log('（--skip-print：跳过 Sumatra 打印，接线层 + bake 层已验证）')
     console.log('\nGATE PASS（生产接线 + bake 层）')
@@ -210,11 +219,11 @@ function main() {
     console.error(`❌ SumatraPDF 不存在: ${SUMATRA}`)
     process.exit(1)
   }
-  console.log('\n▶ Sumatra FIT 打印（4-2b-1：bake 后仍 fit，验证不二次缩放）...')
+  console.log('\n▶ Sumatra NOSCALE 打印（4-2b-2b：baked PDF，Sumatra 纯执行不参与 layout）...')
   try {
-    // 生产 buildPrintSettings 同构命令：竖纸 disable-auto-rotation + fit + paper=a4
+    // 生产 buildPrintSettings 同构命令：竖纸 disable-auto-rotation + noscale + paper=a4
     sh(SUMATRA, ['-print-to', 'Wondershare PDFelement',
-      '-print-settings', 'disable-auto-rotation,fit,paper=a4',
+      '-print-settings', 'disable-auto-rotation,noscale,paper=a4',
       '-silent', '-exit-when-done', bakedPdf])
   } catch (e) {
     console.error('❌ Sumatra 调用失败:', e.message)
@@ -242,29 +251,29 @@ function main() {
   }
   console.log(`▶ artifact: ${artifactPdf}`)
 
-  // ── Step 6: artifact 断言（4-2b-1 验收：fit 不破坏 bake 几何）──
+  // ── Step 6: artifact 断言（4-2b-2b 验收：noscale 不破坏 bake 几何）──
   const art = measureBBox(artifactPdf)
   console.log(`artifact: ${art.wMm}x${art.hMm}mm /Rotate=${art.rotate} 边距 L${art.L} T${art.T} R${art.R} B${art.B}`)
   const symL = Math.abs(art.L - art.R)
   const symT = Math.abs(art.T - art.B)
-  // 主断言 = fit 未二次变换：
+  // 主断言 = noscale 未二次变换（bake 产物 MediaBox==paper 时 noscale 1:1 no-op）：
   //   a) 内容中心漂移 vs 纸中心（bake 产物本身居中 → artifact 也应居中）
-  //   b) 逐边增量：artifact 边距 vs bake 产物边距（fit 若引入重排会 > 0.5mm）
+  //   b) 逐边增量：artifact 边距 vs bake 产物边距（noscale 若介入会 > 0.5mm）
   const driftL = Math.abs(art.L - baked.L)
   const driftT = Math.abs(art.T - baked.T)
   const driftR = Math.abs(art.R - baked.R)
   const driftB = Math.abs(art.B - baked.B)
   const maxDrift = Math.max(driftL, driftT, driftR, driftB)
   const centerDrift = Math.hypot(art.cxMm - 105, art.cyMm - 148.5)
-  // 参考：四边对称（受源发票自身非对称内边距影响，非 fit 问题——4-2a 已验对称语义）
+  // 参考：四边对称（受源发票自身非对称内边距影响，非 noscale 问题——4-2a 已验对称语义）
   console.log(`参考对称性: |L-R|=${symL.toFixed(2)}mm |T-B|=${symT.toFixed(2)}mm（源内容非对称，非判定项）`)
-  console.log(`fit 未二次缩放: 内容中心漂移 ${centerDrift.toFixed(2)}mm（容差 2mm）`)
-  console.log(`fit 逐边增量: L+${driftL.toFixed(2)} T+${driftT.toFixed(2)} R+${driftR.toFixed(2)} B+${driftB.toFixed(2)}mm（容差 0.5mm，max=${maxDrift.toFixed(2)}）`)
+  console.log(`noscale 未二次缩放: 内容中心漂移 ${centerDrift.toFixed(2)}mm（容差 2mm）`)
+  console.log(`noscale 逐边增量: L+${driftL.toFixed(2)} T+${driftT.toFixed(2)} R+${driftR.toFixed(2)} B+${driftB.toFixed(2)}mm（容差 0.5mm，max=${maxDrift.toFixed(2)}）`)
   const pass = Math.abs(art.wMm - 210) < 1 && Math.abs(art.hMm - 297) < 1
     && art.rotate === 0 && centerDrift < 2.0 && maxDrift < 0.5
   console.log(pass
-    ? '\nGATE PASS ✅ 4-2b-1 生产接线：bake 后 fit 保持几何（Sumatra 纯执行，未二次缩放）'
-    : '\nGATE FAIL ❌ 4-2b-1 验收未达')
+    ? '\nGATE PASS ✅ 4-2b-2b 生产执行：baked PDF → Sumatra noscale 纯执行（几何零干预）'
+    : '\nGATE FAIL ❌ 4-2b-2b 验收未达')
   process.exit(pass ? 0 : 1)
 }
 

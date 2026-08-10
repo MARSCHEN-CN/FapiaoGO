@@ -530,16 +530,21 @@ ipcMain.handle('print-source-file', async (_event, { target, settings, pipeline 
     const bakeEnabled = placementBake.hasPlacement(settings, target.filePath)
     console.log('[print-source-file] hasMargins=%s fileExt=%s bakeEnabled=%s', hasMargins, fileExt, bakeEnabled)
     if (bakeEnabled) {
-      // 4-2b-1：bake 接线（生产 executor consumption）。
-      //   - bake 优先并跳过 pdfMargin：pdfMargin 的 expand_box 会撑大 MediaBox，
-      //     与 bake 的 contain-fit 语义互斥，双重烘焙破坏源尺寸。
-      //   - 【冻结】保留 fit，不切 noscale（fit→noscale 属 4-2b-2，D2 触碰点单独裁决）。
-      //   - 降级（env/脚本/纸型不一致/bake 失败）→ 返回原路径，Sumatra fit 兜底。
-      console.log('[print-source-file] Plan placement detected → placement bake (4-2b-1, keep fit)')
+      // 4-2b-1 接线 + 4-2b-2（D2）执行策略：
+      //   - 4-2b-1 冻结：bake 优先并跳过 pdfMargin（expand_box 与 contain-fit 互斥，
+      //     双重烘焙破坏源尺寸）；无 placement 旧路径零变化。
+      //   - 4-2b-2b（本 commit）：bake 成功 → Sumatra 不再参与 layout（noscale）。
+      //     bake 产物 MediaBox==paper /Rotate=0（4-2a 输出契约），noscale 与 fit
+      //     在该条件下严格等价（4-2b-2a sumatraNoScaleGate 五 case 证明，drift≤0.16mm）。
+      //     override 通过【新对象】{...settings, scalePolicy:'none'}，不 mutate settings
+      //     （G-C1-C-1）。⚠️ noscale 只在 bake 成功路径；降级（bake 失败）→ 原路径 fit。
+      console.log('[print-source-file] Plan placement detected → placement bake (4-2b-2: noscale)')
       const bakeResult = await placementBake.process(target.filePath, settings)
       if (bakeResult.path !== target.filePath) {
         printTarget = { ...target, filePath: bakeResult.path }
+        printSettings = { ...(settings || {}), scalePolicy: 'none' }
         console.log('[print-source-file] Using placement-baked PDF:', bakeResult.path)
+        console.log('[print-source-file] scalePolicy=none (noscale) — baked PDF, Sumatra pure executor')
       } else {
         console.log('[print-source-file] Placement bake degraded → print original (fit)')
       }
