@@ -156,7 +156,7 @@ const ImportProgressModal = (props) => {
         {/* 进度条 */}
         <div className="ipm-progress-wrap">
           <div className="ipm-bar-track">
-            <div className="ipm-bar-fill" style={{ width: `${pct}%` }}>
+            <div className={`ipm-bar-fill${importStage === 'completed' ? ' is-complete' : ''}`} style={{ width: `${pct}%` }}>
               <span className="ipm-bar-dot" />
             </div>
           </div>

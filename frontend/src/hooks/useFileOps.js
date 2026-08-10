@@ -395,6 +395,23 @@ export function useFileOps({ setFiles, settings, electronAPIRef }) {
     })
     addImportLog(`开始导入 ${acceptedFiles.length} 个文件...`)
 
+    // ── 导入结果计数（替代 setFiles 探针，避免 React 异步渲染导致计数为 0）──
+    let importSuccessCount = 0
+    let importErrorCount = 0
+    const countedFileKeys = new Set()
+    const countingQueueUpdate = (key, newStatus, extra = {}) => {
+      if (!countedFileKeys.has(key)) {
+        if (newStatus === 'parsed') {
+          importSuccessCount++
+          countedFileKeys.add(key)
+        } else if (newStatus === 'error' || newStatus === 'cancelled') {
+          importErrorCount++
+          countedFileKeys.add(key)
+        }
+      }
+      queueUpdate(key, newStatus, extra)
+    }
+
     // ── Step 1: 为每个文件生成占位项，立即显示 ──────────────
     const placeholders = createPlaceholders(acceptedFiles)
     addFilesToSession(session.id, placeholders)
@@ -477,7 +494,7 @@ export function useFileOps({ setFiles, settings, electronAPIRef }) {
         // 13-A.3.5b：解析成功后、消费前确保 render doc_id（OFD 走 Render Contract）
         await ensureRenderContract(fileObj)
         const update = consumeParseResult(result, fileObj, session.id)
-          queueUpdate(fileObj.key, result.status, update)
+          countingQueueUpdate(fileObj.key, result.status, update)
 
           // 13-A.3.5c：metadata 驱动纠正（OFD 多页 / 真实尺寸），置 consume 之后为最终权威
           // 同步更新 docId + identity，确保 resolveDocId() 取到正确值
@@ -488,7 +505,7 @@ export function useFileOps({ setFiles, settings, electronAPIRef }) {
           await ensureDocumentMetadata(fileObj)
         } catch (err) {
           console.error(`[App] 解析失败: ${fileObj.name}`, err)
-          queueUpdate(fileObj.key, 'error')
+          countingQueueUpdate(fileObj.key, 'error')
         } finally {
           progressDone += 1
           updateProgress(session.id, { completed: progressDone, total: progressTotal })
@@ -550,7 +567,7 @@ export function useFileOps({ setFiles, settings, electronAPIRef }) {
           }
         } catch (err) {
           console.error(`[App] 文件处理失败: ${f.name}`, err)
-          queueUpdate(p.key, 'error')
+          countingQueueUpdate(p.key, 'error')
           addImportLog(`  → 拆分失败: ${err.message || '未知错误'}`)
         } finally {
           splitDone += 1
@@ -639,7 +656,7 @@ export function useFileOps({ setFiles, settings, electronAPIRef }) {
         autoOrient: settingsRef.current.autoOrient ?? false,
         deps: {
           client: { createImportBatch, subscribeBatchProgress, getBatchResults, cancelImportBatch },
-          onFileUpdate: queueUpdate,
+          onFileUpdate: countingQueueUpdate,
           onAggregateProgress,
           onTaskStatus: updateTaskStatus,
           onTaskStream: setTaskStream,
@@ -699,10 +716,10 @@ export function useFileOps({ setFiles, settings, electronAPIRef }) {
                     raw: {},
                   }
                   const update = mapParseResultToFileUpdate(hydrationResult, fileObj)
-                  queueUpdate(fileObj.key, 'parsed', update)
+                  countingQueueUpdate(fileObj.key, 'parsed', update)
                   terminalFileKeys.add(fileObj.key)
                 } else {
-                  queueUpdate(fileObj.key, 'parsed')
+                  countingQueueUpdate(fileObj.key, 'parsed')
                   terminalFileKeys.add(fileObj.key)
                 }
                 const effectiveDocId = (item && item.docId) || fileObj.docId
@@ -1005,43 +1022,21 @@ export function useFileOps({ setFiles, settings, electronAPIRef }) {
     progressMonotonicRef.current = Math.max(progressMonotonicRef.current, 85)
     addImportLog('正在组装文档...')
 
-    // 强制刷新所有待处理更新（hydration 结果），再后处理
+    // 强制刷新所有待处理更新（hydration 结果）
     flushUpdates()
 
-    // 探针：flush 后状态分布（计数用于完成提示，诊断输出仅开发环境）
-    let successCount = 0
-    let errorCount = 0
-    setFiles((prev) => {
-      if (process.env.NODE_ENV === 'development') {
-        const dist = prev.reduce((a, f) => { a[f.status] = (a[f.status] || 0) + 1; return a }, {})
-        console.log('[ImportScale flush] 状态分布:', dist)
-        successCount = dist.parsed || 0
-        errorCount = dist.error || 0
-        const notDone = prev.filter(
-          (f) => f.status !== 'parsed' && f.status !== 'error' && f.status !== 'cancelled'
-        )
-        if (notDone.length > 0) {
-          console.warn(`[ImportScale before process] ${notDone.length} 个文件未到终态:`,
-            notDone.slice(0, 20).map(f => `${f.name}:${f.status}`))
-        }
-      } else {
-        for (let i = 0; i < prev.length; i++) {
-          const s = prev[i].status
-          if (s === 'parsed') successCount++
-          else if (s === 'error') errorCount++
-        }
-      }
-      return prev
-    })
+    if (process.env.NODE_ENV === 'development') {
+      console.log(`[ImportScale] 导入完成: 成功=${importSuccessCount}, 失败=${importErrorCount}`)
+    }
 
-    // 导入完成：先显示100%完成状态，等主界面渲染稳定后再关闭弹窗，避免闪烁
-    addImportLog(`导入完成：成功 ${successCount} 个，失败 ${errorCount} 个`)
+    // 导入完成：使用计数器直接获取结果（替代 setFiles 探针，避免 React 异步渲染导致计数为 0）
+    addImportLog(`导入完成：成功 ${importSuccessCount} 个，失败 ${importErrorCount} 个`)
     setImportStage('completed')
     progressMonotonicRef.current = 100
     setImportStats((prev) => ({
       ...prev,
       parseDone: prev.parseTotal,
-      buildDone: prev.buildTotal || successCount,
+      buildDone: prev.buildTotal || importSuccessCount,
       currentFile: prev.totalFiles,
     }))
 
@@ -1051,24 +1046,33 @@ export function useFileOps({ setFiles, settings, electronAPIRef }) {
       completeDismissTimerRef.current = null
     }
 
-    // 等待主界面DOM稳定后再关闭弹窗：
-    // 1) 双 requestAnimationFrame：确保 React commit → 浏览器 layout/paint 完成一轮
-    //    （flushUpdates + setFiles排序触发的大规模重渲染需要至少一帧完成）
-    // 2) 额外 250ms 停留：让用户看到100%完成状态，同时浏览器完成缩略图/预览区首帧绘制
-    // 3) 然后再关闭弹窗：弹窗面板先快速淡出(150ms)，遮罩在面板完全消失后再淡出(200ms)，
-    //    此时主界面已完全就绪，不会出现"闪一下"。
+    // 按文件数动态调整关闭策略：
+    // - 少量文件（≤5）：单 rAF + 0ms 延迟（渲染负载轻，无需等待）
+    // - 中等批量（6-50）：双 rAF + 100ms 延迟（确保列表渲染稳定）
+    // - 大批量（>50）：双 rAF + 250ms 延迟（缩略图/预览区需要更多时间绘制）
+    const fileCount = acceptedFiles.length
+    const useDoubleRAF = fileCount > 5
+    const dismissDelay = fileCount > 50 ? 250 : (fileCount > 5 ? 100 : 0)
+
+    const dismissModal = () => {
+      completeDismissTimerRef.current = null
+      currentAbortRef.current = null
+      setParsing(false)
+      setParseProgress({ current: 0, total: 0 })
+      setImporting(false)
+    }
+
     const waitFramesAndDismiss = () => {
-      requestAnimationFrame(() => {
+      const scheduleDismiss = () => {
+        completeDismissTimerRef.current = setTimeout(dismissModal, dismissDelay)
+      }
+      if (useDoubleRAF) {
         requestAnimationFrame(() => {
-          completeDismissTimerRef.current = setTimeout(() => {
-            completeDismissTimerRef.current = null
-            currentAbortRef.current = null
-            setParsing(false)
-            setParseProgress({ current: 0, total: 0 })
-            setImporting(false)
-          }, 250)
+          requestAnimationFrame(scheduleDismiss)
         })
-      })
+      } else {
+        requestAnimationFrame(scheduleDismiss)
+      }
     }
     // 用setTimeout(0)将等待推迟到当前宏任务结束，确保setImportStage('completed')的状态更新先被React处理
     completeDismissTimerRef.current = setTimeout(waitFramesAndDismiss, 0)

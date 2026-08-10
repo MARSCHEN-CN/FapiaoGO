@@ -2303,7 +2303,7 @@ button.pc-btn.outline,
 }
 
 .ipm-overlay.ipm-closing {
-  animation: ipmOverlayOut 0.25s ease-in both;
+  animation: ipmOverlayOut 0.15s ease-in both;
   pointer-events: none;
 }
 
@@ -2325,7 +2325,7 @@ button.pc-btn.outline,
 }
 
 .ipm-panel.ipm-panel-closing {
-  animation: ipmOut 0.15s ease-in both;
+  animation: ipmOut 0.1s ease-in both;
 }
 
 @keyframes ipmIn {
@@ -2474,6 +2474,11 @@ button.pc-btn.outline,
   background: linear-gradient(90deg, #7c3aed 0%, #4f7cff 100%);
   border-radius: 999px;
   transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* completed 阶段：缩短 transition，让 100% 快速归位（仅最终跳变生效，不影响中间解析进度） */
+.ipm-bar-fill.is-complete {
+  transition: width 0.15s ease-out;
 }
 
 .ipm-bar-fill::after {
