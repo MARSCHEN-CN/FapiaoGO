@@ -27,6 +27,24 @@ const golden = JSON.parse(
   readFileSync(new URL('./legacy_executePrint_snapshot.json', import.meta.url), 'utf8'),
 )
 
+/**
+ * 递归移除值为 undefined 的属性——JSON 快照无法表达 undefined（paperkind: undefined
+ * 是 resolvePaperSpec 的真实结构，但 JSON.parse 后快照无此属性）。deepStrictEqual
+ * 区分「属性存在但值为 undefined」与「属性不存在」，故 golden 比较前需归一。
+ * 仅移除 undefined，不放宽任何其他比较。
+ */
+function stripUndefined(v) {
+  if (Array.isArray(v)) return v.map(stripUndefined)
+  if (v && typeof v === 'object') {
+    const out = {}
+    for (const [k, val] of Object.entries(v)) {
+      if (val !== undefined) out[k] = stripUndefined(val)
+    }
+    return out
+  }
+  return v
+}
+
 // ── 样例数据（与生成脚本一致；见 golden._meta 注释） ──
 const A = { key: 'A', name: 'A.pdf', status: 'parsed', printPath: '/a.pdf', fileFormat: 'pdf' }
 const B = { key: 'B', name: 'B.ofd', status: 'parsed', docId: 'doc-b', previewImage: 'img-b', printPath: '/b.ofd', fileFormat: 'ofd' }
@@ -46,8 +64,10 @@ test('SOURCE extraSpecial=false: legacy == new == golden', () => {
     fileRotations,
   })
   assert.deepStrictEqual(normalizePlan(legacy), normalizePlan(next), 'legacy 与 new 结构应等价')
-  assert.deepStrictEqual(next, golden.source_extraSpecial_false, 'new 应匹配黄金快照')
-  assert.deepStrictEqual(legacy, golden.source_extraSpecial_false, 'legacy 应匹配黄金快照')
+  assert.deepStrictEqual(stripUndefined(next), golden.source_extraSpecial_false, 'new 应匹配黄金快照')
+  // legacy oracle 的 paper 保持旧形态 {size}（忠实镜像旧执行逻辑）；paper 完整几何属新契约
+  // （C-2 G-C2-1），故 legacy 的 golden 比较走 normalizePlan 面（与断言 1 同判据）。
+  assert.deepStrictEqual(normalizePlan(legacy), normalizePlan(golden.source_extraSpecial_false), 'legacy 应匹配黄金快照（normalizePlan 面）')
 })
 
 test('SOURCE extraSpecial=true: 一普二专展开 round2（extraPages=[D]）', () => {
@@ -58,8 +78,8 @@ test('SOURCE extraSpecial=true: 一普二专展开 round2（extraPages=[D]）', 
     fileRotations,
   })
   assert.deepStrictEqual(normalizePlan(legacy), normalizePlan(next))
-  assert.deepStrictEqual(next, golden.source_extraSpecial_true)
-  assert.deepStrictEqual(legacy, golden.source_extraSpecial_true)
+  assert.deepStrictEqual(stripUndefined(next), golden.source_extraSpecial_true)
+  assert.deepStrictEqual(normalizePlan(legacy), normalizePlan(golden.source_extraSpecial_true))
   // 明确断言 round2 含专票 D
   assert.deepStrictEqual(next.extraPages.map((p) => p.source.fileId), ['D'])
 })
@@ -72,8 +92,8 @@ test('MERGE2: 分组 [A,B],[C,D],[E]，含 error 文件 C', () => {
     fileRotations,
   })
   assert.deepStrictEqual(normalizePlan(legacy), normalizePlan(next))
-  assert.deepStrictEqual(next, golden.merge2)
-  assert.deepStrictEqual(legacy, golden.merge2)
+  assert.deepStrictEqual(stripUndefined(next), golden.merge2)
+  assert.deepStrictEqual(normalizePlan(legacy), normalizePlan(golden.merge2))
   assert.deepStrictEqual(
     next.pages.map((p) => p.slots.map((s) => s.fileId)),
     [['A', 'B'], ['C', 'D'], ['E']],
@@ -90,7 +110,7 @@ test('冻结不变量: merge 模式忽略 extraSpecial（extraPages 恒为空）
   assert.deepStrictEqual(normalizePlan(legacy), normalizePlan(next))
   assert.deepStrictEqual(next.extraPages, [], 'merge 路径不应展开 round2')
   assert.deepStrictEqual(legacy.extraPages, [], 'legacy merge 路径不应展开 round2')
-  assert.deepStrictEqual(next, golden.merge2_extraSpecial_true)
+  assert.deepStrictEqual(stripUndefined(next), golden.merge2_extraSpecial_true)
 })
 
 test('归一化保留文件顺序、旋转、方向', () => {
