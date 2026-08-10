@@ -20,6 +20,8 @@ const { registerRenameHandlers } = require('./ipc-rename')
 const { registerPackHandlers } = require('./ipc-pack')
 const { initArchivePaths } = require('./archive-utils')
 const pdfMargin = require('./print-service/pdf-margin-processor')
+// C-2 Step 4-2b-1：Plan placement 生产消费层（placement_bake 接线；无 placement 时零介入）
+const placementBake = require('./print-service/placement-bake-processor')
 const { initUpdateManager } = require('./services/Update/UpdateManager')
 const { load: loadConfig } = require('./services/ConfigService')
 
@@ -514,14 +516,34 @@ ipcMain.handle('print-source-file', async (_event, { target, settings, pipeline 
     const imgExts = ['.pdf', '.png', '.jpg', '.jpeg', '.bmp', '.tiff', '.tif']
     const fileExt = target.filePath ? path.extname(target.filePath).toLowerCase() : ''
     let printTarget = target
+    // 提升 printSettings 声明：旧代码在 margin if 块内声明、块外引用（TDZ，
+    // OFD/无 margins 走 else 时 ReferenceError）。提升后默认值不变，零行为变化。
+    let printSettings = settings || {}
     const marginL = Number(settings?.marginLeft) || 0
     const marginR = Number(settings?.marginRight) || 0
     const marginT = Number(settings?.marginTop) || 0
     const marginB = Number(settings?.marginBottom) || 0
     console.log('[print-source-file] margin fields: left=%d right=%d top=%d bottom=%d', marginL, marginR, marginT, marginB)
     const hasMargins = pdfMargin.hasMargins(settings)
-    console.log('[print-source-file] hasMargins=%s fileExt=%s', hasMargins, fileExt)
-    if (hasMargins && imgExts.includes(fileExt)) {
+    // C-2 Step 4-2b-1：Plan placement 生产接线判定（placement + executionPaper + PDF 源
+    // + Sumatra 纸 == executionPaper；任一不满足 → false，走原路径）
+    const bakeEnabled = placementBake.hasPlacement(settings, target.filePath)
+    console.log('[print-source-file] hasMargins=%s fileExt=%s bakeEnabled=%s', hasMargins, fileExt, bakeEnabled)
+    if (bakeEnabled) {
+      // 4-2b-1：bake 接线（生产 executor consumption）。
+      //   - bake 优先并跳过 pdfMargin：pdfMargin 的 expand_box 会撑大 MediaBox，
+      //     与 bake 的 contain-fit 语义互斥，双重烘焙破坏源尺寸。
+      //   - 【冻结】保留 fit，不切 noscale（fit→noscale 属 4-2b-2，D2 触碰点单独裁决）。
+      //   - 降级（env/脚本/纸型不一致/bake 失败）→ 返回原路径，Sumatra fit 兜底。
+      console.log('[print-source-file] Plan placement detected → placement bake (4-2b-1, keep fit)')
+      const bakeResult = await placementBake.process(target.filePath, settings)
+      if (bakeResult.path !== target.filePath) {
+        printTarget = { ...target, filePath: bakeResult.path }
+        console.log('[print-source-file] Using placement-baked PDF:', bakeResult.path)
+      } else {
+        console.log('[print-source-file] Placement bake degraded → print original (fit)')
+      }
+    } else if (hasMargins && imgExts.includes(fileExt)) {
       console.log('[print-source-file] Margins WILL be applied')
       const margins = pdfMargin.extractMargins(settings)
       const orient = settings.contentOrientation
@@ -542,7 +564,6 @@ ipcMain.handle('print-source-file', async (_event, { target, settings, pipeline 
       // Phase 1-C-1-c：scalePolicy 单一来源。边距已 bake 进 PDF 时禁止 Sumatra 再
       // fit（二次缩放破坏边距精度）——override 通过【新对象】{...settings, scalePolicy:'none'}，
       // 不 mutate settings（G-C1-C-1：本文件不得再出现 legacy fit 字段读取）。
-      let printSettings = settings || {}
       if (marginResult.path !== target.filePath) {
         console.log('[print-source-file] Using margin-processed PDF:', marginResult.path,
           'orientation:', marginResult.orientation || '?')
