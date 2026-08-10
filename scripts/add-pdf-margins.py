@@ -118,7 +118,7 @@ def _image_to_pdf_native_size(img_path):
             rgb = img.convert("RGBA")
             bg = Image.new("RGB", rgb.size, (255, 255, 255))
             bg.paste(rgb, mask=rgb.split()[-1])
-            # 原始像素尺寸 + round 后的图片 DPI → MediaBox == img2pdf 语义（B2 断言）
+            # 原始像素尺寸 + round 后的图片 DPI → 页面尺寸与 img2pdf 语义一致（B2 断言）
             bg.save(tmp_path, "PDF", resolution=dpi)
         return tmp_path
 
