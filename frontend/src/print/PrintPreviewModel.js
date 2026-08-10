@@ -28,6 +28,9 @@
 
 import { computeTicketSlots } from '../layout/SlotLayout.js'
 import { resolveContentPlacement, resolveContentBounds, getContentDimensions, normalizeRotation } from '../layout/RotationResolver.js'
+// C-2 Step 2（G-C2-5）：纸张表单源化——不再维护内联 PAPER_MM，统一消费 paperSpec.js。
+// config.js PAPER_REGISTRY（UI 运行时表，依赖 vite import.meta.env）仍由守卫测试锁定同步。
+import { PAPER_MM } from './paperSpec.js'
 
 const PREVIEW_DPI = 300
 const PX_TO_MM = 25.4 / PREVIEW_DPI
@@ -60,15 +63,9 @@ export function fileContentPx(f) {
   return null
 }
 
-// 与 config.js PAPER_REGISTRY（L102-109）同步的内联纸张表（mm）。
-// config.js 依赖 vite import.meta.env 不可在纯 node 加载；新增纸型须两处同步（守卫测试锁定）。
-const PAPER_MM = {
-  A4: { widthMM: 210, heightMM: 297 },
-  A5: { widthMM: 148, heightMM: 210 },
-  A3: { widthMM: 297, heightMM: 420 },
-  Letter: { widthMM: 215.9, heightMM: 279.4 },
-  Voucher240x140: { widthMM: 240, heightMM: 140 },
-}
+// 纸张表单源：paperSpec.js（C-2 Step 2 G-C2-5，原内联表已删除）
+// 与 config.js PAPER_REGISTRY（L102-109）同步；新增纸型须两处同步（守卫测试锁定）。
+// (PAPER_MM imported from './paperSpec.js')
 
 /**
  * 预览纸面几何（与 computePaperLayout 同构的本地实现，纯 node）。
@@ -175,25 +172,41 @@ export function buildPrintPreviewModel(plan, { files = [], settings = {}, curren
   }
 
   const pageToModel = (page) => {
-    // B1 修复：swap 触发必须基于「requested ≠ paperShape」，而非「requested === landscape」。
-    // 旧逻辑硬编码「基础纸型恒为竖向」，导致 Voucher240x140 等原生横向纸型 UI/几何恒相反。
-    const requested = page.orientation
-    const paperShapeOrientation = layout.paperRect.w > layout.paperRect.h ? 'landscape' : 'portrait'
-    const needSwap = requested !== paperShapeOrientation
-    // 票位几何：横向在横向物理可用区重算（margins 不随内容旋转），纵向用自然可用区。
+    // C-2 Step 2（G-C2-4）：plan.paper 是纸张几何唯一事实源（resolvePaperSpec 已完成
+    // needSwap 归一，widthMM/heightMM = 请求方向物理尺寸）。
+    //   usable = paper(请求方向) − margins：needSwap 时旧 landUsable.w = naturalH−mL−mR
+    //   == 请求方向 paperW−mL−mR，数学等价（margins 属 Paper 坐标，不随方向变化）。
+    // fallback（旧 plan，缺 plan.paper）：保留 previewPaperLayout + needSwap 旧逻辑。
+    const planPaper = (page.paper && page.paper.widthMM > 0 && page.paper.heightMM > 0)
+      ? page.paper
+      : null
+    let paperW, paperH, widthMM, heightMM, usable
+    if (planPaper) {
+      paperW = Math.round(planPaper.widthMM / 25.4 * PREVIEW_DPI)
+      paperH = Math.round(planPaper.heightMM / 25.4 * PREVIEW_DPI)
+      widthMM = planPaper.widthMM
+      heightMM = planPaper.heightMM
+      usable = { x: mL, y: mT, w: paperW - mL - mR, h: paperH - mT - mB }
+    } else {
+      // B1 修复语义（保留为 fallback）：swap 触发 = requested ≠ paperShape（非 requested===landscape）
+      const requested = page.orientation
+      const paperShapeOrientation = layout.paperRect.w > layout.paperRect.h ? 'landscape' : 'portrait'
+      const needSwap = requested !== paperShapeOrientation
+      usable = needSwap ? landUsable : layout.usableRect
+      widthMM = (needSwap ? layout.paperRect.h : layout.paperRect.w) * PX_TO_MM
+      heightMM = (needSwap ? layout.paperRect.w : layout.paperRect.h) * PX_TO_MM
+      paperW = layout.paperRect.w
+      paperH = layout.paperRect.h
+    }
     // 可用区非正（边距超出）→ 返回 null，由调用方统一判定 invalid。
-    const usable = needSwap ? landUsable : layout.usableRect
     if (usable.w <= 0 || usable.h <= 0) {
       // [DIAG-16] pageToModel 返回 null 的根因（边距超出纸张 → 无有效预览页）
-      console.log('[DIAG-16 pageToModel null] fileKey=%s needSwap=%s usable=%dx%d paperW=%d paperH=%d',
-        page.slots[0]?.fileId?.slice(-20) || '?', needSwap, Math.round(usable.w), Math.round(usable.h),
-        Math.round(layout.paperRect.w), Math.round(layout.paperRect.h))
+      console.log('[DIAG-16 pageToModel null] fileKey=%s usable=%dx%d paperW=%d paperH=%d',
+        page.slots[0]?.fileId?.slice(-20) || '?', Math.round(usable.w), Math.round(usable.h),
+        Math.round(paperW), Math.round(paperH))
       return null
     }
     const slots = computeTicketSlots({ usableRect: usable }, page.slots.length)
-
-    const widthMM = (needSwap ? layout.paperRect.h : layout.paperRect.w) * PX_TO_MM
-    const heightMM = (needSwap ? layout.paperRect.w : layout.paperRect.h) * PX_TO_MM
 
     return {
       paper: page.paper?.size || settings.paperSize || 'A4',
@@ -235,8 +248,10 @@ export function buildPrintPreviewModel(plan, { files = [], settings = {}, curren
           //   （否则会出现「外部 swap → Resolver 内部二次解释方向」的双重 swap）。
           //   纸张坐标链：requestedPaperOrientation → needSwap → physicalPaper → physicalPaperOrientation。
           //   与 SVG viewBox（同样按方向交换，PrintPreviewCanvas.jsx:159-160）落在同一显示坐标系。
-      const paperW_mm = (needSwap ? layout.paperRect.h : layout.paperRect.w) * PX_TO_MM
-      const paperH_mm = (needSwap ? layout.paperRect.w : layout.paperRect.h) * PX_TO_MM
+      const paperW_mm = planPaper ? planPaper.widthMM
+        : (needSwap ? layout.paperRect.h : layout.paperRect.w) * PX_TO_MM
+      const paperH_mm = planPaper ? planPaper.heightMM
+        : (needSwap ? layout.paperRect.w : layout.paperRect.h) * PX_TO_MM
           const marginLeft_mm = mL * PX_TO_MM
           const marginRight_mm = mR * PX_TO_MM
           const marginTop_mm = mT * PX_TO_MM

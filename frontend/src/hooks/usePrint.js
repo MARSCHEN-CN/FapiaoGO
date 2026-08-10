@@ -13,8 +13,9 @@ import { runMergedPrintTasks } from '../runners/printRunner'
 import { computePaperLayout } from '../previewState'
 import { extendPaperLayoutContract } from '../print/paperLayoutContract'
 import { applySourceOriginPlacement, transformPaperRotation } from '../print/placementAdapter'
-import { getContentDimensions, resolveContentPlacement, resolveContentBounds } from '../layout/RotationResolver'
+import { resolveContentPlacement } from '../layout/RotationResolver'
 import { resolvePaperSpec } from '../print/paperSpec'
+import { fileContentPx } from '../print/PrintPreviewModel'
 import { fetchPrintRaster, buildPrintJobItem } from '../utils/printAdapter'
 // A1/A1.5：已证等价的 Plan 事实来源 + 影子比较 helper（Commit 2 source / Commit 3 merge 分支消费）
 import { buildPrintExecutionPlan, createPrintPlanInput } from '../print/buildPrintExecutionPlan'
@@ -536,7 +537,10 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
       bottom: settings.marginBottom ?? 3,
     }
     for (const f of files) {
-      const dims = getContentDimensions(f)
+      // C-2 Step 2（G-C2-4 抓出）：contentPhysicalSize 必须 px@PREVIEW_DPI（Resolver 契约）——
+      // 用 fileContentPx（PDF points × dpi/72 归一，与 Preview pageToModel 同源），
+      // 不能直接传 getContentDimensions 的 PDF points（单位错 → scale 差 dpi/72 倍）。
+      const dims = fileContentPx(f)
       if (!dims) continue
       const contentRotation = fileRotations[f.key] || 0
       try {

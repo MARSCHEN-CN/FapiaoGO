@@ -13,6 +13,7 @@ import assert from 'node:assert/strict'
 import { resolveContentPlacement } from '../../layout/RotationResolver.js'
 import { resolvePaperSpec } from '../paperSpec.js'
 import { createPrintPlanInput, buildPrintExecutionPlan } from '../buildPrintExecutionPlan.js'
+import { buildPrintPreviewModel, fileContentPx } from '../PrintPreviewModel.js'
 
 const PREVIEW_DPI = 300
 
@@ -29,10 +30,12 @@ const MARGINS = { left: 3, right: 3, top: 3, bottom: 3 }
 
 function previewPlacement(settings, file, contentRotation = 0) {
   // 复刻 usePrint placements（C-2 S1-B）与 PrintPreviewModel 同源：
-  // resolvePaperSpec（needSwap 归一化）→ resolveContentPlacement（唯一 resolver）
+  // fileContentPx（PDF points × dpi/72 → px@dpi）→ resolvePaperSpec（needSwap 归一化）
+  // → resolveContentPlacement（唯一 resolver）
   const paper = resolvePaperSpec(settings)
+  const contentPx = fileContentPx(file)
   return resolveContentPlacement({
-    contentPhysicalSize: { width: file._pdfPageWidth, height: file._pdfPageHeight },
+    contentPhysicalSize: contentPx,
     contentRotation,
     physicalPaper: { widthMM: paper.widthMM, heightMM: paper.heightMM },
     margins: MARGINS,
@@ -128,4 +131,52 @@ test('G-C2-1 佐证: plan.paper 几何字段完整（createPrintPlanInput 解析
   assert.deepEqual(Object.keys(plan.pages[0].paper).sort(),
     ['customPaper', 'heightMM', 'orientation', 'paperkind', 'size', 'widthMM'])
   assert.equal(plan.pages[0].orientation, 'portrait')
+})
+
+test('G-C2-4: Plan round-trip — PrintSpec → ExecutionPlan → Preview render input（同 placement / paper geometry）', () => {
+  const settings = {
+    paperSize: 'A4', landscape: false, mergeMode: 'none',
+    marginLeft: 3, marginRight: 3, marginTop: 3, marginBottom: 3,
+  }
+  const file = mkInvoice()
+  // usePrint 模式：placements 先算（resolvePaperSpec → resolveContentPlacement）
+  const preview = previewPlacement(settings, file)
+  const placements = { [file.key]: preview }
+  const { files, options } = createPrintPlanInput([file], settings, {}, placements)
+  const plan = buildPrintExecutionPlan(files, options)
+  // Preview render input（buildPrintPreviewModel 消费 plan）
+  const m = buildPrintPreviewModel(plan, { files: [file], settings, backendUrl: '' })
+  assert.ok(m.valid, `预览构建失败: ${m.reason}`)
+  const p = m.pages[0]
+  const planPage = plan.pages[0]
+  const planSlot = planPage.slots[0]
+  const s = p.slots[0]
+  // paper geometry 一致（C-2 Step 2：Preview 消费 plan.paper）
+  assert.equal(p.paperSizeMM.widthMM, planPage.paper.widthMM, 'paperSizeMM.widthMM')
+  assert.equal(p.paperSizeMM.heightMM, planPage.paper.heightMM, 'paperSizeMM.heightMM')
+  assert.equal(p.requestedPaperOrientation, planPage.orientation, 'requestedPaperOrientation')
+  // placement 一致：Preview resolver 输出 == plan 携带（同一 resolveContentPlacement + 同一 physicalPaper）
+  assert.ok(planSlot.placement, 'plan slot.placement 非空')
+  assert.ok(s.placement, 'preview slot.placement 非空')
+  assert.equal(s.placement.scale, planSlot.placement.scale, 'scale')
+  assert.deepEqual(s.placement.offset, planSlot.placement.offset, 'offset')
+  assert.deepEqual(s.placement.placedRect, planSlot.placement.placedRect, 'placedRect')
+})
+
+test('G-C2-4b: Plan round-trip（A4 landscape 横打）→ 一致', () => {
+  const settings = {
+    paperSize: 'A4', landscape: true, mergeMode: 'none',
+    marginLeft: 3, marginRight: 3, marginTop: 3, marginBottom: 3,
+  }
+  const file = mkInvoice()
+  const preview = previewPlacement(settings, file)
+  const { files, options } = createPrintPlanInput([file], settings, {}, { [file.key]: preview })
+  const plan = buildPrintExecutionPlan(files, options)
+  const m = buildPrintPreviewModel(plan, { files: [file], settings, backendUrl: '' })
+  assert.ok(m.valid)
+  const p = m.pages[0]
+  assert.equal(p.paperSizeMM.widthMM, plan.pages[0].paper.widthMM)
+  assert.equal(p.paperSizeMM.heightMM, plan.pages[0].paper.heightMM)
+  assert.equal(p.slots[0].placement.scale, plan.pages[0].slots[0].placement.scale)
+  assert.deepEqual(p.slots[0].placement.placedRect, plan.pages[0].slots[0].placement.placedRect)
 })

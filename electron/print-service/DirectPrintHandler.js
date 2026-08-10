@@ -127,7 +127,9 @@ async function handle(filePath, settings) {
   const marginT = spec.margins.top
   const marginB = spec.margins.bottom
   const hasMargins = marginL > 0 || marginR > 0 || marginT > 0 || marginB > 0
-  let marginsApplied = false
+  // C-2 Step 2（G-C2-6）：语义隔离改名——旧「边距已应用」布尔（混了三语义）→
+  // geometryMaterialized，明确「边距几何已物化进 PDF」这一单一事实。不驱动 scalePolicy / rotation（C-1-c 已切断）。
+  let geometryMaterialized = false
 
   console.log('[DirectPrintHandler] margin fields: L=%d R=%d T=%d B=%d hasMargins=%s',
     marginL, marginR, marginT, marginB, hasMargins)
@@ -152,7 +154,7 @@ async function handle(filePath, settings) {
       if (marginResult.path && marginResult.path !== destPath) {
         console.log('[DirectPrintHandler] Margin applied successfully:', marginResult.path)
         destPath = marginResult.path
-        marginsApplied = true
+        geometryMaterialized = true
       } else {
         console.log('[DirectPrintHandler] Margin processing returned original file (no change or fallback)')
       }
@@ -177,11 +179,10 @@ async function handle(filePath, settings) {
     scaleFactor: settings?.scaleFactor || 100,
     collate: settings?.collate || true,
     customPaper: spec.paper.customPaper || null,
-    // Phase 1-C-1-c：scalePolicy 单一读取点（删除 marginsApplied 条件式——scale 语义
-    // 由 PrintSpec 决定；边距 bake 后的 noscale override 属 C-2 PrintExecutionPlan 闭环）。
-    // marginsApplied 字段暂保留（无消费者，语义隔离待 C-2 处理，避免扩大战场）。
+    // C-2 Step 2（G-C2-6）：geometryMaterialized 仅表达「边距几何已物化」，不驱动
+    // scalePolicy / rotation（C-1-c 已切断该链路；noscale override 属 C-2 PrintExecutionPlan 闭环）。
     scale: spec.scalePolicy,
-    marginsApplied,
+    geometryMaterialized,
   };
 
   // ========== [DEBUG] 链路追踪 ==========
