@@ -15,9 +15,9 @@ class DateExtractor:
     def extract(self, doc: OCRDocument) -> str:
         # 修改1: 优先用带关键词的 pattern，裸日期降为低优先级
         patterns = [
-            r'开票日期[:：]?\s*(\d{4}[-/年]\d{1,2}[-/月]\d{1,2}[日号]?)',
-            r'日期[:：]?\s*(\d{4}[-/年]\d{1,2}[-/月]\d{1,2}[日号]?)',
-            r'(\d{4}年\d{1,2}月\d{1,2}日)',
+            r'开票日期[:：]?\s*(\d{4}\s*[-/年]\s*\d{1,2}\s*[-/月]\s*\d{1,2}\s*[日号]?)',
+            r'日期[:：]?\s*(\d{4}\s*[-/年]\s*\d{1,2}\s*[-/月]\s*\d{1,2}\s*[日号]?)',
+            r'(\d{4}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日)',
         ]
 
         # 优先从 header 区域搜索（避免从备注中误取日期）
@@ -43,6 +43,8 @@ class DateExtractor:
             return ''
 
         raw = raw.replace('年', '-').replace('月', '-').replace('日', '').replace('号', '')
+        # 去除空格,支持 OCR 输出 "2025 年 11 月 26 日" 这类带空格格式
+        raw = re.sub(r'\s+', '', raw)
         m = re.match(r'(\d{4})[-/](\d{1,2})[-/](\d{1,2})', raw)
         if m:
             year, month, day = m.group(1), m.group(2), m.group(3)
