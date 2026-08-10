@@ -1,13 +1,16 @@
 /**
  * Margin Contract Gate — 运行器（DEV-only）
  *
- * 两种被测对象（--target）：
- *   production : 调用生产实现 scripts/add-pdf-margins.py（Gate 2 预期 RED）
+ * 三种被测对象（--target）：
+ *   production : 调用生产实现 scripts/add-pdf-margins.py（Gate 2 预期 RED，旧代码回归基线）
+ *   phase1a    : 调用 Phase 1-A executor scripts/margin_contract.py（预期 GREEN）
  *   correct    : 用 makeFixture.py correct 生成的已知正确输出（Gate 基础设施自检，预期 GREEN）
  *
  * 用法:
  *   node runGate.mjs --target production
  *   node runGate.mjs --target correct
+ *   node runGate.mjs --target phase1a
+ *   node runGate.mjs --target phase1a --force-pending   # 连 pending 向量（如 V-04 rot90）也跑
  *   node runGate.mjs --target correct --only V-02-asym-tb
  *
  * 退出码：0 = 全部 active 向量通过；1 = 有失败。
@@ -25,6 +28,7 @@ const REPO = path.resolve(HERE, '..', '..', '..', '..')
 const PY = path.join(REPO, 'backend', 'venv', 'Scripts', 'python.exe')
 const VECTORS = path.join(REPO, 'docs', 'margin_contract_vectors.json')
 const PROD_SCRIPT = path.join(REPO, 'scripts', 'add-pdf-margins.py')
+const EXECUTOR = path.join(REPO, 'scripts', 'margin_contract.py')
 const RASTERIZE = path.join(HERE, '..', 'rasterize_pdf.py')
 const OUT = path.join(HERE, '.out')
 
@@ -32,9 +36,10 @@ const argv = process.argv.slice(2)
 const getArg = (k, d) => { const i = argv.indexOf(k); return i >= 0 ? argv[i + 1] : d }
 const target = getArg('--target', 'production')
 const only = getArg('--only', null)
+const forcePending = argv.includes('--force-pending')
 
-if (!['production', 'correct'].includes(target)) {
-  console.error('--target 必须是 production 或 correct'); process.exit(2)
+if (!['production', 'phase1a', 'correct'].includes(target)) {
+  console.error('--target 必须是 production / phase1a / correct'); process.exit(2)
 }
 fs.mkdirSync(OUT, { recursive: true })
 fs.writeFileSync(path.join(OUT, '.gitignore'), '*\n')
@@ -63,7 +68,7 @@ let pending = 0
 
 for (const vec of doc.vectors) {
   if (only && vec.id !== only) continue
-  if (vec.status !== 'active') {
+  if (vec.status !== 'active' && !(forcePending && target === 'phase1a')) {
     pending++
     results.push({ id: vec.id, status: 'PENDING', reason: vec.status, note: vec.notes ?? '' })
     continue
@@ -95,6 +100,22 @@ for (const vec of doc.vectors) {
         '--top', String(ptToMm(m.top)), '--bottom', String(ptToMm(m.bottom)),
       ])
       rec.productionReturn = out
+    } else if (target === 'phase1a') {
+      const m = vec.input.margin
+      const p = vec.input.paper
+      const rot = vec.input.spec?.contentRotation ?? 0
+      const allowUp = vec.input.spec?.allowUpscale ?? false
+      const args = [
+        '--input', srcPdf, '--output', outPdf,
+        '--paper-width-pt', String(p.widthPt), '--paper-height-pt', String(p.heightPt),
+        '--left-pt', String(m.left), '--right-pt', String(m.right),
+        '--top-pt', String(m.top), '--bottom-pt', String(m.bottom),
+        '--content-rotation', String(rot),
+      ]
+      if (allowUp) args.push('--allow-upscale')
+      const out = py(EXECUTOR, args)
+      if (!out.success) throw new Error(`margin_contract failed: ${out.error}`)
+      rec.executorInfo = out.info
     } else {
       const out = py(path.join(HERE, 'makeFixture.py'),
         ['correct', '--vector', vec.id, '--out', outPdf, '--src', srcPdf])
