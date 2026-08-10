@@ -1,0 +1,720 @@
+{
+  "$schema": "internal://print-margin-contract/vectors-1.0",
+  "version": "1.0",
+  "contract": "docs/print_margin_contract.md v1.0 (FROZEN 2026-08-10)",
+  "gate": "Gate 1 (print_margin_contract.md §9)",
+  "coordinateSpace": "pdf-user-space",
+  "origin": "bottom-left, Y axis up (D3)",
+  "unit": "pt",
+  "mmToPt": 2.834645669291339,
+  "marginOrder": [
+    "left",
+    "right",
+    "top",
+    "bottom"
+  ],
+  "generatedBy": "manual",
+  "generatedFrom": "formula",
+  "expectationSource": "hand-derived",
+  "expectationRule": "所有 expected 均由契约 §1.1 冻结公式以有理数精确推导得出，未运行任何生产实现。scaleExact 保留最简分数形式作为审计线索，可人工复核。禁止用任何实现的输出回填或修正本文件；实现与本文件不符时，错的是实现。",
+  "consumers": [
+    "JS contract test",
+    "Python contract test",
+    "frontend/test/printGate"
+  ],
+  "nonGoals": [
+    "不作为 fixture PDF（本文件只描述几何输入条件与期望几何结果）",
+    "不记录 PDF object id / Form XObject / pikepdf 等实现细节",
+    "不记录 Sumatra 行为（fit / noscale 属 D2，不属本向量集）"
+  ],
+  "tolerance": {
+    "analyticPt": 1e-06,
+    "guardPt": 0.1,
+    "rasterMm": 0.5,
+    "rasterDpi": 300,
+    "_note": "analyticPt 用于 JS/Python 纯公式一致性；guardPt 对齐 §6 G-2 与 INV-1；rasterMm/rasterDpi 对齐 frontend/test/printGate/gateConfig.mjs"
+  },
+  "fieldSemantics": {
+    "input.paper": "源纸空间（旋转前）的目标纸尺寸。D1 冻结：margin 定义于此空间。",
+    "input.source.pageRotate": "源 PDF 页自带的 /Rotate 属性（0/90/180/270），由 §1.4 归一。",
+    "input.source.widthPt/heightPt": "§1.4 归一后的有效可视尺寸（已应用 pageRotate 的转置）。",
+    "input.spec.contentRotation": "Policy A 业务内容旋转 theta。与 pageRotate 是两个独立概念，禁止合并。",
+    "input.spec.allowUpscale": "INV-3 的显式开关，默认 false。",
+    "expected.mediaBox": "输出物理纸尺寸。theta%180==90 时按 Policy A 交换宽高（见 ERRATA-2）。",
+    "expected.contentBox": "放置后内容外接矩形，规范空间（原点左下）。",
+    "expected.effectiveMargins": "输出空间四边留白，冗余字段，便于人工核对与 raster gate 直接比对。"
+  },
+  "errata": [
+    {
+      "id": "ERRATA-1",
+      "severity": "blocker-for-V-08",
+      "target": "print_margin_contract.md §1.1",
+      "issue": "§1.1 公式为 scale = min(uW/cW, uH/cH)，无 clamp；INV-3 却规定默认禁止 scale>1。两者冲突，源页小于 usableRect 时行为未定义。",
+      "proposal": "§1.1 改为 scale = allowUpscale ? min(sx, sy) : min(1, sx, sy)，并在 INV-3 注明默认 allowUpscale=false。",
+      "status": "pending-signoff"
+    },
+    {
+      "id": "ERRATA-2",
+      "severity": "blocker-for-V-04",
+      "target": "print_margin_contract.md §1.2 INV-1",
+      "issue": "INV-1 写 effectivePageSize(output) == targetPaper。若 targetPaper 指源纸空间的纸，则 Policy A 下 rot90 输出必然违反 INV-1（宽高已交换）。",
+      "proposal": "INV-1 补一句：targetPaper 指经 Policy A 变换后的输出纸，即 theta%180==90 时为 swap(paper)。",
+      "status": "pending-signoff"
+    },
+    {
+      "id": "ERRATA-3",
+      "severity": "editorial",
+      "target": "print_margin_contract.md §7.2 向量 id 表",
+      "issue": "表中列 V-01..V-07 共 7 条，本文件为 9 条（新增 V-05b 与 V-08）。",
+      "proposal": "§7.2 表补入 V-05b-zero-margin-crossfit 与 V-08-no-upscale。",
+      "status": "pending-signoff"
+    },
+    {
+      "id": "ERRATA-4",
+      "severity": "high",
+      "target": "Gate 1 提案 schema",
+      "issue": "提案 schema 用单一 source.rotation 字段，会把「源页 /Rotate 属性」与「Policy A 内容旋转 theta」混为一谈。二者在 §1.4 与 §2.1 是不同概念，混用会让 V-04 与 V-07 无法区分。",
+      "proposal": "已在本文件拆为 input.source.pageRotate 与 input.spec.contentRotation。",
+      "status": "applied"
+    },
+    {
+      "id": "ERRATA-5",
+      "severity": "high",
+      "target": "Gate 1 提案 V06（margin=0）",
+      "issue": "A4 源页 + A4 纸 + margin=0 的正确输出与 shutil.copy 的输出几何完全一致，故该向量无法捕获 X-2 短路复制。",
+      "proposal": "已新增 V-05b（Letter -> A4, margin=0），复制会留下 612x792 的 MediaBox，可被 INV-1 捕获。",
+      "status": "applied"
+    },
+    {
+      "id": "ERRATA-6",
+      "severity": "informational",
+      "target": "Gate 1 提案的 V01 期望值",
+      "issue": "提案给出 scale=0.9527、contentBox 538.58x785.19、y=28.346。经 §1.1 复核为错：正确值 scale=19/21=0.904762、content 538.582677x761.709786、y=40.089989。0.9527 疑为只扣了一侧边距（1 - 28.3465/595.2756 = 0.952381）；785.19 是 usableHeight，不是 contentHeight。",
+      "proposal": "以本文件 V-01 的手工推导值为准。此条恰好印证 §7.2「期望值必须可被第二人独立复核」的必要性。",
+      "status": "resolved"
+    }
+  ],
+  "gate2Baseline": {
+    "_note": "对当前错误实现（expand_box）的预测，非契约真值。Gate 2 必须实测确认；实测与预测不符时以实测为准并回填本字段。",
+    "vector": "V-01-a4-sym",
+    "predictedMediaBox": {
+      "widthPt": 651.9685039370079,
+      "heightPt": 898.5826771653543
+    },
+    "predictedScale": 1.0,
+    "expectedFailure": "INV-1 mismatch",
+    "rejectIfFailureReasonIs": [
+      "bbox calculation error",
+      "harness error",
+      "file not found"
+    ]
+  },
+  "vectors": [
+    {
+      "id": "V-01-a4-sym",
+      "purpose": "A4 满版 + 对称 10mm。基线用例，直接抓 expand_box。",
+      "status": "active",
+      "catches": [
+        "INV-1: expand_box 使 MediaBox 膨胀为 651.968504 x 898.582677",
+        "内容未缩放（当前实现 scale 恒为 1）"
+      ],
+      "input": {
+        "paper": {
+          "widthPt": 595.2755905511812,
+          "heightPt": 841.8897637795276,
+          "_space": "source-paper-space (pre-rotation, contract D1)"
+        },
+        "source": {
+          "widthPt": 595.2755905511812,
+          "heightPt": 841.8897637795276,
+          "pageRotate": 0
+        },
+        "spec": {
+          "contentRotation": 0,
+          "allowUpscale": false
+        },
+        "margin": {
+          "left": 28.346456692913385,
+          "right": 28.346456692913385,
+          "top": 28.346456692913385,
+          "bottom": 28.346456692913385
+        }
+      },
+      "expected": {
+        "scale": 0.9047619047619048,
+        "scaleExact": "19/21",
+        "usableRect": {
+          "x": 28.346456692913385,
+          "y": 28.346456692913385,
+          "widthPt": 538.5826771653543,
+          "heightPt": 785.1968503937007
+        },
+        "mediaBox": {
+          "widthPt": 595.2755905511812,
+          "heightPt": 841.8897637795276
+        },
+        "pageRotate": 0,
+        "contentBox": {
+          "x": 28.346456692913385,
+          "y": 40.089988751406075,
+          "widthPt": 538.5826771653543,
+          "heightPt": 761.7097862767154
+        },
+        "effectiveMargins": {
+          "left": 28.346456692913385,
+          "right": 28.346456692913385,
+          "top": 40.089988751406075,
+          "bottom": 40.089988751406075
+        }
+      },
+      "derivation": "usable = (210-20) x (297-20) mm = 190 x 277 mm; sx = 190/210 = 19/21, sy = 277/297; scale = min = 19/21",
+      "notes": "宽度为约束边：contentWidth 恰等于 usableWidth，故 offsetX 无居中增量；高度方向居中增量为 11.743532pt。"
+    },
+    {
+      "id": "V-02-asym-tb",
+      "purpose": "四边全非对称边距（L20/R5/T30/B10 mm）。专抓原点翻转。",
+      "status": "active",
+      "catches": [
+        "offsetY 用了 marginTop 而非 marginBottom（bottom-left 原点写反）",
+        "margin 数组顺序错位（[L,R,T,B] 被当成 [L,T,R,B]）"
+      ],
+      "input": {
+        "paper": {
+          "widthPt": 595.2755905511812,
+          "heightPt": 841.8897637795276,
+          "_space": "source-paper-space (pre-rotation, contract D1)"
+        },
+        "source": {
+          "widthPt": 595.2755905511812,
+          "heightPt": 841.8897637795276,
+          "pageRotate": 0
+        },
+        "spec": {
+          "contentRotation": 0,
+          "allowUpscale": false
+        },
+        "margin": {
+          "left": 56.69291338582677,
+          "right": 14.173228346456693,
+          "top": 85.03937007874016,
+          "bottom": 28.346456692913385
+        }
+      },
+      "expected": {
+        "scale": 0.8653198653198653,
+        "scaleExact": "257/297",
+        "usableRect": {
+          "x": 56.69291338582677,
+          "y": 28.346456692913385,
+          "widthPt": 524.4094488188977,
+          "heightPt": 728.503937007874
+        },
+        "mediaBox": {
+          "widthPt": 595.2755905511812,
+          "heightPt": 841.8897637795276
+        },
+        "pageRotate": 0,
+        "contentBox": {
+          "x": 61.34574087329993,
+          "y": 28.346456692913385,
+          "widthPt": 515.1037938439513,
+          "heightPt": 728.503937007874
+        },
+        "effectiveMargins": {
+          "left": 61.34574087329993,
+          "right": 18.82605583392985,
+          "top": 85.03937007874016,
+          "bottom": 28.346456692913385
+        }
+      },
+      "derivation": "usable = (210-25) x (297-40) mm = 185 x 257 mm; sx = 185/210 = 37/42, sy = 257/297; scale = min = 257/297",
+      "notes": "高度为约束边。若把 offsetY 写成 marginTop + ... 会得 85.039370 而非 28.346457，差 56.69pt，必被捕获。"
+    },
+    {
+      "id": "V-03-wide",
+      "purpose": "源页 1200x1600pt 大于纸，宽度为约束边、垂直居中。",
+      "status": "active",
+      "catches": [
+        "scaleX != scaleY（非等比拉伸，INV-2）",
+        "未做 contain（内容溢出 usableRect）"
+      ],
+      "input": {
+        "paper": {
+          "widthPt": 595.2755905511812,
+          "heightPt": 841.8897637795276,
+          "_space": "source-paper-space (pre-rotation, contract D1)"
+        },
+        "source": {
+          "widthPt": 1200.0,
+          "heightPt": 1600.0,
+          "pageRotate": 0
+        },
+        "spec": {
+          "contentRotation": 0,
+          "allowUpscale": false
+        },
+        "margin": {
+          "left": 28.346456692913385,
+          "right": 28.346456692913385,
+          "top": 28.346456692913385,
+          "bottom": 28.346456692913385
+        }
+      },
+      "expected": {
+        "scale": 0.44881889763779526,
+        "scaleExact": "57/127",
+        "usableRect": {
+          "x": 28.346456692913385,
+          "y": 28.346456692913385,
+          "widthPt": 538.5826771653543,
+          "heightPt": 785.1968503937007
+        },
+        "mediaBox": {
+          "widthPt": 595.2755905511812,
+          "heightPt": 841.8897637795276
+        },
+        "pageRotate": 0,
+        "contentBox": {
+          "x": 28.346456692913385,
+          "y": 61.889763779527556,
+          "widthPt": 538.5826771653543,
+          "heightPt": 718.1102362204724
+        },
+        "effectiveMargins": {
+          "left": 28.346456692913385,
+          "right": 28.346456692913385,
+          "top": 61.889763779527556,
+          "bottom": 61.889763779527556
+        }
+      },
+      "derivation": "sx = 538.582677/1200 = 57/127, sy = 785.196850/1600; scale = min = 57/127",
+      "notes": "源页宽高比 0.75 大于 usableRect 宽高比 0.6859，故宽度约束、上下各留居中增量 33.543307pt。"
+    },
+    {
+      "id": "V-04-rot90",
+      "purpose": "rot90 + 四边非对称（L10/R20/T30/B40 mm）。验证 D1 顺时针轮换。",
+      "status": "pending-a3v2",
+      "catches": [
+        "margin 被当成物理纸空间恒定绑边（未随 Policy A 旋转）",
+        "输出 MediaBox 未按 Policy A 交换宽高"
+      ],
+      "input": {
+        "paper": {
+          "widthPt": 595.2755905511812,
+          "heightPt": 841.8897637795276,
+          "_space": "source-paper-space (pre-rotation, contract D1)"
+        },
+        "source": {
+          "widthPt": 595.2755905511812,
+          "heightPt": 841.8897637795276,
+          "pageRotate": 0
+        },
+        "spec": {
+          "contentRotation": 90,
+          "allowUpscale": false
+        },
+        "margin": {
+          "left": 28.346456692913385,
+          "right": 56.69291338582677,
+          "top": 85.03937007874016,
+          "bottom": 113.38582677165354
+        }
+      },
+      "expected": {
+        "scale": 0.7643097643097643,
+        "scaleExact": "227/297",
+        "usableRect": {
+          "x": 28.346456692913385,
+          "y": 113.38582677165354,
+          "widthPt": 510.23622047244095,
+          "heightPt": 643.4645669291339
+        },
+        "mediaBox": {
+          "widthPt": 841.8897637795276,
+          "heightPt": 595.2755905511812
+        },
+        "pageRotate": 0,
+        "contentBox": {
+          "x": 113.38582677165354,
+          "y": 84.32355046528275,
+          "widthPt": 643.4645669291339,
+          "heightPt": 454.974946313529
+        },
+        "effectiveMargins": {
+          "left": 113.38582677165354,
+          "right": 85.03937007874016,
+          "top": 55.977093772369365,
+          "bottom": 84.32355046528275
+        }
+      },
+      "derivation": "源纸空间 usable = (210-30) x (297-70) mm = 180 x 227 mm; scale = min(180/210, 227/297) = 227/297; 布局完成后整页 90deg CW 旋转，纸面随之交换为 297 x 210 mm；边距顺时针轮换 (L',T',R',B') = (B,L,T,R)",
+      "notes": "RG-4：现在就写，Gate 中 SKIP 并计入 pending，不允许静默遗漏。顺时针轮换方向源自 MEMORY A3-C5 canvas 实测锚点（rot0 L14.3/T16/R10.6/B17 -> rot90 L17/T14.3/R16/B10.6），属候选映射，必须由 A3-V2 对 Sumatra artifact 的实测确认后方可转 active。"
+    },
+    {
+      "id": "V-05-zero-margin",
+      "purpose": "margin=0 仍走 contain-fit（INV-6），不得短路复制。",
+      "status": "active",
+      "catches": [
+        "（本向量无法捕获 X-2 短路复制 —— 见 notes）"
+      ],
+      "input": {
+        "paper": {
+          "widthPt": 595.2755905511812,
+          "heightPt": 841.8897637795276,
+          "_space": "source-paper-space (pre-rotation, contract D1)"
+        },
+        "source": {
+          "widthPt": 595.2755905511812,
+          "heightPt": 841.8897637795276,
+          "pageRotate": 0
+        },
+        "spec": {
+          "contentRotation": 0,
+          "allowUpscale": false
+        },
+        "margin": {
+          "left": 0.0,
+          "right": 0.0,
+          "top": 0.0,
+          "bottom": 0.0
+        }
+      },
+      "expected": {
+        "scale": 1.0,
+        "scaleExact": "1/1",
+        "usableRect": {
+          "x": 0.0,
+          "y": 0.0,
+          "widthPt": 595.2755905511812,
+          "heightPt": 841.8897637795276
+        },
+        "mediaBox": {
+          "widthPt": 595.2755905511812,
+          "heightPt": 841.8897637795276
+        },
+        "pageRotate": 0,
+        "contentBox": {
+          "x": 0.0,
+          "y": 0.0,
+          "widthPt": 595.2755905511812,
+          "heightPt": 841.8897637795276
+        },
+        "effectiveMargins": {
+          "left": 0.0,
+          "right": 0.0,
+          "top": 0.0,
+          "bottom": 0.0
+        }
+      },
+      "derivation": "usable = paper; scale = min(1, 1) = 1; offset = (0, 0)",
+      "notes": "审查警告：本向量的几何输出与 shutil.copy(input, output) 完全一致，故它证明的是「margin=0 的正确答案是恒等变换」，不能证明短路复制已被删除。捕获 X-2 必须依赖 V-05b。"
+    },
+    {
+      "id": "V-05b-zero-margin-crossfit",
+      "purpose": "margin=0 且源纸不等于目标纸（Letter 612x792 -> A4）。真正捕获 X-2。",
+      "status": "active",
+      "catches": [
+        "X-2: margin==0 短路复制（复制会留下 MediaBox 612x792 != A4，违反 INV-1）",
+        "margin=0 时跳过 contain-fit"
+      ],
+      "input": {
+        "paper": {
+          "widthPt": 595.2755905511812,
+          "heightPt": 841.8897637795276,
+          "_space": "source-paper-space (pre-rotation, contract D1)"
+        },
+        "source": {
+          "widthPt": 612.0,
+          "heightPt": 792.0,
+          "pageRotate": 0
+        },
+        "spec": {
+          "contentRotation": 0,
+          "allowUpscale": false
+        },
+        "margin": {
+          "left": 0.0,
+          "right": 0.0,
+          "top": 0.0,
+          "bottom": 0.0
+        }
+      },
+      "expected": {
+        "scale": 0.9726725335803613,
+        "scaleExact": "2100/2159",
+        "usableRect": {
+          "x": 0.0,
+          "y": 0.0,
+          "widthPt": 595.2755905511812,
+          "heightPt": 841.8897637795276
+        },
+        "mediaBox": {
+          "widthPt": 595.2755905511812,
+          "heightPt": 841.8897637795276
+        },
+        "pageRotate": 0,
+        "contentBox": {
+          "x": 0.0,
+          "y": 35.766558591940715,
+          "widthPt": 595.2755905511812,
+          "heightPt": 770.3566465956461
+        },
+        "effectiveMargins": {
+          "left": 0.0,
+          "right": 0.0,
+          "top": 35.766558591940715,
+          "bottom": 35.766558591940715
+        }
+      },
+      "derivation": "usable = paper = 595.275591 x 841.889764; sx = 595.275591/612 = 2100/2159, sy = 841.889764/792; scale = min = 2100/2159",
+      "notes": "审查新增（契约 §7.2 表未列，见 ERRATA-5）。这是唯一能几何性地证伪短路复制的用例。"
+    },
+    {
+      "id": "V-06-internal-geometry",
+      "purpose": "源页 900x1200pt。验证 INV-7 相似变换与整页原子性。",
+      "status": "active",
+      "catches": [
+        "INV-7a: 出现非等比缩放 / shear / 镜像",
+        "INV-7b: 逐对象重排导致内部相对几何改变"
+      ],
+      "input": {
+        "paper": {
+          "widthPt": 595.2755905511812,
+          "heightPt": 841.8897637795276,
+          "_space": "source-paper-space (pre-rotation, contract D1)"
+        },
+        "source": {
+          "widthPt": 900.0,
+          "heightPt": 1200.0,
+          "pageRotate": 0
+        },
+        "spec": {
+          "contentRotation": 0,
+          "allowUpscale": false
+        },
+        "margin": {
+          "left": 28.346456692913385,
+          "right": 28.346456692913385,
+          "top": 28.346456692913385,
+          "bottom": 28.346456692913385
+        }
+      },
+      "expected": {
+        "scale": 0.5984251968503937,
+        "scaleExact": "76/127",
+        "usableRect": {
+          "x": 28.346456692913385,
+          "y": 28.346456692913385,
+          "widthPt": 538.5826771653543,
+          "heightPt": 785.1968503937007
+        },
+        "mediaBox": {
+          "widthPt": 595.2755905511812,
+          "heightPt": 841.8897637795276
+        },
+        "pageRotate": 0,
+        "contentBox": {
+          "x": 28.346456692913385,
+          "y": 61.889763779527556,
+          "widthPt": 538.5826771653543,
+          "heightPt": 718.1102362204724
+        },
+        "effectiveMargins": {
+          "left": 28.346456692913385,
+          "right": 28.346456692913385,
+          "top": 61.889763779527556,
+          "bottom": 61.889763779527556
+        },
+        "probePoints": [
+          {
+            "source": [
+              0,
+              0
+            ],
+            "expected": [
+              28.346456692913385,
+              61.889763779527556
+            ]
+          },
+          {
+            "source": [
+              900,
+              0
+            ],
+            "expected": [
+              566.9291338582677,
+              61.889763779527556
+            ]
+          },
+          {
+            "source": [
+              0,
+              1200
+            ],
+            "expected": [
+              28.346456692913385,
+              780.0
+            ]
+          },
+          {
+            "source": [
+              900,
+              1200
+            ],
+            "expected": [
+              566.9291338582677,
+              780.0
+            ]
+          },
+          {
+            "source": [
+              450,
+              600
+            ],
+            "expected": [
+              297.6377952755906,
+              420.9448818897638
+            ]
+          }
+        ],
+        "similarityInvariant": {
+          "pair": [
+            [
+              0,
+              0
+            ],
+            [
+              900,
+              1200
+            ]
+          ],
+          "sourceDistance": 1500.0,
+          "expectedDistance": 897.6377952755905,
+          "tolerancePt": 0.1
+        }
+      },
+      "derivation": "scale = min(538.582677/900, 785.196850/1200) = min(76/127, 0.654331) = 76/127",
+      "notes": "探针点在源页用户空间给出；期望点 = offset + p * scale。任取两点须满足 |T(p1)-T(p2)| = s * |p1-p2|（容差 0.1pt）。源页 (0,0)-(900,1200) 距离恰为 1500（3-4-5 三角），便于人工复核。"
+    },
+    {
+      "id": "V-07-src-rotate",
+      "purpose": "源页自带 /Rotate 90（MediaBox 595.28x841.89）。验证 §1.4 归一 + R-1 输出归零。",
+      "status": "active",
+      "catches": [
+        "§1.4: 未归一源页 /Rotate，contentSize 取成 595x842 而非 842x595",
+        "R-1: 输出仍带 /Rotate != 0，把旋转留给后端二次解释"
+      ],
+      "input": {
+        "paper": {
+          "widthPt": 595.2755905511812,
+          "heightPt": 841.8897637795276,
+          "_space": "source-paper-space (pre-rotation, contract D1)"
+        },
+        "source": {
+          "widthPt": 841.8897637795276,
+          "heightPt": 595.2755905511812,
+          "pageRotate": 90
+        },
+        "spec": {
+          "contentRotation": 0,
+          "allowUpscale": false
+        },
+        "margin": {
+          "left": 28.346456692913385,
+          "right": 28.346456692913385,
+          "top": 28.346456692913385,
+          "bottom": 28.346456692913385
+        }
+      },
+      "expected": {
+        "scale": 0.6397306397306397,
+        "scaleExact": "190/297",
+        "usableRect": {
+          "x": 28.346456692913385,
+          "y": 28.346456692913385,
+          "widthPt": 538.5826771653543,
+          "heightPt": 785.1968503937007
+        },
+        "mediaBox": {
+          "widthPt": 595.2755905511812,
+          "heightPt": 841.8897637795276
+        },
+        "pageRotate": 0,
+        "contentBox": {
+          "x": 28.346456692913385,
+          "y": 230.53686471009306,
+          "widthPt": 538.5826771653543,
+          "heightPt": 380.8160343593415
+        },
+        "effectiveMargins": {
+          "left": 28.346456692913385,
+          "right": 28.346456692913385,
+          "top": 230.53686471009306,
+          "bottom": 230.53686471009306
+        }
+      },
+      "derivation": "源页 MediaBox 595.275591 x 841.889764 且 /Rotate 90 -> contentSize 归一为 841.889764 x 595.275591; sx = 538.582677/841.889764 = 190/297, sy = 785.196850/595.275591; scale = min = 190/297",
+      "notes": "input.source.widthPt/heightPt 已是 §1.4 归一后的有效可视尺寸；原始 MediaBox 为其转置。注意区分：本向量的 pageRotate=90 是源页属性，spec.contentRotation=0；与 V-04 的 Policy A 旋转是两个概念。"
+    },
+    {
+      "id": "V-08-no-upscale",
+      "purpose": "源页 300x300pt 远小于 usableRect。验证默认禁止放大（INV-3）。",
+      "status": "active",
+      "catches": [
+        "INV-3: scale 被算成 1.795276 把小内容放大",
+        "clamp 后未按 usableRect 居中"
+      ],
+      "input": {
+        "paper": {
+          "widthPt": 595.2755905511812,
+          "heightPt": 841.8897637795276,
+          "_space": "source-paper-space (pre-rotation, contract D1)"
+        },
+        "source": {
+          "widthPt": 300.0,
+          "heightPt": 300.0,
+          "pageRotate": 0
+        },
+        "spec": {
+          "contentRotation": 0,
+          "allowUpscale": false
+        },
+        "margin": {
+          "left": 28.346456692913385,
+          "right": 28.346456692913385,
+          "top": 28.346456692913385,
+          "bottom": 28.346456692913385
+        }
+      },
+      "expected": {
+        "scale": 1.0,
+        "scaleExact": "1/1",
+        "usableRect": {
+          "x": 28.346456692913385,
+          "y": 28.346456692913385,
+          "widthPt": 538.5826771653543,
+          "heightPt": 785.1968503937007
+        },
+        "mediaBox": {
+          "widthPt": 595.2755905511812,
+          "heightPt": 841.8897637795276
+        },
+        "pageRotate": 0,
+        "contentBox": {
+          "x": 147.63779527559055,
+          "y": 270.9448818897638,
+          "widthPt": 300.0,
+          "heightPt": 300.0
+        },
+        "effectiveMargins": {
+          "left": 147.63779527559055,
+          "right": 147.63779527559055,
+          "top": 270.9448818897638,
+          "bottom": 270.9448818897638
+        }
+      },
+      "derivation": "raw sx = 538.582677/300 = 1.795276, sy = 785.196850/300 = 2.617323; min = 1.795276 > 1，allowUpscale=false 故 clamp 到 1",
+      "notes": "审查新增（契约 §7.2 表未列，见 ERRATA-1 / ERRATA-3）。注意：契约 §1.1 的公式文本没有 clamp 项，与 INV-3 冲突；本向量按 INV-3 语义写，待 ERRATA-1 签署后同步修正 §1.1。"
+    }
+  ]
+}
