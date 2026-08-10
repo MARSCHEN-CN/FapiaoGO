@@ -157,8 +157,9 @@ _RIGHT_DIST_WEIGHT_DY = RIGHT_DIST_WEIGHT_DY
 _SOURCE_PRIORITY = SOURCE_PRIORITY
 
 # 互斥关键词集合（用于 _fuzzy_match 中的交叉过滤）
-_BUYER_EXCLUSIVE = {'购买方', '购方信息', '购买方信息'}
-_SELLER_EXCLUSIVE = {'销售方', '销方信息', '销售方信息'}
+# 同时覆盖"购货方/销货方"写法,防止销售方锚点被误判为购买方。
+_BUYER_EXCLUSIVE = {'购买方', '购货方', '购方信息', '购买方信息', '购货方信息'}
+_SELLER_EXCLUSIVE = {'销售方', '销货方', '销方信息', '销售方信息', '销货方信息'}
 
 # ═══════════════════════════════════════════════════════════
 # Token 辅助函数
@@ -240,10 +241,11 @@ def _fuzzy_match(text: str, keywords: list, min_ratio: float = _FUZZY_MATCH_MIN_
             return kw
 
     # [PERF] 交叉过滤：seller/buyer 互斥关键词剔除
-    if '销售' in tc or '销方' in tc:
+    # 同时识别"销货/购货"写法。
+    if '销售' in tc or '销方' in tc or '销货' in tc:
         kw_set -= _BUYER_EXCLUSIVE
 
-    if '购买' in tc or '购方' in tc:
+    if '购买' in tc or '购方' in tc or '购货' in tc:
         kw_set -= _SELLER_EXCLUSIVE
 
     # [PERF] 覆盖率计算前增加快速过滤：字符集交集不足则跳过
@@ -393,8 +395,9 @@ class PartyExtractor:
                 merged.extend(group)
 
         # ── 合并后验证：拆回可疑的误合并 ──
-        _ANCHOR_KW = ('购买方', '购方', '销售方', '销方', '名称', '税号',
-                       '信用代码', '纳税人', '发票', '备注', '开票', '复核', '收款')
+        _ANCHOR_KW = ('购买方', '购货方', '购方', '销售方', '销货方', '销方',
+                       '名称', '税号', '信用代码', '纳税人', '发票', '备注',
+                       '开票', '复核', '收款')
         _SUFFIX_KW = ('有限公司', '有限责任公司', '股份有限公司', '集团',
                        '合伙', '银行', '事务所', '合作社')
         validated = []
@@ -716,6 +719,11 @@ class PartyExtractor:
                     anchor.buyer_anchor = None
                     anchor.seller_anchor = None
 
+        # [FIX] 合并同行标签碎片（如 "名" + "称:" → "名称:"）
+        # OCR 有时将 "名称:" 拆成 "名" 和 "称:" 两个 token，导致标签检测失败
+        buyer_region = self._merge_label_fragments(buyer_region)
+        seller_region = self._merge_label_fragments(seller_region)
+
         # ── L0: 标签锚点空间定位（在 label 过滤之前执行） ──
         l0_candidates = self._extract_label_anchor_candidates(
             buyer_region, seller_region, inv_pos)
@@ -805,9 +813,9 @@ class PartyExtractor:
             ba_line = lines[ba_idx] if ba_idx < len(lines) else ''
             sa_line = lines[sa_idx] if sa_idx < len(lines) else ''
             if ba_line.strip() == sa_line.strip():
-                if '销售' in ba_line or '销方' in ba_line:
+                if '销售' in ba_line or '销方' in ba_line or '销货' in ba_line:
                     ba_idx = -1
-                elif '购买' in ba_line or '购方' in ba_line:
+                elif '购买' in ba_line or '购方' in ba_line or '购货' in ba_line:
                     sa_idx = -1
 
         anchor_gap = abs(ba_idx - sa_idx) if ba_idx >= 0 and sa_idx >= 0 else 999
@@ -872,13 +880,21 @@ class PartyExtractor:
         if not region:
             logger.debug("[LabelAnchor/DBG] %s %s: region为空, 跳过", region_name, field_name)
             return
-        label_token = None
+        # [FIX] 优先匹配短文本的 label token。
+        # 原因:区域可能同时包含购买方"名称:"和明细表头"货物或应税劳务、服务名称",
+        # 两者都含"名称"。若按遍历顺序取第一个,可能误取明细表头作为 label。
+        # 短文本(如"名称:"、"公司名称:")更可能是真正的字段标签。
+        label_candidates = []
         for t in region:
             text = _token_text(t)
-            logger.debug("[LabelAnchor/DBG] %s %s: 检查token='%s'", region_name, field_name, text[:20])
-            if any(lbl in text for lbl in labels) and '购买方' not in text and '销售方' not in text:
-                label_token = t
-                break
+            if any(lbl in text for lbl in labels) and '购买方' not in text and '销售方' not in text and '购货方' not in text and '销货方' not in text:
+                label_candidates.append((len(text), t))
+        if label_candidates:
+            # 按文本长度升序,取最短的
+            label_candidates.sort(key=lambda x: x[0])
+            label_token = label_candidates[0][1]
+        else:
+            label_token = None
         if label_token is None:
             logger.debug("[LabelAnchor/DBG] %s %s: 未找到标签token, labels=%s", region_name, field_name, labels)
             return
@@ -1094,7 +1110,7 @@ class PartyExtractor:
         """
         _LABEL_CUT_RE = re.compile(
             r'名\s*称[:：]|统一社会信用代码|纳税人识别号|'
-            r'销售方信息|购买方信息|下载次数'
+            r'销售方信息|购买方信息|销货方信息|购货方信息|下载次数'
         )
         m = _LABEL_CUT_RE.search(val)
         if m and m.start() >= 4:
@@ -1136,7 +1152,7 @@ class PartyExtractor:
             line_tokens = []
             for t in lt:
                 tt = _token_text(t).strip()
-                if len(tt) == 1 and tt in '购买方信息销售方信息纳税人':
+                if len(tt) == 1 and tt in '购买方信息销售方信息购货方销货方纳税人':
                     continue
                 line_tokens.append(tt)
             line_text = ' '.join(line_tokens)
@@ -1463,7 +1479,8 @@ class PartyExtractor:
                     if self._name_ok(n) and n not in seen_c and len(n) >= 4 \
                             and n not in label_bound_names:
                         if any(kw in n for kw in [
-                                '购买方', '销售方', '名称', '税号', '纳税人', '识别号']):
+                                '购买方', '购货方', '销售方', '销货方',
+                                '名称', '税号', '纳税人', '识别号']):
                             continue
                         companies.append((i, n))
                         seen_c.add(n)
@@ -1662,9 +1679,14 @@ class PartyExtractor:
         if token and self._near_inv_id(token, inv_pos):
             score += _SCORE_NEAR_INV_ID
 
-        # 读取 RegionContext 的 line_item_y
+        # [FIX] L2/L3 候选已在正确区域内（锚点窗口/区域扫描），
+        # 不应因 cy >= line_item_y 而被惩罚。
+        # 销售方信息区天然位于明细表下方（cy >= line_item_y），
+        # 惩罚会导致销售方名称得分从 85 降至 45，低于置信度阈值。
+        # line_item_y 惩罚仅保留给 L0/L1（标签）和 L4（文本）候选。
         line_item_y = self._ctx.region.line_item_y
-        if token and line_item_y and _cy(token) >= line_item_y:
+        if (source not in ('bbox_l2_anchor', 'bbox_l3_region')
+                and token and line_item_y and _cy(token) >= line_item_y):
             score += _SCORE_IN_LINE_ITEM
 
         return min(max(0, score), 100)
@@ -1695,7 +1717,7 @@ class PartyExtractor:
 
         score = base_score
 
-        all_labels = _NAME_LABELS + _TAX_LABELS + ('购买方', '销售方', '购方', '销方')
+        all_labels = _NAME_LABELS + _TAX_LABELS + ('购买方', '购货方', '销售方', '销货方', '购方', '销方')
         label_token = self._find_label_in_line(line_obj, all_labels)
         if label_token and self._is_right_of_label(value, label_token, line_obj):
             score += _SCORE_L4_LABEL_RIGHT
@@ -2139,7 +2161,7 @@ class PartyExtractor:
     
         # 兆底：关键词匹配，精确计算偏移
         combined_all = ''.join(lines[i].strip() for i in range(len(lines)) if lines[i].strip())
-        for kw in ['购买方', '销售方']:
+        for kw in ['购买方', '购货方', '销售方', '销货方']:
             kw_pos = combined_all.find(kw)
             if kw_pos >= 0:
                 char_count = 0
@@ -2628,6 +2650,72 @@ class PartyExtractor:
             logger.info("[RemoveLabelTokens] 移除%d个标签token: %s -> %s",
                         removed, len(region), len(filtered))
         return filtered
+
+    def _merge_label_fragments(self, region: list) -> list:
+        """合并同行中的标签碎片，如 '名' + '称:' → '名称:'
+
+        OCR 有时将 '名称:' 拆成 '名' 和 '称:' 两个 token，
+        导致 _extract_label_anchor_single 的 `any(lbl in text for lbl in labels)`
+        无法匹配（'名' 不含 '名称' 子串）。此方法将同一行（相近 cy）的
+        '名' 和 '称:'/'称' 合并为 '名称:' token。
+        """
+        if not region:
+            return region
+
+        ming_tokens = []
+        cheng_tokens = []
+        for t in region:
+            text = _token_text(t)
+            if text == '名':
+                ming_tokens.append(t)
+            elif text in ('称:', '称：', '称'):
+                cheng_tokens.append(t)
+
+        if not ming_tokens or not cheng_tokens:
+            return region
+
+        used_cheng = set()
+        merged_pairs = []
+        for mt in ming_tokens:
+            mt_cy = _cy(mt)
+            mt_x0 = _get_token_attr(mt, 'x0', 0)
+            for i, ct in enumerate(cheng_tokens):
+                if i in used_cheng:
+                    continue
+                # 验证同一行且"称:"在"名"右侧（正常阅读顺序）
+                if abs(_cy(ct) - mt_cy) < 15 and _get_token_attr(ct, 'x0', 0) > mt_x0:
+                    merged_pairs.append((mt, ct))
+                    used_cheng.add(i)
+                    break
+
+        if not merged_pairs:
+            return region
+
+        merged_ids = set()
+        result = []
+        for mt, ct in merged_pairs:
+            merged_ids.add(id(mt))
+            merged_ids.add(id(ct))
+            ct_text = _token_text(ct)
+            merged_text = '名称:' if ':' in ct_text or '：' in ct_text else '名称'
+            merged_token = Token(
+                text=merged_text,
+                x0=min(_get_token_attr(mt, 'x0', 0), _get_token_attr(ct, 'x0', 0)),
+                y0=min(_get_token_attr(mt, 'y0', 0), _get_token_attr(ct, 'y0', 0)),
+                x1=max(_get_token_attr(mt, 'x1', 0), _get_token_attr(ct, 'x1', 0)),
+                y1=max(_get_token_attr(mt, 'y1', 0), _get_token_attr(ct, 'y1', 0)),
+                page=0,
+                confidence=1.0,
+            )
+            result.append(merged_token)
+            logger.info("[MergeLabel] 合并 '名' + '%s' → '%s' cy=%.1f",
+                        ct_text, merged_text, _cy(mt))
+
+        for t in region:
+            if id(t) not in merged_ids:
+                result.append(t)
+
+        return result
 
     # ═══════════════════════════════════════════════════════════
     # 区域构建

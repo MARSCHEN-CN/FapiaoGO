@@ -261,8 +261,14 @@ class VerticalSplitStrategy:
 
         b_y0, b_y1 = (bounds.py0, split_y) if is_buyer_above else (split_y, bounds.py1)
         s_y0, s_y1 = (split_y, bounds.py1) if is_buyer_above else (bounds.py0, split_y)
-        b_y0 = max(b_y0, _cy(ba) - ANCHOR_TOP_MARGIN)
-        s_y0 = max(s_y0, _cy(sa) - ANCHOR_TOP_MARGIN)
+        # [FIX] 用锚点 token 的 y0(顶部)而非 cy(中心)计算下限。
+        # 原因:竖排发票的锚点是三字合并(如"购买方"),cy 取中间字,
+        # 但"名称:"在第一个字"购"的同一行(y 略高于 cy),
+        # 用 cy-30 会把"名称:"排除出区域。用 y0-30 能正确包含。
+        ba_y0 = _get_token_attr(ba, 'y0', _cy(ba) - ANCHOR_TOP_MARGIN)
+        sa_y0 = _get_token_attr(sa, 'y0', _cy(sa) - ANCHOR_TOP_MARGIN)
+        b_y0 = max(b_y0, ba_y0 - ANCHOR_TOP_MARGIN)
+        s_y0 = max(s_y0, sa_y0 - ANCHOR_TOP_MARGIN)
 
         buyer_region = [
             t for t in tokens

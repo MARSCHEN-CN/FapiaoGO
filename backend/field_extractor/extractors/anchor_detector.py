@@ -207,7 +207,7 @@ class AnchorDetector:
             # line_y 过滤
             if self.line_y is not None and _cy(t) > self.line_y + 20:
                 tc_filtered = text.replace(' ', '').replace('\u3000', '')
-                if any(k in tc_filtered for k in ['购买', '购方', '销售', '销方']):
+                if any(k in tc_filtered for k in ['购买', '购方', '购货', '销售', '销方', '销货']):
                     self.diagnostics.buyer_rejected.append({
                         'text': text[:30], 'reason': 'line_y_filtered',
                         'cy': round(_cy(t), 1), 'line_y': round(self.line_y, 1)
@@ -295,11 +295,15 @@ class AnchorDetector:
         seller_candidates = []
 
         # 收集单字中文字符 token
+        # [FIX] 竖排单字不做 line_y 过滤。
+        # 原因:竖排发票的"销货方"标签在明细表头下方(y > line_y),
+        # 但它是真正的销售方锚点,不是页脚噪声。
+        # line_y 过滤的初衷是排除底部"收款人/复核/销售方:(章)"等横排噪声,
+        # 这些噪声是横向多字 token,不会进入竖排单字收集路径。
+        # 且 _vertical_fallback 已有 max_anchor_len+2 长度保护,不会误匹配明细行。
         single_chars = []
         for t in tokens:
             text = _get_token_attr(t, 'text', '').strip()
-            if self.line_y is not None and _cy(t) > self.line_y + 20:
-                continue
             if len(text) == 1 and '\u4e00' <= text <= '\u9fff':
                 single_chars.append(t)
 
@@ -322,36 +326,72 @@ class AnchorDetector:
                 col_groups[cx] = [t]
 
         # 拼接每列字符并尝试匹配
+        # [FIX] 同一列可能跨越多个区域(如购买方+销售方竖排标签都在 x≈138),
+        # 整列拼接会导致 "购买方销货方" 被同时匹配为 buyer 和 seller,
+        # 且共享同一个 synth token(坐标相同),造成 cy_diff=0 区域策略误判。
+        # 修复:按 y 间距分段,间距超过阈值(3倍中位行高)时断开为独立子组。
+        max_anchor_len = max(
+            max(len(a) for a in self.buyer_anchors),
+            max(len(a) for a in self.seller_anchors)
+        )
+
         for col_cx, group in col_groups.items():
             if len(group) < 2:
                 continue
             group.sort(key=lambda t: _cy(t))
-            combined = ''.join(_get_token_attr(t, 'text', '') for t in group)
-            combined_nospace = combined.replace(' ', '').replace('\u3000', '')
 
-            if not buyer_candidates:
-                bm = _fuzzy_match(combined_nospace, self.buyer_anchors)
-                if bm:
-                    x0 = min(_get_token_attr(t, 'x0', 0) for t in group)
-                    y0 = min(_get_token_attr(t, 'y0', 0) for t in group)
-                    x1 = max(_get_token_attr(t, 'x1', 0) for t in group)
-                    y1 = max(_get_token_attr(t, 'y1', 0) for t in group)
-                    synth = Token(text=combined_nospace, x0=x0, y0=y0, x1=x1, y1=y1, page=0, confidence=1.0)
-                    trust = len(bm) + 10
-                    buyer_candidates.append((trust, len(bm), synth))
-                    logger.info("[VERTICAL_FALLBACK] buyer: '%s' → match '%s'", combined_nospace[:20], bm)
+            # 估算中位行高(用于分段阈值)
+            heights = [(_get_token_attr(t, 'y1', 0) - _get_token_attr(t, 'y0', 0)) for t in group]
+            heights = [h for h in heights if h > 0]
+            median_h = sorted(heights)[len(heights) // 2] if heights else 25
+            # 逐字分行的间距约为 2 倍行高;跨区域间距远大于此(通常 >5 倍)。
+            # 阈值取 3 倍中位行高,既能容忍逐字分行,又能断开跨区域跳跃。
+            split_threshold = median_h * 3
 
-            if not seller_candidates:
-                sm = _fuzzy_match(combined_nospace, self.seller_anchors)
-                if sm:
-                    x0 = min(_get_token_attr(t, 'x0', 0) for t in group)
-                    y0 = min(_get_token_attr(t, 'y0', 0) for t in group)
-                    x1 = max(_get_token_attr(t, 'x1', 0) for t in group)
-                    y1 = max(_get_token_attr(t, 'y1', 0) for t in group)
-                    synth = Token(text=combined_nospace, x0=x0, y0=y0, x1=x1, y1=y1, page=0, confidence=1.0)
-                    trust = len(sm) + 10
-                    seller_candidates.append((trust, len(sm), synth))
-                    logger.info("[VERTICAL_FALLBACK] seller: '%s' → match '%s'", combined_nospace[:20], sm)
+            # 按 y 间距分段
+            subgroups = []
+            current_sub = [group[0]]
+            for prev_t, curr_t in zip(group, group[1:]):
+                gap = _cy(curr_t) - _cy(prev_t)
+                if gap > split_threshold:
+                    subgroups.append(current_sub)
+                    current_sub = [curr_t]
+                else:
+                    current_sub.append(curr_t)
+            if current_sub:
+                subgroups.append(current_sub)
+
+            for subgroup in subgroups:
+                # 跳过明显超过锚点长度的子组(避免误匹配)
+                if len(subgroup) > max_anchor_len + 2:
+                    continue
+
+                combined = ''.join(_get_token_attr(t, 'text', '') for t in subgroup)
+                combined_nospace = combined.replace(' ', '').replace('\u3000', '')
+
+                if not buyer_candidates:
+                    bm = _fuzzy_match(combined_nospace, self.buyer_anchors)
+                    if bm:
+                        x0 = min(_get_token_attr(t, 'x0', 0) for t in subgroup)
+                        y0 = min(_get_token_attr(t, 'y0', 0) for t in subgroup)
+                        x1 = max(_get_token_attr(t, 'x1', 0) for t in subgroup)
+                        y1 = max(_get_token_attr(t, 'y1', 0) for t in subgroup)
+                        synth = Token(text=combined_nospace, x0=x0, y0=y0, x1=x1, y1=y1, page=0, confidence=1.0)
+                        trust = len(bm) + 10
+                        buyer_candidates.append((trust, len(bm), synth))
+                        logger.info("[VERTICAL_FALLBACK] buyer: '%s' → match '%s'", combined_nospace[:20], bm)
+
+                if not seller_candidates:
+                    sm = _fuzzy_match(combined_nospace, self.seller_anchors)
+                    if sm:
+                        x0 = min(_get_token_attr(t, 'x0', 0) for t in subgroup)
+                        y0 = min(_get_token_attr(t, 'y0', 0) for t in subgroup)
+                        x1 = max(_get_token_attr(t, 'x1', 0) for t in subgroup)
+                        y1 = max(_get_token_attr(t, 'y1', 0) for t in subgroup)
+                        synth = Token(text=combined_nospace, x0=x0, y0=y0, x1=x1, y1=y1, page=0, confidence=1.0)
+                        trust = len(sm) + 10
+                        seller_candidates.append((trust, len(sm), synth))
+                        logger.info("[VERTICAL_FALLBACK] seller: '%s' → match '%s'", combined_nospace[:20], sm)
 
         return buyer_candidates, seller_candidates
 

@@ -10,7 +10,11 @@ from .models import OCRDocument, Token, Line
 # ============================
 
 # normalize()
-_RE_WHITESPACE = re.compile(r'\s+')
+# 注意:只合并行内空白(空格/Tab/回车),保留换行符 \n。
+# 换行是 OCR 文本行结构的关键信息,若被吞掉,竖排逐字分行的
+# "购\n买\n方" 会被压成 "购 买 方" 单行,导致 _merge_vertical_text
+# 的 len(line)<=2 条件失败,竖排标签无法合并。
+_RE_WHITESPACE = re.compile(r'[ \t\r\u3000]+')
 
 # _normalize_invoice_keywords()
 _RE_FA_PIAO = re.compile(r"发\s*票")
@@ -72,8 +76,10 @@ _RE_CJK_SPACE = re.compile(r'([\u4e00-\u9fff])\s+([\u4e00-\u9fff])')
 # 已知垂直文字短语（OCR 逐字分行时，将这些单字行合并为一行）
 _VERTICAL_PHRASES = [
     '购买方信息', '销售方信息',
+    '购货方信息', '销货方信息',
     '购方信息', '销方信息',
     '购买方', '销售方',
+    '购货方', '销货方',
     '收款人', '复核人', '开票人',
     '备注', '合计', '价税合计',
     '发票代码', '发票号码', '开票日期',
@@ -326,7 +332,84 @@ class TextNormalizer:
             )
             result.append(line)
 
+        # 竖排单字行合并:与 _merge_vertical_text 对 structured_lines 做同样处理,
+        # 保证 doc.structured_lines 与 doc.lines 行数和内容一致(避免 party_extractor
+        # 的 line_map 错位)。当某行只有一个 CJK 单字且与相邻行可拼成已知短语时合并。
+        return TextNormalizer._merge_vertical_structured_lines(result)
+
+    @staticmethod
+    def _merge_vertical_structured_lines(lines: list) -> list:
+        """对 structured_lines 应用与 _merge_vertical_text 相同的竖排合并规则。
+
+        输入/输出: List[Line]。
+        仅处理"行文本长度≤2 且全是 CJK 单字"的连续行,合并为已知短语。
+        """
+        if not lines:
+            return lines
+
+        sorted_phrases = sorted(_VERTICAL_PHRASES, key=len, reverse=True)
+        result = []
+        i = 0
+        while i < len(lines):
+            merged = False
+            for phrase in sorted_phrases:
+                plen = len(phrase)
+                if i + plen > len(lines):
+                    continue
+                # 所有待合并行必须都是短行(≤2字,strip 后)
+                window = lines[i:i + plen]
+                window_texts = [getattr(l, 'text', str(l)).strip() for l in window]
+                if not all(len(t) <= 2 and t for t in window_texts):
+                    continue
+                # 全部必须是 CJK 单字(允许2字行如"备注")
+                if not all(all('\u4e00' <= c <= '\u9fff' for c in t) for t in window_texts):
+                    continue
+                candidate = ''.join(window_texts)
+                if candidate == phrase:
+                    # 合并这些 Line 为一个新 Line
+                    merged_line = TextNormalizer._combine_lines(window, phrase)
+                    result.append(merged_line)
+                    i += plen
+                    merged = True
+                    break
+            if not merged:
+                result.append(lines[i])
+                i += 1
         return result
+
+    @staticmethod
+    def _combine_lines(lines_to_merge: list, merged_text: str):
+        """合并多个 Line 为一个,文本用 merged_text,坐标取并集。"""
+        if not lines_to_merge:
+            return None
+        first = lines_to_merge[0]
+        # 直接构造一个新 Line,文本用合并后的短语,token 取所有,tokens 按原始顺序
+        all_tokens = []
+        min_x, min_y = float('inf'), float('inf')
+        max_x1, max_y1 = float('-inf'), float('-inf')
+        for l in lines_to_merge:
+            l_tokens = getattr(l, 'tokens', []) or []
+            all_tokens.extend(l_tokens)
+            lx0 = getattr(l, 'x0', 0) or 0
+            ly0 = getattr(l, 'y0', 0) or 0
+            lx1 = getattr(l, 'x1', 0) or 0
+            ly1 = getattr(l, 'y1', 0) or 0
+            if lx0 < min_x:
+                min_x = lx0
+            if ly0 < min_y:
+                min_y = ly0
+            if lx1 > max_x1:
+                max_x1 = lx1
+            if ly1 > max_y1:
+                max_y1 = ly1
+        return Line(
+            text=merged_text,
+            tokens=all_tokens,
+            x0=min_x,
+            y0=min_y,
+            x1=max_x1,
+            y1=max_y1,
+        )
 
     # ─── 垂直文字合并 ───
     @staticmethod
