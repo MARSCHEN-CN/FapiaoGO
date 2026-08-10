@@ -39,6 +39,13 @@ export function deriveSourcePrintJobs(plan, files) {
       ...f,
       _jobKey: jobKey,
       _round: round,
+      // C-2 Step 4-1（G-C2-S4-placement-preservation）：从 Plan 搬运 geometry 事实，
+      // 让 executor 有机会看到 Plan truth。只搬运不计算：
+      //   paper     = page.paper（needSwap 后物理纸几何：size/orientation/widthMM/heightMM）
+      //   placement = page.slots[0].placement（与 Preview 同一布局解析器的输出）
+      // ⚠️ 禁止在此重新派生 / 重新计算——Plan 是唯一 geometry authority。
+      paper: page.paper || null,
+      placement: page.slots?.[0]?.placement ?? null,
     }
   }
 

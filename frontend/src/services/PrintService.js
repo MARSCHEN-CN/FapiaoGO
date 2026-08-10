@@ -54,7 +54,7 @@ export function detectPrintFormat(file) {
  * @param {object} [placement] - RotationResolver 布局结果 { scale, offset, renderTransform, ... }（Commit 3-B 新增）
  * @returns {object} 打印设置
  */
-export function buildPrintSettings(file, userSettings, fileRotations, detectOrientationFn, placement) {
+export function buildPrintSettings(file, userSettings, fileRotations, detectOrientationFn, placement, executionPaper) {
   const fileRotation = fileRotations?.[file.key] || 0
   const hasReliableOrient = file._pdfPageWidth > 0 && file._pdfPageHeight > 0
   const contentOrientation = detectOrientationFn?.(file)
@@ -83,6 +83,10 @@ export function buildPrintSettings(file, userSettings, fileRotations, detectOrie
     customPaper: userSettings.customPaper,
     // Commit 3-B: 布局结果透传（Preview 与 Print 共享同一个 RotationResolver 输出）
     placement: placement || null,
+    // C-2 Step 4-1：Plan truth 独立透传（execution* 前缀 = Execution Plan geometry，
+    // 与用户 PrintSettings 生命周期分离——不混入 userSettings；electron 消费属 Step 4-2）。
+    //   executionPaper = plan.paper（needSwap 后物理纸几何：size/orientation/widthMM/heightMM）
+    executionPaper: executionPaper || null,
   }
 }
 
@@ -116,7 +120,7 @@ export function resolvePrintPath(file) {
  * @param {object} [placement] - RotationResolver 布局结果（Commit 3-B 新增）
  * @returns {Promise<object>} PrintResult
  */
-export async function printSingleSourceFile(file, ipc, userSettings, fileRotations, detectOrientationFn, placement) {
+export async function printSingleSourceFile(file, ipc, userSettings, fileRotations, detectOrientationFn, placement, executionPaper) {
   if (!file) return createFailedResult({ taskId: file?.key, error: '文件对象为空' })
   if (!ipc) return createFailedResult({ taskId: file.key, error: 'Electron IPC 不可用' })
 
@@ -131,8 +135,8 @@ export async function printSingleSourceFile(file, ipc, userSettings, fileRotatio
   const printerName = resolvePrinterName(userSettings, userSettings)
   if (!printerName) return createFailedResult({ taskId: file.key, error: '请选择打印机' })
 
-  // 构建打印设置（Commit 3-B: placement 透传）
-  const ps = buildPrintSettings(file, userSettings, fileRotations, detectOrientationFn, placement)
+  // 构建打印设置（Commit 3-B: placement 透传；C-2 Step 4-1: executionPaper 独立透传）
+  const ps = buildPrintSettings(file, userSettings, fileRotations, detectOrientationFn, placement, executionPaper)
 
   try {
     const result = await ipc.invoke('print-source-file', {

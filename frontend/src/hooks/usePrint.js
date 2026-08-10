@@ -948,9 +948,12 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
 
     // 合并 settings + printSettings 作为 userSettings
     const userSettings = { ...settings, ...(printSettings || {}) }
-    const filePlacement = placements[f.key] || null
+    // C-2 Step 4-1：优先消费 job 携带的 Plan truth（deriveSourcePrintJobs 从 plan 搬运）；
+    // placements[f.key]（useMemo 独立计算）仅作非 plan 路径回退——Plan 是唯一 geometry authority。
+    const filePlacement = f?.placement ?? placements[f.key] ?? null
+    const executionPaper = f?.paper ?? null
 
-    const result = await printSingleSource(f, ipc, userSettings, fileRotations, detectDocumentOrientation, filePlacement)
+    const result = await printSingleSource(f, ipc, userSettings, fileRotations, detectDocumentOrientation, filePlacement, executionPaper)
 
     return {
       success: result.success,
