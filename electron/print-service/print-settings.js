@@ -105,19 +105,58 @@ class MissingPrintSpecPaperError extends Error {
 }
 
 /**
+ * 纸张物理尺寸（mm）—— PaperRegistry → customPaper → A 系列内置表
+ * @param {string} sizeName
+ * @param {object} [customPaper]
+ * @returns {{widthMM: number, heightMM: number}|null}
+ */
+function _paperDimsMm(sizeName, customPaper) {
+  if (customPaper && Number(customPaper.widthMM) > 0 && Number(customPaper.heightMM) > 0) {
+    return { widthMM: Number(customPaper.widthMM), heightMM: Number(customPaper.heightMM) }
+  }
+  try {
+    const { PaperRegistryProvider } = require('../shared/PaperRegistryProvider')
+    const dims = PaperRegistryProvider.getEffectivePaperMap()[sizeName]
+    if (dims && Number(dims.widthMM) > 0 && Number(dims.heightMM) > 0) {
+      return { widthMM: Number(dims.widthMM), heightMM: Number(dims.heightMM) }
+    }
+  } catch (e) {
+    // PaperRegistry 不可用 → 内置表
+  }
+  const A_SERIES_MM = {
+    A4: [210, 297], A3: [297, 420], A5: [148, 210], A2: [420, 594], A6: [105, 148],
+    LETTER: [215.9, 279.4], LEGAL: [215.9, 355.6], TABLOID: [279.4, 431.8],
+    STATEMENT: [139.7, 215.9],
+  }
+  const dims = A_SERIES_MM[String(sizeName || '').toUpperCase()]
+  return dims ? { widthMM: dims[0], heightMM: dims[1] } : null
+}
+
+/**
  * PrintSpec.normalize — 唯一解释层（Phase 1-C-1）
  *
  * 把 legacy settings（renderer 直传字段：paperSize/fit/rotation/sourceRotation/
  * marginLeft...）归一化为权威 PrintSpec：
  *
  *   PrintSpec {
- *     paper:    { sizeName, paperkind, customPaper },   ← paperSize(legacy)→sizeName
- *     margins:  { left, right, top, bottom },           ← marginLeft...(legacy) 单位 mm
- *     scalePolicy: 'none'|'contain'|'fill',             ← fit(legacy)
- *     rotation: number,                                 ← sourceRotation ?? rotation(legacy)
- *     contentOrientation, paperOrientation,             ← 透传（rotate 决策域，C-1-a 不改）
+ *     paper: {
+ *       sizeName,            ← paperSize(legacy)
+ *       orientation,         ← getPaperShapeOrientation（纸张方向 ≠ 内容旋转）
+ *       widthMM, heightMM,   ← 物理尺寸（PaperRegistry/customPaper/A 系列）
+ *       paperkind, customPaper,
+ *     },
+ *     margins:      { left, right, top, bottom },   ← marginLeft...(legacy) 单位 mm
+ *     contentRotation: number,                      ← sourceRotation ?? rotation(legacy)
+ *     scalePolicy:  'none'|'contain'|'fill',        ← fit(legacy)
+ *     contentOrientation, paperOrientation,         ← 透传（rotate 决策域，C-1-a 不改）
  *     grayscale, duplex, copies,
  *   }
+ *
+ * 语义分离（Phase 1-C-1-b 冻结，用户裁决）：
+ *   paper.orientation  → 决定 paper W/H、usableRect、margin placement
+ *   contentRotation    → 决定 invoice content transform
+ *   Sumatra rotate=    → external rotation authority（C-1-b 不动，A3-V2 移交）
+ *   三者互不复用同一字段。
  *
  * 纪律（G-C1-1）：consumer 只许读 PrintSpec 字段；本函数是唯一允许读
  * legacy 字段（paperSize/fit/rotation/sourceRotation/landscape）的地方。
@@ -145,17 +184,23 @@ function normalize(ps) {
       '打印设置缺少纸张尺寸（paperSize/paper）。禁止隐式 A4 fallback（契约 §4 / Phase 1-C-1 P2 裁决）')
   }
 
-  // ── rotation：sourceRotation（legacy）→ rotation（权威）──
-  const rotation = src.sourceRotation ?? src.rotation ?? 0
+  // ── rotation：sourceRotation（legacy）→ contentRotation（权威）──
+  const contentRotation = src.sourceRotation ?? src.rotation ?? 0
 
   // ── scalePolicy：fit（legacy）→ scalePolicy（权威）。默认 contain（现状等价）──
   const scalePolicy = src.scalePolicy ?? src.fit ?? 'contain'
 
+  const customPaper = src.customPaper || null
+  const dims = _paperDimsMm(sizeName, customPaper)
+
   return {
     paper: {
       sizeName,
+      orientation: getPaperShapeOrientation(sizeName, customPaper),
+      widthMM: dims ? dims.widthMM : null,
+      heightMM: dims ? dims.heightMM : null,
       paperkind: src.paperkind != null ? src.paperkind : undefined,
-      customPaper: src.customPaper || null,
+      customPaper,
     },
     margins: {
       left: Number(src.marginLeft) || 0,
@@ -164,7 +209,7 @@ function normalize(ps) {
       bottom: Number(src.marginBottom) || 0,
     },
     scalePolicy,
-    rotation,
+    contentRotation,
     contentOrientation: src.contentOrientation,
     paperOrientation: src.paperOrientation,
     grayscale: src.grayscale || false,
@@ -221,7 +266,7 @@ function buildPrintSettings(ps) {
   const parts = [];
 
   // 1. 解析方向命令（仅在提供方向信息时激活，否则向后兼容）
-  const sourceRotation = spec.rotation
+  const sourceRotation = spec.contentRotation
   const hasOrient = spec.contentOrientation && spec.paperOrientation;
   if (hasOrient) {
     const orientResult = resolveOrientationCommands(

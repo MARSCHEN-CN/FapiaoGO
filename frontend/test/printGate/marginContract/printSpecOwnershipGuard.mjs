@@ -21,12 +21,14 @@ import { fileURLToPath } from 'node:url'
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const REPO = path.resolve(HERE, '..', '..', '..', '..')
 
-// 禁止模式：consumer 直接读取 legacy 字段（settings.paperSize / .landscape / .fit / .rotate）
+// 禁止模式：consumer 从 legacy settings 对象读取字段（settings.paperSize 等）。
+// 精确到 settings/normalizedSettings 前缀——printJob 等 PrintSpec 流出对象的同名
+// 字段（如 printJob.paperSize）不误报（G-C1-1 只约束「读 settings」的路径）。
 const FORBIDDEN = [
-  { name: 'settings.paperSize', re: /\.paperSize\b/ },
-  { name: 'settings.landscape', re: /\.landscape\b/ },
-  { name: 'settings.fit',       re: /\.fit\b/ },
-  { name: 'settings.rotate',    re: /\.rotate\b/ },
+  { name: 'settings.paperSize', re: /(?:settings|normalizedSettings)(?:\?\.|\.)paperSize\b/ },
+  { name: 'settings.landscape', re: /(?:settings|normalizedSettings)(?:\?\.|\.)landscape\b/ },
+  { name: 'settings.fit',       re: /(?:settings|normalizedSettings)(?:\?\.|\.)fit\b/ },
+  { name: 'settings.rotate',    re: /(?:settings|normalizedSettings)(?:\?\.|\.)rotate\b/ },
 ]
 
 // 强制检查（已收敛链）
@@ -41,11 +43,7 @@ const WHITELIST = [
     reason: 'L551 settings.fit=\'none\'（条件式 fit）→ C-1-c 移除',
     expire: 'C-1-c',
   },
-  {
-    file: path.join(REPO, 'electron', 'print-service', 'DirectPrintHandler.js'),
-    reason: 'L125 settings.landscape / L156 settings.paperSize||\'A4\' → C-1-b 移除',
-    expire: 'C-1-b',
-  },
+  // DirectPrintHandler 已于 C-1-b 收敛（P1/P2 删除，0 hits）——不再列入
 ]
 
 function scan(file) {

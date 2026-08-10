@@ -13,6 +13,7 @@ const fs = require('fs');
 const path = require('path');
 const { TEMP_DIR } = require('../temp-manager');
 const pdfMargin = require('./pdf-margin-processor');
+const { normalize, MissingPrintSpecPaperError } = require('./print-settings');
 
 // 直接打印支持的文件扩展名
 const DIRECT_PRINT_EXTENSIONS = ['.pdf', '.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif'];
@@ -79,6 +80,18 @@ async function handle(filePath, settings) {
     return { success: false, error: 'PrintService not initialized' };
   }
 
+  // Phase 1-C-1-b：PrintSpec 唯一来源。paper 缺失 → 显式失败（G-C1-2 / P2 裁决），
+  // 不再 `paperSize || 'A4'` 隐式默认。
+  let spec;
+  try {
+    spec = normalize(settings || {})
+  } catch (e) {
+    if (e instanceof MissingPrintSpecPaperError) {
+      return { success: false, error: e.message }
+    }
+    throw e
+  }
+
   const jobId = generateJobId();
   // 统一到 temp-manager 受管根目录（TEMP_DIR），纳入其孤儿/定时/启动清理，
   // 避免崩溃时 os.tmpdir() 下的临时目录永久泄漏。调用方仍由各路径自己的清理逻辑负责。
@@ -95,7 +108,7 @@ async function handle(filePath, settings) {
   const destPath = path.join(tempDir, `original${ext}`)
 
   // ========== [DEBUG] 链路追踪 ==========
-  console.log(`[DEBUG-DPH] settings.landscape: ${settings?.landscape}`)
+  console.log(`[DEBUG-DPH] spec.paper.orientation: ${spec.paper.orientation}`)
   console.log(`[DEBUG-DPH] Source PDF: ${filePath}`)
   console.log(`[DEBUG-DPH] Dest PDF: ${destPath}`);
 
@@ -109,11 +122,11 @@ async function handle(filePath, settings) {
   }
 
   // ── 边距处理（与打印预览一致的语义：内容缩小 + 四周留白） ──
-  const marginL = Number(settings?.marginLeft) || 0
-  const marginR = Number(settings?.marginRight) || 0
-  const marginT = Number(settings?.marginTop) || 0
-  const marginB = Number(settings?.marginBottom) || 0
-  const hasMargins = pdfMargin.hasMargins(settings)
+  const marginL = spec.margins.left
+  const marginR = spec.margins.right
+  const marginT = spec.margins.top
+  const marginB = spec.margins.bottom
+  const hasMargins = marginL > 0 || marginR > 0 || marginT > 0 || marginB > 0
   let marginsApplied = false
 
   console.log('[DirectPrintHandler] margin fields: L=%d R=%d T=%d B=%d hasMargins=%s',
@@ -122,8 +135,11 @@ async function handle(filePath, settings) {
   if (hasMargins) {
     try {
       const isImage = ext.toLowerCase() !== '.pdf'
-      const orient = settings?.landscape ? 'landscape' : 'portrait'
-      console.log('[DirectPrintHandler] Applying margins via pdf-margin-processor (isImage=%s, orient=%s)',
+      // Phase 1-C-1-b：方向来自 PrintSpec.paper.orientation（P1 删除——不再从
+      // legacy landscape 布尔推断）。pdfMargin.process 的 orientation 参数已废弃
+      //（Step 2 起不传 --orientation），此处传值仅为保持签名形状。
+      const orient = spec.paper.orientation
+      console.log('[DirectPrintHandler] Applying margins via pdf-margin-processor (isImage=%s, paper.orientation=%s)',
         isImage, orient)
 
       const marginResult = await pdfMargin.process(destPath, {
@@ -153,14 +169,16 @@ async function handle(filePath, settings) {
     tempDir,
     printerName: settings?.printerName || '',
     copies: settings?.copies || 1,
-    paperSize: settings?.paperSize || 'A4',
-    paperkind: settings?.paperkind != null ? settings.paperkind : undefined,
-    orientation: settings?.landscape ? 'landscape' : 'portrait',
-    grayscale: settings?.grayscale || false,
+    // Phase 1-C-1-b：paper 唯一来源 PrintSpec（P2 删除——不再 `paperSize || 'A4'`）
+    paperSize: spec.paper.sizeName,
+    paperkind: spec.paper.paperkind != null ? spec.paper.paperkind : undefined,
+    orientation: spec.paper.orientation,
+    grayscale: spec.grayscale || false,
     scaleFactor: settings?.scaleFactor || 100,
     collate: settings?.collate || true,
-    customPaper: settings?.customPaper || null,
+    customPaper: spec.paper.customPaper || null,
     // 边距已 bake 进 PDF 内容时，禁止 SumatraPDF 再做 fit 缩放（否则二次缩放破坏边距精度）
+    // ⚠️ C-1-c 处理：条件式 scale 将收敛为 PrintSpec.scalePolicy 单一读取点（此处暂保留）
     scale: marginsApplied ? 'noscale' : 'fit',
     marginsApplied,
   };
