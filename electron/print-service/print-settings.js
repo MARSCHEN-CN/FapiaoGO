@@ -3,11 +3,12 @@
  *
  * 纯 mapper，无副作用，可独立单元测试。
  *
- * 核心设计：
- *   - 方向命令 resolveOrientationCommands(contentOrient, paperOrient, desiredRotation)
- *     根据表格驱动生成正确的 baseFlag（landscape / disable-auto-rotation）和 rotate=N
- *   - contentOrientation + paperOrientation 可从 settings 传入，按需使用
- *   - 无方向信息时保持向后兼容（disable-auto-rotation 兜底）
+ * 核心设计（RG-3 起，Rotation Authority Transfer）：
+ *   - 方向命令 resolveOrientationCommands({ paperOrientation, contentRotation })
+ *     两通道分离：纸向（Plan authority，唯一来自 paper.orientation）
+ *     与内容旋转（content transform executor，rotate=N）
+ *   - paperOrientation 可从 settings 透传（legacy paperOrientation / landscape 请求）
+ *   - 无方向信息时按纸型固有方向（getPaperShapeOrientation）兜底
  *   - 纸张尺寸三层策略：
  *     ① paperkind 存在 → 输出 paperkind=<num>（可附带 paper=<name>）
  *     ② 标准纸张 → 输出 paper=<name>
@@ -21,37 +22,31 @@
  */
 
 /**
- * 根据内容方向、纸张方向、目标旋转角度，解析正确的 Sumatra 命令参数。
+ * RG-3：旋转语义两通道分离（Rotation Authority Transfer，2026-08-10）
  *
- * 适用场景：单文件 PDF 打印（通过 SumatraPDF 直通）。
- * 数据来源：验证表格
+ * 旧模型（A3-V2 证实语义混淆）：
+ *   resolveOrientationCommands(contentOrient, paperOrient, desiredRotation)
+ *   → baseFlag 由 contentOrient 决定（内容方向劫持纸向决定权 → A3-03 SELF_ORIENT 根源）
+ *   → rotate=N 由 content×paper×desired 三查表（ROTATE_LOOKUP 混合计算副产物）
  *
- * @param {'portrait'|'landscape'} contentOrient - PDF 页面的自然方向（从 MediaBox 检测）
- * @param {'portrait'|'landscape'} paperOrient - 用户选择的纸张方向
- * @param {number} desiredRotation - 用户期望的最终旋转效果（0/90/180/270）
- * @returns {{ baseFlag: 'landscape'|'disable-auto-rotation', rotate: number }}
+ * 新模型（RG-3 冻结）：
+ *   resolveOrientationCommands({ paperOrientation, contentRotation })
+ *   → { paperOrientation, contentRotation }
+ *     - paperOrientation：纸向唯一来源（Plan.paper.orientation / spec.orientation）
+ *     - contentRotation：内容变换（content transform executor，rotate=N 直接 = 该值）
+ *   两个通道完全分离，互不复用同一字段（G-RG3-1/2/3）。
+ *
+ * @param {object} opts
+ * @param {'portrait'|'landscape'} [opts.paperOrientation='portrait'] - 纸向（Plan authority）
+ * @param {number} [opts.contentRotation=0] - 内容旋转（0/90/180/270）
+ * @returns {{ paperOrientation: 'portrait'|'landscape', contentRotation: number }}
  */
-function resolveOrientationCommands(contentOrient, paperOrient, desiredRotation) {
-  // Step 1: base flag 只跟内容方向和旋转奇偶性有关
-  //   content=横向: 偶数→landscape, 奇数→disable-auto-rotation
-  //   content=竖向: 偶数→disable-auto-rotation, 奇数→landscape
-  const steps = Math.round(desiredRotation / 90);
-  const isEven = steps % 2 === 0;
-  const baseFlag = (contentOrient === 'landscape') === isEven
-    ? 'landscape'
-    : 'disable-auto-rotation';
-
-  // Step 2: rotate=N 值取决于内容方向 × 纸张方向（经表格验证）
-  const ROTATE_LOOKUP = {
-    'landscape|portrait':  { 0: 0,  90: 90,  180: 180, 270: 270 },
-    'landscape|landscape': { 0: 90, 90: 180, 180: 270, 270: 0   },
-    'portrait|portrait':   { 0: 0,  90: 0,   180: 180, 270: 180 },
-    'portrait|landscape':  { 0: 90, 90: 90,  180: 270, 270: 270 },
+function resolveOrientationCommands({ paperOrientation = 'portrait', contentRotation = 0 } = {}) {
+  const steps = ((Math.round(contentRotation / 90) % 4) + 4) % 4;
+  return {
+    paperOrientation: paperOrientation === 'landscape' ? 'landscape' : 'portrait',
+    contentRotation: steps * 90,
   };
-  const key = `${contentOrient}|${paperOrient}`;
-  const rotate = ROTATE_LOOKUP[key]?.[desiredRotation] ?? desiredRotation;
-
-  return { baseFlag, rotate };
 }
 
 /**
@@ -161,7 +156,7 @@ function _paperDimsMm(sizeName, customPaper) {
  * 纪律（G-C1-1）：consumer 只许读 PrintSpec 字段；本函数是唯一允许读
  * legacy 字段（paperSize/fit/rotation/sourceRotation/landscape）的地方。
  *
- * 纯函数，返回副本，不修改输入。R1 红线：不碰 ROTATE_LOOKUP / resolveOrientationCommands。
+ * 纯函数，返回副本，不修改输入。RG-3：纸向/内容旋转两通道分离（rotationAuthorityGuard）。
  *
  * @param {object} ps - legacy PrintSettings
  * @param {number} [ps.sourceRotation=0] - 内容旋转角度（回退 ps.rotation）
@@ -195,12 +190,27 @@ function normalize(ps) {
   const customPaper = src.customPaper || null
   const dims = _paperDimsMm(sizeName, customPaper)
 
+  // ── paper.orientation：RG-3 纸向权移交（Plan authority）──
+  // 纸向 = 用户请求方向（needSwap 后物理方向），与 frontend paperSpec.resolvePaperSpec 对齐：
+  //   - legacy `landscape`（用户横打请求 / 前端自动检测内容方向）→ 请求方向 landscape
+  //   - legacy `paperOrientation` 显式方向 → 优先
+  //   - 均未传 → 纸型固有方向（getPaperShapeOrientation：A4 竖 / Voucher240x140 横）
+  // needSwap：请求方向 ≠ 纸型固有方向 → 宽高交换（physicalPaper）
+  const naturalOrient = getPaperShapeOrientation(sizeName, customPaper)
+  const requestedOrient = src.landscape
+    ? 'landscape'
+    : (src.paperOrientation === 'landscape' || src.paperOrientation === 'portrait'
+      ? src.paperOrientation
+      : naturalOrient)
+  const needSwap = requestedOrient !== naturalOrient
+  const baseDims = dims || { widthMM: null, heightMM: null }
+
   return {
     paper: {
       sizeName,
-      orientation: getPaperShapeOrientation(sizeName, customPaper),
-      widthMM: dims ? dims.widthMM : null,
-      heightMM: dims ? dims.heightMM : null,
+      orientation: requestedOrient,               // needSwap 后物理方向（Plan authority）
+      widthMM: needSwap ? baseDims.heightMM : baseDims.widthMM,
+      heightMM: needSwap ? baseDims.widthMM : baseDims.heightMM,
       paperkind: src.paperkind != null ? src.paperkind : undefined,
       customPaper,
     },
@@ -267,24 +277,20 @@ function buildPrintSettings(ps) {
   const spec = normalize(ps);
   const parts = [];
 
-  // 1. 解析方向命令（仅在提供方向信息时激活，否则向后兼容）
-  const sourceRotation = spec.contentRotation
-  const hasOrient = spec.contentOrientation && spec.paperOrientation;
-  if (hasOrient) {
-    const orientResult = resolveOrientationCommands(
-      spec.contentOrientation,
-      spec.paperOrientation,
-      sourceRotation
-    );
-    parts.push(orientResult.baseFlag);
-    if (orientResult.rotate !== 0) {
-      parts.push(`rotate=${orientResult.rotate}`);
-    }
-  } else {
-    parts.push('disable-auto-rotation');
-    if (sourceRotation && sourceRotation !== 0) {
-      parts.push(`rotate=${sourceRotation}`);
-    }
+  // 1. RG-3 两通道：纸向（唯一来自 spec.paper.orientation，Plan authority）
+  //    + 内容旋转（唯一来自 spec.contentRotation，content transform executor）。
+  //    不再由 contentOrientation 决定 baseFlag（A3-03 SELF_ORIENT 修复），
+  //    不再经 ROTATE_LOOKUP 混合查表（RG-3-A/B）。
+  const paperOrient = spec.paper.orientation;
+  const orientResult = resolveOrientationCommands({
+    paperOrientation: paperOrient,
+    contentRotation: spec.contentRotation,
+  });
+  parts.push(orientResult.paperOrientation === 'landscape'
+    ? 'landscape'
+    : 'disable-auto-rotation');
+  if (orientResult.contentRotation !== 0) {
+    parts.push(`rotate=${orientResult.contentRotation}`);
   }
 
   // 2. 适应方式（scalePolicy：'none'→noscale / 'contain'→fit / 'fill'→stretch）

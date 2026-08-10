@@ -54,55 +54,9 @@ const PROBE = path.resolve(REPO, 'scripts', 'probe_render_resource_fitz.py')
 const DPI = 300
 const MM_PER_PX = 25.4 / DPI
 
-// ─── 1. 生产 buildPrintSettings 1:1 复刻（与 print-settings.js 逐字符一致） ───
-function resolveOrientationCommands(contentOrient, paperOrient, desiredRotation) {
-  const steps = Math.round(desiredRotation / 90)
-  const isEven = steps % 2 === 0
-  const baseFlag = (contentOrient === 'landscape') === isEven
-    ? 'landscape'
-    : 'disable-auto-rotation'
-  const ROTATE_LOOKUP = {
-    'landscape|portrait':  { 0: 0,  90: 90,  180: 180, 270: 270 },
-    'landscape|landscape': { 0: 90, 90: 180, 180: 270, 270: 0   },
-    'portrait|portrait':   { 0: 0,  90: 0,   180: 180, 270: 180 },
-    'portrait|landscape':  { 0: 90, 90: 90,  180: 270, 270: 270 },
-  }
-  const key = `${contentOrient}|${paperOrient}`
-  const rotate = ROTATE_LOOKUP[key]?.[desiredRotation] ?? desiredRotation
-  return { baseFlag, rotate }
-}
-
-function buildPrintSettings(ps) {
-  const parts = []
-  const hasOrient = ps.contentOrientation && ps.paperOrientation
-  if (hasOrient) {
-    const r = resolveOrientationCommands(ps.contentOrientation, ps.paperOrientation, ps.rotation || 0)
-    parts.push(r.baseFlag)
-    if (r.rotate !== 0) parts.push(`rotate=${r.rotate}`)
-  } else {
-    parts.push('disable-auto-rotation')
-    if (ps.rotation && ps.rotation !== 0) parts.push(`rotate=${ps.rotation}`)
-  }
-  const fit = ps.fit || 'contain'
-  parts.push(fit === 'fill' ? 'stretch' : fit === 'none' ? 'noscale' : 'fit')
-  const paper = ps.paper
-  if (ps.paperkind != null) {
-    parts.push(`paperkind=${ps.paperkind}`)
-    if (paper && paper !== 'Custom') parts.push(`paper=${paper.toLowerCase()}`)
-  } else if (paper) {
-    const A_SERIES = /^(A\d|Letter|Legal|Tabloid)$/i
-    if (A_SERIES.test(paper)) {
-      parts.push(`paper=${paper.toLowerCase()}`)
-    } else if (paper.toLowerCase() === 'custom' && ps.customPaper) {
-      const w = ps.customPaper.widthMM || 0, h = ps.customPaper.heightMM || 0
-      if (w > 0 && h > 0) parts.push(`paper=${w}mm x ${h}mm`)
-      else parts.push(`paper=custom`)
-    } else {
-      parts.push(`paper=${paper.toLowerCase()}`)
-    }
-  }
-  return parts.join(',')
-}
+// ─── 1. 生产 buildPrintSettings（RG-3 起直接 require 生产模块——消除「复刻漂移」风险：
+//     本脚本验证的是生产命令本身，不是一份可能过期的拷贝） ───
+const { buildPrintSettings, resolveOrientationCommands } = require(path.join(REPO, 'electron', 'print-service', 'print-settings.js'))
 
 // ─── 2. 7-case 矩阵定义 ───
 // content = 内容 PDF 文件；paper = 目标纸；orientation 组合由 contentOrient/paperOrient 表达。
@@ -203,13 +157,21 @@ function computeMetrics(data) {
 }
 
 // ─── 4. 抓取 writer 落盘 ───
-function grabOutput(outPdf, searchDirs, maxAgeMs = 90000) {
+// Wondershare PDFCreator 保留原文件名 + `_N` 后缀（如 a3v2_portrait_content_3.pdf）。
+// ⚠️ 2026-08-10 RG-3 修复：按 mtime 抓「最新任意 PDF」会在同内容多次打印时抓错
+// （窗口内旧副本 mtime 也可能最新）——必须按内容文件名前缀匹配 + mtime 最新。
+function grabOutput(outPdf, searchDirs, baseName, maxAgeMs = 120000) {
   const cutoff = Date.now() - maxAgeMs
+  // ⚠️ 2026-08-10 修复：baseName 必须取裸文件名（Wondershare 落盘保留的是
+  // 原文件名不含路径；传相对路径会导致 stem 含斜杠永远匹配不上）。
+  const stem = path.basename(baseName).replace(/\.pdf$/i, '')
   let best = null
   for (const dir of searchDirs) {
     let names = []
     try { names = fs.readdirSync(dir).filter(f => f.toLowerCase().endsWith('.pdf')) } catch { continue }
     for (const f of names) {
+      // 匹配「原文件名」或「原文件名_N」（Wondershare 副本命名）
+      if (!(f === stem + '.pdf' || new RegExp(`^${escapeReg(stem)}_\\d+\\.pdf$`).test(f))) continue
       const full = path.join(dir, f)
       let st
       try { st = fs.statSync(full) } catch { continue }
@@ -221,6 +183,8 @@ function grabOutput(outPdf, searchDirs, maxAgeMs = 90000) {
   console.log(`   ▶ 抓取 writer 输出: ${best.full} → ${outPdf}`)
   return outPdf
 }
+
+function escapeReg(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') }
 
 // ─── 5. 主流程 ───
 function main() {
@@ -263,7 +227,8 @@ function main() {
   const summary = []
 
   for (const c of active) {
-    const oc = resolveOrientationCommands(c.contentOrient, c.paperOrient, c.rotation)
+    // RG-3 两通道：纸向（paperOrientation=case 请求方向）+ 内容旋转（contentRotation=case rotation）
+    const oc = resolveOrientationCommands({ paperOrientation: c.paperOrient, contentRotation: c.rotation })
     const ps = {
       rotation: c.rotation, paper: c.paper, paperOrientation: c.paperOrient,
       contentOrientation: c.contentOrient, fit: c.fit,
@@ -275,7 +240,7 @@ function main() {
     console.log(`── ${c.id} ${c.name} ──`)
     console.log(`  content: ${c.content} (${fs.existsSync(contentPath) ? 'ok' : 'MISSING'})`)
     console.log(`  -print-settings: "${printSettings}"`)
-    console.log(`  baseFlag=${oc.baseFlag} rotate=${oc.rotate} fit=${c.fit}`)
+    console.log(`  paperOrient=${oc.paperOrientation} contentRotation=${oc.contentRotation} fit=${c.fit}`)
 
     if (!fs.existsSync(contentPath)) { console.error('  ❌ 内容 PDF 缺失，跳过'); allOk = false; continue }
 
@@ -297,11 +262,13 @@ function main() {
         allOk = false
         continue
       }
-      // 等待 writer 落盘（轮询抓取：PDFCreator 保留原文件名 + _N 后缀，最晚 30s）
+      // 等待 writer 落盘（轮询抓取：按内容文件名匹配 + mtime 最新，最晚 30s）
+      const baseName = path.basename(contentPath)
       const deadline = Date.now() + 30000
       while (Date.now() < deadline) {
-        if (fs.existsSync(outPdf)) break
-        if (grabOutput(outPdf, uniqDirs, 120000)) break
+        // ⚠️ 必须检查「非空」而非「存在」——空文件（上一轮残留）会跳过 grab 导致读到 0 字节
+        if (fs.existsSync(outPdf) && fs.statSync(outPdf).size > 0) break
+        if (grabOutput(outPdf, uniqDirs, baseName, 120000)) break
         awaitSleep(1500)
       }
     }
@@ -322,11 +289,11 @@ function main() {
       console.log(`  content 边距(视觉坐标): L${m.margins.L} T${m.margins.T} R${m.margins.R} B${m.margins.B} mm`)
     }
 
-    // ── case 判定 ──
-    // 核心机制（本矩阵实测揭示）：
-    //   Sumatra 输出 PDF 用 /Rotate 属性表达方向（MediaBox 恒为纸原始尺寸）。
-    //   landscape 旗标路径 → /Rotate=90（视觉 landscape）
-    //   disable-auto-rotation + rotate=N 参数路径 → 旋转烤进内容（/Rotate=0）
+    // ── case 判定（RG-3 语义：纸向=命令决定，内容=rotate=N）──
+    // 核心机制（A3-V2 + RG-3 对照实验实测）：
+    //   Sumatra 忠实执行命令：disable-auto-rotation → 视觉竖纸（/Rotate=0）；
+    //   landscape → 视觉横纸（/Rotate=90）；rotate=N → 旋转烤进内容。
+    //   内容方向不参与纸向决策（RG-3-A 两通道，rotationAuthorityGuard 锁定）。
     let verdict = 'OK'
     let flag = false
     if (c.id === 'A3-01') {
@@ -335,25 +302,28 @@ function main() {
       verdict = ok ? 'EXEC_AS_IS ✓（原样输出，无旋转无缩放）' : '⚠️ 有干涉'
       flag = !ok
     } else if (c.id === 'A3-02') {
-      // 横纸横内容：landscape|landscape 0→ROTATE_LOOKUP 给 rotate=90 → Sumatra 执行旋转输出横纸
-      const ok = m.orient === 'landscape'
-      verdict = ok ? 'EXEC_AS_IS ✓（视觉横纸输出；rotate=90 由 ROTATE_LOOKUP 对 landscape|landscape 的要求，Sumatra 忠实执行）' : '⚠️ 方向不一致'
+      // 横纸横内容：RG-3 后命令 = landscape（rotate=90 消失——旧 ROTATE_LOOKUP 混合副产物）
+      // 纸向=landscape 由 Plan/请求方向决定，Sumatra 忠实输出横纸
+      const ok = m.orient === 'landscape' && (d.rotation ?? 0) !== 0
+      verdict = ok
+        ? 'EXEC_AS_IS ✓（纸向=landscape（Plan authority），Sumatra 输出横纸 /Rotate=90；rotate=90 已按 RG-3-C 降级移除）'
+        : '⚠️ 方向不一致'
       flag = !ok
     } else if (c.id === 'A3-03') {
-      // 横票竖纸：生产命令发 landscape 旗标 → Sumatra 收到后自行决定纸方向（视觉横纸）+ fit 内容
-      const selfOrient = m.orient === 'landscape' && (d.rotation ?? 0) !== 0
-      verdict = selfOrient
-        ? 'SELF_ORIENT ⚠️（Sumatra 收到 landscape 旗标自行决定纸方向——Plan 未决定纸向，违反 C2-R2）'
-        : 'NEEDS_PLACEMENT_ROT（未观察到 Sumatra 自决纸向）'
-      flag = selfOrient
+      // 横票竖纸：RG-3 后命令 = disable-auto-rotation（纸向=竖，Plan authority）→
+      // 实测必须竖纸（旧 landscape,fit 是内容劫持纸向 = SELF_ORIENT 违反 C2-R2）
+      const paperOk = m.orient === 'portrait' && (d.rotation ?? 0) === 0
+      verdict = paperOk
+        ? 'PAPER_ORIENT_OK ✓（纸向=竖由 disable-auto-rotation 决定，内容不劫持纸向——C2-R2 达成）'
+        : 'SELF_ORIENT ⚠️（纸向仍被内容劫持，违反 C2-R2）'
+      flag = !paperOk
     } else if (c.id === 'A3-04') {
-      // 竖票横纸：portrait|landscape 0 → ROTATE_LOOKUP 给 rotate=90（生产语义）→ Sumatra 收到 rotate=90
-      // 实测视觉 portrait + /Rotate=0：旋转烤进内容（Sumatra 输出 PDF 的 /Rotate 恒 0 的另一种路径）
-      const executed = oc.rotate === 90
-      verdict = executed
-        ? 'ROTATE_EXECUTED ✓（rotate=90 由 ROTATE_LOOKUP 发出，Sumatra 执行：内容旋转烤进 /Rotate=0 页面）'
-        : 'NO_ROTATE（rotate 未被发出）'
-      flag = false // rotate 执行属命令要求，非异常
+      // 竖票横纸：RG-3 后命令 = landscape（纸向=横）→ Sumatra 输出横纸 /Rotate=90
+      const ok = m.orient === 'landscape' && (d.rotation ?? 0) !== 0
+      verdict = ok
+        ? 'PAPER_ORIENT_OK ✓（纸向=landscape（Plan authority），Sumatra 输出横纸）'
+        : '⚠️ 纸向未按命令输出'
+      flag = !ok
     } else if (c.id === 'A3-05') {
       // 非对称 margin：内容已 bake margin，Sumatra fit 到同纸应保持 offset
       const ok = m.margins && Math.abs(m.margins.L - m.margins.R) > 1
@@ -365,13 +335,14 @@ function main() {
       verdict = ok ? 'NOSCALE_OK ✓（1:1 输出，内部 fit 关闭，位置保持）' : 'FIT_ACTIVE ⚠️（noscale 未生效）'
       flag = !ok
     } else if (c.id === 'A3-07') {
-      // rotate=90（业务旋转）：portrait|portrait 90 → ROTATE_LOOKUP 给 rotate=0，但 steps 奇数 → baseFlag=landscape
-      // → Sumatra 收到 landscape 旗标 → 输出视觉横纸（/Rotate=90），内容居中
-      const absorbed = oc.rotate === 0 && m.orient === 'landscape' && (d.rotation ?? 0) !== 0
-      verdict = absorbed
-        ? 'ROTATE_ABSORBED ✓（rotation=90 被吸收为方向旗标：命令 rotate=0 + landscape，Sumatra 输出横纸）'
-        : '⚠️ rotate 未被正确吸收'
-      flag = !absorbed
+      // rotation=90（业务旋转）：RG-3 后命令 = disable-auto-rotation,rotate=90（纸向=竖 + 内容转 90）
+      // 实测视觉竖纸 + /Rotate=0 + 内容居中：旋转烤进内容（content transform executor）
+      const ok = m.orient === 'portrait' && (d.rotation ?? 0) === 0 && m.margins
+        && Math.abs(m.margins.L - m.margins.R) < 2 && Math.abs(m.margins.T - m.margins.B) < 2
+      verdict = ok
+        ? 'ROTATE_EXECUTED ✓（rotate=90 直通 contentRotation，Sumatra 烤进内容；纸向=竖）'
+        : '⚠️ rotate 执行异常'
+      flag = !ok
     }
 
     console.log(`  判定: ${verdict}`)

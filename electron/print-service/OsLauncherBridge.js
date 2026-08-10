@@ -326,20 +326,24 @@ function toSumatraArgs(spec, job) {
   const filePath = job?.pdfPath || job?.sourcePath;
 
   if (filePath) {
+    // RG-3：纸向唯一来自 spec.orientation（Plan authority，纸固有方向）；
+    // 内容旋转 direct 轨暂不接（contentRotation=0，C-2 Step 4 接线 Plan placement）。
+    // detectPdfOrientation 保留：direct 轨无法获取 spec.contentOrientation 时的诊断兜底
+    //（不再参与纸向/旋转决策——两通道语义分离，G-RG3-1/2/3）。
     const pdfOrientation = detectPdfOrientation(filePath);
-
-    if (pdfOrientation) {
-      const orientResult = resolveOrientationCommands(
-        pdfOrientation,
-        spec.orientation || 'portrait',
-        0
-      );
-      parts.push(orientResult.baseFlag);
-      if (orientResult.rotate !== 0) {
-        parts.push(`rotate=${orientResult.rotate}`);
-      }
-    } else {
-      parts.push('disable-auto-rotation');
+    const orientResult = resolveOrientationCommands({
+      paperOrientation: spec.orientation || 'portrait',
+      contentRotation: 0,
+    });
+    parts.push(orientResult.paperOrientation === 'landscape'
+      ? 'landscape'
+      : 'disable-auto-rotation');
+    if (orientResult.contentRotation !== 0) {
+      parts.push(`rotate=${orientResult.contentRotation}`);
+    }
+    if (!pdfOrientation) {
+      // 内容方向未知仅记日志（纸向/旋转不依赖它——RG-3 两通道）
+      // console.debug 避免噪音
     }
   } else {
     parts.push('disable-auto-rotation');

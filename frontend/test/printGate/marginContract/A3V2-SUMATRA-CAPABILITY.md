@@ -112,3 +112,33 @@ node scripts/verify_sumatra_capability.cjs --measure-only     # 复用已有 art
 ## 7. 遗留待确认
 - **Wondershare 对自定义纸（230×160）的行为**未在本矩阵覆盖（A3 矩阵全用 A4）——A1 异形纸场景仍由 `verify_sumatra_rotation.js`（V2-B，Wondershare「PostScript」纸型）负责，与本矩阵互补。
 - A3-03 的 SELF_ORIENT 是否可被「显式 paper 方向参数」抑制，需在 RG-3 的实施阶段用同一矩阵复测验证。
+
+---
+
+## 附录：RG-3 改造后复测（2026-08-10，commit 后）
+
+### A3-V2 结论修正（grab 修复发现）
+
+**A3-V2 初版 A3-03 SELF_ORIENT 是抓取 bug 误报**：
+- 根因：Wondershare PDFCreator 目录累积同名副本（`_N` 后缀），脚本按 mtime 抓「最新任意 PDF」，窗口内旧副本被误抓。
+- 修复：grab 改为**按内容文件名前缀匹配 + mtime 最新**，且检查「非空」而非「存在」（空文件残留会跳过 grab）。
+- 对照实验（4 组）证明 **Sumatra 忠实执行命令，内容方向不参与纸向决策**：
+
+| 命令 | 横内容 | 竖内容 |
+|---|---|---|
+| `disable-auto-rotation,fit` | 595×842 portrait /Rotate=0 | 595×842 portrait /Rotate=0 |
+| `landscape,fit` | 842×595 landscape /Rotate=90 | 842×595 landscape /Rotate=90 |
+
+### RG-3 两通道改造后实测（7-case 全绿）
+
+| Case | 命令（RG-3 后） | 视觉 | 判定 |
+|---|---|---|---|
+| A3-01 竖纸竖内容 | `disable-auto-rotation,fit` | 竖 /Rotate=0 | EXEC_AS_IS ✓ |
+| A3-02 横纸横内容 | `landscape,fit`（rotate=90 移除） | 横 /Rotate=90 | EXEC_AS_IS ✓（RG-3-C） |
+| **A3-03 横票竖纸** | `disable-auto-rotation,fit` | **竖 /Rotate=0** | **PAPER_ORIENT_OK ✓（C2-R2 达成，SELF_ORIENT 消除）** |
+| A3-04 竖票横纸 | `landscape,fit` | 横 /Rotate=90 | PAPER_ORIENT_OK ✓ |
+| A3-05 非对称 margin | `disable-auto-rotation,fit` | 竖 /Rotate=0 | OFFSET_PRESERVED ✓ |
+| A3-06 noscale | `disable-auto-rotation,noscale` | 竖 /Rotate=0 | NOSCALE_OK ✓ |
+| A3-07 rotation=90 | `disable-auto-rotation,rotate=90` | 竖 /Rotate=0 内容居中 | ROTATE_EXECUTED ✓ |
+
+**RG-3 核心验证达成**：纸向 = 命令决定（disable-auto-rotation→竖 / landscape→横），内容方向不再劫持纸向。

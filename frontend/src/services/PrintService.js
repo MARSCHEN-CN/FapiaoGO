@@ -69,6 +69,9 @@ export function buildPrintSettings(file, userSettings, fileRotations, detectOrie
     paperkind: userSettings.paperkind,
     paper: userSettings.paperSize || userSettings.paper || PRINT_SETTINGS_DEFAULTS.paper,
     fit: userSettings.fit || PRINT_SETTINGS_DEFAULTS.fit,
+    // RG-3：纸向权移交——用户横打请求（landscape）必须显式传给 electron normalize
+    // （旧路径靠 contentOrientation 间接决定 baseFlag，RG-3 后两通道分离，请求方向必须直传）。
+    landscape: !!userSettings.landscape,
     ...(hasReliableOrient ? { contentOrientation } : {}),
     duplex: userSettings.duplex ?? PRINT_SETTINGS_DEFAULTS.duplex,
     grayscale: userSettings.grayscale ?? PRINT_SETTINGS_DEFAULTS.grayscale,

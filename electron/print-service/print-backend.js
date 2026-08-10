@@ -110,10 +110,12 @@ async function buildSumatraCommand(target, settings) {
 
   // Phase 1-C-1：不再在此做 paperSize→paper 字段映射——统一由
   // print-settings.normalize（PrintSpec 唯一解释层）处理（G-C1-1）。
+  // RG-3：contentOrientation 检测保留仅用于日志/诊断；纸向与内容旋转由
+  // print-settings.resolveOrientationCommands 两通道处理（不再在此构造方向命令）。
   const normalizedSettings = { ...settings };
 
   // 内容方向：优先使用前端传入的 contentOrientation（导入时已检测），
-  // 未传或格式不对时回退到后端 MediaBox 检测
+  // 未传或格式不对时回退到后端 MediaBox 检测（RG-3 后仅诊断用途）
   let contentOrient = normalizedSettings.contentOrientation;
   if (contentOrient !== 'portrait' && contentOrient !== 'landscape') {
     contentOrient = detectPdfOrientation(resolved.filePath);

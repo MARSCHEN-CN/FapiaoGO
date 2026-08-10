@@ -135,18 +135,35 @@ test('兼容: paper 与 paperSize 都给 → paper 优先', () => {
   assert.equal(spec.paper.sizeName, 'A3')
 })
 
-test('行为等价: buildPrintSettings 旧输入 → 相同 Sumatra DSL（C-1-a 不改变打印行为）', () => {
+test('RG-3: buildPrintSettings 两通道 DSL（纸向=Plan/请求方向，内容=rotate=N；语义迁移）', () => {
+  // RG-3 后 DSL 变化（预期行为变化，用户裁决 A3-02/A3-03）：
+  //   - 纸向唯一来自 paper.orientation（landscape 请求 / 纸固有横 / 显式 paperOrientation）
+  //   - 内容旋转唯一来自 contentRotation（rotate=N，不再经 ROTATE_LOOKUP 混合查表）
   const cases = [
+    // 无方向请求：纸固有方向（A4 竖）
     [{ paperSize: 'A4', fit: 'contain' }, 'disable-auto-rotation,fit,paper=a4'],
     [{ paperSize: 'A4', fit: 'none' }, 'disable-auto-rotation,noscale,paper=a4'],
     [{ paperSize: 'A4', fit: 'fill' }, 'disable-auto-rotation,stretch,paper=a4'],
+    // A3-03 修复：横内容 + 竖纸 → 纸向=竖（旧 'landscape,fit' 是内容劫持纸向，违反 C2-R2）
     [{ paperSize: 'A4', contentOrientation: 'landscape', paperOrientation: 'portrait', fit: 'contain' },
-      'landscape,fit,paper=a4'],
+      'disable-auto-rotation,fit,paper=a4'],
+    // 横内容 + 竖纸 + 内容转 90 → 纸向=竖 + rotate=90（不变）
     [{ paperSize: 'A4', contentOrientation: 'landscape', paperOrientation: 'portrait', sourceRotation: 90, fit: 'contain' },
       'disable-auto-rotation,rotate=90,fit,paper=a4'],
-    [{ paperSize: 'Voucher240x140', fit: 'contain' }, 'disable-auto-rotation,fit,paper=240mm x 140mm'],
+    // A3-02：横纸横内容 → 纸向=landscape，无多余 rotate=90（旧 'landscape,rotate=90' 的 rotate 是 ROTATE_LOOKUP 混合副产物）
+    [{ paperSize: 'A4', paperOrientation: 'landscape', fit: 'contain' },
+      'landscape,fit,paper=a4'],
+    // 用户横打请求（landscape:true）→ 纸向=landscape（RG-3 paper authority，前端透传）
+    [{ paperSize: 'A4', landscape: true, fit: 'contain' },
+      'landscape,fit,paper=a4'],
+    // 纸固有横（Voucher240x140）→ paperCommand=landscape（旧 disable-auto-rotation 是纸向权未移交的表现）
+    [{ paperSize: 'Voucher240x140', fit: 'contain' }, 'landscape,fit,paper=240mm x 140mm'],
     [{ paperSize: 'Custom', customPaper: { widthMM: 240, heightMM: 140 }, fit: 'contain' },
-      'disable-auto-rotation,fit,paper=240mm x 140mm'],
+      'landscape,fit,paper=240mm x 140mm'],
+    // 纸固有横 + 内容转 90
+    [{ paperSize: 'Voucher240x140', sourceRotation: 90, fit: 'contain' },
+      'landscape,rotate=90,fit,paper=240mm x 140mm'],
+    // 其余参数不变
     [{ paperSize: 'A4', paperkind: 9, fit: 'contain' }, 'disable-auto-rotation,fit,paperkind=9,paper=a4'],
     [{ paperSize: 'A4', fit: 'contain', duplex: true }, 'disable-auto-rotation,fit,paper=a4,duplexlong'],
     [{ paperSize: 'A4', fit: 'contain', grayscale: true }, 'disable-auto-rotation,fit,paper=a4,monochrome'],
@@ -155,6 +172,15 @@ test('行为等价: buildPrintSettings 旧输入 → 相同 Sumatra DSL（C-1-a 
   for (const [input, expected] of cases) {
     assert.equal(ps.buildPrintSettings(input), expected, JSON.stringify(input))
   }
+})
+
+test('RG-3: resolveOrientationCommands 两通道（paperOrientation + contentRotation，G-RG3-2）', () => {
+  const r = ps.resolveOrientationCommands({ paperOrientation: 'landscape', contentRotation: 90 })
+  assert.equal(r.paperOrientation, 'landscape')
+  assert.equal(r.contentRotation, 90)
+  const r2 = ps.resolveOrientationCommands({ paperOrientation: 'portrait', contentRotation: 0 })
+  assert.equal(r2.paperOrientation, 'portrait')
+  assert.equal(r2.contentRotation, 0)
 })
 
 test('纯函数: normalize 不修改输入', () => {
