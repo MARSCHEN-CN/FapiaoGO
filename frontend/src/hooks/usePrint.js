@@ -14,6 +14,7 @@ import { computePaperLayout } from '../previewState'
 import { extendPaperLayoutContract } from '../print/paperLayoutContract'
 import { applySourceOriginPlacement, transformPaperRotation } from '../print/placementAdapter'
 import { getContentDimensions, resolveContentPlacement, resolveContentBounds } from '../layout/RotationResolver'
+import { resolvePaperSpec } from '../print/paperSpec'
 import { fetchPrintRaster, buildPrintJobItem } from '../utils/printAdapter'
 // A1/A1.5：已证等价的 Plan 事实来源 + 影子比较 helper（Commit 2 source / Commit 3 merge 分支消费）
 import { buildPrintExecutionPlan, createPrintPlanInput } from '../print/buildPrintExecutionPlan'
@@ -517,15 +518,17 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
   // 派生（useMemo）；settings/files/fileRotations 一变即重建，杜绝「打开时快照过期」。
   // 与 doPrint/executePrint 共用 createPrintPlanInput → filter 同源，plan 即唯一事实源。
 
-  // Commit 3-B：计算每个文件的 PlacementResult（RotationResolver）
-  //   Preview 与 Print 共享同一布局结果，杜绝各自解释旋转。
+  // C-2 Step 1-B：修复 placements 死代码（Gap G3）。
+  //   1. contentPhysicalSize 传【原始尺寸】，contentRotation 由 Resolver 内部施加
+  //      （原传 contentSize 违反契约 → 恒抛错 → placements 恒 {}）
+  //   2. physicalPaper 走 paperSpec.resolvePaperSpec —— needSwap 归一化后（请求方向），
+  //      与 Preview（PrintPreviewModel.pageToModel L180-196）同一纸张事实源。
+  //   3. 与 Preview 共用 resolveContentPlacement（唯一 layout resolver，禁两套算法）。
   const placements = useMemo(() => {
     const result = {}
     if (!settings?.paperSize) return result
-    const paper = settings.customPaper && settings.customPaper.widthMM > 0
-      ? settings.customPaper
-      : null
-    const paperSize = paper || { widthMM: 210, heightMM: 297 }  // default A4
+    const paper = resolvePaperSpec(settings)
+    const physicalPaper = { widthMM: paper.widthMM, heightMM: paper.heightMM }
     const margins = {
       left: settings.marginLeft ?? 3,
       right: settings.marginRight ?? 3,
@@ -536,21 +539,11 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
       const dims = getContentDimensions(f)
       if (!dims) continue
       const contentRotation = fileRotations[f.key] || 0
-      const rotated = resolveContentBounds(dims, contentRotation)
       try {
-        // ⚠️ 已知缺陷（Commit 3 之前就存在，本次**刻意不修**，见 Issue P11）：
-        //   1. 入参写的是 `contentSize`，而 Resolver 契约要求 `contentPhysicalSize`
-        //      → 每次调用都在校验处抛错 → 被下面的 catch 静默吞掉
-        //      → `placements` 恒为 {}，本 useMemo 实为死代码。
-        //   2. 这里的 paperSize 是**未经 needSwap 归一化的原生纸型**（settings.customPaper / A4 默认），
-        //      并非 physical paper。修复第 1 点时必须同时补上
-        //      `requestedPaperOrientation → needSwap → physicalPaper` 归一化，
-        //      否则会把 B1 的老 bug 原样带回 Canvas/打印路径。
-        //   按 bisect 纪律：一个问题一个 commit，此处仅同步 Commit 3 的入参改名。
         result[f.key] = resolveContentPlacement({
-          contentSize: rotated,
+          contentPhysicalSize: dims,
           contentRotation,
-          physicalPaper: paperSize,
+          physicalPaper,
           margins,
           dpi: PREVIEW_DPI,
         })

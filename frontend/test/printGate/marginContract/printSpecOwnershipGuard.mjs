@@ -43,6 +43,9 @@ const ENFORCED = [
   path.join(REPO, 'electron', 'print-service', 'print-backend.js'),
   path.join(REPO, 'electron', 'print-service', 'DirectPrintHandler.js'),
   path.join(REPO, 'electron', 'main.js'),
+  // G-C2-1（C-2 Step 1）：ExecutionPlan builder 不得直接读 legacy 纸张/方向字段——
+  // 统一走 paperSpec.resolvePaperSpec 解析点（frontend/src/print/paperSpec.js，豁免）。
+  path.join(REPO, 'frontend', 'src', 'print', 'buildPrintExecutionPlan.js'),
 ]
 
 // 白名单（遗留推断点，到期 commit 移除后从列表删除）

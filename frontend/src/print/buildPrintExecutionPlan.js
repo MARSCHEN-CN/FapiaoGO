@@ -21,8 +21,9 @@
  * @module print/buildPrintExecutionPlan
  */
 
-import { isMergeMode, getForcedLandscape } from '../utils/mergeMode.js'
+import { isMergeMode } from '../utils/mergeMode.js'
 import { resolveInvoiceIdentity } from '../utils/invoiceIdentityResolver.js'
+import { resolvePaperSpec } from './paperSpec.js'
 
 /**
  * Source 打印入口过滤（忠实镜像 executePrint L817）。
@@ -227,7 +228,7 @@ export function createPrintPlanInput(files, settings = {}, fileRotations = {}, p
     ? files  // merge 模式暂不处理，后续按需扩展
     : normalizePrintSources(files)
 
-  return { files: normalizedFiles, options: { filter, settings, fileRotations, placements } }
+  return { files: normalizedFiles, options: { filter, settings, fileRotations, placements, paper: resolvePaperSpec(settings) } }
 }
 
 /**
@@ -254,6 +255,7 @@ export function buildPrintExecutionPlan(files, options = {}) {
     settings = {},
     fileRotations = {},
     placements = {},
+    paper,            // C-2 Step 1-A：纸张几何（createPrintPlanInput 解析；直接调用时兜底）
   } = options
 
   // 1. 过滤（保留入口差异：filter 完全透传，A1 不统一口径）
@@ -266,12 +268,12 @@ export function buildPrintExecutionPlan(files, options = {}) {
     ? (parseInt(mergeMode.replace('merge', ''), 10) || 2)
     : 1
 
-  // 3. 实现方向（执行事实，非几何）：merge 模式强制方向，其余用用户配置
-  const orientation = isMerge
-    ? (getForcedLandscape(mergeMode, settings.landscape) ? 'landscape' : 'portrait')
-    : (settings.landscape ? 'landscape' : 'portrait')
+  // 3. 纸张几何唯一来源（G-C2-1：本文件不直接读 legacy 纸张/方向字段，统一走 paperSpec 解析点）。
+  //    paper = { size, orientation, widthMM, heightMM, customPaper, paperkind }，
+  //    orientation = 请求打印方向（needSwap 后 physical paper orientation），与 Preview 同源。
+  const paperSpec = paper || resolvePaperSpec(settings)
+  const orientation = paperSpec.orientation
 
-  const paperSize = settings.paperSize || 'A4'
   const perFileRotation = (f) => fileRotations[f.key] || 0
   const perFilePlacement = (f) => placements[f.key] || null
 
@@ -295,7 +297,7 @@ export function buildPrintExecutionPlan(files, options = {}) {
       const group = sourceFiles.slice(i, i + groupSize)
       pages.push({
         type: 'multi-ticket',
-        paper: { size: paperSize },
+        paper: { ...paperSpec },
         orientation,
         invoiceDocumentIds: group.map((f) => f.invoiceDocumentId || resolveInvoiceIdentity(f) || ''),
         slots: group.map(buildSlot),
@@ -314,7 +316,7 @@ export function buildPrintExecutionPlan(files, options = {}) {
   // 忠实镜像 executePrint L817-841（source 单文件逐文件打印）
   const round1 = sourceFiles.map((f) => ({
     type: 'single',
-    paper: { size: paperSize },
+    paper: { ...paperSpec },
     orientation,
     invoiceDocumentId: f.invoiceDocumentId || resolveInvoiceIdentity(f) || '',
     // 多页文档逐页展开在渲染层（renderFileToPrintImage / buildPrintJobItem）；
@@ -332,7 +334,7 @@ export function buildPrintExecutionPlan(files, options = {}) {
     )
     extraPages = specialFiles.map((f) => ({
       type: 'single',
-      paper: { size: paperSize },
+      paper: { ...paperSpec },
       orientation,
       invoiceDocumentId: f.invoiceDocumentId || resolveInvoiceIdentity(f) || '',
       source: { fileId: f.key, pageIndex: 0 },
