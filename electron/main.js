@@ -539,6 +539,10 @@ ipcMain.handle('print-source-file', async (_event, { target, settings, pipeline 
         marginTimeoutPromise
       ])
 
+      // Phase 1-C-1-c：scalePolicy 单一来源。边距已 bake 进 PDF 时禁止 Sumatra 再
+      // fit（二次缩放破坏边距精度）——override 通过【新对象】{...settings, scalePolicy:'none'}，
+      // 不 mutate settings（G-C1-C-1：本文件不得再出现 legacy fit 字段读取）。
+      let printSettings = settings || {}
       if (marginResult.path !== target.filePath) {
         console.log('[print-source-file] Using margin-processed PDF:', marginResult.path,
           'orientation:', marginResult.orientation || '?')
@@ -547,9 +551,10 @@ ipcMain.handle('print-source-file', async (_event, { target, settings, pipeline 
           settings.contentOrientation = marginResult.orientation
           console.log('[print-source-file] Updated contentOrientation to:', marginResult.orientation)
         }
-        // 边距已 bake 进 PDF，禁止 SumatraPDF 再 fit 缩放（否则二次缩放破坏边距精度）
-        settings.fit = 'none'
-        console.log('[print-source-file] Set fit=none (noscale) since margins are baked in')
+        // ⚠️ contentOrientation 的 mutate 属方向域，C-2（PrintExecutionPlan 闭环）统一处理；
+        // 本 commit 只收敛 scalePolicy。
+        printSettings = { ...(settings || {}), scalePolicy: 'none' }
+        console.log('[print-source-file] scalePolicy=none (noscale) since margins are baked in')
       } else {
         console.log('[print-source-file] Margin processing returned original file (no change or fallback)')
       }
@@ -559,7 +564,7 @@ ipcMain.handle('print-source-file', async (_event, { target, settings, pipeline 
 
     const backend = createBackend(pipeline?.backend || 'sumatra')
     console.log('[print-source-file] Using backend=%s', pipeline?.backend || 'sumatra')
-    const result = await backend.print(printTarget, settings || {})
+    const result = await backend.print(printTarget, printSettings)
     console.log('[print-source-file] result=%j', result)
 
     return result

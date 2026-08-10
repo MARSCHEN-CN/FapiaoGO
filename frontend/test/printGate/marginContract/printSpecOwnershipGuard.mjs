@@ -31,26 +31,31 @@ const FORBIDDEN = [
   { name: 'settings.rotate',    re: /(?:settings|normalizedSettings)(?:\?\.|\.)rotate\b/ },
 ]
 
+// G-C1-C-2（C-1-c）：consumer 不得出现 scale 决策字面量（'noscale'/'fit'）。
+// 决策只允许在 normalize 与 PrintSpec schema（print-settings.js，豁免）。
+// 赋值 spec.scalePolicy 不含字面量，不会被误报。
+const FORBIDDEN_SCALE = [
+  { name: 'scale 决策字面量', re: /['"](?:noscale|fit)['"]/ },
+]
+
 // 强制检查（已收敛链）
 const ENFORCED = [
   path.join(REPO, 'electron', 'print-service', 'print-backend.js'),
+  path.join(REPO, 'electron', 'print-service', 'DirectPrintHandler.js'),
+  path.join(REPO, 'electron', 'main.js'),
 ]
 
 // 白名单（遗留推断点，到期 commit 移除后从列表删除）
-const WHITELIST = [
-  {
-    file: path.join(REPO, 'electron', 'main.js'),
-    reason: 'L551 settings.fit=\'none\'（条件式 fit）→ C-1-c 移除',
-    expire: 'C-1-c',
-  },
-  // DirectPrintHandler 已于 C-1-b 收敛（P1/P2 删除，0 hits）——不再列入
-]
+// C-1-c 后全部收敛：main.js / DirectPrintHandler 均已 0 hits，白名单为空。
+// 注：OsLauncherBridge.decidePrintSpec（direct 轨 spec 构造点，等价 normalize 角色）
+// 未列入——其 scale 字段收敛属 C-2。
+const WHITELIST = []
 
-function scan(file) {
+function scan(file, patterns) {
   const src = fs.readFileSync(file, 'utf8')
   const lines = src.split(/\r?\n/)
   const hits = []
-  for (const { name, re } of FORBIDDEN) {
+  for (const { name, re } of patterns) {
     lines.forEach((line, i) => {
       if (re.test(line)) hits.push({ line: i + 1, name, text: line.trim().slice(0, 90) })
     })
@@ -60,10 +65,9 @@ function scan(file) {
 
 function main() {
   let fail = false
-  let pending = 0
 
   for (const file of ENFORCED) {
-    const hits = scan(file)
+    const hits = scan(file, FORBIDDEN)
     if (hits.length > 0) {
       fail = true
       console.error(`[SPEC-GUARD] FAIL: ${path.relative(REPO, file)} 直接读取 legacy 字段：`)
@@ -73,22 +77,22 @@ function main() {
     } else {
       console.log(`[SPEC-GUARD] ok: ${path.relative(REPO, file)} 0 hits（仅消费 PrintSpec）`)
     }
-  }
-
-  for (const w of WHITELIST) {
-    const rel = path.relative(REPO, w.file)
-    const hits = scan(w.file)
-    if (hits.length > 0) {
-      pending++
-      console.log(`[SPEC-GUARD] ⏳ 白名单（${w.expire} 到期）: ${rel} 命中 ${hits.length} 处 — ${w.reason}`)
+    // G-C1-C-2：scale 决策字面量检查（print-settings.js 豁免——normalize/schema 唯一决策处）
+    const scaleHits = scan(file, FORBIDDEN_SCALE)
+    if (scaleHits.length > 0) {
+      fail = true
+      console.error(`[SPEC-GUARD] FAIL(G-C1-C-2): ${path.relative(REPO, file)} 出现 scale 决策字面量：`)
+      for (const h of scaleHits) {
+        console.error(`    L${h.line} [${h.name}] ${h.text}`)
+      }
     } else {
-      console.log(`[SPEC-GUARD] ok: ${rel} 0 hits（白名单可移除）`)
+      console.log(`[SPEC-GUARD] ok(G-C1-C-2): ${path.relative(REPO, file)} 无 scale 决策字面量`)
     }
   }
 
   console.log(fail
-    ? '[SPEC-GUARD] FAIL：consumer 直接读 legacy 字段，见上'
-    : '[SPEC-GUARD] PASS（白名单待清理项计入 PENDING）')
+    ? '[SPEC-GUARD] FAIL：consumer 直接读 legacy 字段或 scale 决策，见上'
+    : '[SPEC-GUARD] PASS：consumer 仅消费 PrintSpec，scalePolicy 单一读取点')
   process.exit(fail ? 1 : 0)
 }
 

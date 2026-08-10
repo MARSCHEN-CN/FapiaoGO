@@ -177,9 +177,10 @@ async function handle(filePath, settings) {
     scaleFactor: settings?.scaleFactor || 100,
     collate: settings?.collate || true,
     customPaper: spec.paper.customPaper || null,
-    // 边距已 bake 进 PDF 内容时，禁止 SumatraPDF 再做 fit 缩放（否则二次缩放破坏边距精度）
-    // ⚠️ C-1-c 处理：条件式 scale 将收敛为 PrintSpec.scalePolicy 单一读取点（此处暂保留）
-    scale: marginsApplied ? 'noscale' : 'fit',
+    // Phase 1-C-1-c：scalePolicy 单一读取点（删除 marginsApplied 条件式——scale 语义
+    // 由 PrintSpec 决定；边距 bake 后的 noscale override 属 C-2 PrintExecutionPlan 闭环）。
+    // marginsApplied 字段暂保留（无消费者，语义隔离待 C-2 处理，避免扩大战场）。
+    scale: spec.scalePolicy,
     marginsApplied,
   };
 

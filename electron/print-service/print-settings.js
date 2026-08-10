@@ -187,7 +187,9 @@ function normalize(ps) {
   // ── rotation：sourceRotation（legacy）→ contentRotation（权威）──
   const contentRotation = src.sourceRotation ?? src.rotation ?? 0
 
-  // ── scalePolicy：fit（legacy）→ scalePolicy（权威）。默认 contain（现状等价）──
+  // ── scalePolicy：fit（legacy）→ scalePolicy（权威）──
+  // 现阶段默认 'contain'（Sumatra fit 语义）；【禁止】在此做 if(margin) noscale——
+  // noscale 迁移属 C-2 PrintExecutionPlan 闭环（用户裁决：不提前触碰 margin contract）。
   const scalePolicy = src.scalePolicy ?? src.fit ?? 'contain'
 
   const customPaper = src.customPaper || null

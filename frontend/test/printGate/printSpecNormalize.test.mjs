@@ -116,6 +116,20 @@ test('G-C1-3: scalePolicy 回退（scalePolicy ?? fit ?? contain）', () => {
   assert.equal(ps.normalize({ paperSize: 'A4', fit: 'none', scalePolicy: 'contain' }).scalePolicy, 'contain')
 })
 
+test('C-1-c: scalePolicy override（main.js 边距后 {...settings, scalePolicy:\'none\'}）→ Sumatra noscale（行为等价）', () => {
+  // main.js 不再 mutate settings.fit='none'，改为构造新对象 override（G-C1-C-1）
+  assert.equal(
+    ps.buildPrintSettings({ paperSize: 'A4', fit: 'contain', scalePolicy: 'none' }),
+    'disable-auto-rotation,noscale,paper=a4')
+  assert.equal(
+    ps.buildPrintSettings({ paperSize: 'A4', scalePolicy: 'none' }),
+    'disable-auto-rotation,noscale,paper=a4')
+  // 默认（无 override）仍是 fit 语义——C-1-c 不做 noscale 迁移（C-2 范围）
+  assert.equal(
+    ps.buildPrintSettings({ paperSize: 'A4', fit: 'contain' }),
+    'disable-auto-rotation,fit,paper=a4')
+})
+
 test('兼容: paper 与 paperSize 都给 → paper 优先', () => {
   const spec = ps.normalize({ paper: 'A3', paperSize: 'A4' })
   assert.equal(spec.paper.sizeName, 'A3')
