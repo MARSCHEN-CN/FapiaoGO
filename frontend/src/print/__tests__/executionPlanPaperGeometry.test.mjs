@@ -163,6 +163,32 @@ test('G-C2-4: Plan round-trip — PrintSpec → ExecutionPlan → Preview render
   assert.deepEqual(s.placement.placedRect, planSlot.placement.placedRect, 'placedRect')
 })
 
+test('S3-A: plan slot 几何完整性（执行端所需字段锁定，Step 3-A 唯一代码产物）', () => {
+  const settings = {
+    paperSize: 'A4', landscape: false, mergeMode: 'none',
+    marginLeft: 3, marginRight: 3, marginTop: 3, marginBottom: 3,
+  }
+  const file = mkInvoice()
+  const preview = previewPlacement(settings, file)
+  const { files, options } = createPrintPlanInput([file], settings, {}, { [file.key]: preview })
+  const plan = buildPrintExecutionPlan(files, options)
+  const page = plan.pages[0]
+  const slot = page.slots[0]
+  // placement：完整 resolver 输出（含 layoutRotation —— 注意 Preview 的 slot.placement 是裁剪版，
+  // 执行端接线时以 plan 完整版为准，见 S3-A audit 缺失字段表）
+  assert.ok(slot.placement.scale > 0, 'scale')
+  assert.ok(typeof slot.placement.offset.x === 'number' && typeof slot.placement.offset.y === 'number', 'offset')
+  assert.deepEqual(Object.keys(slot.placement.placedRect), ['x', 'y', 'w', 'h'], 'placedRect')
+  assert.ok(typeof slot.placement.layoutRotation === 'number', 'layoutRotation（完整 resolver 输出）')
+  assert.ok(slot.placement.canvasSize && slot.placement.canvasSize.width > 0, 'canvasSize')
+  // slot 外层旋转字段（用户旋转）
+  assert.equal(slot.contentRotation, 0)
+  // paper 几何
+  assert.ok(page.paper.widthMM > 0 && page.paper.heightMM > 0, 'paper mm')
+  assert.ok(page.paper.orientation === 'portrait' || page.paper.orientation === 'landscape', 'orientation')
+  assert.equal(page.orientation, page.paper.orientation, 'page.orientation == paper.orientation')
+})
+
 test('G-C2-4b: Plan round-trip（A4 landscape 横打）→ 一致', () => {
   const settings = {
     paperSize: 'A4', landscape: true, mergeMode: 'none',
