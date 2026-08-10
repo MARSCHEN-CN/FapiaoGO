@@ -92,19 +92,85 @@ function getPaperShapeOrientation(paperId, customPaper) {
 }
 
 /**
- * 归一化 PrintSettings（纯函数，返回副本，不修改输入）
+ * PrintSpec 缺失纸张尺寸错误（Phase 1-C-1 G-C1-2）
  *
- * @param {object} ps - 原始 PrintSettings
- * @param {number} [ps.sourceRotation=0] - 内容旋转角度（Commit 3-B-2-A 改名，回退 ps.rotation）
- * @param {number} [ps.paperkind] - Windows DMPAPER_* ID（优先级高于 paper name）
- * @param {string} [ps.paper] - 纸张尺寸名称（A4/A5/Letter/Custom）
+ * 契约裁决：禁止隐式 A4 fallback（P2）。打印设置缺少纸张尺寸时
+ * 直接拒绝进入打印 pipeline，而不是默默按 A4 处理。
+ */
+class MissingPrintSpecPaperError extends Error {
+  constructor(detail) {
+    super(`Missing PrintSpec.paper: ${detail || '打印设置缺少纸张尺寸（paperSize/paper）'}`)
+    this.name = 'MissingPrintSpecPaperError'
+  }
+}
+
+/**
+ * PrintSpec.normalize — 唯一解释层（Phase 1-C-1）
+ *
+ * 把 legacy settings（renderer 直传字段：paperSize/fit/rotation/sourceRotation/
+ * marginLeft...）归一化为权威 PrintSpec：
+ *
+ *   PrintSpec {
+ *     paper:    { sizeName, paperkind, customPaper },   ← paperSize(legacy)→sizeName
+ *     margins:  { left, right, top, bottom },           ← marginLeft...(legacy) 单位 mm
+ *     scalePolicy: 'none'|'contain'|'fill',             ← fit(legacy)
+ *     rotation: number,                                 ← sourceRotation ?? rotation(legacy)
+ *     contentOrientation, paperOrientation,             ← 透传（rotate 决策域，C-1-a 不改）
+ *     grayscale, duplex, copies,
+ *   }
+ *
+ * 纪律（G-C1-1）：consumer 只许读 PrintSpec 字段；本函数是唯一允许读
+ * legacy 字段（paperSize/fit/rotation/sourceRotation/landscape）的地方。
+ *
+ * 纯函数，返回副本，不修改输入。R1 红线：不碰 ROTATE_LOOKUP / resolveOrientationCommands。
+ *
+ * @param {object} ps - legacy PrintSettings
+ * @param {number} [ps.sourceRotation=0] - 内容旋转角度（回退 ps.rotation）
+ * @param {number} [ps.paperkind] - Windows DMPAPER_* ID
+ * @param {string} [ps.paper] - 纸张尺寸名称（已有管线用；print-backend 已改为传 paperSize）
+ * @param {string} [ps.paperSize] - 纸张尺寸名称（renderer 直传）
  * @param {object} [ps.customPaper] - 自定义纸张尺寸
  * @param {number} [ps.customPaper.widthMM]
  * @param {number} [ps.customPaper.heightMM]
- * @returns {object} 归一化后的副本
+ * @returns {object} 权威 PrintSpec
+ * @throws {MissingPrintSpecPaperError} paper/paperSize 均缺失（G-C1-2）
  */
 function normalize(ps) {
-  return { ...ps };
+  const src = { ...(ps || {}) }
+
+  // ── paper：paperSize（legacy）→ sizeName（权威）。缺失 fail-fast（G-C1-2）──
+  const sizeName = src.paper ?? src.paperSize
+  if (!sizeName) {
+    throw new MissingPrintSpecPaperError(
+      '打印设置缺少纸张尺寸（paperSize/paper）。禁止隐式 A4 fallback（契约 §4 / Phase 1-C-1 P2 裁决）')
+  }
+
+  // ── rotation：sourceRotation（legacy）→ rotation（权威）──
+  const rotation = src.sourceRotation ?? src.rotation ?? 0
+
+  // ── scalePolicy：fit（legacy）→ scalePolicy（权威）。默认 contain（现状等价）──
+  const scalePolicy = src.scalePolicy ?? src.fit ?? 'contain'
+
+  return {
+    paper: {
+      sizeName,
+      paperkind: src.paperkind != null ? src.paperkind : undefined,
+      customPaper: src.customPaper || null,
+    },
+    margins: {
+      left: Number(src.marginLeft) || 0,
+      right: Number(src.marginRight) || 0,
+      top: Number(src.marginTop) || 0,
+      bottom: Number(src.marginBottom) || 0,
+    },
+    scalePolicy,
+    rotation,
+    contentOrientation: src.contentOrientation,
+    paperOrientation: src.paperOrientation,
+    grayscale: src.grayscale || false,
+    duplex: src.duplex || false,
+    copies: Number(src.copies) || 1,
+  }
 }
 
 /**
@@ -149,16 +215,18 @@ function normalize(ps) {
  * // → "disable-auto-rotation,fit,paper=a4"
  */
 function buildPrintSettings(ps) {
-  const normalized = normalize(ps);
+  // Phase 1-C-1：唯一解释层。legacy settings → 权威 PrintSpec（paper 缺失 throw，G-C1-2）。
+  // 本函数及下游只读 PrintSpec 字段（G-C1-1）；R1 红线：resolveOrientationCommands 不变。
+  const spec = normalize(ps);
   const parts = [];
 
   // 1. 解析方向命令（仅在提供方向信息时激活，否则向后兼容）
-  const sourceRotation = normalized.sourceRotation ?? normalized.rotation ?? 0
-  const hasOrient = normalized.contentOrientation && normalized.paperOrientation;
+  const sourceRotation = spec.rotation
+  const hasOrient = spec.contentOrientation && spec.paperOrientation;
   if (hasOrient) {
     const orientResult = resolveOrientationCommands(
-      normalized.contentOrientation,
-      normalized.paperOrientation,
+      spec.contentOrientation,
+      spec.paperOrientation,
       sourceRotation
     );
     parts.push(orientResult.baseFlag);
@@ -168,12 +236,12 @@ function buildPrintSettings(ps) {
   } else {
     parts.push('disable-auto-rotation');
     if (sourceRotation && sourceRotation !== 0) {
-      parts.push(`rotate=${normalized.rotation}`);
+      parts.push(`rotate=${sourceRotation}`);
     }
   }
 
-  // 2. 适应方式
-  switch (normalized.fit || 'contain') {
+  // 2. 适应方式（scalePolicy：'none'→noscale / 'contain'→fit / 'fill'→stretch）
+  switch (spec.scalePolicy) {
     case 'fill':
       parts.push('stretch');
       break;
@@ -187,8 +255,8 @@ function buildPrintSettings(ps) {
   }
 
   // 3. 纸张尺寸（三层策略）
-  const paper = normalized.paper;
-  const paperkind = normalized.paperkind;
+  const paper = spec.paper.sizeName;
+  const paperkind = spec.paper.paperkind;
 
   if (paperkind != null) {
     parts.push(`paperkind=${paperkind}`);
@@ -209,8 +277,8 @@ function buildPrintSettings(ps) {
       const dims = paperMap[paper];
       if (dims && dims.widthMM > 0 && dims.heightMM > 0) {
         w = dims.widthMM; h = dims.heightMM;
-      } else if (normalized.customPaper?.widthMM && normalized.customPaper?.heightMM) {
-        w = normalized.customPaper.widthMM; h = normalized.customPaper.heightMM;
+      } else if (spec.paper.customPaper?.widthMM && spec.paper.customPaper?.heightMM) {
+        w = spec.paper.customPaper.widthMM; h = spec.paper.customPaper.heightMM;
       }
       if (w > 0 && h > 0) {
         parts.push(`paper=${w}mm x ${h}mm`);
@@ -221,21 +289,21 @@ function buildPrintSettings(ps) {
   }
 
   // 4. 双面打印
-  if (normalized.duplex) {
+  if (spec.duplex) {
     parts.push('duplexlong');
   }
 
   // 5. 灰度打印
-  if (normalized.grayscale) {
+  if (spec.grayscale) {
     parts.push('monochrome');
   }
 
   // 6. 份数
-  if (normalized.copies && normalized.copies > 1) {
-    parts.push(`${normalized.copies}x`);
+  if (spec.copies && spec.copies > 1) {
+    parts.push(`${spec.copies}x`);
   }
 
   return parts.join(',');
 }
 
-module.exports = { buildPrintSettings, normalize, resolveOrientationCommands, getPaperShapeOrientation };
+module.exports = { buildPrintSettings, normalize, MissingPrintSpecPaperError, resolveOrientationCommands, getPaperShapeOrientation };

@@ -108,11 +108,9 @@ async function buildSumatraCommand(target, settings) {
   const exe = getSumatraPath();
   const resolved = resolvePrintTarget(target);
 
-  // 归一化字段名：前端发来 paperSize，管线需要 paper
+  // Phase 1-C-1：不再在此做 paperSize→paper 字段映射——统一由
+  // print-settings.normalize（PrintSpec 唯一解释层）处理（G-C1-1）。
   const normalizedSettings = { ...settings };
-  if (normalizedSettings.paperSize && !normalizedSettings.paper) {
-    normalizedSettings.paper = normalizedSettings.paperSize;
-  }
 
   // 内容方向：优先使用前端传入的 contentOrientation（导入时已检测），
   // 未传或格式不对时回退到后端 MediaBox 检测
