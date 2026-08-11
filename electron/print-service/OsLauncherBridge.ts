@@ -47,6 +47,7 @@ const SUMATRA_PAPER_SIZES: Readonly<Record<string, string>> = {
   A3: 'A3',
   Letter: 'letter',
   Legal: 'legal',
+  PostScript: 'PostScript',
 };
 
 function buildPrintSettings(job: PrintJob): string {

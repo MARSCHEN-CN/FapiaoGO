@@ -94,13 +94,13 @@ test('G-C2-2d: rot90 pending vector（contentRotation=90）→ Preview == Plan p
   assertPlacementEqual(slot, preview)
 })
 
-test('G-C2-2e: Voucher240x140 原生横向纸（portrait 请求）→ physicalPaper 宽高交换（B1 语义）', () => {
-  const settings = { paperSize: 'Voucher240x140', landscape: false, mergeMode: 'none' }
+test('G-C2-2e: PostScript 原生横向纸（portrait 请求）→ physicalPaper 宽高交换（B1 语义）', () => {
+  const settings = { paperSize: 'PostScript', landscape: false, mergeMode: 'none' }
   const file = mkInvoice()
   const { slot, preview, plan } = planPlacement(settings, file)
   assertPlacementEqual(slot, preview)
   assert.deepEqual(plan.pages[0].paper,
-    { size: 'Voucher240x140', orientation: 'portrait', widthMM: 140, heightMM: 240, customPaper: null, paperkind: undefined })
+    { size: 'PostScript', orientation: 'portrait', widthMM: 140, heightMM: 240, customPaper: null, paperkind: undefined })
 })
 
 test('G-C2-3: 方向突变 portrait→landscape → paper dims 变化 + placement 重算（不只 Sumatra args）', () => {

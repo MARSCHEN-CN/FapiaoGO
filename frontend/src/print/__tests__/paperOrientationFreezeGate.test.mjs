@@ -6,8 +6,8 @@
  * 为什么这样设计（bisect 纪律）：
  *   - 这是 P0-1/P0-2/P0-3 修复序列的**安全地基**。
  *   - Commit 1（纯语义改名）→ 本 Gate 必须仍全绿（证明行为零变化）。
- *   - Commit 2（修 swap：needSwap = requested !== shape）→ A4 行不变，Voucher 行「反了」必须变「OK」，
- *     届时在本文件更新 Voucher 行的期望值即 Commit 2 的验收动作。
+ *   - Commit 2（修 swap：needSwap = requested !== shape）→ A4 行不变，PostScript 行「反了」必须变「OK」，
+ *     届时在本文件更新 PostScript 行的期望值即 Commit 2 的验收动作。
  *   - Commit 4（UI orientation 打通到 Sumatra）→ 表 B 出现 UI 分化。
  *
  * 运行：
@@ -16,8 +16,8 @@
  * 注意：本文件刻意不依赖 vitest/jest，纯 node:assert + process.exit，
  * 以便随时复跑、且能在 CI 之外作为「行为快照」手动验证。
  *
- * ⚠️ 当前锁定的 Voucher 行为（portrait→landscape、landscape→portrait）是**已知 bug 基线**，
- * 不是「正确值」。修 BLOCKER-1 时请同步更新表 A 的 Voucher 四行期望值。
+ * ⚠️ 当前锁定的 PostScript 行为（portrait→landscape、landscape→portrait）是**已知 bug 基线**，
+ * 不是「正确值」。修 BLOCKER-1 时请同步更新表 A 的 PostScript 四行期望值。
  */
 
 import assert from 'node:assert'
@@ -81,9 +81,9 @@ const tableA = [
   // A4 — 基础纸型竖向，当前代码正确
   { paperSize: 'A4', ui: 'portrait',  geoW: 209.97, geoH: 297.01, geoOrient: 'portrait',  modelOrientation: 'portrait',  consistent: true,  layoutRotation: -90, scaleApprox: 1.386 },
   { paperSize: 'A4', ui: 'landscape', geoW: 297.01, geoH: 209.97, geoOrient: 'landscape', modelOrientation: 'landscape', consistent: true,  layoutRotation: 0,   scaleApprox: 1.386 },
-  // Voucher240x140 — 基础纸型横向；Commit 2 修 B1 后 UI 与几何一致（反了→OK）
-  { paperSize: 'Voucher240x140', ui: 'portrait',  geoW: 140.04, geoH: 240.03, geoOrient: 'portrait',  modelOrientation: 'portrait',  consistent: true, layoutRotation: -90, scaleApprox: 1.114 },
-  { paperSize: 'Voucher240x140', ui: 'landscape', geoW: 240.03, geoH: 140.04, geoOrient: 'landscape', modelOrientation: 'landscape', consistent: true, layoutRotation: 0,   scaleApprox: 1.114 },
+  // PostScript — 基础纸型横向；Commit 2 修 B1 后 UI 与几何一致（反了→OK）
+  { paperSize: 'PostScript', ui: 'portrait',  geoW: 140.04, geoH: 240.03, geoOrient: 'portrait',  modelOrientation: 'portrait',  consistent: true, layoutRotation: -90, scaleApprox: 1.114 },
+  { paperSize: 'PostScript', ui: 'landscape', geoW: 240.03, geoH: 140.04, geoOrient: 'landscape', modelOrientation: 'landscape', consistent: true, layoutRotation: 0,   scaleApprox: 1.114 },
 ]
 
 // ══════════════════════════════════════════════════════════════════
@@ -91,7 +91,7 @@ const tableA = [
 // 锁定当前行为：UI orientation 完全未进入此链（BLOCKER-3 bug 基线，Commit 4 时改）
 // ══════════════════════════════════════════════════════════════════
 const tableB = []
-for (const paper of ['A4', 'Voucher240x140']) {
+for (const paper of ['A4', 'PostScript']) {
   // 复刻 print-backend.js:129：getPaperShapeOrientation(paper, customPaper) 无 UI 入参
   const sent = getPaperShapeOrientation(paper, undefined)
   const r = resolveOrientationCommands('landscape', sent, 0)
@@ -111,7 +111,7 @@ let failed = 0
 const fail = (msg) => { failed++; console.error('  ✗ ' + msg) }
 const ok = (msg) => { console.log('  ✓ ' + msg) }
 
-console.log('\n[Gate A] Preview / Print 链 — 锁定当前行为（含 Voucher 反转 bug）')
+console.log('\n[Gate A] Preview / Print 链 — 锁定当前行为（含 PostScript 反转 bug）')
 for (const c of tableA) {
   const r = probePreview(c.paperSize, c.ui === 'landscape')
   const tag = `${c.paperSize}/${c.ui}`
@@ -121,11 +121,11 @@ for (const c of tableA) {
   } else ok(`${tag} 几何 ${r.geoW.toFixed(2)}x${r.geoH.toFixed(2)}`)
   // 原生形状
   if (r.geoOrient !== c.geoOrient) fail(`${tag} 原生形状 ${r.geoOrient} ≠ ${c.geoOrient}`)
-  // 标签（当前 = UI 标签，Voucher 下与几何相反）
+  // 标签（当前 = UI 标签，PostScript 下与几何相反）
   if (r.modelOrientation !== c.modelOrientation) {
     fail(`${tag} model.requestedPaperOrientation ${r.modelOrientation} ≠ 锁定 ${c.modelOrientation}`)
   } else ok(`${tag} model.orientation=${r.modelOrientation}`)
-  // 一致性（A4=true / Voucher=false，这是 bug 基线的核心断言）
+  // 一致性（A4=true / PostScript=false，这是 bug 基线的核心断言）
   if (r.consistent !== c.consistent) {
     fail(`${tag} 一致性 ${r.consistent} ≠ 锁定 ${c.consistent}（这是 bug 基线的核心）`)
   } else ok(`${tag} 一致?=${r.consistent}`)
@@ -156,7 +156,7 @@ if (failed > 0) {
   console.error(`\n❌ 冻结 Gate 失败：${failed} 项断言不符。当前行为已漂移，禁止继续 Commit 1/2 直到排查。`)
   process.exit(1)
 } else {
-  console.log('✅ 冻结 Gate 通过：当前行为已锁定（含 Voucher 反转 / Sumatra UI-丢弃 两个已知 bug 基线）。')
-  console.log('   下一步：Commit 1 纯改名后本 Gate 必须仍全绿；Commit 2 修 swap 时同步更新表 A 的 Voucher 行。')
+  console.log('✅ 冻结 Gate 通过：当前行为已锁定（含 PostScript 反转 / Sumatra UI-丢弃 两个已知 bug 基线）。')
+  console.log('   下一步：Commit 1 纯改名后本 Gate 必须仍全绿；Commit 2 修 swap 时同步更新表 A 的 PostScript 行。')
   process.exit(0)
 }

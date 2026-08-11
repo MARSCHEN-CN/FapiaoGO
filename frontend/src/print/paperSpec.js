@@ -10,7 +10,7 @@
  * 输出：plan.paper 几何（G-C2-1：builder 不再直接读 settings.paperSize/landscape）
  *
  *   {
- *     size,            // 'A4' | 'Voucher240x140' | ...
+ *     size,            // 'A4' | 'PostScript' | ...
  *     orientation,     // 请求打印方向（needSwap 后物理方向）：getForcedLandscape(mergeMode, landscape)
  *     widthMM, heightMM, // needSwap 后 physicalPaper（用户请求方向下的物理尺寸）
  *     customPaper,     // {widthMM, heightMM} | null
@@ -33,7 +33,7 @@ export const PAPER_MM = {
   A5: { widthMM: 148, heightMM: 210 },
   A3: { widthMM: 297, heightMM: 420 },
   Letter: { widthMM: 215.9, heightMM: 279.4 },
-  Voucher240x140: { widthMM: 240, heightMM: 140 },
+  PostScript: { widthMM: 240, heightMM: 140 },
 }
 
 /**

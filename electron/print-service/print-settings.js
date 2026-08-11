@@ -54,10 +54,10 @@ function resolveOrientationCommands({ paperOrientation = 'portrait', contentRota
  *
  * 规则：
  *   - A4/A5/A3/A6/Letter/Legal 等标准纸张 → 竖向（高 > 宽）
- *   - 凭证纸 240×140mm → 横向（宽 > 高）
+ *   - PostScript 240×140mm → 横向（宽 > 高）
  *   - 自定义纸张 → 根据用户输入的宽高比判断
  *
- * @param {string} paperId - 纸张 ID（如 'A4', 'Voucher240x140', 'Custom'）
+ * @param {string} paperId - 纸张 ID（如 'A4', 'PostScript', 'Custom'）
  * @param {object} [customPaper] - 自定义纸张尺寸（paperId='Custom' 时使用）
  * @param {number} [customPaper.widthMM]
  * @param {number} [customPaper.heightMM]
@@ -74,8 +74,8 @@ function getPaperShapeOrientation(paperId, customPaper) {
 
   // 已知横向纸张
   const LANDSCAPE_PAPERS = new Set([
-    'Voucher240x140',
-    ' voucher', 'voucher',
+    'PostScript',
+    'postscript',
     'invoice', 'Invoice',
   ]);
 
@@ -194,7 +194,7 @@ function normalize(ps) {
   // 纸向 = 用户请求方向（needSwap 后物理方向），与 frontend paperSpec.resolvePaperSpec 对齐：
   //   - legacy `landscape`（用户横打请求 / 前端自动检测内容方向）→ 请求方向 landscape
   //   - legacy `paperOrientation` 显式方向 → 优先
-  //   - 均未传 → 纸型固有方向（getPaperShapeOrientation：A4 竖 / Voucher240x140 横）
+  //   - 均未传 → 纸型固有方向（getPaperShapeOrientation：A4 竖 / PostScript 横）
   // needSwap：请求方向 ≠ 纸型固有方向 → 宽高交换（physicalPaper）
   const naturalOrient = getPaperShapeOrientation(sizeName, customPaper)
   const requestedOrient = src.landscape
@@ -317,10 +317,9 @@ function buildPrintSettings(ps) {
       parts.push(`paper=${paper.toLowerCase()}`);
     }
   } else if (paper) {
-    // 标准纸张（A4/A5/A3等）用名字匹配（打印机普遍识别）
-    // 特种纸（Voucher240x140等）用尺寸（避免名字不匹配回退A4）
-    const A_SERIES = /^(A\d|Letter|Legal|Tabloid)$/i;
-    if (A_SERIES.test(paper)) {
+    // 标准纸张（A4/A5/A3等）及命名自定义纸（PostScript等）用名字匹配（打印机普遍识别）
+    const KNOWN_NAMED = /^(A\d|Letter|Legal|Tabloid|PostScript)$/i;
+    if (KNOWN_NAMED.test(paper)) {
       parts.push(`paper=${paper.toLowerCase()}`);
     } else {
       // 优先从 PaperRegistry 取尺寸，失败则从 customPaper 取

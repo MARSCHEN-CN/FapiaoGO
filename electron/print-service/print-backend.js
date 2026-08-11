@@ -124,7 +124,7 @@ async function buildSumatraCommand(target, settings) {
     }
   }
 
-  // 纸张方向由所选纸张的宽高比硬编码决定（如 A4 竖向、凭证纸 240×140 横向）
+  // 纸张方向由所选纸张的宽高比硬编码决定（如 A4 竖向、PostScript 240×140 横向）
   if (contentOrient) {
     normalizedSettings.paperOrientation = getPaperShapeOrientation(
       normalizedSettings.paper,

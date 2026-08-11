@@ -152,7 +152,7 @@ export function buildRenderCommand(paperLayout, documentState, slotRect = null) 
   // 有效纸张是否横向：直接由 PaperOrientation Fact 派生，根除旧 totalRot 推导的 180° bug。
   const paperLandscape = paperOrientation === 'landscape'
   // B1 修复：geometry swap 必须基于「有效方向 ≠ 原生形状」，而非「有效方向 === landscape」。
-  // 旧逻辑硬编码基础纸型恒为竖向，导致 Voucher240x140 等原生横向纸型 UI/几何恒相反。
+  // 旧逻辑硬编码基础纸型恒为竖向，导致 PostScript 等原生横向纸型 UI/几何恒相反。
   const nativeLandscape = paperRect.w > paperRect.h
   const needSwap = paperLandscape !== nativeLandscape
 

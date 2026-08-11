@@ -231,6 +231,7 @@ const SUMATRA_PAPER_SIZES = Object.freeze({
   Legal: 'legal',
   Tabloid: 'tabloid',
   Statement: 'statement',
+  PostScript: 'PostScript',
 });
 
 /**
@@ -259,7 +260,7 @@ function decidePrintSpec(job) {
     paperName = SUMATRA_PAPER_SIZES[job.paperSize] || job.paperSize
   }
 
-  // 纸张方向由所选纸张的宽高比硬编码决定（如 A4 竖向、凭证纸 240×140 横向）
+  // 纸张方向由所选纸张的宽高比硬编码决定（如 A4 竖向、PostScript 240×140 横向）
   const orientation = getPaperShapeOrientation(job.paperSize, job.customPaper);
 
   return {
