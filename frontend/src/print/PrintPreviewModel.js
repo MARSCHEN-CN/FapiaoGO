@@ -26,7 +26,8 @@
  * @module print/PrintPreviewModel
  */
 
-import { computeTicketSlots } from '../layout/SlotLayout.js'
+import { computeSlots } from '../layout/SlotLayout.js'
+import { resolveMergeSpec } from '../compose/composeSlot.js'
 import { resolveContentPlacement, resolveContentBounds, getContentDimensions, normalizeRotation } from '../layout/RotationResolver.js'
 // C-2 Step 2（G-C2-5）：纸张表单源化——不再维护内联 PAPER_MM，统一消费 paperSpec.js。
 // config.js PAPER_REGISTRY（UI 运行时表，依赖 vite import.meta.env）仍由守卫测试锁定同步。
@@ -126,6 +127,11 @@ export function buildPrintPreviewModel(plan, { files = [], settings = {}, curren
   if (!plan || !Array.isArray(plan.pages)) {
     return { valid: false, reason: 'plan 缺失或结构非法', pages: [], currentPageIndex: 0 }
   }
+  // 合并模式规格：从 plan.mergeMode 推导（与实际打印同源），slotCount 与 strategy 用于
+  // 计算票位几何——merge 模式下 slot 总数固定（如 merge4=4），不足文件时空 slot 保留。
+  const mergeMode = plan.mergeMode || settings.mergeMode || 'none'
+  const isMerge = mergeMode && mergeMode !== 'none'
+  const mergeSpec = isMerge ? resolveMergeSpec(mergeMode) : null
   const layout = previewPaperLayout(
     settings.paperSize || 'A4',
     settings.customPaper || null,
@@ -206,13 +212,21 @@ export function buildPrintPreviewModel(plan, { files = [], settings = {}, curren
         Math.round(paperW), Math.round(paperH))
       return null
     }
-    const slots = computeTicketSlots({ usableRect: usable }, page.slots.length)
+    // 票位几何：merge 模式使用固定 slotCount + strategy（与实际打印同源），
+    // 非 merge 模式退回 page.slots.length（单文件=1）。
+    // slot 使用 paperRect（虚拟纸张外框）作为定位参考，内容在 contentRect 内。
+    const slotCount = mergeSpec ? mergeSpec.groupSize : page.slots.length
+    const slotStrategy = mergeSpec ? mergeSpec.strategy : 'vertical'
+    const allSlots = computeSlots(
+      { usableRect: usable },
+      { count: slotCount, strategy: slotStrategy, gridCols: mergeSpec?.gridCols, gridRows: mergeSpec?.gridRows }
+    )
 
     return {
       paper: page.paper?.size || settings.paperSize || 'A4',
       requestedPaperOrientation: page.orientation,
       paperSizeMM: { widthMM: round2(widthMM), heightMM: round2(heightMM) },
-      slots: slots.map((s, i) => {
+      slots: allSlots.map((s, i) => {
         const slotDef = page.slots[i] || {}
         const f = fileById.get(slotDef.fileId)
         const userRotation = slotDef.rotation || 0
@@ -241,34 +255,81 @@ export function buildPrintPreviewModel(plan, { files = [], settings = {}, curren
           )
         }
         if (contentPx && contentPx.width > 0 && contentPx.height > 0) {
-          // Commit 3 fix: 传原始尺寸 + contentRotation，由 resolveContentPlacement 内部计算 effectiveContentSize。
-          // resolveContentBounds 在这里不再需要（已内化到 Resolver 的二阶段模型中）。
-          // Commit 3（B2 修复）：本处 needSwap 归一化的产物**就是最终 physical paper**，
-          //   Resolver 只收这一个纸张事实源、方向自行从几何派生，不再额外接收 orientation 标签
-          //   （否则会出现「外部 swap → Resolver 内部二次解释方向」的双重 swap）。
-          //   纸张坐标链：requestedPaperOrientation → needSwap → physicalPaper → physicalPaperOrientation。
-          //   与 SVG viewBox（同样按方向交换，PrintPreviewCanvas.jsx:159-160）落在同一显示坐标系。
-      const paperW_mm = planPaper ? planPaper.widthMM
-        : (needSwap ? layout.paperRect.h : layout.paperRect.w) * PX_TO_MM
-      const paperH_mm = planPaper ? planPaper.heightMM
-        : (needSwap ? layout.paperRect.w : layout.paperRect.h) * PX_TO_MM
-          const marginLeft_mm = mL * PX_TO_MM
-          const marginRight_mm = mR * PX_TO_MM
-          const marginTop_mm = mT * PX_TO_MM
-          const marginBottom_mm = mB * PX_TO_MM
-          // 纸面尺寸不变：不因内容旋转而旋转纸面
+          // P0 Fix: Placement target = slot（virtual paper 语义），而非整页 paper。
+          //
+          // 背景（Defect: Placement-Paper Geometry Disconnect）：
+          //   旧代码用整页 paper + 页级 outerMargin 作为 placement target，
+          //   导致 merge 模式下 invoice 仍然按整页尺寸 fit，与 slot 框几何完全脱节。
+          //
+          // 修复策略：
+          //   把 slot 当作 mini paper 喂给 RotationResolver：
+          //     physicalPaper = slot.paperRect  (slot 外框 = virtual paper 外框)
+          //     margins       = slot 内缩量      (slotMargin = virtual paper 的边距)
+          //   Resolver 输出为 slot-local 坐标，再加上 slot.paperRect.x/y 偏移
+          //   回到 SVG 纸面绝对坐标，保证 Canvas 消费契约不变。
+          //
+          // 不变量：
+          //   • RotationResolver 算法不动（layoutRotation / fit / center 语义不变）
+          //   • PrintPreviewCanvas 消费契约不动（renderTransformMM 仍是纸面 mm 绝对坐标）
+          //   • 实际打印路径不动（buildRenderCommand → createPlacement 不受影响）
+          //   • Margin 语义不动（slotMargin 来源仍由 SlotLayout 决定）
+          const slotPaper = s.paperRect || { x: 0, y: 0, width: s.width, height: s.height }
+          const slotContent = s.contentRect || slotPaper
+          // slot-local margins = paperRect → contentRect 的四边内缩量（px）
+          const slotMarginLeft = slotContent.x - slotPaper.x
+          const slotMarginTop = slotContent.y - slotPaper.y
+          const slotMarginRight = slotPaper.width - slotContent.width - slotMarginLeft
+          const slotMarginBottom = slotPaper.height - slotContent.height - slotMarginTop
+          // px → mm（Resolver 入参要求 mm 单位）
+          const slotPaperW_mm = slotPaper.width * PX_TO_MM
+          const slotPaperH_mm = slotPaper.height * PX_TO_MM
+          const slotMarginLeft_mm = slotMarginLeft * PX_TO_MM
+          const slotMarginRight_mm = slotMarginRight * PX_TO_MM
+          const slotMarginTop_mm = slotMarginTop * PX_TO_MM
+          const slotMarginBottom_mm = slotMarginBottom * PX_TO_MM
+
           placementResult = resolveContentPlacement({
             contentPhysicalSize: contentPx,   // 已归一化到 px@PREVIEW_DPI（PDF points×dpi/72）
-            contentRotation: userRotation, // Resolver 内部 apply contentRotation
-            physicalPaper: { widthMM: paperW_mm, heightMM: paperH_mm },
+            contentRotation: userRotation,    // Resolver 内部 apply contentRotation
+            physicalPaper: { widthMM: slotPaperW_mm, heightMM: slotPaperH_mm },
             margins: {
-              left: marginLeft_mm,
-              right: marginRight_mm,
-              top: marginTop_mm,
-              bottom: marginBottom_mm,
+              left: slotMarginLeft_mm,
+              right: slotMarginRight_mm,
+              top: slotMarginTop_mm,
+              bottom: slotMarginBottom_mm,
             },
             dpi: PREVIEW_DPI,
           })
+
+          // slot-local → paper-absolute 坐标偏移（px 层偏移，mm 转换在 renderTransformMM 统一做）
+          // 注意：canvasSize 是尺寸不是位置，不偏移；rotationCx/Cy 是内容中心（相对内容原点），不偏移。
+          const slotOffsetX = slotPaper.x
+          const slotOffsetY = slotPaper.y
+          placementResult = {
+            ...placementResult,
+            offset: {
+              x: placementResult.offset.x + slotOffsetX,
+              y: placementResult.offset.y + slotOffsetY,
+            },
+            placedRect: {
+              x: placementResult.placedRect.x + slotOffsetX,
+              y: placementResult.placedRect.y + slotOffsetY,
+              w: placementResult.placedRect.w,
+              h: placementResult.placedRect.h,
+            },
+            availableRect: {
+              x: placementResult.availableRect.x + slotOffsetX,
+              y: placementResult.availableRect.y + slotOffsetY,
+              w: placementResult.availableRect.w,
+              h: placementResult.availableRect.h,
+            },
+            renderTransform: {
+              ...placementResult.renderTransform,
+              translateX: placementResult.renderTransform.translateX + slotOffsetX,
+              translateY: placementResult.renderTransform.translateY + slotOffsetY,
+            },
+          }
+
           effectiveRotation = normalizeRotation(
             (placementResult.contentRotation || 0) + (placementResult.layoutRotation || 0)
           )

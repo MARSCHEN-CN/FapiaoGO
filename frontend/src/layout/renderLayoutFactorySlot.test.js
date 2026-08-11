@@ -77,7 +77,7 @@ test('A4 two tickets: slot geometry (inset, floor+remainder)', () => {
   const slots = computeTicketSlots(paperLayout, 2)
   assert.equal(slots.length, 2)
   const u = paperLayout.usableRect
-  const inset = paperLayout.slotSafeInset || 0
+  const inset = paperLayout.slotMarginPx || 0
   const baseH = Math.floor(u.h / 2)
 
   // 内缩 inset

@@ -87,8 +87,8 @@ test('P0 Case 2: 两票 → two commands, y 递增, ≈等分 + safeInset', () =
   assert.ok(clip0.y < clip1.y, 'cmd[0].clip.y < cmd[1].clip.y')
 
   const u = paperLayout.usableRect
-  const inset = paperLayout.slotSafeInset || 0
-  // clip 内缩 safeInset（对齐 createLayout contentRect）
+  const inset = paperLayout.slotMarginPx || 0
+  // clip 内缩 slot margin（对齐 Virtual Paper Geometry 的 contentRect）
   assert.equal(clip0.x, u.x + inset, 'clip0.x = usable.x + inset')
   assert.equal(clip1.x, u.x + inset, 'clip1.x = usable.x + inset')
   assert.equal(clip0.width, u.w - 2 * inset, 'clip0.width = usable.w - 2*inset')
@@ -116,7 +116,7 @@ test('P0 Case 3: 三票 → last contentRect bottom === usable.h - inset', () =>
   assert.equal(result.length, 3, 'commands.length === 3')
 
   const u = paperLayout.usableRect
-  const inset = paperLayout.slotSafeInset || 0
+  const inset = paperLayout.slotMarginPx || 0
   const last = result[2].renderCommand.clip
 
   // 最后一个 slot contentRect 不出界：底边 = usable.h - inset

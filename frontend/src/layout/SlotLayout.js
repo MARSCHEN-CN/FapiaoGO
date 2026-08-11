@@ -33,50 +33,130 @@ export function safeRectOf(paperLayout) {
 }
 
 /**
- * 计算一页 N 票的票位（竖向等分 band）。
+ * 计算一页 N 票的票位（统一入口：支持 vertical / grid 两种策略）。
+ *
+ * ⚠️ 冻结的 px 分区公式（与 composeSlotRasterizer.js 同源，C 阶段铁律）：
+ *   vertical: baseH = floor(areaPx.height / count)
+ *             y = index * baseH
+ *             height = (index === count-1) ? areaPx.height - y : baseH
+ *   grid:     baseW = floor(areaPx.width / gridCols)
+ *             baseH = floor(areaPx.height / gridRows)
+ *             width  = (col === gridCols-1) ? areaPx.width  - col*baseW  : baseW
+ *             height = (row === gridRows-1) ? areaPx.height - row*baseH : baseH
+ *   ⇒ 余数恒落「最后一格 / 最后一列 / 最后一行」，与旧行为一致。
  *
  * 不变量：
- *  • count<=1 退化为整页单票（slot0 == 安全区），保证 buildRenderCommand(slot) 与无 slot 行为一致。
+ *  • count<=1 退化为整页单票（slot0 == 安全区）。
  *  • 票位落在 paperLayout 自然空间（portrait）；横向纸张由 buildRenderCommand 统一做轴交换。
- *  • 末位精确收口到 usable 底边，杜绝浮点累积导致越界（与 createLayout「末格吃余」同义）。
+ *  • 末位精确收口，杜绝浮点累积导致越界。
+ *  • 每个 slot 含 paperRect（虚拟纸张外框）和 contentRect（内缩安全边距后）。
  *
  * @param {Object} paperLayout - computePaperLayout 产物（usableRect 已在边距内缩，px@dpi）
- * @param {number} ticketCount - 票数（非正整数→1）
- * @returns {Array<{x:number,y:number,width:number,height:number,index:number}>}
+ * @param {Object} options
+ * @param {number} options.count - 票数（非正整数→1）
+ * @param {'vertical'|'grid'} [options.strategy='vertical'] - 切分策略
+ * @param {number} [options.gridCols=2] - grid 模式列数
+ * @param {number} [options.gridRows=2] - grid 模式行数
+ * @returns {Array<{index:number, x:number, y:number, width:number, height:number, paperRect:Object, contentRect:Object, gridPosition?:{col:number,row:number}}>}
  *   空数组表示 paperLayout 非法（调用方应走 empty / 不渲染）。
  */
-export function computeTicketSlots(paperLayout, ticketCount) {
+export function computeSlots(paperLayout, options) {
   const safe = safeRectOf(paperLayout)
   if (!safe) return []
 
-  const count = Math.max(1, Math.floor(ticketCount) || 1)
+  const {
+    count: countRaw,
+    strategy = 'vertical',
+    gridCols = 2,
+    gridRows = 2,
+  } = options || {}
+
+  const count = Math.max(1, Math.floor(countRaw) || 1)
+  // slotMarginPx：每张虚拟纸（slot）的内部 margin（px）。
+  // 对应 Virtual Paper Geometry 的第二层：slot → contentRect（四周均匀内缩）。
+  const inset = (paperLayout && paperLayout.slotMarginPx) || 0
+
   // 单票：slot0 == 整页安全区（向后兼容 buildRenderCommand 无 slot 语义）
   if (count === 1) {
-    return [{ x: safe.x, y: safe.y, width: safe.w, height: safe.h, index: 0 }]
+    const paperRect = { x: safe.x, y: safe.y, width: safe.w, height: safe.h }
+    const contentRect = inset > 0
+      ? { x: safe.x + inset, y: safe.y + inset, width: safe.w - 2 * inset, height: safe.h - 2 * inset }
+      : { ...paperRect }
+    return [{ index: 0, x: contentRect.x, y: contentRect.y, width: contentRect.width, height: contentRect.height, paperRect, contentRect }]
   }
 
-  // ── 与 createLayout 对齐的 slot 几何 ──
-  // 1) 基数用 Math.floor（非 float 等分），避免 Flt 累积
-  // 2) 末 slot 吃余数，保证 sum(slots.height) === usable.h
-  // 3) 每 slot 内缩 safeInsetPx（由 paperLayout.slotSafeInset 提供，
-  //    对应 old DEFAULT_SLOT_MARGIN_MM / PRINT_SAFE_MARGIN_MM 的 px 当量），
-  //    使 fit/居中在「留四周安全边距的 contentRect」内进行，与 createLayout 的同构。
-  const inset = (paperLayout && paperLayout.slotSafeInset) || 0
-  const baseH = Math.floor(safe.h / count)
   const slots = []
-  let accY = safe.y
-  for (let i = 0; i < count; i++) {
-    // 末 slot 精确收口到底边（吃余数）
-    const height = (i === count - 1) ? (safe.y + safe.h - accY) : baseH
-    const rawSlot = { x: safe.x, y: accY, width: safe.w, height }
-    // 内缩 safeInset（用于 createPlacement 的 contentRect）
-    const insetSlot = inset > 0
-      ? { x: rawSlot.x + inset, y: rawSlot.y + inset, width: rawSlot.width - 2 * inset, height: rawSlot.height - 2 * inset }
-      : { ...rawSlot }
-    slots.push({ ...insetSlot, index: i })
-    accY += height
+
+  if (strategy === 'grid') {
+    const cols = Math.max(1, Math.floor(gridCols) || 1)
+    const rows = Math.max(1, Math.floor(gridRows) || 1)
+    const baseW = Math.floor(safe.w / cols)
+    const baseH = Math.floor(safe.h / rows)
+    let idx = 0
+    for (let row = 0; row < rows && idx < count; row++) {
+      for (let col = 0; col < cols && idx < count; col++) {
+        const x = safe.x + col * baseW
+        const y = safe.y + row * baseH
+        const width = (col === cols - 1) ? (safe.x + safe.w - x) : baseW
+        const height = (row === rows - 1) ? (safe.y + safe.h - y) : baseH
+        const paperRect = { x, y, width, height }
+        const contentRect = inset > 0
+          ? { x: x + inset, y: y + inset, width: Math.max(0, width - 2 * inset), height: Math.max(0, height - 2 * inset) }
+          : { ...paperRect }
+        slots.push({
+          index: idx,
+          x: contentRect.x,
+          y: contentRect.y,
+          width: contentRect.width,
+          height: contentRect.height,
+          paperRect,
+          contentRect,
+          gridPosition: { col, row },
+        })
+        idx++
+      }
+    }
+  } else {
+    // vertical 策略：竖向等分
+    const baseH = Math.floor(safe.h / count)
+    let accY = safe.y
+    for (let i = 0; i < count; i++) {
+      const height = (i === count - 1) ? (safe.y + safe.h - accY) : baseH
+      const paperRect = { x: safe.x, y: accY, width: safe.w, height }
+      const contentRect = inset > 0
+        ? { x: safe.x + inset, y: accY + inset, width: safe.w - 2 * inset, height: height - 2 * inset }
+        : { ...paperRect }
+      slots.push({
+        index: i,
+        x: contentRect.x,
+        y: contentRect.y,
+        width: contentRect.width,
+        height: contentRect.height,
+        paperRect,
+        contentRect,
+      })
+      accY += height
+    }
   }
+
   return slots
+}
+
+/**
+ * 计算一页 N 票的票位（竖向等分 band）。
+ *
+ * 向后兼容的 thin wrapper：内部委托 computeSlots(strategy='vertical')，
+ * 仅返回 contentRect 的扁平 x/y/width/height/index（旧调用方只消费这些字段）。
+ *
+ * @deprecated 新代码请直接使用 computeSlots({ strategy })
+ * @param {Object} paperLayout - computePaperLayout 产物（usableRect 已在边距内缩，px@dpi）
+ * @param {number} ticketCount - 票数（非正整数→1）
+ * @returns {Array<{x:number,y:number,width:number,height:number,index:number}>}
+ */
+export function computeTicketSlots(paperLayout, ticketCount) {
+  const slots = computeSlots(paperLayout, { count: ticketCount, strategy: 'vertical' })
+  // 兼容旧契约：只返回扁平字段（x/y/width/height/index = contentRect 投影）
+  return slots.map(s => ({ x: s.x, y: s.y, width: s.width, height: s.height, index: s.index }))
 }
 
 /**

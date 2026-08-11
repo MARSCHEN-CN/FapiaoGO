@@ -112,12 +112,12 @@ test('computeTicketSlots: with page margins → slots inset from clip', () => {
 })
 
 // ════════════════════════════════════════════
-// slotSafeInset
+// slotMarginPx (Virtual Paper Geometry: Layer 2)
 // ════════════════════════════════════════════
-test('computeTicketSlots: with slotSafeInset → each slot inset uniformly', () => {
-  // slotSafeInset ≈ 5mm at 300dpi = 59px
+test('computeTicketSlots: with slotMarginPx → each slot inset uniformly', () => {
+  // slotMarginPx = 5mm at 300dpi = 59px（Virtual Paper Geometry 第二层：slot → contentRect）
   const paperLayout = makePaper({ usableRect: { x: 100, y: 80, w: 2280, h: 3348 } })
-  paperLayout.slotSafeInset = 59
+  paperLayout.slotMarginPx = 59
   const slots = computeTicketSlots(paperLayout, 2)
   assert.equal(slots.length, 2)
   // 每个 slot 内缩 inset

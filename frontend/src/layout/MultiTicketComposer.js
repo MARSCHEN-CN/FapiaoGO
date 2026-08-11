@@ -11,7 +11,7 @@
  * @module MultiTicketComposer
  */
 
-import { computeTicketSlots } from './SlotLayout.js'
+import { computeSlots } from './SlotLayout.js'
 import { buildRenderCommand } from './RenderLayoutFactory.js'
 import { documentStateToPlan } from '../compose/composePagePlan.js'  // 13-E.1 B-lite adapter
 
@@ -63,15 +63,18 @@ import { documentStateToPlan } from '../compose/composePagePlan.js'  // 13-E.1 B
  * @param {Object} params.paperLayout
  * @param {Object[]} params.plans - ComposePagePlan[]（含 source + documentState）
  * @param {number} [params.ticketCount]
+ * @param {'vertical'|'grid'} [params.strategy='vertical'] - 切分策略
+ * @param {number} [params.gridCols=2] - grid 模式列数
+ * @param {number} [params.gridRows=2] - grid 模式行数
  * @returns {Array<{plan:Object, renderCommand:Object}>}
  */
-export function composePlans({ paperLayout, plans, ticketCount }) {
+export function composePlans({ paperLayout, plans, ticketCount, strategy = 'vertical', gridCols = 2, gridRows = 2 }) {
   if (!paperLayout || !plans || !Array.isArray(plans) || plans.length === 0) {
     return []
   }
 
   const count = (ticketCount != null) ? ticketCount : plans.length
-  const slots = computeTicketSlots(paperLayout, count)
+  const slots = computeSlots(paperLayout, { count, strategy, gridCols, gridRows })
   if (slots.length === 0) return []
 
   const result = []
@@ -102,11 +105,14 @@ export function composePlans({ paperLayout, plans, ticketCount }) {
  * @param {Object} params.paperLayout
  * @param {DocumentState[]} params.documents
  * @param {number} [params.ticketCount]
+ * @param {'vertical'|'grid'} [params.strategy='vertical']
+ * @param {number} [params.gridCols=2]
+ * @param {number} [params.gridRows=2]
  * @returns {Array<{documentState:Object, renderCommand:Object}>}
  */
-export function compose({ paperLayout, documents, ticketCount }) {
+export function compose({ paperLayout, documents, ticketCount, strategy = 'vertical', gridCols = 2, gridRows = 2 }) {
   const plans = (documents || []).map((d, i) => documentStateToPlan(d, i))
-  return composePlans({ paperLayout, plans, ticketCount }).map(({ plan, renderCommand }) => ({
+  return composePlans({ paperLayout, plans, ticketCount, strategy, gridCols, gridRows }).map(({ plan, renderCommand }) => ({
     documentState: plan.documentState,
     renderCommand,
   }))

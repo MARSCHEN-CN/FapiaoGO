@@ -471,7 +471,7 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
       // ✅ 合并模式强制方向（merge2/3=竖向, merge4=横向），纸张用用户设置
       const forcedLandscape = getForcedLandscape(settings.mergeMode, settings.landscape)
 
-      // ✅ V16 slotted path: paperLayout 驱动 MultiTicketComposer（slotSafeInset 已对齐 createLayout）
+      // ✅ V16 slotted path: paperLayout 驱动 MultiTicketComposer（slotMarginPx 已对齐 createLayout 的 slot margin）
       const printPaperLayout = computePaperLayout({
         paperSize: settings.paperSize,
         customPaper: settings.customPaper,

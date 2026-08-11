@@ -27,7 +27,7 @@ import { fileObjToComposePagePlan } from './compose/composePagePlan.js'  // 13-E
  * @returns {boolean}
  */
 function canUseSlotComposer(paperLayout, strategy) {
-  return !!(paperLayout && strategy !== 'grid')
+  return !!paperLayout
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -873,14 +873,21 @@ async function _renderViaWorker(items, paperKey, dpi, isLandscape, rotations, sl
   if (canUseSlotComposer(paperLayout, layoutOptions.strategy)) {
     // V16 路径：FileObj → ComposePagePlan → MultiTicketComposer.composePlans + buildRenderCommand
     const { composePlans } = await import('./layout/MultiTicketComposer.js')
-    const { computeTicketSlots } = await import('./layout/SlotLayout.js')
+    const { computeSlots } = await import('./layout/SlotLayout.js')
     const forcedOrient = isLandscape ? 'landscape' : 'portrait'
+    const _strategy = layoutOptions.strategy || 'vertical'
+    const _gridCols = layoutOptions.gridCols ?? 2
+    const _gridRows = layoutOptions.gridRows ?? 2
     // 13-E.1：在 FileObj → RenderCommand 之间插入 ComposePagePlan，线程 docId/pageId 来源身份
     const plans = items.map((item, i) =>
       fileObjToComposePagePlan(item, i, contentSources.get(item.id || item.key), forcedOrient, rotations))
-    const result = composePlans({ paperLayout, plans, ticketCount: slotCount })
+    const result = composePlans({
+      paperLayout, plans, ticketCount: slotCount,
+      strategy: _strategy, gridCols: _gridCols, gridRows: _gridRows,
+    })
     commands = result.map(r => r.renderCommand)
-    const slotPositions = computeTicketSlots(paperLayout, items.length)
+    const allSlots = computeSlots(paperLayout, { count: slotCount, strategy: _strategy, gridCols: _gridCols, gridRows: _gridRows })
+    const slotPositions = allSlots.map(s => ({ x: s.paperRect.x, y: s.paperRect.y, width: s.paperRect.width, height: s.paperRect.height }))
     const effW = isLandscape ? paperLayout.paperRect.h : paperLayout.paperRect.w
     const effH = isLandscape ? paperLayout.paperRect.w : paperLayout.paperRect.h
     layout = {
@@ -1150,15 +1157,22 @@ async function _renderDirect(
   let layout, commands, slotPositions
   if (canUseSlotComposer(paperLayout, layoutOptions.strategy)) {
     const { composePlans } = await import('./layout/MultiTicketComposer.js')
-    const { computeTicketSlots } = await import('./layout/SlotLayout.js')
+    const { computeSlots } = await import('./layout/SlotLayout.js')
+    const _strategy = layoutOptions.strategy || 'vertical'
+    const _gridCols = layoutOptions.gridCols ?? 2
+    const _gridRows = layoutOptions.gridRows ?? 2
 
     // 13-E.1：FileObj → ComposePagePlan，线程 docId/pageId 来源身份（documents 映射改为 plans）
     const forcedOrient = isLandscape ? 'landscape' : 'portrait'
     const plans = items.map((item, i) =>
       fileObjToComposePagePlan(item, i, contentSources.get(item.id || item.key), forcedOrient, rotations))
-    const result = composePlans({ paperLayout, plans, ticketCount: slotCount })
+    const result = composePlans({
+      paperLayout, plans, ticketCount: slotCount,
+      strategy: _strategy, gridCols: _gridCols, gridRows: _gridRows,
+    })
     commands = result.map(r => r.renderCommand)
-    slotPositions = computeTicketSlots(paperLayout, items.length)
+    const allSlots = computeSlots(paperLayout, { count: slotCount, strategy: _strategy, gridCols: _gridCols, gridRows: _gridRows })
+    slotPositions = allSlots.map(s => ({ x: s.paperRect.x, y: s.paperRect.y, width: s.paperRect.width, height: s.paperRect.height }))
 
     // 构造最小 layout 对象供后续使用（canvas 尺寸 + 可打印区域 + slot 参考）
     const effW = isLandscape ? paperLayout.paperRect.h : paperLayout.paperRect.w
