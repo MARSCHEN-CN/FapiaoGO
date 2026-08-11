@@ -1,6 +1,6 @@
-# C-2-E 调查结论 — Sumatra 无法可靠选择自定义 Form（确定性定位）
+# C-2-E 调查结论 — CLOSED: EXECUTOR LIMITATION CONFIRMED
 
-> 日期：2026-08-11 ｜ 状态：**CLOSED（NO，确定性）** ｜ 基线：`2b6ec10`
+> 日期：2026-08-11 ｜ 状态：**CLOSED — EXECUTOR LIMITATION CONFIRMED（用户裁决 16:12）** ｜ 基线：`1493595`
 > 结论一句话：**Sumatra 从不为自定义纸设置 `dmFormName`，而 Windows 对非标准 DMPAPER ID 的 Form 选纸强制要求 `dmFormName`——凭证纸（DMPAPER 213）因此无法被 Sumatra 可靠选中。这是 Sumatra 的确定性 executor 缺陷。**
 
 ## 1. 调查方法
