@@ -102,3 +102,28 @@ static void SetCustomPaperSize(Printer* printer, SizeF size) {
 4. **无任何组合达到「240×140 + 内容完整」**——用户声称的「正确输出」未在内容完整性层面复现。
 
 **结论：C-2-E 的 NO 结论不被推翻**。纸尺寸命中 ≠ 内容正确；`sumatraLandscapeGate` 三项验收（纸 240×140 ✅ / 内容方向 / 内容 ≥90% ❌）仍未全绿。请用户提供其验证时的 artifact 路径/截图或确认配置位置。
+
+---
+
+## 10. A 正交实验（2026-08-11 14:17，命令层最小对比）
+
+用户裁决：只做 A（纯命令/DEVMODE 行为解析），B（geometry 补偿）冻结。6-case 干净实验（唯一文件名+抓后改名，无串台）。
+
+### 矩阵
+| Case | paper | orientation | 纸 | 内容 | 面积比 | drift |
+|---|---|---|---|---|---|---|
+| A1 | postscript | landscape | ✅ 240×140 横 | 36.3×58.9 | 11% ❌ | 0.88 |
+| A2 | 240mm x 140mm | landscape | ❌ A4 横 | 167×111.8 | 100% ✅ | 0.00 |
+| A3 | a4 | landscape | ❌ A4 横 | 167×111.8 | 100% | 0.00 |
+| A4 | postscript | disable-auto-rotation | ❌ 140×240 竖 | 111.8×167 | 100% | 0.82 |
+| A5 | 240mm x 140mm | disable-auto-rotation | ❌ 竖 | 111.8×167 | 100% | 0.82 |
+| A6 | a4 | disable-auto-rotation | ❌ A4 竖 | 167.1×111.8 | 100% | 0.00 |
+
+### 结论
+1. **landscape 被排除**：A2（尺寸命令 + landscape）内容 100% 完整 drift 0.00 → landscape 不毁内容。
+2. **内容异常归因 paper token 路径**：postscript（fallback 默认 32767 无 dmFormName）→ 布局空间错乱（A1）；尺寸命令（dmPaperSize=0 + width/length）→ 布局空间正确（A2/A5 内容 100%）。
+3. **纸/内容互斥（executor limitation 定性）**：
+   - postscript（fallback 默认）：纸 240×140 ✅ / 内容错乱 ❌
+   - 240mm x 140mm（尺寸命令）：纸 A4 ❌（驱动忽略 dmPaperSize=0 自定义尺寸）/ 内容完整 ✅
+4. **B 冻结保持**：不触碰 bake layoutRotation（无证据支持 geometry 补偿，避免污染 C-2 冻结边界）。
+5. 后续可选：研究尺寸命令路径能否让驱动应用 240×140 纸（可能需驱动接受 dmPaperSize=0 / 或 dmFormName 支持——属 executor 能力延伸）。
