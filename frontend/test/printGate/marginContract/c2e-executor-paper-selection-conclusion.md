@@ -127,3 +127,28 @@ static void SetCustomPaperSize(Printer* printer, SizeF size) {
    - 240mm x 140mm（尺寸命令）：纸 A4 ❌（驱动忽略 dmPaperSize=0 自定义尺寸）/ 内容完整 ✅
 4. **B 冻结保持**：不触碰 bake layoutRotation（无证据支持 geometry 补偿，避免污染 C-2 冻结边界）。
 5. 后续可选：研究尺寸命令路径能否让驱动应用 240×140 纸（可能需驱动接受 dmPaperSize=0 / 或 dmFormName 支持——属 executor 能力延伸）。
+
+---
+
+## 11. GDI 决定性对照（2026-08-11 14:35，绕过 Sumatra 直测驱动）
+
+### 方法
+ctypes 构造 DEVMODEW → `CreateDCW('WINSPRINT')` → GDI 画矩形 → Wondershare 捕获 → probe MediaBox。**绕过 Sumatra，直接回答「Wondershare 对 custom paper DEVMODE 的响应」。**
+
+### 结果
+| 变体 | dmPaperSize | dmPaperWidth/Length | orient | MediaBox | 视觉 |
+|---|---|---|---|---|---|
+| A | 0 | 2400/1400 | landscape | **680×397（240×140 横）** ✅ | 239.9×140.1 |
+| B | 0 | 2400/1400 | portrait | 397×680（140×240 竖） | 140.1×239.9 |
+| C | 213 | — | landscape | **680×397（240×140 横）** ✅ | 239.9×140.1 |
+
+### 决定性结论（结论翻转）
+1. **Wondershare 接受 `dmPaperSize=0 + dmPaperWidth/Length=2400/1400`（custom paper DEVMODE）→ 正确输出 240×140 横纸**。
+2. **Sumatra 用相同 DEVMODE（A2 `paper=240mm x 140mm`）却输出 A4** → **Sumatra 的 custom-size DEVMODE 未正确传到驱动**（Sumatra 打印路径的 DEVMODE 应用/传递缺陷）。
+3. **Stop 条件未命中「驱动拒绝」**（相反：驱动支持）；问题收敛为 **Sumatra executor 内部 DEVMODE 传递缺陷**。
+4. **替代 executor 实测可行**：GDI 打印路径（CreateDCW + 完整 DEVMODE）已验证能出 240×140——C-2-E 方案 A 落地有实测支撑。
+
+### 边界
+- C-2 geometry 链 / noscale / Gate 全部冻结保持。
+- B（bake layoutRotation 补偿）不解冻——GDI 替代可绕过问题，无需污染 geometry。
+- 参数探索停止（Sumatra 内部缺陷，命令层不可解）。
