@@ -102,3 +102,39 @@
 - **确认 Wondershare 驱动实际纸张列表**：打印首选项里「PostScript」纸是否存在？物理尺寸/方向？若是用户自定义 Form，DMPAPER ID 需从驱动 DEVMODE 获取（本机 reg/win32print 均不可用）。
 - **候选替代**：若驱动无 postscript 纸 → PostScript 纸方案不成立，回退驱动真实支持的纸（A4 横打已验证 PASS）或注册自定义 Form。
 - **候选修复（命令层）**：若 postscript 纸确实存在，用驱动真实 paperkind ID（非 256）+ `disable-auto-rotation` + 与驱动纸方向匹配的 bake。
+
+---
+
+## 8. 驱动纸型枚举 + 决定性对照（2026-08-11 终局）
+
+### 8.1 驱动纸型枚举（pywin32 EnumForms，213 个）
+
+**Wondershare PDFelement 驱动里没有 'PostScript' 纸型**；唯一 240×140 纸 = **「凭证纸」240.0 × 140.0 mm**。
+**默认 DEVMODE**：`dmPaperSize=32767`（DMPAPER_USER）+ `dmPaperWidth=2400 / dmPaperLength=1400`（0.1mm）= **驱动默认纸就是凭证纸 240×140**。
+
+**→ 命中决策树 C 分支**：`paper=postscript` 是**无效纸 token**（另一会话 Voucher→PostScript 改名只动了应用层，驱动层纸名仍是「凭证纸」）→ Sumatra 选纸 fallback → 布局错乱。
+
+### 8.2 决定性对照（同一 PostScript bake 产物，横 240×140 /Rotate=0 内容 167×111.8）
+
+| 命令 | 纸 | 内容 | 判定 |
+|---|---|---|---|
+| `landscape,noscale,paper=a4` | A4 横 /Rotate=90 | **167×111.8 完整** | ✅ |
+| `disable-auto-rotation,noscale,paper=a4` | A4 竖 /Rotate=0 | **167.1×111.8 完整** | ✅ |
+| `landscape,noscale,paper=postscript` | 240×140 横 /R90 | 36×59 | ❌ |
+| `noscale`（无 paper）/ `paper=凭证纸` / `paperkind=32767` | 140×240 竖 /R0 | 36×32 | ❌ |
+| `disable-auto-rotation,noscale` / `paper=240mm x 140mm` | 140×240 竖 /R0 | 111.8×167 完整但转置 | ⚠️ |
+| 竖 bake + 上述任意命令 | 140×240 竖 /R0 | 36×32 | ❌ |
+
+### 8.3 终局结论
+
+1. **`paper=a4`（Sumatra 标准纸名）内容完整** → **bake 产物正确、Sumatra 不毁内容**；landscape 的 /Rotate=90 只是纸方向标记（fitz 归一后内容原位）。
+2. **`paper=postscript` 无效 token** → Sumatra 布局空间 fallback 错乱（内容缩放 1/16 或转置）。**非 geometry、非 noscale、非旋转语义**。
+3. **Sumatra 对驱动自定义纸（凭证纸 240×140）的所有表达均无法正确选纸**：纸名（postscript/凭证纸）、尺寸（240mm x 140mm）、paperkind（256/32767）——只有标准纸名（a4 等）布局空间正常。
+4. **竖 bake 全组合失败**（内容 36×32）——Sumatra 对非标准纸的布局引擎异常，与 bake 形态无关。
+
+### 8.4 建议（不再猜 Sumatra 参数）
+
+1. **另一会话的 Voucher→PostScript 改名应立即回退/纠正**——PostScript 非驱动纸名，会让凭证纸打印持续失效；应用层应保持与驱动纸名（凭证纸）一致或走标准纸。
+2. **凭证纸打印需 Sumatra 能选到驱动 form 的机制**——Sumatra 当前版本对 Wondershare 驱动自定义纸支持不良（可能需 Sumatra 升级 / 驱动注册标准 form / 换纸表达），属 executor 能力问题，**非 C-2 职责**。
+3. **A4 横打路径完整可用**（4-2b-2a Gate PASS + 本对照 M/N 内容完整）——业务可先 A4 横打兜底。
+4. **冻结不变**：C-2 geometry 链、placement_bake、noscale 全部冻结；生产代码零改动；调查工具在 `.out`（gitignored）。
