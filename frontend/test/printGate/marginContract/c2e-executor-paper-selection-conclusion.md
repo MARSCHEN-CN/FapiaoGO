@@ -206,3 +206,27 @@ ctypes 构造 DEVMODEW → `CreateDCW('WINSPRINT')` → GDI 画矩形 → Wonder
 ### 边界
 - 16 表 Golden Evidence 保留（P2/P4 证实 rotate 值在 bake 路径同样生效）。
 - 未改生产代码 / 未动 resolver / 未解冻 bake。下一步（用户裁决）：验证 P2/P3 文本方向 → 决定 bake 路径 landscape 纸是否补 rotate（属 C-2-G 修正范围）。
+
+---
+
+## 14. P2/P3 文本方向判定（2026-08-11 18:15，模板匹配 IoU）— rotate=90 正向定论
+
+### 方法
+当前模型无法直接看图，用程序化模板匹配：bake 原始内容为模板 B，P2/P3 artifact 内容 A，比较 A 的 0°/180° 与 B 的 IoU（PIL 归一化 400×260 + 二值，`.out/check-text-direction.py`）。IoU 高者 = 实际方向。
+
+### 结果
+| Case | 命令 | IoU(0°) | IoU(180°) | 判定 |
+|---|---|---|---|---|
+| **P2** | `landscape,rotate=90,fit` | **0.806** | 0.031 | **正向（净 0°）✅** |
+| **P3** | `landscape,rotate=270,fit` | 0.025 | **0.837** | **倒置 180° ❌** |
+
+### 结论
+1. **横纸 bake 路径应补 rotate=90（= 16 表值）**；rotate=270 内容倒置。
+2. **机制确认**：Sumatra `landscape` 隐含 +90° 布局旋转 → `rotate=90` 净 0°（正向）、`rotate=270` 净 180°（倒置）。
+3. **16 表 rotate 值在真实 bake 输入同样正确**（P2 内容 1:1 正向 IoU 0.806）——Golden Evidence 进一步强化：16 表不仅适用于源 PDF 直打，也适用于 bake 产物。
+4. 生产横向失败根因链完整：bake 路径 `landscape` 缺 rotate → 隐含 +90° 未补偿 → 内容 90° 错乱（38%）。修复 = landscape 纸补 rotate=90。
+
+### 下一步（用户裁决，未执行）
+生产 bake 路径 landscape 纸补 rotate=90 的接线实验。接入方式候选：
+- A. 硬编码：paper.orientation==landscape 且走 bake 路径 → rotate=90（最小改动）
+- B. 16 表 resolver 查表（rotate 补偿与输入来源无关，P2 已证）——但用户此前裁决"不接入 bake 链"，需重新裁决
