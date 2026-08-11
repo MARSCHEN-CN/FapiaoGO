@@ -61,3 +61,44 @@
 3. 结论后单独裁决修复（命令层 or 纸型定义）
 
 **冻结不变**：C-2 geometry 链不动；4-2b-2 noscale 不回滚（问题在方向命令/纸型定义，不在 noscale）。
+
+---
+
+## 7. R1/R2/R3 实验结论（2026-08-11 追加）
+
+### R1 `paperkind` — ❌ 失败
+| 命令 | artifact | 判定 |
+|---|---|---|
+| `noscale,paperkind=256` | A4 竖 210×297（/Rotate=0） | ❌ 256(DMPAPER_USER) 不是 PostScript 纸 |
+| `noscale,paperkind=256,paper=postscript` | 140×240 竖 + 内容 36×31.8mm | ❌ 内容极小 |
+
+### R2 `rotate=0` — ❌ 失败（用户预判证实）
+`landscape,noscale,paper=postscript,rotate=0` → **与 A 完全相同**（/Rotate=90 + 内容 36.3×58.9mm）。
+**Sumatra 的 landscape 在命令解析阶段已定 orientation，rotate=0 无法覆盖隐式 /Rotate=90。**
+
+### R3 竖 bake 验证 — ❌ 失败
+竖 bake（140×240 + layoutRotation=-90 烤进）→ `disable-auto-rotation,noscale,paper=postscript` → 140×240 竖 + /Rotate=0 但**内容 36.2×31.8mm**（缩放 1/16）。
+
+### 完整矩阵（PostScript 纸全部组合）
+
+| bake 形态 | 命令 | artifact | 内容 |
+|---|---|---|---|
+| 横 240×140 | landscape | 240×140 横 /Rotate=90 | 36×59 ❌ |
+| 横 240×140 | disable-auto-rotation | **140×240 竖** /Rotate=0 | 111.8×167（完整但转置）⚠️ |
+| 横 240×140 | landscape,rotate=0 | 同 landscape | ❌ |
+| 横 240×140 | paperkind=256 | A4 | ❌ |
+| 竖 140×240 | disable-auto-rotation | 140×240 竖 /Rotate=0 | 36×32 ❌ |
+| 竖 140×240 | landscape | 240×140 横 /Rotate=90 | 36×59 ❌ |
+
+### 核心结论
+
+1. **`paper=postscript` 在 Sumatra 层不可用**——所有组合要么内容旋转（landscape 伴生 /Rotate=90）、要么纸方向反（disable-auto-rotation 强制 140×240 竖）、要么内容缩放 1/16（纸型解析失败 fallback）。
+2. **B 是唯一内容完整的 case**（横 bake + disable-auto-rotation → 140×240 竖 + 内容 111.8×167）——但内容被**转置 90°**（bake 横条 167×111.8 → 竖条 111.8×167），对横内容发票仍不正确。
+3. **Sumatra 对 postscript 纸名解析异常**（对比 a4 完全正常：4-2b-2a Gate 证明 A4 横打 PASS）——**Sumatra 认识 a4，不认识 postscript**。`paper=postscript` 非 Sumatra 标准纸名，选纸 fallback 导致布局错乱。
+4. **已排除**：非方向命令问题（R2）、非 paperkind 256（R1）、非「140×240 竖纸型 + 横向使用」（R3）。
+
+### 下一步（需用户侧信息）
+
+- **确认 Wondershare 驱动实际纸张列表**：打印首选项里「PostScript」纸是否存在？物理尺寸/方向？若是用户自定义 Form，DMPAPER ID 需从驱动 DEVMODE 获取（本机 reg/win32print 均不可用）。
+- **候选替代**：若驱动无 postscript 纸 → PostScript 纸方案不成立，回退驱动真实支持的纸（A4 横打已验证 PASS）或注册自定义 Form。
+- **候选修复（命令层）**：若 postscript 纸确实存在，用驱动真实 paperkind ID（非 256）+ `disable-auto-rotation` + 与驱动纸方向匹配的 bake。
