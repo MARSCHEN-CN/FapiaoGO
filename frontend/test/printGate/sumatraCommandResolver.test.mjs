@@ -86,3 +86,25 @@ test('非法输入抛错', () => {
   assert.throws(() => resolveSumatraRotation({ contentOrientation: 'landscape', contentRotation: 45, paperOrientation: 'portrait' }))
   assert.throws(() => resolveSumatraRotation({ contentOrientation: 'landscape', contentRotation: 0, paperOrientation: 'bad' }))
 })
+
+// ── Symmetry invariant（用户裁决 2026-08-11 17:30）──
+// 对称性是【验证约束，非运行时实现】：查表保持 16-case 直查，测试额外保证
+//   横向表 == 竖向 golden base + orientation swap（8/8 双向）
+// swap 规则（实测归纳，2026-08-11）：
+//   内容有效方向 eff = (contentBase + rot) mod 180（横 contentBase=0°，竖=90°）
+//     eff==0（横向布局）→ rotate 不变；eff==90（竖向布局）→ rotate 翻转（90↔270）
+test('Symmetry: 横向表 == 竖向 golden base + orientation swap（8/8 双向）', () => {
+  const eff = (content, rot) => ((content === 'landscape' ? 0 : 90) + rot) % 180
+  const swapRotate = (content, rot, baseRot) => (eff(content, rot) === 90 ? (baseRot + 180) % 360 : baseRot)
+  for (const content of ['landscape', 'portrait']) {
+    for (const rot of [0, 90, 180, 270]) {
+      const base = resolveSumatraRotation({ contentOrientation: content, contentRotation: rot, paperOrientation: 'portrait' }).rotate
+      const actual = resolveSumatraRotation({ contentOrientation: content, contentRotation: rot, paperOrientation: 'landscape' }).rotate
+      const derived = swapRotate(content, rot, base)
+      assert.strictEqual(derived, actual,
+        `竖→横 swap 推导不符: ${content}-rot${rot}（base=${base} 推导=${derived} 查表=${actual}）`)
+      assert.strictEqual(swapRotate(content, rot, actual), base,
+        `横→竖 反向不符: ${content}-rot${rot}`)
+    }
+  }
+})
