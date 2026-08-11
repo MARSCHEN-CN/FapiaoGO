@@ -81,9 +81,9 @@ test('C1-B-V1: 横向票据 + A4 portrait → paper.orientation 解析 + content
   assert.equal(spec.contentOrientation, 'landscape')
 })
 
-test('C1-B-V1b: 自定义横向纸（Voucher240x140）→ paper.orientation=landscape + W/H', () => {
+test('C1-B-V1b: 自定义横向纸（PostScript）→ paper.orientation=landscape + W/H', () => {
   const spec = ps.normalize({
-    paperSize: 'Voucher240x140',
+    paperSize: 'PostScript',
     fit: 'contain',
   })
   assert.equal(spec.paper.orientation, 'landscape')
@@ -156,13 +156,13 @@ test('RG-3: buildPrintSettings 两通道 DSL（纸向=Plan/请求方向，内容
     // 用户横打请求（landscape:true）→ 纸向=landscape（RG-3 paper authority，前端透传）
     [{ paperSize: 'A4', landscape: true, fit: 'contain' },
       'landscape,fit,paper=a4'],
-    // 纸固有横（Voucher240x140）→ paperCommand=landscape（旧 disable-auto-rotation 是纸向权未移交的表现）
-    [{ paperSize: 'Voucher240x140', fit: 'contain' }, 'landscape,fit,paper=240mm x 140mm'],
+    // 纸固有横（PostScript）→ paperCommand=landscape（旧 disable-auto-rotation 是纸向权未移交的表现）
+    [{ paperSize: 'PostScript', fit: 'contain' }, 'landscape,fit,paper=postscript'],
     [{ paperSize: 'Custom', customPaper: { widthMM: 240, heightMM: 140 }, fit: 'contain' },
       'landscape,fit,paper=240mm x 140mm'],
     // 纸固有横 + 内容转 90
-    [{ paperSize: 'Voucher240x140', sourceRotation: 90, fit: 'contain' },
-      'landscape,rotate=90,fit,paper=240mm x 140mm'],
+    [{ paperSize: 'PostScript', sourceRotation: 90, fit: 'contain' },
+      'landscape,rotate=90,fit,paper=postscript'],
     // 其余参数不变
     [{ paperSize: 'A4', paperkind: 9, fit: 'contain' }, 'disable-auto-rotation,fit,paperkind=9,paper=a4'],
     [{ paperSize: 'A4', fit: 'contain', duplex: true }, 'disable-auto-rotation,fit,paper=a4,duplexlong'],
