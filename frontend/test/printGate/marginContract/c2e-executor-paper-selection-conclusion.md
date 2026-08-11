@@ -179,3 +179,30 @@ ctypes 构造 DEVMODEW → `CreateDCW('WINSPRINT')` → GDI 画矩形 → Wonder
 ### 边界
 - C-2 Command Mapping（16 表）冻结不变；resolver **不接入** bake 生产链（两条链执行模型互斥：直打 fit+rotate vs bake noscale）。
 - placement / RotationResolver / bake geometry / noscale / 无 rotate 全部保持冻结。
+
+---
+
+## 13. 🔴 P1-P5 决定性对照（2026-08-11 18:10）— §12 归因撤回
+
+### ⚠️ 撤回声明
+§12 的"executor 布局缺陷定论"**证据不足，正式撤回**。§12 的 C1-C4 同时改变 rotate/fit/paper 三个变量且未纳入已验证成功的命令作参照，不能归因。用户指出后重做：**同一真实生产 bake 产物（temp 未清理：`placement_bake_1786441296107_uh3pxs.pdf`，240×140 横 /Rotate=0 内容 195.0×121.2），只变命令**。
+
+### 结果（P1 vs P2 是决定性比较）
+| Case | 命令 | 内容 | 判定 |
+|---|---|---|---|
+| **P1 生产基线** | `landscape,noscale,paper=postscript` | **121.2×104.3（38%）** | ❌ |
+| **P2 16表命令** | `landscape,rotate=90,fit,paper=postscript` | **195.1×121.2（70%）= bake 内容 1:1** | ✅ |
+| P3 对称 | `landscape,rotate=270,fit,paper=postscript` | 195.1×121.2（70%）bbox 同 P2 | ✅*（文本方向待验） |
+| P4 分离 fit | `landscape,rotate=90,noscale,paper=postscript` | 195.1×121.2（70%） | ✅ |
+| P5 分离 paper | `landscape,rotate=90,fit,paper=凭证纸` | 195.1×121.2（70%） | ✅ |
+
+### 结论（根因修正）
+1. **rotate=90 是成功/失败分水岭**：P1 vs P2 只差 rotate → 生产横向失败根因 = **命令缺 rotate=90**，**不是**自定义纸 executor limitation。
+2. **fit 无关**（P2=P4）、**paper token 无关**（P2=P5）。
+3. **统一解释**：Sumatra `landscape` 隐含 +90° 布局旋转，作用于**任何输入**（源 PDF 或 bake 产物）；16 表 rotate = 该隐含旋转的补偿值 → **bake 路径同样需要 rotate**。竖纸正确 = `disable-auto-rotation` 无隐含旋转。
+4. **P2 vs P3 文本方向待验**：rotate 90/270 对横向内容 bbox 同向（mod 180），文本可能差 180°（倒置）——需渲染图像确认 P3 是否也正确。
+5. ⚠️ **4-2b-2 Gate 盲区**：`sumatraNoScaleGate` 只证明 fit==noscale **相对等价**，未断言内容**绝对正确**——横纸 case（A3-02/04）可能两模式同样错乱却 PASS。真实横向打印失败暴露此盲区。
+
+### 边界
+- 16 表 Golden Evidence 保留（P2/P4 证实 rotate 值在 bake 路径同样生效）。
+- 未改生产代码 / 未动 resolver / 未解冻 bake。下一步（用户裁决）：验证 P2/P3 文本方向 → 决定 bake 路径 landscape 纸是否补 rotate（属 C-2-G 修正范围）。
