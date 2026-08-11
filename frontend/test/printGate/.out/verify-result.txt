@@ -1,0 +1,19 @@
+=== L2 客观属性判定（probe-only，16 artifact）===
+✅ landscape-rot0-portrait: 纸portrait(210×297.1) 内容bbox 179.7×290.1(面积52131mm²=纸84% ≥15%)   /Rotate=0
+✅ landscape-rot0-landscape: 纸landscape(297.1×210) 内容bbox 126.8×205(面积25994mm²=纸42% ≥15%)   /Rotate=90
+✅ landscape-rot90-portrait: 纸portrait(210×297.1) 内容bbox 179.7×290.1(面积52131mm²=纸84% ≥15%)   /Rotate=0
+✅ landscape-rot90-landscape: 纸landscape(297.1×210) 内容bbox 126.8×205(面积25994mm²=纸42% ≥15%)   /Rotate=90
+✅ landscape-rot180-portrait: 纸portrait(210×297.1) 内容bbox 179.7×290.1(面积52131mm²=纸84% ≥15%)   /Rotate=0
+✅ landscape-rot180-landscape: 纸landscape(297.1×210) 内容bbox 126.9×205(面积26015mm²=纸42% ≥15%)   /Rotate=90
+✅ landscape-rot270-portrait: 纸portrait(210×297.1) 内容bbox 179.7×290.1(面积52131mm²=纸84% ≥15%)   /Rotate=0
+✅ landscape-rot270-landscape: 纸landscape(297.1×210) 内容bbox 126.9×205(面积26015mm²=纸42% ≥15%)   /Rotate=90
+✅ portrait-rot0-portrait: 纸portrait(210×297.1) 内容bbox 168×106.5(面积17892mm²=纸29% ≥15%)   /Rotate=0
+✅ portrait-rot0-landscape: 纸landscape(297.1×210) 内容bbox 106.6×168(面积17909mm²=纸29% ≥15%)   /Rotate=90
+✅ portrait-rot90-portrait: 纸portrait(210×297.1) 内容bbox 168×106.5(面积17892mm²=纸29% ≥15%)   /Rotate=0
+✅ portrait-rot90-landscape: 纸landscape(297.1×210) 内容bbox 106.6×168(面积17909mm²=纸29% ≥15%)   /Rotate=90
+✅ portrait-rot180-portrait: 纸portrait(210×297.1) 内容bbox 168×106.5(面积17892mm²=纸29% ≥15%)   /Rotate=0
+✅ portrait-rot180-landscape: 纸landscape(297.1×210) 内容bbox 106.6×168(面积17909mm²=纸29% ≥15%)   /Rotate=90
+✅ portrait-rot270-portrait: 纸portrait(210×297.1) 内容bbox 168×106.5(面积17892mm²=纸29% ≥15%)   /Rotate=0
+✅ portrait-rot270-landscape: 纸landscape(297.1×210) 内容bbox 106.6×168(面积17909mm²=纸29% ≥15%)   /Rotate=90
+
+L2: 16/16 PASS ✅
