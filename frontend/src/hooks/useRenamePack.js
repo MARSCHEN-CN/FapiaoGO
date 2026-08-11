@@ -399,6 +399,9 @@ export function useRenamePack({ files, documentRows, settings, setFiles, parseFi
             return {
               ...f,
               name: renamed.newName,
+              // 查询主键同步：重命名后 DB file_name = newName（后端 rename_invoices_by_filename 已更新），
+              // originalName 必须同步为新名，否则 InvoiceDetail/InvoiceDock/导出确认页用旧名查后端 → 404/空 rows。
+              originalName: renamed.newName,
               path: renamed.newPath,
               printPath: renamed.newPath,
               newName: renamed.newName,

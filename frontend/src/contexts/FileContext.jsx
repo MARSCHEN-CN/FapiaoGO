@@ -81,7 +81,8 @@ export function FileProvider({ children }) {
     const fileSig = files.length
       ? files.map(f =>
           [f.key, f.status, f.invoiceDate || '', f.amount || '',
-           f.invoiceNumber || '', f.docId || '', f.totalPages || '', f.pageNum || '']
+           f.invoiceNumber || '', f.docId || '', f.totalPages || '', f.pageNum || '',
+           f.name || '']
           .join('|')
         ).sort().join('‖')
       : ''
