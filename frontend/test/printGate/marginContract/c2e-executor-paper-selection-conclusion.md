@@ -86,3 +86,19 @@ static void SetCustomPaperSize(Printer* printer, SizeF size) {
 - **C-2 冻结不变**：geometry 链 / noscale / Gate 全部保持
 - **PostScript WIP 保持未验证**：应用层改名 PostScript 与驱动「PostScript 自定义页面大小」（DMPAPER_USER 32767）语义不同，不可混用
 - 本调查零生产代码改动；工具在 `.out`（gitignored）+ 隔离 venv（pywin32）
+
+---
+
+## 9. 用户反馈复验（2026-08-11 12:46，supersede 尝试被证据驳回）
+
+用户反馈「已把驱动 Form 配置为 PostScript，paper=postscript → 240×140 正确输出」，要求复验。**实测驳回**：
+
+1. **全系统枚举**：7 个打印机（Wondershare/WPS PDF/SHARP/PDF24/Microsoft/Brother/219）Forms **全部只有「凭证纸」240×140，均无 'PostScript' Form**。用户配置未在系统 Forms 层生效（可能混淆应用层 WIP 纸名或 Sumatra 对话框显示的「PostScript 自定义页面大小」= DMPAPER 32767）。
+2. **唯一文件名重跑**（排除 grab 交叉污染——此前 probe/gate 同名 bake 文件导致抓错）：
+   - `landscape,noscale,paper=postscript` → 纸 **240×140 横**（= **fallback 到驱动默认纸凭证纸**，非 PostScript Form 命中）+ /Rotate=90 + **内容 36.3×58.9mm（面积 11%）** ❌
+   - `landscape,noscale,paper=PostScript 自定义页面大小`（32767 全名）→ A4 横 297×210 + 内容完整——**纸不对** ❌
+   - `paper=凭证纸` / `paperkind=213` 全组合 → 内容 36×32 ❌
+3. **纸 240×140 的真相**：paper=postscript 匹配失败 → fallback `devMode->dmPaperSize`（默认 32767 + 240×140 凭证纸）→ 纸恰好 240×140，但**内容布局仍错乱**（36×59 = 面积 11%）——**与 §8 C-2-E 结论一致（自定义纸无 dmFormName 布局异常）**。
+4. **无任何组合达到「240×140 + 内容完整」**——用户声称的「正确输出」未在内容完整性层面复现。
+
+**结论：C-2-E 的 NO 结论不被推翻**。纸尺寸命中 ≠ 内容正确；`sumatraLandscapeGate` 三项验收（纸 240×140 ✅ / 内容方向 / 内容 ≥90% ❌）仍未全绿。请用户提供其验证时的 artifact 路径/截图或确认配置位置。
