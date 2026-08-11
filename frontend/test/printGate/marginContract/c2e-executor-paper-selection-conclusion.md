@@ -152,3 +152,30 @@ ctypes 构造 DEVMODEW → `CreateDCW('WINSPRINT')` → GDI 画矩形 → Wonder
 - C-2 geometry 链 / noscale / Gate 全部冻结保持。
 - B（bake layoutRotation 补偿）不解冻——GDI 替代可绕过问题，无需污染 geometry。
 - 参数探索停止（Sumatra 内部缺陷，命令层不可解）。
+
+---
+
+## 12. 生产 bake 路径命令级对照（2026-08-11 17:56，C-2-E 结论强化）
+
+背景：用户实测生产日志 `landscape,noscale,paper=postscript,monochrome`（bake 产物 240×140 横，无 rotate——bake 模型正确形态：旋转已烤进内容，A3-03 验证）。横向纸张内容失败，做命令级对照（不讨论 Form 理论）。
+
+### 方法
+构造 bake 等价物（240×140mm 横纸，横票内容 fit 居中，等价生产 placement_bake 产物）→ 4 条命令变体 → Wondershare → probe。
+
+### 结果
+| Case | 命令 | 纸 | 内容 | 判定 |
+|---|---|---|---|---|
+| C1 生产 1:1 | `landscape,noscale,paper=postscript,monochrome` | 239.9×140.1 横 ✅ | 126.9×120.7（46%）/Rotate=90 | ❌ |
+| C2 去灰度 | `landscape,noscale,paper=postscript` | 239.9×140.1 横 ✅ | **126.9×120.7（46%）完全一致** | ❌ |
+| C3 驱动纸名 | `landscape,noscale,paper=凭证纸` | 239.9×140.1 横 ✅ | **126.9×120.7（46%）完全一致** | ❌ |
+| C4 无 paper | `landscape,noscale` | A4 横 297.1×210 | 201.8×126.9（41%，宽高比≈横票 1:1） | ⚠️ 更接近原样 |
+
+### 关键结论（修正 §8 的"无效 token"表述）
+1. **`paper=postscript` 与 `paper=凭证纸` 完全等价**——都解析到驱动默认凭证纸 240×140（纸选对 239.9×140.1），`monochrome` 无影响。**不是"无效 token fallback 纸错"**，纸是对的。
+2. **内容错乱与 paper token 无关**——C1/C2/C3 内容完全一致（46%）。根因 = **landscape + 240×140 自定义纸（无 dmFormName）的驱动布局错乱**：纸选对反而内容乱；无 paper（A4）内容反而接近 1:1。
+3. **生产日志命令本身不是错误命令**（C1 == C2 == C3）——横向失败是 **Sumatra/驱动对 240×140 自定义纸的 executor 布局缺陷**（C-2-E 定论强化），**bake 路径同样存在**（与直打路径无关）。
+4. 唯一已验证可行：GDI 直打（C-2-F Phase 1，240×140 + 内容完整）/ A4 横打兜底（4-2b-2a Gate PASS）。
+
+### 边界
+- C-2 Command Mapping（16 表）冻结不变；resolver **不接入** bake 生产链（两条链执行模型互斥：直打 fit+rotate vs bake noscale）。
+- placement / RotationResolver / bake geometry / noscale / 无 rotate 全部保持冻结。
