@@ -19,6 +19,7 @@
 import { PRINT_SETTINGS_DEFAULTS } from '../config'
 import { createSuccessfulResult, createFailedResult } from '../models/PrintResult'
 import { getExtension } from '../utils'
+import { requestedPaperOrientation } from '../print/paperSpec.js'
 
 /**
  * PrintTask mode constants.
@@ -72,6 +73,10 @@ export function buildPrintSettings(file, userSettings, fileRotations, detectOrie
     // RG-3：纸向权移交——用户横打请求（landscape）必须显式传给 electron normalize
     // （旧路径靠 contentOrientation 间接决定 baseFlag，RG-3 后两通道分离，请求方向必须直传）。
     landscape: !!userSettings.landscape,
+    // G2（C-2-G）：绝对请求方向，与 resolvePaperSpec 共用 requestedPaperOrientation 单一来源。
+    // 修复「横纸型 + 纵向」因 landscape 布尔无法表达而被 normalize 回退成 natural(landscape) 的断点。
+    // normalize(print-settings.js:202-203,226) 已原生消费/透传此字段；纯补传，零 electron 改动。
+    paperOrientation: requestedPaperOrientation(userSettings),
     ...(hasReliableOrient ? { contentOrientation } : {}),
     duplex: userSettings.duplex ?? PRINT_SETTINGS_DEFAULTS.duplex,
     grayscale: userSettings.grayscale ?? PRINT_SETTINGS_DEFAULTS.grayscale,
