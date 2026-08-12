@@ -22,9 +22,6 @@ const { initArchivePaths } = require('./archive-utils')
 const pdfMargin = require('./print-service/pdf-margin-processor')
 // C-2 Step 4-2b-1：Plan placement 生产消费层（placement_bake 接线；无 placement 时零介入）
 const placementBake = require('./print-service/placement-bake-processor')
-// C-2-Sumatra-Command-Matrix：16 表实测映射（仅 bake 路径 landscape 纸 rotate 命令消费，
-// 见 print-source-file handler；竖纸不注入——disable-auto-rotation 无隐含旋转，bake 已含旋转）
-const { resolveSumatraRotation } = require('./print-service/sumatra-command-resolver')
 const { initUpdateManager } = require('./services/Update/UpdateManager')
 const { load: loadConfig } = require('./services/ConfigService')
 
@@ -548,32 +545,21 @@ ipcMain.handle('print-source-file', async (_event, { target, settings, pipeline 
         printSettings = { ...(settings || {}), scalePolicy: 'none' }
         console.log('[print-source-file] Using placement-baked PDF:', bakeResult.path)
         console.log('[print-source-file] scalePolicy=none (noscale) — baked PDF, Sumatra pure executor')
-        // ── C-2-G（最小接线）：bake 路径 landscape 纸 rotate 用 16 表 resolver ──
-        // 根因（P1-P5 决定性对照 + IoU 方向判定，2026-08-11）：
-        //   Sumatra `landscape` 隐含布局旋转作用于任何输入（含 bake 产物）→ 缺 rotate
-        //   内容 90° 错乱（38%）；rotate=90 内容 1:1 正向（70%，P2 验证，IoU 0°=0.806）。
+        // ── C-2-G（bake 路径 landscape 纸 rotate 恒 90）：横向纸张修复 ──
+        // 根因链（P1-P5 + IoU 判定 + 8 组合实测，2026-08-11/12）：
+        //   Sumatra `landscape` 隐含 -90° 布局旋转作用于任何输入（含 bake 产物）；
+        //   bake 内容已烤进最终方向（Plan truth），恒 rotate=90 抵消隐含旋转 →
+        //   内容保持 bake 原方向（8/8 组合实测正向，bakeLandscapeMatrixGate）。
+        // ⚠️ 不用 16 表 resolver 查表：270 在 bake 路径 4/4 倒置 FAIL（16 表 270
+        //   是直打模型适配值，不适用 bake）。
         // 范围【严格限定】：
-        //   - 仅 paper.orientation=='landscape' 注入（landscape 才有隐含旋转）
+        //   - 仅 paper.orientation=='landscape'（landscape 才有隐含旋转）
         //   - 竖纸 disable-auto-rotation 无隐含旋转 → 不注入（bake 已含旋转，现状正确零回归）
-        //   - 仅命令层：contentRotation 在 buildPrintSettings 只影响 rotate 输出（G-C2-1 外），
-        //     不碰 bake 几何 / placement / paper / noscale（全冻结）
-        //   - resolver 失败 → 保持 legacy rotate（优雅降级）
+        //   - 仅命令层：sourceRotation 在 buildPrintSettings 只影响 rotate 输出，不碰几何
         const execOrient = settings?.executionPaper?.orientation
-        const contentOrient = settings?.contentOrientation
-        if (execOrient === 'landscape' && contentOrient) {
-          const contentRot = settings?.sourceRotation ?? settings?.rotation ?? 0
-          try {
-            const cmdRot = resolveSumatraRotation({
-              contentOrientation: contentOrient,
-              contentRotation: contentRot,
-              paperOrientation: 'landscape',
-            }).rotate
-            printSettings = { ...printSettings, sourceRotation: cmdRot }
-            console.log('[print-source-file] C-2-G command matrix rotate →', cmdRot,
-              `(content=${contentOrient} rot=${contentRot} paper=landscape)`)
-          } catch (e) {
-            console.log('[print-source-file] C-2-G command matrix resolve failed, keep legacy rotate:', e.message)
-          }
+        if (execOrient === 'landscape') {
+          printSettings = { ...printSettings, sourceRotation: 90 }
+          console.log('[print-source-file] C-2-G bake landscape rotate=90 (Sumatra 隐含 -90° 补偿)')
         }
       } else {
         console.log('[print-source-file] Placement bake degraded → print original (fit)')

@@ -78,3 +78,63 @@ if (execOrient === 'landscape' && contentOrient) {
 ## 5. 提交
 
 - commit：`feat(print): C-2-G bake 路径 landscape 纸 Command Matrix rotate 最小接线`（main.js 单文件）
+
+---
+
+## 6. 🔴 8 组合实测修正（2026-08-12）：bake 路径 rotate = 恒 90（非 resolver 查表）
+
+单 case（横票 0°+横纸）PASS 后，按 16 表逐步验证剩余横纸组合（`bakeLandscapeMatrixGate.mjs`，240×140 横纸 + `landscape,rotate=N,noscale,paper=postscript` + IoU 0°/180° 模板匹配方向断言）。
+
+### 6.1 第一轮（resolver 查表值）：4/8 PASS，rotate=270 组合 4/4 全倒置
+
+| Case | resolver rotate | IoU(0°) | IoU(180°) | 判定 |
+|---|---|---|---|---|
+| 横票 0° | 90 | 0.929 | 0.033 | ✅ |
+| 横票 90° | 90 | 0.719 | 0.032 | ✅ |
+| **横票 180°** | **270** | 0.033 | 0.918 | ❌ 倒置 |
+| **横票 270°** | **270** | 0.032 | 0.684 | ❌ 倒置 |
+| **竖票 0°** | **270** | 0.705 | 0.848 | ❌ 倒置 |
+| 竖票 90° | 90 | 0.980 | 0.687 | ✅ |
+| 竖票 180° | 90 | 0.969 | 0.605 | ✅ |
+| **竖票 270°** | **270** | 0.691 | 0.987 | ❌ 倒置 |
+
+**完美二分：rotate=270 组合 4/4 倒置，rotate=90 组合 4/4 正向。**
+
+### 6.2 第二轮（恒 rotate=90）：8/8 全正向 PASS
+
+| Case | 内容 | IoU(0°) | 判定 |
+|---|---|---|---|
+| 横票 0° | 201.8×127 (76%) | 0.929 | ✅ |
+| 横票 90° | 84.7×134.8 (34%) | 0.719 | ✅ |
+| 横票 180° | 201.8×127.1 (76%) | 0.927 | ✅ |
+| 横票 270° | 84.8×135 (34%) | 0.535 | ✅ |
+| 竖票 0° | 71×112.2 (24%) | 0.977 | ✅ |
+| 竖票 90° | 158.5×100.6 (47%) | 0.980 | ✅ |
+| 竖票 180° | 71×112.2 (24%) | 0.969 | ✅ |
+| 竖票 270° | 158.5×100.6 (47%) | 0.977 | ✅ |
+
+### 6.3 机制修正（关键）
+
+- **Sumatra `landscape` 隐含旋转 = -90°**（非此前推断的 +90°）。
+- bake 内容已烤进最终方向（Plan truth）→ **恒 rotate=90 抵消隐含 -90°，内容保持 bake 原方向**，与内容方向/用户旋转无关。
+- **16 表 rotate=270 是直打模型适配值（源 PDF 未旋转内容），不适用于 bake 路径**——这是 §2 接线"resolver 查表"方案的缺陷，8 组合实测暴露后修正。
+
+### 6.4 生产接线修正（main.js）
+
+```js
+// 仅 paper.orientation == 'landscape'（landscape 才有隐含 -90° 旋转）
+// 竖纸 disable-auto-rotation 无隐含旋转 → 不注入（bake 已含旋转，现状正确零回归）
+if (execOrient === 'landscape') {
+  printSettings = { ...printSettings, sourceRotation: 90 }   // 恒 90，非 resolver 查表
+}
+```
+
+### 6.5 验证
+
+- harness：横纸 8 组合全 rotate=90；竖纸 4 组合注入==无注入（零回归，透传 sourceRotation 是既有行为）；降级零变化。
+- 真实打印：`bakeLandscapeMatrixGate` **8/8 PASS**（恒 90）。
+- 回归：resolver 6/6 + gate 77/77 + 4 guard + Command Matrix L1 16/16 全绿（resolver/16 表零改动——直打模型 spec 仍冻结）。
+
+### 6.6 结论
+
+**Command Mapping → production bake executor（landscape 纸）整链冻结**：bake 路径恒 rotate=90（8/8 实测），竖纸零回归。resolver 16 表保持直打模型 spec（不适用于 bake，勿混用）。
