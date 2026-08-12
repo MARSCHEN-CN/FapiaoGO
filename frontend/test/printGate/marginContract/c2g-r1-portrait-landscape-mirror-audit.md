@@ -10,9 +10,9 @@
 
 ## 0. 结论速览（一句话）
 
-**c39ae14 在「竖纸×横向」组合下对 `normalize` 完全惰性（实证），它不是该组合裁切的根因；
+**c39ae14 在「竖纸×横向」组合下对 `normalize` 的 change-delta = 0（完全惰性，实证），故它**不是**该组合裁切的「触发修改」。
 四象限 Plan == normalize Single Paper Truth 全 PASS；G2-1 唯一改变的是「横纸×纵向」（G2 主修复）。
-若真机确有竖纸×横向裁切，根因必早于 c39ae14，且位于一条根本不消费 `paperOrientation` 的路径。**
+但：是否「裁切早于 c39ae14」目前**无法判定**——本审计只有代码/数值证据，缺该组合的修改前后真机 A/B 证据；该问题只能由 T5 真机闭环回答（见 `c2g-physical-print-gate.md` §3.3）。**
 
 ---
 
@@ -99,24 +99,28 @@ Sumatra 在 297×210 物理纸上 `fit` 缩放竖发票(210×297 native) → sca
 | canvas/merged 轨 computePaperLayout | 持 210×297 但**设计如此**（swap 推迟） | 否（effPaperRect 交换后 297×210） | 不消费 paperOrientation，c39ae14 无关 |
 | canvas 轨交换权威 | `forcedLandscape` / `documentState.*Orientation` | 仅当该权威未随 landscape=true 翻转时可能错位 | c39ae14 未触及此路径 |
 
-**结论：当前所有活跃路径都没有“持旧 portrait 几何且裁切”的层；c39ae14 不是竖纸×横向裁切的触发点。**
-若真机确有竖纸×横向裁切，最可能来源（按概率）：
+**结论：当前所有活跃路径都没有"持旧 portrait 几何且裁切"的层；c39ae14 的 change-delta=0，故它**不是**竖纸×横向裁切的「触发修改」（已证）。**
+关于"根因是否早于 c39ae14"——**本审计不能断言**：目前只有代码/数值证据，缺该组合的修改前后真机 A/B 证据。若 T5 真机确有裁切，只能先排除 c39ae14 为触发点；根因时点与位置须由 T5 FAIL 后的独立只读调查（**G2-R2 / Canvas Paper-Direction Authority Divergence**，见物理 Gate 协议 §8/§10）定位。
+可能来源（按概率，供 G2-R2 调查参考，非定论）：
 1. **misattribution / 既有多轨未对齐**：canvas 轨交换权威(`forcedLandscape`)与 source 轨(`normalize`)
    是两套来源，历史上未统一；但二者对竖纸×横向都应为 'landscape'，故正常不应分叉。
-2. **早于 c39ae14 的既有问题**：c39ae14 不改变该组合，故任何该组合既有缺陷都与其无关。
-3. **T 用例缺口**：现有 T1~T4 **不含**「竖纸×横向」物理用例（见 §5），故该组合从未被真机闭环验证。
+2. **既有问题（与 c39ae14 无关）**：c39ae14 不改变该组合，故任何该组合既有缺陷都不由其引入；
+   但"是否早于 c39ae14"需 A/B 真机证据，本审计不判定。
+3. **T 用例缺口**：现有 T1~T4 **不含**「竖纸×横向」物理用例（见物理 Gate 协议 §3.1），故该组合从未被真机闭环验证。
 
 ---
 
 ## 5. 行动项（只读，未改码）
 
 1. **不回退 c39ae14** — 实验证明其对竖纸×横向惰性，回退无益且会撤销 G2 真修复（横纸×纵向）。✅ 与用户裁决一致。
-2. **向物理 Gate 协议追加 T5 = 竖纸(A4) × 横向**（当前 T1~T4 缺此组合）。
-   T5 验收：真机纸面 = 297×210；竖发票内容正立、四周留 3mm 边距、无裁切。
-   - T5 通过 → 竖纸×横向 blocker 证伪（c39ae14 清白，原担忧关闭）。
-   - T5 失败 → 裁切真实存在且早于 c39ae14，按 §4 定位 canvas 轨 `renderMultipleItemsToCanvas`
-     的 `forcedLandscape` 接线（两轨权威不统一问题），与 G2-2 无关，单独开 issue。
-3. **不宣布 G2 PASS**（维持用户裁决）：待 T1~T4 + 新增 T5 全 PASS，且确认 c39ae14 对四组合均惰性/正确。
+2. **向物理 Gate 协议追加 T5 = 竖纸(A4) × 横向**（已写入 `c2g-physical-print-gate.md` §3.3）。
+   T5 验收：真机纸面 = 297×210；竖发票内容正立；四周留 3mm 边距；裁切 = 0（四件同时看，不只看裁切）。
+   - T5 PASS → 关闭"G2-1 导致竖纸×横向回归"的怀疑（c39ae14 清白，change-delta=0 已证）→ 状态升 **C-2-G PASS**。
+   - T5 FAIL → 裁切真实存在；c39ae14 已证非触发（change-delta=0），但**不据此断言早于 c39ae14**；
+     进入独立只读调查 **G2-R2 / Canvas Paper-Direction Authority Divergence**（定位 canvas 轨
+     `forcedLandscape`/`documentState.*Orientation` 与 source `normalize` 两套方向权威分叉），
+     **不回退 c39ae14**，与 G2-2 无关，单独开 issue。
+3. **不宣布 G2 PASS 直至 T5 物理闭环**（维持用户裁决）：数值四象限 PASS 不足以放行，真机优先级高于数值模拟。
 4. **结构债（非 blocker）**：canvas 轨交换权威（`forcedLandscape` / `documentState.*Orientation`）
    与 source 轨 `normalize` 是两套来源。建议未来统一为单一 `paperOrientation` 事实源（单独排期，不混入 G2）。
 
