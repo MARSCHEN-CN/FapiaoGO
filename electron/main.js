@@ -553,14 +553,16 @@ ipcMain.handle('print-source-file', async (_event, { target, settings, pipeline 
         // ⚠️ 不用 16 表 resolver 查表：270 在 bake 路径 4/4 倒置 FAIL（16 表 270
         //   是直打模型适配值，不适用 bake）。
         // 范围【严格限定】：
-        //   - 仅 paper.orientation=='landscape'（landscape 才有隐含旋转）
-        //   - 竖纸 disable-auto-rotation 无隐含旋转 → 不注入（bake 已含旋转，现状正确零回归）
+        //   - 仅 paper.orientation=='landscape'（landscape 才有隐含旋转）→ keep 冻结 rotate=90
+        //     （Sumatra 隐含 -90° 补偿，8 组合实测正向，bakeLandscapeMatrixGate）
+        //   - 竖纸无隐含旋转：E 方案 bake 已烤入 contentRotation+layoutRotation 全部业务旋转，
+        //     命令层只承载 executor 机械补偿 → 统一 sourceRotation=0，收敛到 golden 命令
+        //     disable-auto-rotation,noscale,...（与 frozen 竖纸 golden baseline 一致）
         //   - 仅命令层：sourceRotation 在 buildPrintSettings 只影响 rotate 输出，不碰几何
+        //   - 不接入 16 表 resolver（270 是直打模型适配值，不适用 bake）
         const execOrient = settings?.executionPaper?.orientation
-        if (execOrient === 'landscape') {
-          printSettings = { ...printSettings, sourceRotation: 90 }
-          console.log('[print-source-file] C-2-G bake landscape rotate=90 (Sumatra 隐含 -90° 补偿)')
-        }
+        printSettings = { ...printSettings, sourceRotation: execOrient === 'landscape' ? 90 : 0 }
+        console.log('[print-source-file] C-2-G bake executor offset: sourceRotation=%s (landscape=90 / else=0)', execOrient === 'landscape' ? 90 : 0)
       } else {
         console.log('[print-source-file] Placement bake degraded → print original (fit)')
       }

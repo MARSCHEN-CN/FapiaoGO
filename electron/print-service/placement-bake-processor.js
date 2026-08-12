@@ -146,6 +146,7 @@ function buildBakeSpec(inputPath, settings, outputPath) {
       offset: { x: p.offset.x, y: p.offset.y },
       placedRect: { x: p.placedRect.x, y: p.placedRect.y, w: p.placedRect.w, h: p.placedRect.h },
       layoutRotation: Number(p.layoutRotation),
+      contentRotation: p.contentRotation != null ? Number(p.contentRotation) : 0,  // E1a：透传已有 contentRotation（默认 0 = 无额外旋转）
       canvasSize: { width: p.canvasSize.width, height: p.canvasSize.height },
     },
     dpi: BAKE_DPI,

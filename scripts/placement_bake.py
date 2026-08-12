@@ -95,9 +95,12 @@ def bake(spec):
     # layoutRotation：RotationResolver 用 -90（内容横放竖纸需逆时针 90 = PDF 顺时针 270）
     # PDF 用户空间顺时针 = _CW_UNIT 的 θ；layoutRotation=-90 → phi=270
     layout_rot = int(placement.get("layoutRotation", 0))
-    phi = (360 + layout_rot) % 360
+    content_rot = int(placement.get("contentRotation", 0))
+    # E1：bake 烤入 contentRotation + layoutRotation 的最终旋转（修复 INV-R 违约：
+    # 之前只烤 layoutRotation、丢弃 contentRotation，导致几何转置 + 触边裁切）
+    phi = (360 + content_rot + layout_rot) % 360
     if phi not in _CW_UNIT:
-        raise ValueError(f"layoutRotation {layout_rot} 不在 {{0,±90,180}}，phi={phi}")
+        raise ValueError(f"contentRotation+layoutRotation {content_rot}+{layout_rot} 不在 {{0,±90,180,270}}，phi={phi}")
 
     # ── 2. 打开源，Form XObject 归一（§1.4 由库完成）──
     with pikepdf.open(src_path) as src:
@@ -136,9 +139,12 @@ def bake(spec):
     px_to_pt = 72.0 / dpi
     s = float(placement["scale"])
     layout_rot = int(placement.get("layoutRotation", 0))
-    phi = (360 + layout_rot) % 360
+    content_rot = int(placement.get("contentRotation", 0))
+    # E1：bake 烤入 contentRotation + layoutRotation 的最终旋转（修复 INV-R 违约：
+    # 之前只烤 layoutRotation、丢弃 contentRotation，导致几何转置 + 触边裁切）
+    phi = (360 + content_rot + layout_rot) % 360
     if phi not in _CW_UNIT:
-        raise ValueError(f"layoutRotation {layout_rot} 不在 {{0,±90,180}}，phi={phi}")
+        raise ValueError(f"contentRotation+layoutRotation {content_rot}+{layout_rot} 不在 {{0,±90,180,270}}，phi={phi}")
 
     # 旋转+缩放后包围盒（compute_transform 原生：src_rect 经 R(phi)·S(scale)）
     matrix0, placed = compute_transform(src_rect, {"x": 0, "y": 0, "widthPt": 0, "heightPt": 0}, phi, s)
