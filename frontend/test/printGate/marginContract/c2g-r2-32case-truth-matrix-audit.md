@@ -14,7 +14,7 @@
 1. `paperType`（竖向/横向纸张**类型**）与 `paperOrientation`（portrait/landscape 纸张**方向**）必须是**两个独立维度**——本审计 §4 + §5 会证明混淆这两者正是当前最危险的错误。
 2. 现有 `sumatra-command-resolver.js` 的 `ROTATE_MATRIX` **就是 Table A（横向纸张类型）**，且**在 electron 中从未被调用**；所以新 resolver 是**新建**而非重构旧 resolver，旧 16 表须被重新归属为「横向纸张类型」子矩阵。
 
-**但本审计发现一处 🔴 blocker（§5），必须先在数据层解决，才能进入 implementation。**
+**但本审计发现一处 🔴 blocker（§4，T5 矩阵错配），必须先在数据层解决，才能进入 implementation。**
 
 ---
 
@@ -101,7 +101,11 @@ invoiceOrientation × rotation × paperType × paperOrientation
 
 ---
 
-## 4. 🔴 Blocker：T5 的 Truth 归属被错配（§五的 270 是错的）
+## 4. 🔴 Blocker：T5 的 Truth 归属被错配（§五的 270 是错配矩阵值）
+
+> **⚠️ 措辞纪律（用户裁决，强制）：** §五 把 T5 误配成 Table A 的 `rotate=270`；本审计的修正只解决「**T5 应查哪个矩阵**」——按 4 轴模型 T5 是竖向纸张类型(A4)，应查 **Table B**，故 **candidate = `landscape,rotate=180,fit`**。
+> 这 **不是** 把 180 冻结为物理 Truth。180 来自「Table B + 跨矩阵 +90° 不变量」的**一致性推导**，而非独立真机验证。T5 恰是我们唯一已知物理 FAIL 的 Case，其候选值必须回真机复测（§4.1）后才能从 *candidate truth* 升为 *frozen physical truth*。
+> **原则：物理实测 → Truth → 矩阵一致性检查 → 冻结；绝不可矩阵一致 → 推导 → 认为物理正确。**
 
 用户在 §五写道：
 
@@ -116,7 +120,7 @@ invoiceOrientation × rotation × paperType × paperOrientation
 
 → 查 **Table B（竖向纸张类型）** → 横向纸(landscape) 列 → portrait 行 → 0° = **L + 180**。
 
-即 T5 的正确 Truth 应为 **`landscape,rotate=180,fit`**，**不是** `landscape,rotate=270,fit`。
+即 T5 的 **candidate Truth**（按 4 轴模型查 Table B，而非 §五 错配的 Table A）= **`landscape,rotate=180,fit`**，**不是** `landscape,rotate=270,fit`（那是横向纸张类型值）。
 
 ### 为什么这不只是措辞问题
 - §五的 270 来自 **Table A（横向纸张类型）**；但 T5 是 A4（竖向纸张类型），应查 **Table B**。
@@ -130,6 +134,37 @@ invoiceOrientation × rotation × paperType × paperOrientation
 - **行动**：真机 T5 用 `landscape,rotate=180,fit` 复测；保留 `rotate=270` 仅用于**横向纸张类型**组合。这一步应并入「32-case regression」首轮。
 
 > 若你确有独立实测证明 A4 横向用 270 才正立，则 Table B 的 portrait@landscape@0° 须改为 270——但那会破坏 §4 的「+90 恒定偏移」跨矩阵不变量，需一并重测整张 Table B。在矛盾解除前，本审计以「4 轴模型 + Table B 自洽」为准，标记 §五 的 270 为 **待物理复核的错配**。
+
+### 4.1 🔬 T5 验证 Gate 实验（唯一下一步，先于一切 implementation）
+
+T5 是 32-case 中唯一已知物理 FAIL 的格，其 candidate 值 180 必须由真机复测升格，逻辑如下：
+
+```text
+输入状态（4 轴）
+  invoiceOrientation = portrait    (竖向发票)
+  rotation           = 0°
+  paperType          = verticalPaper   (A4 210×297，原生竖向纸)
+  paperOrientation   = landscape
+        │
+        ▼
+试打命令（candidate）
+  landscape, rotate=180, fit
+        │
+   ┌────┴────┐
+   PASS      FAIL
+    │          │
+    ▼          ▼
+冻结 180      不强行维护「Table A = Table B + 90°」
+升 frozen      Table B 该格/整张标 partial
+physical truth 按物理实测重测 Table B
+    │
+    ▼
+推进 32-case Truth → resolver → G2-R2 impl
+```
+
+- **PASS** → T5=180 正式冻结；旋即可推进「冻结数据 → 设计 `PrintCommandTruthResolver` → G2-R2 单变量 implementation」。
+- **FAIL** → 优先怀疑 Table B 该格（而非死守 +90° 不变量）；把 Table B 标记为 **partial / unverified**，回到物理测量。此时**不进入 implementation**，因 Truth 尚未确定。
+- 注意：当前 production 对 T5 发 `landscape,fit`（无 rotate）→ 净 −90°（已知 bug）。候选 180 是「抵消 −90° 后内容正立」的预期值，但**预期 ≠ 已验证**；一切以真机为准。
 
 ---
 
@@ -152,12 +187,13 @@ R2-3 中「理论补偿 `ROTATE_MATRIX[portrait][landscape][0]=270`」须加限�
 
 ---
 
-## 7. 下一步（与用户提案一致）
+## 7. 下一步（与用户提案一致，但 T5=180 先作 candidate gate）
 
-1. **冻结数据**：本文件 Table A / Table B 即 32-case Truth（待 §4 blocker 物理复核 T5=180）。
-2. **设计 `PrintCommandTruthResolver`**：4 轴 key + 两子矩阵（或 base+offset），输出 `{orientation, rotate, fit}`，不碰其他层。
-3. **G2-R2 implementation**：仅对「竖向纸张类型 portrait×landscape×0°（T5）」单组合补发 `rotate=180`（绕过 `print-settings.js:292` 短路），严格单变量。
-4. **32-case regression**：真机复测全部 32 项，重点 T5=`landscape,rotate=180,fit`；并验证横纸×纵向 G2 数值、E regression 不退化。
-5. **Margin 独立成层**：Truth Command → Margin Contract → Final Print。
+1. **🔬 T5 单一物理实验（唯一下一步，先于一切 implementation）**：见 §4.1。A4(verticalPaper)/portrait/0°/landscape → 试 `landscape,rotate=180,fit`。PASS→冻结 180 并推进；FAIL→Table B 标 partial、重测，不进 implementation。
+2. **冻结数据**：Table A 与既有 `ROTATE_MATRIX` 一致且（按用户）已实测；Table B 除 T5 待复核外按 32 项实测冻结。**T5=180 在真机 PASS 前仅为 candidate truth，不得冒充 frozen physical truth。**
+3. **设计 `PrintCommandTruthResolver`**：4 轴 key + 两子矩阵（或 base+offset），输出 `{orientation, rotate, fit}`，不碰其他层；`paperType` 由 `resolvePaperType(paperSpec)` 派生，resolver 不猜类型。
+4. **G2-R2 implementation**：仅当 T5 物理 PASS 后，对「竖向纸张类型 portrait×landscape×0°」单组合补发 rotate=180（绕过 `print-settings.js:292` 短路），严格单变量；T5 FAIL 则暂缓，先修 Table B 数据。
+5. **32-case regression**：T5 PASS 后真机复测全部 32 项；验证横纸×纵向 G2 数值、E regression 不退化。
+6. **Margin 独立成层**：Truth Command → Margin Contract → Final Print。
 
 > 本审计未改动任何生产代码；所有结论来自对实测表的只读校验与既有 `ROTATE_MATRIX` 的交叉比对。
