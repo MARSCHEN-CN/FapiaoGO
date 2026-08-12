@@ -37,6 +37,9 @@
   - **G2-R2 范围已收敛**：原命名「Canvas Paper-Direction Authority Divergence」被 R2-1 证伪——T5 单文件 placement=null→`hasPlacement=false`→走纯 source/Sumatra/fit 路径（不经 bake、不经 canvas）。根因 = **source/fit 路径对「portrait 发票×landscape 纸×0°」缺内容方向补偿**：`print-settings.js:292` `if (orientResult.contentRotation!==0)` 短路跳过 rotate（contentRotation=0 来自 UI rotation=0），暴露 Sumatra `-landscape` 隐含 −90°，内容反向侧躺。理论补偿 `ROTATE_MATRIX[portrait][landscape][0]=270`(`sumatra-command-resolver.js:37`) 但该函数 electron 从未调用。审计 `c2g-r2-content-rotation-causal-audit.md`。
   - **冻结**：`e23107b`/`c39ae14` 均保留不回退；不改代码（不进 RotationResolver/margin/normalize/16表/Canvas 双权威）。修复须用户批准 + 单变量纪律（只针对 portrait×landscape×0° 组合补 rotate，不混入 G3/E1/E1a/E2/横纸×纵向 G2）。
   - 结构债（非 T5 触发层）：canvas 轨 `forcedLandscape`/`documentState.*Orientation` 与 source 轨 `normalize` 是两套方向权威，未统一——真实债但 T5 不走此轨。
+  - **32-Case Print Command Truth Matrix（2026-08-12 末，用户实测）**：4 轴 `invoiceOrientation × rotation(4) × paperType(竖向/横向纸张类型) × paperOrientation(2)` = 32。两 16-case 子矩阵：Table A=横向纸张类型(rotate∈{90,270}) **== 既有 `ROTATE_MATRIX`(electron 从未调用)**；Table B=竖向纸张类型(A4 等, rotate∈{0,180}) 新测。跨矩阵不变量：**Table A = Table B + 90°（逐格恒定偏移）**。一致性审计 `c2g-r2-32case-truth-matrix-audit.md`。
+  - 🔴 **T5 值修正（paperType 维度）**：T5=竖纸 A4(竖向纸张类型)×横向 → 查 **Table B** → `landscape,rotate=180,fit`（非 R2-3 误引的 `ROTATE_MATRIX[portrait][landscape][0]=270`，那是横向纸张类型值；270−180=90 恰为跨矩阵偏移，自洽）。G2-R2 审计 R2-3 须加 erratum。修复候选=对竖向纸张类型 portrait×landscape×0° 单组合补 rotate=180（绕过 `print-settings.js:292` contentRotation≠0 短路），待真机复核。
+  - **G2-R2 性质变更 + 架构方向**：从「推导旋转算法」→「冻结 32-case Truth → 一致性审计 → 最小 `PrintCommandTruthResolver`(PrintState→SumatraCommand, 不碰 PDF/Preview/Canvas/几何/Margin) → G2-R2 impl」。纪律：paperType 与 paperOrientation 两独立维度；Margin 独立成层。未改生产代码。
 - ⚠️ **仓库事故（2026-08-10）**：并发 git 写破坏 `.git/refs/` + loose objects（8 commit 消失）。教训：**push 前先 fetch 检查远端**。
 
 ## Gate 工程（frontend/test/printGate/）
