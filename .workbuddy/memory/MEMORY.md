@@ -29,42 +29,32 @@
 
 **已冻结事实（维持）**：
 - **C-2-E**：横向凭证纸 = executor capability blocker（驱动无 PostScript 纸，唯一 240×140 dmPaperSize=32767；`paper=postscript` 无效 token）。非 geometry/旋转语义。
-- **16 表**（`sumatra-command-resolver.js`）：实测查表 = 唯一 truth，**不重构为动态推导**；**仅适用直打模型，不适用 bake 路径**（bake 下 270 全倒置）。竖纸 golden baseline 冻结。
+- **16 表**（`sumatra-command-resolver.js`）：历史实测查表，仅适用直打、不适用 bake（bake 下 270 全倒置）。⚠️ **已被 32-case Truth 取代且无生产调用方（死代码，残留 R-3）**——清理前须先解决 R-1（`OsLauncherBridge` 仍用 `resolveOrientationCommands`）。
 - **Sumatra landscape 隐含旋转 = −90°**（实测定论），bake 路径需常量 +90 抵消。
-- **E 已实施 `e23107b`**（保留不回退）：`placement_bake.py` phi=`(360+contentRotation+layoutRotation)%360` + `buildBakeSpec` 透传 contentRotation。**⚠️ 该 commit 中的 `main.js` executor offset `landscape?90:0` 已被 G2-R2 移除**（旧规则污染，把 sourceRotation 当命令旋转）；landscape 纸的 +90 executor 补偿改由 32-case Execution Truth Resolver 对应格给出（等价且精炼 blanket-90）。
-- **G2 Paper Direction 已实施 `c39ae14`**（保留不回退，零 electron 改动）：仅 `PrintService.js buildPrintSettings()` 补传 `paperOrientation: requestedPaperOrientation(userSettings)`。📌 G2 解冻边界：**G2-R2（2026-08-13 收口）已解冻** `electron/print-settings.js` 与 `electron/main.js`（用户终审令移除 3 个旧注入点）。未解冻：`usePrint.js`、`placement_bake.py`、16表、`RotationResolver`、`margin_contract.py`/`apply_pdf`、`normalize`、Geometry Translator 核心。fit/noscale 仍属 Margin Contract 独立决策。
+- **E `e23107b`**（保留）：`placement_bake.py` phi=`(360+contentRotation+layoutRotation)%360` + `buildBakeSpec` 透传 contentRotation。⚠️ 同 commit 的 `main.js` executor offset `landscape→90` 已被 G2-R2 移除（旧污染）。
+- **G2 `c39ae14`**（保留）：`PrintService.js` 补传 `paperOrientation: requestedPaperOrientation(userSettings)`。
+- 📌 **解冻边界**：G2-R2 已解冻 `electron/main.js` + `print-settings.js`（限 3 个旧注入点）。**仍冻结**：`usePrint.js`、`placement_bake.py`、16表、`RotationResolver`、`margin_contract.py`/`apply_pdf`、`normalize()`、Geometry Translator 核心。`fit`/`noscale` 属 Margin Contract 独立决策。
 
-**T5 真机 FAIL（2026-08-12）**：竖纸 A4×横向方向 → 纸向正确(297×210) 但内容反向90°。根因 = source/fit 路径缺内容方向补偿（`print-settings.js:292` `contentRotation!==0` 短路跳过 rotate）。→ **C-2-G = BLOCKED**（待物理 Gate）；**G2-R2 已于 2026-08-13 收口**（Execution Truth Resolver 替代旧注入）。
+**T5 已 RESOLVED（2026-08-13 实机 PASS）**：原 FAIL（竖纸 A4×横向纸向 → 纸向对但内容错 90° + 裁切）根因 = **Execution 层 rotation wiring 双重旋转**（`apply_pdf` 已烤入旋转且 `/Rotate=0`，executor 又从旧 `sourceRotation` 再转一次），**非** source/fit 缺内容方向补偿、**非** Geometry/margin。G2-R2 收口后同 case 实机 PASS。
 
-**32-case Truth Matrix（用户实测）**：4 轴 `invoiceOrientation × rotation(0/90/180/270) × paperType(竖纸/横纸) × paperOrientation(2)` = 32。Table A(横纸,rotate∈{90,270}) = Table B(竖纸,rotate∈{0,180}) **+90° 恒定偏移**（逐格，强证据非物理证明）。T5 查 Table B → **candidate=`landscape,rotate=180`**（非 §误配的 `ROTATE_MATRIX[portrait][landscape][0]=270`，那是横纸值；270−180=90 恰为跨矩阵偏移，自洽）。**T5 FROZEN=UNKNOWN**，须真机复核才升 frozen。纪律：物理实测→Truth→矩阵一致性→冻结，禁反向推导。
+**32-case Truth Matrix（用户物理实测，唯一 Rotation Authority）**：4 轴 `paperType(竖纸/横纸) × invoiceOrientation × userRotation(0/90/180/270) × requestedPaperOrientation` = 32。全表见 **`g2-r2-freeze.md` §2**（代码 `execution-truth-resolver.js: TRUTH_ROWS`）。跨矩阵规则：**横纸格 = 同格竖纸 +90°(mod 360)**，逐格成立——仅作**一致性校验**，**禁作生成来源**。纪律：物理实测→Truth→矩阵一致性→冻结，**禁反向推导**。
 
-**🔒 G2-R2 架构（Execution Truth 层，2026-08-13 已完成收口，几何引擎仍 FROZEN）**：
-```text
-32-case Truth {orientation, rotate}
-   ↓ Geometry Translator（R6 公式，见下）
-margin_contract.apply_pdf {nativePaperW, nativePaperH, contentRotation}   ← margin 常量 3mm
-   ↓ Final PDF: MediaBox=目标纸, /Rotate=0
-Sumatra noscale
-```
-- 🔴 **命名纪律**：Sumatra `fit`（执行期，被 D2 禁）≠ 应用层 `contain-fit`（apply_pdf，配 noscale）。**禁共用 `fit`**。
-- **R6 双重交换已收敛为精确 Translator 公式**：`apply_pdf` 无 orientation 参数，输出方向由 `policy_a(native, contentRotation%180)` 唯一推导。translator：`r=rotate%180; nativeOri = (r==90)? swapped(orientation) : orientation;` 把 native 纸 width/height 指派为 nativeOri 形状；`orientation` 只一次性决定 native 指派，policy_a 做唯一 swap，绝不二次传 orientation。自检：T5 landscape+180→native 297×210→policy_a portrait-swap? 否(θ%180==0)→landscape ✅；Gate2 landscape+0→297×210→landscape ✅。
-- **Gate 序列**：Gate1 ✅ 代码级 PASS（apply_pdf 已是真正 contain-fit，fit 目标=inner area，非 clip，非新引擎）；Gate2 = A/B 非 T5（A:Sumatra fit vs B:app rotate→contain-fit→inner area→noscale，比 方向/四边距/内容尺寸/裁切/R6）；Gate3 = T5 单变量物理复核（candidate rotate=180, noscale）。**implementation 已批准并推进（2026-08-13 末起）**。
-- **实现就绪审计（只读）**：`c2g-r2-implementation-readiness.md`。Truth 已在 `ps`：`orientation=ps.paperOrientation`(PrintService.js:79)、`rotate=ps.sourceRotation`(PrintService.js:69)。Gate2 case 默认 3mm 边距→落 margin 路径(main.js:569)已走 apply_pdf，纯 source `else`(main.js:605) 不触发→**G1a 延后(D1)**。最终 change set=G1b(main.js:583 补 opts.paperW/H_mm)+G1c(pdfMargin.process 加 contentRotation 槽位→CLI --content-rotation 已支持)+G1d(新建 geometry-translator.js §9.4 纯函数)。noscale 已就位(main.js:600+print-settings.js:301)。
-- 🔴 **致命发现**：**禁复用 `normalize()`(print-settings.js:172) 当 Translator**——其 swap 准则=`requestedOrient!==naturalOrient`(纸向 vs 内禀)，与 §9.4 的 `rotate%180==90` 不同；对 landscape+90 会再被 policy_a swap 成 portrait（双重交换）。G1d 必须全新独立、且几何路径只消费 G1d 输出。
-- 审计文档：`c2g-r2-content-rotation-causal-audit.md` / `c2g-r2-32case-truth-matrix-audit.md` / `c2g-r2-truth-driven-state.md` / `c2g-r2-fit-margin-audit.md` / `c2g-r2-fit-margin-resolution.md`（§9/§10/§10.6 为终态）/ `c2g-r2-wiring-audit.md`（生产链接线审计）。
-- **Gate 2 实施进度（2026-08-13 末启动）**：G1d 已新建 `electron/print-service/geometry-translator.js`（§9.4 纯函数，独立不依赖 normalize）+ `geometry-translator.test.js`（8 组合+负向控制 B9）；G1c `pdfMargin.process` 已加 `contentRotation` 槽位（→CLI --content-rotation，rotate=0 省略）；G1b `main.js` margin 路径(L573-614) 已接 Translator：取 `settings.paperOrientation`/`sourceRotation` + `resolvePaperMmFromSettings` → `translateGeometry` → 透传 `paperW/H_mm, contentRotation` 作 `opts` 第5参。**执行验证待跑**（本回合 shell infra 故障未能 `node --test`/golden/chain-check）。**纪律守**：margin_contract.py / add-pdf-margins.py / bake / 16表 / RotationResolver 全未动；未复用 normalize()；G1a 纯 source 仍延后(D1)。T5 `rotate=180` 仍 candidate。
-- **终态裁决(用户终审 2026-08-13 收口)**：不再优化 `apply_pdf` 算法（已有单 CTM+Form XObject+inner-area contain+scale≤1+/Rotate=0，即最优）。唯一可优化=margin 表达/调用边界/几何阶段数，非换算法。冻结：① margin 属 Paper Geometry Contract(`margin_mm=3`→`expandMarginSymmetric`→LTRB 仅引擎内部；3mm=physical paper inset 非 source page inset) ② 无中间 PDF(已满足) ③ margin 非独立步骤(`fitTarget=Paper-margins`,placement 一次算) ④ 几何权威收回 App(Sumatra 仅 executor) ⑤ 边界守 `noscale≠物理3mm`(打印机 unprintable area 是 D2 physical precondition，非引擎能解) ⑥ 三层准确性=几何(apply_pdf)/执行(D2 noscale)/物理(打印机) ⑦ Translator 单入口(所有几何路径走 `Truth{orientation,rotate}→{nativePaperW/H,contentRotation}→apply_pdf`，Margin 层永不知 orientation，根治 rotation drift) ⑧ 优先级 G1a/b/c/d ≫ margin_contract，只收接线不碰引擎。顺序严格 golden→wiring→Gate2→Gate3。详见 `c2g-r2-wiring-audit.md` §7。
-- **Geometry Authority 收敛(§10)**：用户 8 点提案逐点代码核实——#1/#2/#3/#5/#6/#8 已被 `apply_pdf` 满足（单一 CTM、无中间 PDF、scale≤1、pt-native、Margin 不重判 Truth、INV-M1..M10）；#4 margin 对称展开适配器与 #7 几何黄金测试集(`docs/margin_contract_vectors.json`)为新增。路线=保留 apply_pdf 晋升唯一几何权威、消灭纯 source Sumatra fit、统一 noscale；INV-M8(几何只算一次)最关键；INV-M10 边界=`policy_a` 推导输出方向是几何执行非 Print Truth 重判。
+**🔒 Geometry 层（`apply_pdf` 引擎 FROZEN；Execution 层见下方 G2-R2 块）**
+链路：`Truth{orientation,rotate}` → Translator → `apply_pdf{nativePaperW/H, contentRotation}`（margin 3mm）→ 终态 PDF（MediaBox=目标纸，`/Rotate=0`）→ Sumatra `noscale`。
+- 🔴 **命名纪律**：Sumatra `fit`（执行期）≠ 应用层 `contain-fit`（apply_pdf，配 noscale）。**禁共用 `fit`**。
+- **R6 公式**（代码权威 `geometry-translator.js`）：`nativeOri = (rotate%180==90) ? swapped(orientation) : orientation`；`orientation` **只一次性**决定 native 指派，`policy_a` 做**唯一** swap，绝不二次传（否则双重交换）。
+- 🔴 **禁复用 `normalize()`**(`print-settings.js:172`) 当 Translator——其 swap 准则 `requestedOrient!==naturalOrient` 与 `rotate%180==90` 不同，对 landscape+90 会被 policy_a 二次 swap 成 portrait。几何路径只消费 Translator 输出。
+- **终态裁决（冻结）**：**不再优化 `apply_pdf` 算法**（单 CTM + Form XObject + inner-area contain + scale≤1 + `/Rotate=0` = 最优）；可动的只有 margin 表达/调用边界/几何阶段数。3mm = physical paper inset（非 source page inset）；无中间 PDF；margin 非独立步骤（`fitTarget=Paper−margins`，一次算）；几何权威在 App、Sumatra 仅 executor；`noscale ≠ 物理 3mm`（打印机 unprintable area 是物理前提）；**Translator 单入口**，Margin 层永不知 orientation。
+- **进度**：G1b/c/d ✅ 已实施（Translator 新建 / `pdfMargin.process` 加 `contentRotation`→CLI `--content-rotation` / margin 路径透传 `paperW/H_mm`）；**G1a 纯 source 延后**（默认 3mm 使生产恒走 margin 路径）。Gate1 ✅；Gate3(T5) ✅ 已由 G2-R2 实机 PASS 达成；**Gate2(A/B fit vs contain-fit) 仍 OPEN**，已非阻塞。
+- 文档：`c2g-r2-{content-rotation-causal,32case-truth-matrix,truth-driven-state,fit-margin,fit-margin-resolution,wiring,implementation-readiness}*.md`（终态在 `fit-margin-resolution` §9/§10 与 `wiring-audit` §7/§10，含 INV-M1..M10）。
 
-### G2-R2 完成态（2026-08-13 · 5/5 完成标准全过）
-- **唯一旋转权威 = 32-case Execution Truth Resolver**（新模块 `electron/print-service/execution-truth-resolver.js`，纯函数 `resolveExecutionTruth({paperType, invoiceOrientation, userRotation, requestedPaperOrientation}) → {paperOrientation, rotate}`）。32 条实测矩阵 > 任何抽象公式（用户终审）。
-- **commandOrientation 恒等于 requestedPaperOrientation**（32 格全验证）；rotate 由 4 输入查表唯一确定，禁 +90/swap/normalize/natural-orient 推导。横向纸 rotate = 同格竖纸 +90°（mod 360）跨验证规则维持。
-- **三处旧注入已断**：① `main.js` bake 路径 `sourceRotation = execOrient==='landscape'?90:0` 移除 → 改 `injectExecutionTruth(settings,{baked:true})`；② `print-settings.js buildPrintSettings` 不再 `commandRotate=sourceRotation` 身份映射 → 消费上游注入的 `commandOrientation/commandRotate`（兜底才解析）；③ `print-backend.js` 移除 `paperOrientation = getPaperShapeOrientation(paper)` 覆盖（G2-R2-5）。
-- **单向往架构**：32-case Truth → `resolveExecutionTruth` → `{commandOrientation, commandRotate}` → (Sumatra Executor | Geometry apply_pdf)；无第二旋转 resolver 夹在中间。`main.js` 三路径（bake/margin/source）统一经 `gatherTruthInputs`+`injectExecutionTruth` 注入；bake 语义 `userRotation=0 / invoiceOrientation=请求方向`。
-- **5 完成标准**：G2-R2-1 32/32 单测 PASS（`execution-truth-resolver.test.js`）✓ / G2-R2-2 FAIL case 竖向纸+横向发票+0°+landscape → `landscape,rotate=0`（命令串 `landscape,fit,paper=a4`，rotate=0 在 Sumatra 省略）✓ / G2-R2-3 无 `landscape?90:0` 字面量 ✓ / G2-R2-4 无 `commandRotate=sourceRotation` ✓ / G2-R2-5 paperOrientation 不被 natural orientation 覆盖 ✓。
-- **测试**：`execution-truth-resolver.test.js`（7 用例：32 格+FAIL 回归+跨矩阵+90°+输入校验+中文别名）、`print-settings.g2r2.test.js`（4 用例：buildPrintSettings 端到端）。共 17/17 print-service 测试 PASS（含未动的 geometry-translator）。
-- **C-2-G landscape 纸行为保留**：landscape 纸+landscape 请求对应 Truth 格 = rotate=90（等价旧 blanket-90），故横向凭证纸打印不受影响；resolver 精炼了旧 16 表的 blanket 近似（如 横向纸+portrait 请求 = rotate=90）。
-- **下一步（物理 Gate）**：真机复核 T5（candidate `landscape,rotate=180` 仍 UNKNOWN）及横向纸各格方向，再谈 Gate2/Gate3。Geometry Translator / `apply_pdf` / margin contract 本轮未动。
+### 🔒 G2-R2 = FROZEN（实机 Gate PASS，2026-08-13 · `a5adb39` · tag `g2-r2-machine-pass`）
+> **权威源 = `g2-r2-freeze.md`**（含 32 格全表、INV-E1..E7、残留项 R-1..R-3、解冻程序）。本条只作索引，冲突以该文件为准。
+
+- **唯一 Rotation Authority = 32-case Execution Truth**（`execution-truth-resolver.js`：`resolveExecutionTruth({paperType, invoiceOrientation, userRotation, requestedPaperOrientation}) → {paperOrientation, rotate}`）。核心不变量：**INV-E1** `commandOrientation === requestedPaperOrientation`；**INV-E3** `sourceRotation` 只作真值输入、永不作命令输出；**INV-E5** `rotate=0` 不进命令串（`landscape,fit` 即 `landscape+rotate=0`）；**INV-E7** bake 路径 `userRotation` 恒 0。
+- **三处旧注入永久移除（禁复活）**：`main.js` bake 的 `landscape→90` 硬编码 / `print-settings` 的 `commandRotate:=sourceRotation` 恒等映射（曾致 20/32 错）/ `print-backend` 的 `paperOrientation` 被纸张固有方向覆盖。接线：`main.js:506/:518` → 三路径注入 → `print-settings.js:287-314` 消费（兜底走同一 resolver）。
+- **验证**：5/5 标准过 + 17/17 自动化 + 实机 PASS。**裁切消失而 `apply_pdf` 未改 → 根因是 Execution rotation wiring，非 Geometry/margin。** T5 = 横向发票+竖纸+0°+landscape → `rotate=0`（旧 `candidate=180` 系误查竖向发票行，**已作废**）。C-2-G 横向纸 `+90` 由 Truth 横纸矩阵自然给出，凭证纸等价保留。
+- ⚠️ **残留 R-1（休眠但危险）**：`OsLauncherBridge.toSumatraArgs` 是**第二命令发射器**，硬编码 `contentRotation:0` → 结构上永不发 `rotate=N`，未接 Truth。仅 `mode='legacy'`（`print-file-direct`）或 intent 管线（`submit-print-job`）可达；`mode='source'` 下 `usePrint.js:1079` 提前 return 使其休眠。**切轨前必须先给它接同一 resolver，否则旋转静默退化为「永不旋转」。** R-2/R-3 见冻结文档。
 
 - ⚠️ **仓库事故（2026-08-10）**：并发 git 写破坏 `.git/refs/` + loose objects（8 commit 消失）。教训：**push 前先 fetch 检查远端**。
 
