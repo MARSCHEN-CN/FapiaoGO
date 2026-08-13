@@ -116,3 +116,105 @@ else                        → 纯 source，Sumatra fit        // L605-607
   - G1d：无离散 Translator，R6 防护在 source 路径无从落地。
 - 📌 当前状态：Gate 2 该 case 走 A（Sumatra fit）；若设 margin 走 M 但**靠巧合正确**，非正确接线。
 - ⏭️ 下一步：用户批准 §5 接线方案后，按单变量纪律实施 #1–#5，再做真机 A/B 复核（方向 / 裁切 / 四边距 / 内容尺寸）。T5 `180°` 仍待 Gate 3 物理复核升 frozen。
+
+---
+
+## 7. 最终架构裁决（Terminal Judgment — 不再优化算法，只收接线）
+
+> 本节冻结用户对「边距还能否更高效准确」的终审判断。结论：**算法已到终态，唯一可优化项是表达方式 / 调用边界 / 几何阶段数量，不是换第二套 margin 算法。**
+
+### 7.1 终态路线（已是当前最优，不再改 `apply_pdf`）
+
+```text
+                Print Truth
+            {orientation, rotate}
+                     │
+                     ▼
+             Geometry Translator
+                     │
+          ┌──────────┴──────────┐
+          │                     │
+    nativePaperW/H       contentRotation
+          │                     │
+          └──────────┬──────────┘
+                     ▼
+              apply_pdf()
+                     │
+        ┌────────────┼────────────┐
+        │            │            │
+      rotate      contain-fit    margin
+        │            │            │
+        └────────────┼────────────┘
+                     ▼
+                 single CTM
+                     │
+                     ▼
+          MediaBox = target paper
+               /Rotate = 0
+                     │
+                     ▼
+              Sumatra noscale
+                     │
+                     ▼
+                Printer
+```
+
+### 7.2 被否决的「更优」候选（明确封死，避免回潮）
+
+| 方案 | 判断 | 理由 |
+|---|---|---|
+| 先 Fit 满纸，再加 3mm | ❌ | margin 成后处理，违背 inner-area 语义 |
+| Sumatra fit + PDF margin | ❌ | 双重 geometry，破坏单一权威 |
+| 先生成中间 PDF，再 margin | ❌ | 多阶段 parse/save/浮点误差、/Rotate 残留 |
+| rasterize → resize → margin | ❌ | 对 PDF 矢量完全没必要 |
+| margin 后再 Sumatra fit | ❌ | 与 D2（noscale 硬冻结）冲突 |
+| 自己重写一套 fit engine | ❌ | 重复已有 `apply_pdf` |
+| `apply_pdf` 一次完成 rotate+contain+margin | **✅** | 当前路线 |
+| 单 CTM + Form XObject + MediaBox=paper | **✅ 最优** | 已实现 |
+| 最终 Sumatra `noscale` | **✅** | 执行期零几何 |
+| Translator 统一所有入口 | **✅ 当前最值得做** | 根治 rotation semantic drift |
+
+### 7.3 真正还能收口的（非算法，是模型与边界）
+
+- **#2 margin 表达**：产品语义 = 四周统一 3mm → 应用层 `margin_mm = 3`，经 `expandMarginSymmetric()` 展开为 LTRB 仅供引擎内部。冻结语义：**3mm 是 physical paper 的四周 inset，不是 source page 的 inset**。`LTRB` 属 Geometry Engine 内部表达，`margin_mm` 属 **Paper Geometry Contract**。
+- **#3 无中间 PDF**：`Form XObject + single CTM` 已是终态（见 §1 / 黄金向量 INV-M8），保持。
+- **#4 margin 不是独立步骤**：数学上 `fitTarget = Paper - margins`，最终 placement 一次计算；禁止让后续开发者误以为有「rotate → fit → add margin」三段连续操作。
+- **#5 精确公式**：
+  `innerW=Pw-mL-mR; innerH=Ph-mT-mB; scale=min(1, innerW/Cw, innerH/Ch); x=mL+(innerW-Cw·scale)/2; y=mB+(innerH-Ch·scale)/2; CTM=Translate(x,y)·Scale(scale)·Rotate(rotation); MediaBox=[0,0,Pw,Ph]; /Rotate=0`。
+
+### 7.4 最大收益：几何权威从 Sumatra/driver 收回
+
+- 旧：`App → PDF → Sumatra fit → 打印机 printable area`（两个未知：应用层 + 驱动）。
+- 新：`App → apply_pdf（几何已确定）→ Sumatra noscale → 打印机`。
+- 价值：进入打印机前 `MediaBox=目标纸、content inset=3mm` 已确定；执行期禁止再改 geometry（即 D2）。
+
+### 7.5 必须守住的边界：`noscale ≠ 物理 3mm`
+
+- `apply_pdf` 严格保证：**Final PDF `MediaBox=target paper`、`content inset=3mm`**。
+- **不等于**物理打印 content 距纸边恰 3mm —— 打印机有 `unprintable area`（hardware precondition）。
+- D2 的 `margin ≥ 打印机不可印区` 是 **physical precondition**，**不是 Geometry Engine 能解决的**。
+
+### 7.6 三层准确性（取代「继续优化算法」）
+
+| 层 | 责任方 | 保证 |
+|---|---|---|
+| Layer 1 Geometry | `margin_contract.apply_pdf` | MediaBox=纸、/Rotate=0、inner=纸−margin、contain、single CTM |
+| Layer 2 Executor | `Sumatra` | `noscale`（D2：执行期禁止再改 geometry） |
+| Layer 3 Physical | `printer hardware` | printable area / unprintable edge / driver（不可由 PDF margin 假装解决） |
+
+### 7.7 优先级（结合本审计 §3）
+
+```text
+当前风险 → Production Wire (G1a/b/c/d) ≫ margin_contract
+   G1a: 纯 source 不再走 Sumatra fit
+   G1b: 真正传入 physical paper
+   G1c: 真正传入 Truth rotation
+   G1d: Translator 从「设计公式」→ 可测试生产模块（唯一入口）
+        → 所有几何路径走 Translator；Margin 层永远不知道 orientation
+```
+
+- **#10 Translator 单入口（根治 rotation drift）**：bake 路径目前隐式靠 `buildPrintExecutionPlan` 完成 translator，source/margin 路径完全没有 → 易形成 Path A/B/C 各自理解 orientation/rotation/paper。收敛为 `Print Truth{orientation,rotate} → GeometryTranslator{nativePaperW/H, contentRotation} → apply_pdf()`，所有路径统一入口；Margin 层只知 native paper + content rotation + margin，**永不知 orientation**。
+
+### 7.8 终审结论
+
+> **现已不是「需要寻找更好 margin 算法」的阶段。** 终态已冻结为 §7.1 图。下一步唯一值得做的是把 **G1a/G1b/G1c/G1d 接线一次收干净**，再用 Gate 2 把真实链路跑通。再往 `apply_pdf` 塞东西会破坏已形成的收敛边界。顺序严格遵循 golden vectors → wiring audit → Gate 2 → Gate 3。
