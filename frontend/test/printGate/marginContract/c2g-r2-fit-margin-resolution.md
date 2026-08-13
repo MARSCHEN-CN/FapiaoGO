@@ -156,3 +156,98 @@ G2-R2 implementation（接线 G1a/b/c，不动已冻结引擎）
 - 本方案**不新造几何引擎**（统一引擎 `margin_contract.apply_pdf` 已冻结可用，契约 §7.1）；真实工作是**集成接线**（§4.5 G1a/b/c）：① 纯 source 路径（`main.js:605`）改走 `margin_contract` 引擎而非 Sumatra `fit`；② `main.js:583` 调 `pdfMargin.process` 须补传 `paperW_mm/paperH_mm`（目标纸，尊重交换）与 `content_rotation`（Truth.rotate）；③ 新增 R6 翻译层把 Truth `{orientation,rotate}` 正确映射为引擎 `{paper_w/h(原生), content_rotation}`（避免双重交换）；④ 最终 Sumatra 收 `noscale`。
 - 原则上**不要求改** `RotationResolver` / `normalize` / 16 表 / `usePrint` / `PrintService` 的旋转语义；改的是打印执行接线与几何喂参。
 - implementation 仍未批准；当前 blocker 顺序：Gate 2（A/B 非 T5）→ Gate 3（T5 物理复核）。
+
+## 9. 冻结语义模型（用户终审修订 2026-08-13）
+
+> 本节能级高于前 8 节。它把「R6 双重交换」从「待观察陷阱」收敛为「可钉死的翻译公式」，并把命名纪律写死。
+
+### 9.1 命名纪律（最高优先级，先解冻 R6 的前提）
+
+必须将两个概念彻底分命名，**禁止共用 `fit`**：
+
+- **Sumatra `fit`** = Sumatra 执行期缩放（缩放发生在打印机 printable area，应用不可控）→ 被 D2 禁止，永不用于最终命令。
+- **应用层 `contain-fit`** = `margin_contract.apply_pdf` 算出的几何（缩放由我们自己的几何层控制）→ 配合 Sumatra `noscale`。
+
+口语提及也必须说「Sumatra fit」vs「应用层 contain-fit」，**不可简称「fit」让两者再次混淆**——这正是此前最容易回潮的混淆点。
+
+### 9.2 冻结的最终管线
+
+```text
+32-case Truth
+    ↓
+只决定最终打印方向
+{ orientation, rotate }
+    ↓
+Margin / Geometry 层
+    ├─ 根据目标纸张建立 inner paper area（inset margin）
+    ├─ 按 Truth.rotate 旋转内容
+    ├─ 对旋转后的 bbox 做 contain-fit（目标是 inner area，不是整张纸）
+    ├─ 应用 margin
+    └─ 输出 MediaBox == target paper
+    ↓
+Final PDF
+    ├─ MediaBox = target paper
+    └─ /Rotate = 0
+    ↓
+Sumatra
+    └─ noscale
+```
+
+「先 fit 再形成边距后的最终纸面」OK；但**不是**「先 fit 满整张纸、再额外缩一遍加边距」（后者会二次缩放、破坏单一几何权威）。Fit 目标从来是扣除 margin 后的 inner paper area。
+
+### 9.3 代码级事实：`apply_pdf` 已实现该管线（Gate 1 不是假设）
+
+实测 `scripts/margin_contract.py`：
+
+- `contain_fit`(L72-96)：`usable = paper - margin` → **fit 目标是 inner area**；`scale=min(1,sx,sy)` 居中、scale≤1 不放大、保宽高比、非 clip、非外扩纸。✅
+- `policy_a`(L51-69)：从 `(native paper, content_rotation%180)` 推导输出纸方向（θ%180==90 时 swap 输出纸 + 同步 swap margin，物理边距随纸旋转）。✅
+- `apply_pdf`(L240-321)：MediaBox = policy_a 输出（G-2）、`/Rotate=0`（R-1，旋转烤进相似矩阵）、`content_rotation` 在 fit 前参与（R-2，θ%180==90 内容宽高互换）。✅
+
+→ 结论：新架构 = 把 32-case Truth 翻译成 `apply_pdf` 的 `{nativePaperW, nativePaperH, margin, contentRotation}` 输入，**不新造引擎**。Gate 1 PASS 成立。
+
+### 9.4 R6 收敛为精确翻译规则（Geometry Translator Contract）
+
+`apply_pdf(nativeW, nativeH, margin, contentRotation)` **无独立 orientation 参数**；输出方向完全由 `policy_a(native, contentRotation%180)` 决定。因此 Truth `{orientation, rotate}` 与引擎输入**绝不能直接 1:1 映射**——必须翻译：
+
+```js
+translate(Truth, paperType, margin) {
+  const { w, h } = paperType.dims;            // A4 = {210, 297}
+  const r = ((Truth.rotate % 180) + 180) % 180;
+  // orientation 只在此一次性决定 native paper 的 width/height 指派
+  const nativeOri = (r === 90) ? swapped(Truth.orientation) : Truth.orientation;
+  const native = (nativeOri === 'landscape')
+    ? { w: Math.max(w, h), h: Math.min(w, h) }
+    : { w: Math.min(w, h), h: Math.max(w, h) };
+  return {
+    nativePaperW: native.w,
+    nativePaperH: native.h,
+    contentRotation: Truth.rotate,            // ← rotate 是 Truth，直通
+    margin,                                    // ← margin 是常量，非 Truth 维度
+  };
+}
+```
+
+**不变量（即「orientation 不能再次偷偷改 paper dims」的代码表达）**：
+1. `Truth.orientation` 只在 translator 内**一次性**决定 native 纸的 width/height 指派；
+2. `apply_pdf` 被调用一次，`policy_a` 做**唯一一次** swap（由 `contentRotation%180` 触发）；
+3. `orientation` 绝不二次传给 `apply_pdf`（它也没有该参数）。
+
+**自检（用 policy_a 推导验证 translator 输出 == Truth.orientation）**：
+
+| 场景 | Truth | r | nativeOri | native(W×H) | policy_a 输出 | ✅/❌ |
+| --- | --- | --- | --- | --- | --- | --- |
+| T5 | landscape,180 | 0 | landscape | 297×210 | landscape | ✅ |
+| Gate2 | landscape,0 | 0 | landscape | 297×210 | landscape | ✅ |
+| 反例(双重交换) | landscape,90 误传 native=297×210 | 90 | — | 297×210 | portrait ❌ | 被本规则排除：r=90→nativeOri=portrait→native=210×297→policy_a swap→landscape ✅ |
+
+内容缩放一致性：T5 内容 bbox 210×297 → inner 291×204 → `scale=min(291/210,204/297)=0.687`（与 §2 一致）；Gate2 内容 297×210 → inner 291×204 → `scale=0.971`。两者都经 contain-fit 到 inner area，无二次缩放。
+
+### 9.5 32-case 与 margin 彻底解耦
+
+32-case Truth 只输出 `{orientation, rotate}`（+ `paperType` 决定 native 纸值）。`margin`(3mm)、`scale`(noscale 常量)、`MediaBox`、`/Rotate` 全部由 Margin/Geometry 层（`apply_pdf`）计算，**32 格数据无需记录任何 margin/scale 维度**。→ `Rotation Truth ≠ Margin Truth ≠ Printer Execution` 在架构上成立，而非只是字段拆分。
+
+### 9.6 最终命名（替代原「32-case Truth → SumatraCommand」）
+
+> **32-case Truth → Print Orientation Command `{orientation, rotate}` → Geometry Translator → Margin Contract `apply_pdf` → Final PDF（MediaBox=paper, /Rotate=0）→ Sumatra `noscale`**
+
+原 `PrintCommandTruthResolver` 输出 `{orientation, rotate, fit}` 的提法**作废**：`fit` 不属 Truth，由 Margin 层注入 `noscale`。Resolver 仍只答旋转（不碰 PDF/Canvas/Preview/Margin/placement/Invoice/RotationResolver），Translator 负责 Truth→引擎输入的语义对接。

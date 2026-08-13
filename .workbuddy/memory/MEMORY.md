@@ -14,7 +14,7 @@
 
 **打印四层隔离**：`InvoiceIdentity ≠ PrintExecution ≠ PrintPreviewRenderResource ≠ ViewerRenderResource`。Simulator 模拟**打印结果**，展示区渲染**原文件**（禁 safeMargin）。`buildPrintExecutionPlan()` 产出 `{strategy, mergeMode, pages:[{type,paper,orientation,source,slots:[{fileId,rotation}]}]}`；**rotation 属 slot 不属 paper；Plan 不含几何**。复用点：`computePaperLayout`(previewState.js:178) / `computeTicketSlots`(SlotLayout.js:48) / `createPlacement`(composePlacement.js:65) / `renderFileToPrintImage`。
 
-**Print Margin Contract v1.0**（`docs/print_margin_contract.md`）：margin = 固定纸坐标系 contain-fit，**非页面扩展**。`/Rotate` 恒 0、旋转烤进内容、`expand_box` 删除。门控 RG-1~4。禁止 bugfix 顺带改契约（§11）。
+**Print Margin Contract v1.0**（`docs/print_margin_contract.md`）：margin = 固定纸坐标系 contain-fit，**非页面扩展**。`/Rotate` 恒 0、旋转烤进内容、`expand_box` 删除。门控 RG-1~4。禁止 bugfix 顺带改契约（§11）。`margin_contract.apply_pdf`（`scripts/margin_contract.py`）是契约 §7.1 唯一几何权威，已是**真正 contain-fit**（fit 目标=inner area，非整纸，非 clip），统一引擎已存在。
 
 **RenderCommand 契约**（`RenderLayoutFactory.js:73-99`，7 条校验）：须有 `version===1` / `placement{scale,offsetX,offsetY}` 有限数 / `rotatedBounds` 正数 / `contentRotation` number / `paper` 非空。🐛 缺任一 → `drawRenderCommand` 静默跳过 = **全白 bitmap**。口诀：**bitmap 尺寸对 + bbox=null ⇒ 先查契约校验**。
 
@@ -25,24 +25,33 @@
 - 🔴 安全边距机制不一致：source 轨靠 `main.js` pdfMargin 烘焙（`imgExts` 不含 `.ofd` → OFD 无边距）；canvas 轨走 paperLayout。切轨必须验证 ±0.5mm。
 - **Policy A**（冻结，纸面跟随内容旋转）≠ canvas `createPlacement` 的 Policy B（仅限 A4/merge）。画布级旋转是 Policy A 唯一正解（`rotateCanvasCommand`；直接改 offset 会转出画布）。
 
-## C-2 系列状态（2026-08-12）
-- **C-2-E**：横向凭证纸 = **executor capability blocker**（驱动无 PostScript 纸，唯一 240×140 dmPaperSize=32767；`paper=postscript` 无效 token）。非 geometry/旋转语义。
+## C-2 系列终态（2026-08-13 冻结架构）
+
+**已冻结事实（维持）**：
+- **C-2-E**：横向凭证纸 = executor capability blocker（驱动无 PostScript 纸，唯一 240×140 dmPaperSize=32767；`paper=postscript` 无效 token）。非 geometry/旋转语义。
 - **16 表**（`sumatra-command-resolver.js`）：实测查表 = 唯一 truth，**不重构为动态推导**；**仅适用直打模型，不适用 bake 路径**（bake 下 270 全倒置）。竖纸 golden baseline 冻结。
 - **Sumatra landscape 隐含旋转 = −90°**（实测定论），bake 路径需常量 +90 抵消。
-- **E 已实施 commit `e23107b`**（E1 `placement_bake.py` 两处 phi=`(360+contentRotation+layoutRotation)%360` + E1a `buildBakeSpec` 透传 contentRotation + E2 `main.js` executor offset 归一 `landscape?90:0`）。验证 INV-R 8/8 / 几何 8/8 / cr=0 字节级 / E2 command shape 8/8。`e23107b` 保留不回退。
-- **G2 Paper Direction 已实施 commit `c39ae14`**：仅 `frontend/src/services/PrintService.js` `buildPrintSettings()` 补传 `paperOrientation: requestedPaperOrientation(userSettings)`（与 `resolvePaperSpec` 同源，单一来源），零 electron 改动。数值四象限 Plan==IPC==normalize==dims 8/8；E regression PASS。
-  - 🔒 **G2 解冻边界（用户锁定）**：仅 PrintService.js；不解冻 electron/print-settings.js、`usePrint.js` executionPaper 接线、`executionPaper.orientation`、`placement_bake.py`/`placement-bake-processor.js`/`main.js`、resolver、16表、RotationResolver、margin contract、noscale。
-  - **G2-R1 镜像审计**（portrait×landscape）：c39ae14 对该组合 change-delta=0（惰性）→ **已证非裁切触发修改**；是否早于 c39ae14 **UNKNOWN**（缺真机 A/B 证据）。
-  - 🔴 **T5 真机 FAIL（2026-08-12）**：竖纸 A4×横向 ❌。物理 = 纸已正确 297×210（Paper Direction ✅），但内容反向 90°（成品逆时针转 90° 才正立）。→ **C-2-G = BLOCKED / G2-R2 OPEN READ-ONLY**。
-  - **G2-R2 范围已收敛**：原命名「Canvas Paper-Direction Authority Divergence」被 R2-1 证伪——T5 单文件 placement=null→`hasPlacement=false`→走纯 source/Sumatra/fit 路径（不经 bake、不经 canvas）。根因 = **source/fit 路径对「portrait 发票×landscape 纸×0°」缺内容方向补偿**：`print-settings.js:292` `if (orientResult.contentRotation!==0)` 短路跳过 rotate（contentRotation=0 来自 UI rotation=0），暴露 Sumatra `-landscape` 隐含 −90°，内容反向侧躺。理论补偿 `ROTATE_MATRIX[portrait][landscape][0]=270`(`sumatra-command-resolver.js:37`) 但该函数 electron 从未调用。审计 `c2g-r2-content-rotation-causal-audit.md`。
-  - **冻结**：`e23107b`/`c39ae14` 均保留不回退；不改代码（不进 RotationResolver/margin/normalize/16表/Canvas 双权威）。修复须用户批准 + 单变量纪律（只针对 portrait×landscape×0° 组合补 rotate，不混入 G3/E1/E1a/E2/横纸×纵向 G2）。
-  - 结构债（非 T5 触发层）：canvas 轨 `forcedLandscape`/`documentState.*Orientation` 与 source 轨 `normalize` 是两套方向权威，未统一——真实债但 T5 不走此轨。
-  - **32-Case Print Command Truth Matrix（2026-08-12 末，用户实测）**：4 轴 `invoiceOrientation × rotation(4) × paperType(竖向/横向纸张类型) × paperOrientation(2)` = 32。两 16-case 子矩阵：Table A=横向纸张类型(rotate∈{90,270}) **== 既有 `ROTATE_MATRIX`(electron 从未调用)**；Table B=竖向纸张类型(A4 等, rotate∈{0,180}) 新测。跨矩阵不变量：**Table A = Table B + 90°（逐格恒定偏移）**。一致性审计 `c2g-r2-32case-truth-matrix-audit.md`。
-  - 🔴 **T5 值修正（paperType 维度，180=candidate 非 frozen）**：T5=竖纸 A4(竖向纸张类型)×横向方向 → 查 **Table B** → **candidate**=`landscape,rotate=180,fit`（非 §五 误配的 `ROTATE_MATRIX[portrait][landscape][0]=270`，那是横向纸张类型值；270−180=90 恰为跨矩阵偏移，自洽）。180 来自「Table B + 跨矩阵 +90° 不变量」**一致性推导，非独立真机验证**；T5 恰是唯一已知物理 FAIL 的 Case → 180 须回真机复测才能从 candidate 升 frozen。**纪律：物理实测→Truth→矩阵一致性→冻结；不可矩阵一致→推导→认为物理正确。** 修复候选=对竖向纸张类型 portrait×landscape×0° 单组合补 rotate=180（绕过 `print-settings.js:292` contentRotation≠0 短路）。
-  - **G2-R2 性质变更 + 架构方向**：从「推导旋转算法」→「冻结 32-case Truth → 一致性审计 → 最小 `PrintCommandTruthResolver`(PrintState→SumatraCommand, 不碰 PDF/Preview/Canvas/几何/Margin) → G2-R2 impl」。纪律：paperType 与 paperOrientation 两独立维度；Margin 独立成层。未改生产代码。
-  - **G2-R2 状态分叉（2026-08-12 深夜，用户裁决）**：从「算法推导」正式转「物理 Truth 驱动」。三层：①32-case 实测(measured/candidate 数据源，**非全 frozen**；T5 为唯一已知 FAIL 格) ②矩阵一致性(Table A=Table B+90° 逐格，强证据非物理证明) ③T5 candidate=`landscape,rotate=180,fit` / **FROZEN=UNKNOWN**。Gate=数据→Truth→一致性→异常→单点物理复核→Frozen Truth→Resolver→impl（禁反向推导）。Resolver 边界：只答 PrintState→Sumatra 命令，不知 PDF/Canvas/Preview/Margin/placement/Invoice/RotationResolver；第一版直接硬编码两子矩阵，不压缩公式。Margin 独立成层。**当前唯一动作=T5 单变量物理实验**(verticalPaper/portrait/0°/landscape 试 landscape,rotate=180,fit)；**implementation 未批准**。报告 `c2g-r2-truth-driven-state.md`。
-  - **🔴 fit×margin 关系审计（2026-08-13，`c2g-r2-fit-margin-audit.md`）**：用户「D2 noscale 前提于 margin≥硬件边」表述**错误**——该检查属独立 Capability Guard(§5.1,只放行/告警/阻断,不得改 fit)，D2(§0/§4)是无条件硬冻结(fit 必按 printable area 再缩 96–98% 破严格边距+引入第二 scale 解释点,§2.3/§2.5)。**F2**:32-case 表只录 orientation+rotate,`fit/noscale` 从未逐格实测→「all 32=fit」是 assertion 非 Truth。**F3**:即便采信 fit 也直接违反 D2,须走 §11 契约变更(推翻 D2+更新 vectors+双侧执行器),Resolver 无权覆盖。**F4**:当前 fit 可能掩盖 desync(§2.4);用户提议实验 `landscape,rotate=0,fit` 改错了轴,正确应为 `landscape,rotate=0,noscale`(只改 rotate 对齐 Truth,scale 维持 D2)。**F5**:scale 策略不归 Resolver「拥有」,属 Margin Contract(D2)职责,Resolver 只引用不裁定。未改生产代码。
-  - **✅ fit×margin 冲突解决方案（2026-08-13，`c2g-r2-fit-margin-resolution.md`）**：用户「应用层 contain-fit 到 inner-paper-area + 边距 → 最终 PDF → Sumatra `noscale`」是对 F1–F5 的干净收敛，**不推翻 D2**。代码事实：margin-bake 路径(`main.js:569-604`)与 bake 路径(`main.js:532-568`)已用 `scalePolicy:'none'`(noscale)+应用层几何；**唯一缺口=纯 source 路径(`main.js:605`)仍依赖 Sumatra fit**。`placement-bake-processor.js:99` 明写「fit 会二次变换」。→ 32-case Truth 进一步纯化为 `{orientation, rotate}`，`scalePolicy='noscale'` 是 Margin Contract 常量非 Truth 维度（消解 F2/F3）。命名=Fit-to-inner-paper-area（先 inset margin→inner box→**先 rotate 后** contain-fit），禁「先 fit 满纸再 +margin」。🔍 Gate1 代码级 PASS：统一几何引擎 `margin_contract.apply_pdf`(`scripts/margin_contract.py`) 已冻结可用(契约 §7.1 唯一几何权威)，是**真正 contain-fit**(保宽高比/居中/scale≤1/非 clip/非外扩纸)，MediaBox=目标纸、/Rotate=0、content_rotation 在 fit 前参与；原「clip 要另建引擎」担忧已排除。⚠️ R6 双重交换陷阱：`policy_a`(L51-69) 按「源纸+content_rotation 推导输出方向」(θ%180==90 swap 输出纸)；32-case Truth 把 `orientation`/`rotate` 当独立轴 → 直接传「已交换目标纸 dims+rotate」会在 θ%180==90 **再 swap=双重交换**(landscape+rot90→回 portrait)；须翻译层(传原生纸 dims+Truth.rotate 让 policy_a 推导，orientation 作校验)并在 A/B 钉死。🔧 集成缺口(真实工作量,非新引擎): G1a 纯 source(`main.js:605`)不调引擎→Sumatra fit；G1b `main.js:583` 漏传 `paperW_mm/H_mm`(回退源 MediaBox 不交换纸)；G1c 漏传 `content_rotation`(恒0,Truth.rotate 未入几何层)。R2 不双重边距；R3 旋转顺序统一；R4 OFD 一致性；R5 与 bake 路径互斥(no-op)，且 bake 的 `placement_bake.py` 几何也应归并到 margin_contract 才真单一权威。Gate 序列: Gate1✅代码 / Gate2=A/B 非 T5 / Gate3=T5(rotate=180,noscale)。未改生产代码。
+- **E 已实施 `e23107b`**（保留不回退）：`placement_bake.py` phi=`(360+contentRotation+layoutRotation)%360` + `buildBakeSpec` 透传 contentRotation + `main.js` executor offset `landscape?90:0`。
+- **G2 Paper Direction 已实施 `c39ae14`**（保留不回退，零 electron 改动）：仅 `PrintService.js buildPrintSettings()` 补传 `paperOrientation: requestedPaperOrientation(userSettings)`。📌 G2 解冻边界（用户锁定）：仅 PrintService.js；electron/print-settings.js、`usePrint.js`、`placement_bake.py`、`main.js`、resolver、16表、RotationResolver、margin contract、`normalize` 均不解冻。
+
+**T5 真机 FAIL（2026-08-12）**：竖纸 A4×横向方向 → 纸向正确(297×210) 但内容反向90°。根因 = source/fit 路径缺内容方向补偿（`print-settings.js:292` `contentRotation!==0` 短路跳过 rotate）。→ **C-2-G = BLOCKED / G2-R2 OPEN READ-ONLY**。
+
+**32-case Truth Matrix（用户实测）**：4 轴 `invoiceOrientation × rotation(0/90/180/270) × paperType(竖纸/横纸) × paperOrientation(2)` = 32。Table A(横纸,rotate∈{90,270}) = Table B(竖纸,rotate∈{0,180}) **+90° 恒定偏移**（逐格，强证据非物理证明）。T5 查 Table B → **candidate=`landscape,rotate=180`**（非 §误配的 `ROTATE_MATRIX[portrait][landscape][0]=270`，那是横纸值；270−180=90 恰为跨矩阵偏移，自洽）。**T5 FROZEN=UNKNOWN**，须真机复核才升 frozen。纪律：物理实测→Truth→矩阵一致性→冻结，禁反向推导。
+
+**🔒 G2-R2 冻结架构（用户终审 2026-08-13，未 implementation）**：
+```text
+32-case Truth {orientation, rotate}
+   ↓ Geometry Translator（R6 公式，见下）
+margin_contract.apply_pdf {nativePaperW, nativePaperH, contentRotation}   ← margin 常量 3mm
+   ↓ Final PDF: MediaBox=目标纸, /Rotate=0
+Sumatra noscale
+```
+- 🔴 **命名纪律**：Sumatra `fit`（执行期，被 D2 禁）≠ 应用层 `contain-fit`（apply_pdf，配 noscale）。**禁共用 `fit`**。
+- **R6 双重交换已收敛为精确 Translator 公式**：`apply_pdf` 无 orientation 参数，输出方向由 `policy_a(native, contentRotation%180)` 唯一推导。translator：`r=rotate%180; nativeOri = (r==90)? swapped(orientation) : orientation;` 把 native 纸 width/height 指派为 nativeOri 形状；`orientation` 只一次性决定 native 指派，policy_a 做唯一 swap，绝不二次传 orientation。自检：T5 landscape+180→native 297×210→policy_a portrait-swap? 否(θ%180==0)→landscape ✅；Gate2 landscape+0→297×210→landscape ✅。
+- **Gate 序列**：Gate1 ✅ 代码级 PASS（apply_pdf 已是真正 contain-fit，fit 目标=inner area，非 clip，非新引擎）；Gate2 = A/B 非 T5（A:Sumatra fit vs B:app rotate→contain-fit→inner area→noscale，比 方向/四边距/内容尺寸/裁切/R6）；Gate3 = T5 单变量物理复核（candidate rotate=180, noscale）。implementation 未批准。
+- 审计文档：`c2g-r2-content-rotation-causal-audit.md` / `c2g-r2-32case-truth-matrix-audit.md` / `c2g-r2-truth-driven-state.md` / `c2g-r2-fit-margin-audit.md` / `c2g-r2-fit-margin-resolution.md`（§9 为终态）。
+- 集成缺口(真实工作量,非新引擎)：G1a 纯 source(`main.js:605`)不调引擎→Sumatra fit；G1b `main.js:583` 漏传 `paperW_mm/H_mm`；G1c 漏传 `content_rotation`。未改生产代码。
+
 - ⚠️ **仓库事故（2026-08-10）**：并发 git 写破坏 `.git/refs/` + loose objects（8 commit 消失）。教训：**push 前先 fetch 检查远端**。
 
 ## Gate 工程（frontend/test/printGate/）
