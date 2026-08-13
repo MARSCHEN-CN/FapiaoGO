@@ -492,6 +492,8 @@ frontend/src/previewState.test.js
 
 # A2-G1 Gate 采集输出（真实发票光栅化产物，绝不入库）
 frontend/test/printGate/artifacts/
+# Gate 2 链验证生成的模拟/预测/对比产物（c2g-*.mjs 等为 harness 运行输出，非手写源码，绝不入库）
+frontend/test/printGate/.out/
 frontend/src/stage0-paperlayout-invariant.test.js
 v16-stage1-design.md
 frontend/src/layout/RenderLayoutFactory.test.js
