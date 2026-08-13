@@ -251,3 +251,67 @@ translate(Truth, paperType, margin) {
 > **32-case Truth → Print Orientation Command `{orientation, rotate}` → Geometry Translator → Margin Contract `apply_pdf` → Final PDF（MediaBox=paper, /Rotate=0）→ Sumatra `noscale`**
 
 原 `PrintCommandTruthResolver` 输出 `{orientation, rotate, fit}` 的提法**作废**：`fit` 不属 Truth，由 Margin 层注入 `noscale`。Resolver 仍只答旋转（不碰 PDF/Canvas/Preview/Margin/placement/Invoice/RotationResolver），Translator 负责 Truth→引擎输入的语义对接。
+
+## 10. Geometry Authority 路线收敛（用户终审 2026-08-13，接 §9）
+
+> 本节能级同 §9，是对「下一步做什么」的收口裁决：不再找更优 margin 算法，而是把 `apply_pdf` **提升为所有打印路径唯一 Geometry Authority**。
+
+### 10.1 逐点代码核实（用户 8 点提案）
+
+| # | 用户提议 | 当前 `apply_pdf` 状态 | 证据 |
+| --- | --- | --- | --- |
+| 1 | 一次性 Geometry Transform（rotate→bbox→inner box→contain-fit→一次写入） | ✅ 已实现 | `apply_margin_contract`(L99-150) 顺序：content swap(R-2)→policy_a→contain_fit，单次 |
+| 2 | 不生成中间 PDF 再读回 fit；直接算最终 CTM `M=Translate×Center×Scale×Rotate×SourceTransform` | ✅ 已实现 | `compute_transform`(L167-195) 输出**单一**相似矩阵 `(a,b,c,d,e,f)`；`apply_pdf` L292 `contents_add("q {matrix} cm {name} Do Q")` 写**一次**；`as_form_xobject`(L273) 把源包成 Form XObject（矢量，无二次 rasterize/parse）；`/Rotate=0`(L298) |
+| 3 | margin 公式 `scale=min(1,usableW/cw,usableH/ch)` | ✅ 已实现 | `contain_fit`(L72-96) `scale=min(1.0,sx,sy)` |
+| 4 | margin 表达简化：全对称时 `margin=3mm` 在边界展开成 L=R=T=B | 🆕 新增（API 适配，不改引擎） | 引擎收 `margin_lrtb` 元组；建议边界加 `expandMarginSymmetric(mm)` 适配器；仅不对称场景才传结构化 |
+| 5 | 单位统一 pt：用户 mm→一次 mm→pt→引擎全程 pt | ✅ 引擎已 pt-native | `apply_pdf(nativeW_pt,...)` 全 `_pt`；`mm_to_pt`(L46-48)；CLI `--paper-width-pt` 等。集成边界（translator/main.js）须**只做一次** mm→pt |
+| 6 | Margin 层不重判 Print Truth（orientation/rotate） | ✅ 架构成立 | §9.4 translator 一次性消费 orientation；`apply_pdf` 无 orientation 参数；见 §10.3 INV-M10 边界澄清 |
+| 7 | 先建几何黄金测试集，不改生产代码 | 🆕 下一步（Gate 2/3 执行项） | spec 见 §10.4；落点 `docs/margin_contract_vectors.json` |
+| 8 | 收口为 INV-M1..M10 不变量 | ✅ 采纳为冻结不变量 | 表见 §10.3 |
+
+**关键结论**：用户提议的「高效准确」模型，**除去 API 简化(#4) 与测试集(#7)，核心几何已被 `apply_pdf` 实现**。路线不是「换算法」，而是「保留 + 晋升为唯一权威 + 消灭纯 source Sumatra fit + 统一 noscale」。
+
+### 10.2 单一 CTM 的确认（回应 #2，最重要）
+
+实测 `apply_pdf` 全链路**无中间 PDF**：
+- 源 PDF 仅 `pikepdf.open` 一次(L253)，`as_form_xobject`(L273) 把源页包成 Form XObject（保留矢量，不 rasterize）；
+- `_form_extent`(L202-220) 只读 Form 的 `/BBox` 与 `/Matrix` 算包围盒（不重新解析内容流）；
+- `compute_transform`(L167-195) 把 rotate(`_CW_UNIT[phi]`)+scale+translate 合成**一个** `cm` 矩阵；
+- `contents_add`(L292) 写**一次** `q {matrix} cm {name} Do Q`；
+- `out.save`(L311) 输出唯一 PDF，`/Rotate=0`(L298)，`MediaBox` 一次定(L287 `add_blank_page(page_size=...)`)。
+
+→ 无二次 rasterize、无二次 PDF 解析、无累积浮点误差（旋转/缩放/平移一次性烤进 CTM）。用户 #2 的优化点**已经是当前实现**。
+
+### 10.3 INV-M1..M10 不变量（冻结）
+
+| ID | 不变量 | 当前保障 | 备注 |
+| --- | --- | --- | --- |
+| M1 | MediaBox == target paper | `add_blank_page(page_size=geometry.mediaBox)`(L287) + G-2 断言(L301-309) | |
+| M2 | /Rotate == 0 | L298 写死 + G-1 断言(L301) | |
+| M3 | scaleX == scaleY | `contain_fit` 单 scale(L93) | 相似变换，无 shear |
+| M4 | scale <= 1 | `min(1.0,...)`(L93) | 不放大（INV-3） |
+| M5 | content bbox ⊆ inner paper box | `contain_fit` 由 inner 推导 scale（G-5 运行时 Guard 范围） | G-5 属运行时断言 |
+| M6 | inner box = paper - margin | `contain_fit` usable=paper-L-R/T-B(L89-90) | |
+| M7 | rotation happens before fit | `apply_margin_contract` 先 swap content(L116-119) 再 contain_fit(L122) | |
+| M8 | geometry calculated exactly once | `apply_pdf` 单 pass（见 §10.2） | **最关键新收口点** |
+| M9 | Sumatra receives noscale | 最终命令常量（D2） | 所有路径统一 |
+| M10 | Margin layer never derives Print Truth | translator 一次性消费 orientation；apply_pdf 无 orientation 参数 | **边界澄清见下** |
+
+**INV-M10 边界澄清（防误读）**：`policy_a`(L51-69) 仍按 `(native paper, contentRotation%180)` 推导**输出纸方向**——这是**几何执行**（给定原生纸+旋转算输出纸），不是「Margin 重判 Print Truth」。32-case 的 `orientation` 已在 translator 一次性消费为 native 纸宽高指派；`apply_pdf` 永远看不到 `orientation` 这个量，故不存在第二个判断者。INV-M10 的禁止对象是「Margin/Geometry 层**另外**根据 rotate 再去推断 orientation 并二次施加」，而 `policy_a` 的 swap 是 translator 主动委托的**唯一一次**方向计算。两者不冲突。
+
+### 10.4 几何黄金测试集 spec（Gate 2/3 执行项，不改生产代码）
+
+落点 `docs/margin_contract_vectors.json`（已有 v1.0.1 约定：expected 手工推导，禁止模块自生成）。每个 case 断言 INV-M1..M10，而非只看视觉。
+
+- **Case 1 同尺寸**：paper 297×210, content 297×210, margin 3mm, rot 0 → scale<1, MediaBox 297×210, 四边≥3mm（高度方向贴边、宽度方向有余）。
+- **Case 2 内容偏小**：paper 297×210, content 280×190, margin 3mm, rot 0 → scale=1（不放大），居中。
+- **Case 3 超大内容**：paper 297×210, content 400×300, margin 3mm, rot 0 → scale<1，内容完整，四边≥3mm。
+- **Case 4 90°旋转**：native paper, content 297×210, rot 90 → 先 swap bbox 再 fit（非 fit 后 rotate）；验证 M7。
+- **Case 5 180°（对应 T5）**：rot 180 → bbox 不变（180° 保 w×h）、内容方向反转；验证 M7 + T5 几何。
+- **R6 Translator cases（Gate 2/3 核心）**：覆盖 `{orientation, rotate}` × `{portrait,landscape}` native 组合，断言 translator 输出经 `policy_a` 后 == Truth.orientation，且全程无双重 swap。含 T5 candidate `landscape,rotate=180` 单变量物理复核。
+
+### 10.5 路线裁决（替代「再找更优 margin 算法」）
+
+> **保留 `apply_pdf` → 晋升为所有打印路径唯一 Geometry Authority → 消灭纯 source 路径的 Sumatra `fit`(G1a) → 所有路径统一 `noscale`。**
+
+剩余真实工作（非算法）：① G1a 纯 source(`main.js:605`) 改走 `apply_pdf` 而非 Sumatra fit；② G1b 补传 `paperW/H_mm`(边界 mm→pt 一次)；③ G1c 补传 `content_rotation`；④ 新增 §9.4 Translator（R6）；⑤ #4 margin API 对称展开适配器；⑥ #7 几何黄金测试集。所有项均**不改几何引擎本身**。

@@ -51,6 +51,7 @@ Sumatra noscale
 - **Gate 序列**：Gate1 ✅ 代码级 PASS（apply_pdf 已是真正 contain-fit，fit 目标=inner area，非 clip，非新引擎）；Gate2 = A/B 非 T5（A:Sumatra fit vs B:app rotate→contain-fit→inner area→noscale，比 方向/四边距/内容尺寸/裁切/R6）；Gate3 = T5 单变量物理复核（candidate rotate=180, noscale）。implementation 未批准。
 - 审计文档：`c2g-r2-content-rotation-causal-audit.md` / `c2g-r2-32case-truth-matrix-audit.md` / `c2g-r2-truth-driven-state.md` / `c2g-r2-fit-margin-audit.md` / `c2g-r2-fit-margin-resolution.md`（§9 为终态）。
 - 集成缺口(真实工作量,非新引擎)：G1a 纯 source(`main.js:605`)不调引擎→Sumatra fit；G1b `main.js:583` 漏传 `paperW_mm/H_mm`；G1c 漏传 `content_rotation`。未改生产代码。
+- **Geometry Authority 收敛(§10)**：用户 8 点提案逐点代码核实——#1/#2/#3/#5/#6/#8 已被 `apply_pdf` 满足（单一 CTM、无中间 PDF、scale≤1、pt-native、Margin 不重判 Truth、INV-M1..M10）；#4 margin 对称展开适配器与 #7 几何黄金测试集(`docs/margin_contract_vectors.json`)为新增。路线=保留 apply_pdf 晋升唯一几何权威、消灭纯 source Sumatra fit、统一 noscale；INV-M8(几何只算一次)最关键；INV-M10 边界=`policy_a` 推导输出方向是几何执行非 Print Truth 重判。
 
 - ⚠️ **仓库事故（2026-08-10）**：并发 git 写破坏 `.git/refs/` + loose objects（8 commit 消失）。教训：**push 前先 fetch 检查远端**。
 
