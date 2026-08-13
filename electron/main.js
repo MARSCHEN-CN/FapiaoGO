@@ -22,6 +22,15 @@ const { initArchivePaths } = require('./archive-utils')
 const pdfMargin = require('./print-service/pdf-margin-processor')
 // C-2 Step 4-2b-1：Plan placement 生产消费层（placement_bake 接线；无 placement 时零介入）
 const placementBake = require('./print-service/placement-bake-processor')
+// G1d / R6：Geometry Translator —— Truth {orientation, rotate} → apply_pdf 输入。
+// 唯一 Rotation→Geometry 语义转换入口；不复用 print-settings.js:normalize()（其 swap 准则
+// = requestedOrient!==naturalOrient，与 §9.4 的 rotate%180==90 不同，复用会再引入双重交换）。
+const { translateGeometry } = require('./print-service/geometry-translator')
+// G2-R2：32-case Execution Truth Resolver —— Execution Command 层唯一旋转权威。
+// 替代旧 main.js 把 sourceRotation 当命令旋转的污染（G2-R2-3 已断），旧 16 表 resolver
+// 仅适用直打模型、不适用 bake，本 Resolver 是 32 条真机实测的唯一真理。
+const { resolveExecutionTruth } = require('./print-service/execution-truth-resolver')
+const { getPaperShapeOrientation } = require('./print-service/print-settings')
 const { initUpdateManager } = require('./services/Update/UpdateManager')
 const { load: loadConfig } = require('./services/ConfigService')
 
@@ -490,6 +499,34 @@ ipcMain.handle('generate-print-pdf', async (_event, { canvasBuffer, paperSize, o
 // ── 源文件直通打印（新管线） ──
 const { createBackend } = require('./print-service/print-backend')
 
+// G2-R2：从 settings 收集 32-case Execution Truth 的 4 个真值输入。
+//   baked=true 表示走 placement-bake 路径：内容已烤入最终方向（Plan truth, /Rotate=0）
+//     → userRotation=0（业务旋转已烤入内容）、invoiceOrientation=请求方向（baked 内容已对齐请求）。
+//   baked=false 表示直打路径（margin / source）：内容未烤入，按真实输入解析。
+function gatherTruthInputs(settings, { baked = false } = {}) {
+  const paper = settings?.paper ?? settings?.paperSize;
+  const naturalOrient = getPaperShapeOrientation(paper, settings?.customPaper);
+  const requestedPaperOrientation =
+    settings?.paperOrientation ?? (settings?.landscape ? 'landscape' : naturalOrient);
+  const invoiceOrientation = baked ? requestedPaperOrientation : (settings?.contentOrientation || naturalOrient);
+  const userRotation = baked ? 0 : (Number(settings?.sourceRotation) || Number(settings?.rotation) || 0);
+  return { paperType: naturalOrient, invoiceOrientation, userRotation, requestedPaperOrientation };
+}
+
+// G2-R2：解析 32-case Execution Truth 并注入 commandOrientation/commandRotate 到 target（best-effort）。
+// 失败时回退 buildPrintSettings 内置兜底解析（不抛，保证打印链路不中断）。
+function injectExecutionTruth(target, settings, opts) {
+  try {
+    const truth = resolveExecutionTruth(gatherTruthInputs(settings, opts));
+    target.commandOrientation = truth.paperOrientation;
+    target.commandRotate = truth.rotate;
+  } catch (e) {
+    console.warn('[print-source-file] G2-R2 resolveExecutionTruth 失败，回退 buildPrintSettings 内置解析: %s', e.message);
+  }
+  return target;
+}
+
+
 ipcMain.handle('print-source-file', async (_event, { target, settings, pipeline }) => {
   const PRINT_TIMEOUT_MS = 180000
 
@@ -545,24 +582,16 @@ ipcMain.handle('print-source-file', async (_event, { target, settings, pipeline 
         printSettings = { ...(settings || {}), scalePolicy: 'none' }
         console.log('[print-source-file] Using placement-baked PDF:', bakeResult.path)
         console.log('[print-source-file] scalePolicy=none (noscale) — baked PDF, Sumatra pure executor')
-        // ── C-2-G（bake 路径 landscape 纸 rotate 恒 90）：横向纸张修复 ──
-        // 根因链（P1-P5 + IoU 判定 + 8 组合实测，2026-08-11/12）：
-        //   Sumatra `landscape` 隐含 -90° 布局旋转作用于任何输入（含 bake 产物）；
-        //   bake 内容已烤进最终方向（Plan truth），恒 rotate=90 抵消隐含旋转 →
-        //   内容保持 bake 原方向（8/8 组合实测正向，bakeLandscapeMatrixGate）。
-        // ⚠️ 不用 16 表 resolver 查表：270 在 bake 路径 4/4 倒置 FAIL（16 表 270
-        //   是直打模型适配值，不适用 bake）。
-        // 范围【严格限定】：
-        //   - 仅 paper.orientation=='landscape'（landscape 才有隐含旋转）→ keep 冻结 rotate=90
-        //     （Sumatra 隐含 -90° 补偿，8 组合实测正向，bakeLandscapeMatrixGate）
-        //   - 竖纸无隐含旋转：E 方案 bake 已烤入 contentRotation+layoutRotation 全部业务旋转，
-        //     命令层只承载 executor 机械补偿 → 统一 sourceRotation=0，收敛到 golden 命令
-        //     disable-auto-rotation,noscale,...（与 frozen 竖纸 golden baseline 一致）
-        //   - 仅命令层：sourceRotation 在 buildPrintSettings 只影响 rotate 输出，不碰几何
-        //   - 不接入 16 表 resolver（270 是直打模型适配值，不适用 bake）
-        const execOrient = settings?.executionPaper?.orientation
-        printSettings = { ...printSettings, sourceRotation: execOrient === 'landscape' ? 90 : 0 }
-        console.log('[print-source-file] C-2-G bake executor offset: sourceRotation=%s (landscape=90 / else=0)', execOrient === 'landscape' ? 90 : 0)
+        // ── G2-R2-3：移除旧污染（曾按 landscape 纸把 sourceRotation 强行设为 90 的注入）──
+        // 该注入把 sourceRotation 当成命令旋转，与 32-case Truth 冲突，是 FAIL case 根因
+        // （竖向纸+横向发票+0°+landscape 被错误加成 rotate=90）。现改为：经 32-case
+        // Execution Truth Resolver 解析命令旋转（bake 语义：内容已烤入最终方向，
+        //   userRotation=0 / invoiceOrientation=请求方向）。landscape 纸的 +90 executor 补偿
+        // 由 Truth 表「横向纸+landscape 请求」对应格自然给出，不再手写字面量，且精炼了
+        // 旧 16 表的 blanket-90 近似（如 横向纸+portrait 请求对应格为 rotate=90，见 Truth）。
+        printSettings = injectExecutionTruth(printSettings, settings, { baked: true });
+        console.log('[print-source-file] G2-R2 bake executor command: orient=%s rotate=%s',
+          printSettings.commandOrientation, printSettings.commandRotate);
       } else {
         console.log('[print-source-file] Placement bake degraded → print original (fit)')
       }
@@ -572,6 +601,31 @@ ipcMain.handle('print-source-file', async (_event, { target, settings, pipeline 
       const orient = settings.contentOrientation
       const isImage = fileExt !== '.pdf'
 
+      // ── G1b / G1d（Gate 2）：Truth → Geometry Translator → apply_pdf 输入 ──
+      // Truth.orientation = settings.paperOrientation（最终期望输出纸方向，PrintService:79 已补传）
+      // Truth.rotate      = settings.sourceRotation（用户原始旋转意图，PrintService:69）
+      // baseDims          = resolvePaperMmFromSettings（物理纸尺寸 mm，orientation-agnostic，如 A4={width:210,height:297}）
+      // Translator 是唯一 swap 权威（§9.4 R6）；paperW/H 必须来自 Translator 输出，
+      //   绝不能把 requested orientation 对应的尺寸直接塞给 apply_pdf（否则双重交换）。
+      const truthOrientation = settings.paperOrientation === 'landscape' || settings.paperOrientation === 'portrait'
+        ? settings.paperOrientation
+        : (settings.landscape ? 'landscape' : 'portrait')
+      const truthRotate = Number(settings.sourceRotation) || 0
+      const baseDims = pdfMargin.resolvePaperMmFromSettings(settings)
+      let geoOpts = {}
+      if (baseDims) {
+        const geo = translateGeometry({ orientation: truthOrientation, rotate: truthRotate, baseDims })
+        geoOpts = {
+          paperW_mm: geo.nativePaperW_mm,
+          paperH_mm: geo.nativePaperH_mm,
+          contentRotation: geo.contentRotation,
+        }
+        console.log('[print-source-file] G1d Translator: orient=%s rotate=%s → native=%dx%dmm contentRotation=%s',
+          truthOrientation, truthRotate, geo.nativePaperW_mm, geo.nativePaperH_mm, geo.contentRotation)
+      } else {
+        console.warn('[print-source-file] G1d: resolvePaperMmFromSettings 返回 null（纸型未知）→ 维持源 MediaBox 兜底（旧行为）')
+      }
+
       const MARGIN_TIMEOUT_MS = 30000
       const marginTimeoutPromise = new Promise((_, reject) => {
         setTimeout(() => {
@@ -580,7 +634,7 @@ ipcMain.handle('print-source-file', async (_event, { target, settings, pipeline 
       })
 
       const marginResult = await Promise.race([
-        pdfMargin.process(target.filePath, margins, isImage, orient),
+        pdfMargin.process(target.filePath, margins, isImage, orient, geoOpts),
         marginTimeoutPromise
       ])
 
@@ -604,6 +658,14 @@ ipcMain.handle('print-source-file', async (_event, { target, settings, pipeline 
       }
     } else {
       console.log('[print-source-file] No margins to apply (reason: hasMargins=%s, ext=%s)', hasMargins, fileExt)
+    }
+
+    // G2-R2：直打路径（margin / source / bake 降级）统一在末端注入 32-case Execution Truth。
+    // bake 成功路径已在上方注入（commandOrientation 已存在），此处 guard 跳过避免重复解析。
+    if (!printSettings.commandOrientation) {
+      printSettings = injectExecutionTruth(printSettings, printSettings, { baked: false });
+      console.log('[print-source-file] G2-R2 direct command: orient=%s rotate=%s',
+        printSettings.commandOrientation, printSettings.commandRotate);
     }
 
     const backend = createBackend(pipeline?.backend || 'sumatra')

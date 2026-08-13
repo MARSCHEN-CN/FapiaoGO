@@ -23,7 +23,7 @@ const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const { resolvePrintTarget } = require('./print-target');
-const { buildPrintSettings, getPaperShapeOrientation } = require('./print-settings');
+const { buildPrintSettings } = require('./print-settings');
 const { enhanceWithCapability } = require('./printer-capability');
 const { detectPdfOrientation: _detectPdfOrientation } = require('../shared/pdf-orientation')
 
@@ -126,15 +126,17 @@ async function buildSumatraCommand(target, settings) {
 
   // 纸张方向由所选纸张的宽高比硬编码决定（如 A4 竖向、PostScript 240×140 横向）
   if (contentOrient) {
-    normalizedSettings.paperOrientation = getPaperShapeOrientation(
-      normalizedSettings.paper,
-      normalizedSettings.customPaper
-    );
-    console.log('[CommandBuilder] orient: content=%s (src=%s), paper=%s (paper=%s), sourceRotation=%d',
+    // G2-R2-5：不再用纸张固有方向覆盖用户请求的 paperOrientation。
+    // 旧逻辑（用纸张固有方向覆盖 paperOrientation）会丢弃
+    // 用户的 landscape 请求（natural orientation 覆盖）。paperOrientation 现由上游 main.js
+    // 经 32-case Execution Truth Resolver 解析后注入；此处仅保留 contentOrientation 作为
+    // Resolver 的 invoiceOrientation 输入（已写入 normalizedSettings.contentOrientation）。
+    console.log('[CommandBuilder] orient: content=%s (src=%s), paper=%s, requestedPaperOrientation=%s, sourceRotation=%d',
       contentOrient,
       settings.contentOrientation ? 'frontend' : 'mediaBox',
+      normalizedSettings.paper,
       normalizedSettings.paperOrientation,
-      normalizedSettings.paper, normalizedSettings.sourceRotation ?? normalizedSettings.rotation ?? 0);
+      normalizedSettings.sourceRotation ?? normalizedSettings.rotation ?? 0);
   }
 
   // Step 2: Capability 自动映射 — 从缓存补齐 paperkind（异步，避免打印链路同步磁盘读取）

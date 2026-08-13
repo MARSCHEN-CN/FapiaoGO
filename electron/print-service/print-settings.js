@@ -41,6 +41,8 @@
  * @param {number} [opts.contentRotation=0] - 内容旋转（0/90/180/270）
  * @returns {{ paperOrientation: 'portrait'|'landscape', contentRotation: number }}
  */
+const { resolveExecutionTruth } = require('./execution-truth-resolver');
+
 function resolveOrientationCommands({ paperOrientation = 'portrait', contentRotation = 0 } = {}) {
   const steps = ((Math.round(contentRotation / 90) % 4) + 4) % 4;
   return {
@@ -277,20 +279,39 @@ function buildPrintSettings(ps) {
   const spec = normalize(ps);
   const parts = [];
 
-  // 1. RG-3 两通道：纸向（唯一来自 spec.paper.orientation，Plan authority）
-  //    + 内容旋转（唯一来自 spec.contentRotation，content transform executor）。
-  //    不再由 contentOrientation 决定 baseFlag（A3-03 SELF_ORIENT 修复），
-  //    不再经 ROTATE_LOOKUP 混合查表（RG-3-A/B）。
-  const paperOrient = spec.paper.orientation;
-  const orientResult = resolveOrientationCommands({
-    paperOrientation: paperOrient,
-    contentRotation: spec.contentRotation,
-  });
-  parts.push(orientResult.paperOrientation === 'landscape'
-    ? 'landscape'
-    : 'disable-auto-rotation');
-  if (orientResult.contentRotation !== 0) {
-    parts.push(`rotate=${orientResult.contentRotation}`);
+  // 1. G2-R2：Execution Truth Resolver 为唯一旋转权威（Execution Command 层）。
+  //    上游（main.js）解析 32-case Truth 后注入 commandOrientation/commandRotate；
+  //    此处直接消费，不再把 sourceRotation 当命令旋转（G2-R2-4 已断该身份映射）。
+  //    仅当未注入时，从 legacy 输入解析
+  //    （兜底路径；生产路径恒由 main.js 注入，故兜底在生产中不会被命中）。
+  let commandOrientation;
+  let commandRotate;
+  const injectedOrient =
+    ps.commandOrientation === 'landscape' || ps.commandOrientation === 'portrait'
+      ? ps.commandOrientation
+      : null;
+  if (injectedOrient) {
+    commandOrientation = injectedOrient;
+    const r = Number(ps.commandRotate);
+    commandRotate = (r === 0 || r === 90 || r === 180 || r === 270) ? r : 0;
+  } else {
+    const naturalOrient = getPaperShapeOrientation(spec.paper.sizeName, spec.paper.customPaper);
+    const truth = resolveExecutionTruth({
+      paperType: naturalOrient,
+      // invoiceOrientation：发票固有方向（= contentOrientation）；缺失时回退物理纸型（兜底）
+      invoiceOrientation: spec.contentOrientation || naturalOrient,
+      // userRotation：用户文档旋转（= legacy contentRotation = sourceRotation ?? rotation ?? 0）
+      userRotation: spec.contentRotation,
+      // requestedPaperOrientation：用户请求纸向（raw，不取 needSwap 后的物理方向）
+      requestedPaperOrientation: ps.paperOrientation ?? (ps.landscape ? 'landscape' : naturalOrient),
+    });
+    commandOrientation = truth.paperOrientation;
+    commandRotate = truth.rotate;
+  }
+
+  parts.push(commandOrientation === 'landscape' ? 'landscape' : 'disable-auto-rotation');
+  if (commandRotate !== 0) {
+    parts.push(`rotate=${commandRotate}`);
   }
 
   // 2. 适应方式（scalePolicy：'none'→noscale / 'contain'→fit / 'fill'→stretch）
