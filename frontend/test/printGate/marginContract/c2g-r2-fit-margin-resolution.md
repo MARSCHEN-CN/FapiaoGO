@@ -315,3 +315,26 @@ translate(Truth, paperType, margin) {
 > **保留 `apply_pdf` → 晋升为所有打印路径唯一 Geometry Authority → 消灭纯 source 路径的 Sumatra `fit`(G1a) → 所有路径统一 `noscale`。**
 
 剩余真实工作（非算法）：① G1a 纯 source(`main.js:605`) 改走 `apply_pdf` 而非 Sumatra fit；② G1b 补传 `paperW/H_mm`(边界 mm→pt 一次)；③ G1c 补传 `content_rotation`；④ 新增 §9.4 Translator（R6）；⑤ #4 margin API 对称展开适配器；⑥ #7 几何黄金测试集。所有项均**不改几何引擎本身**。
+
+### 10.6 黄金向量执行结果（Gate 2/3 前置，2026-08-13 实跑）
+
+§10.4 spec 已落地为可执行 golden set，并**对未修改的 `margin_contract.py` 实跑通过**：
+
+- 向量集：`docs/c2g-r2-golden-vectors.json`（Layer A 几何引擎 5 例 + Layer B Translator 8 例 + 负向控制；**hand-derived** expected，遵守与 Gate-1 几何契约 JSON 同一纪律；独立成文件以免污染其固定 schema）。
+- harness：`frontend/test/printGate/marginContract/geometry_golden_vectors.py`（backend venv + pikepdf 10.10.0；**只读 import 引擎，不改生产代码**）。
+- **执行结果：ALL PASS（Layer A 5×16=80 检查 + Layer B 8+1 检查）**。
+
+**Layer A 关键结论（验证 INV-M1..M8）**：
+- A1 同尺寸 rot0：scale=`34/35`≈0.9714（<1）、MediaBox=A4 竖、四边≥3mm；
+- A2 内容偏小：scale=`1`（默认禁止放大，INV-M3/M4）、居中；
+- A3 超大内容：scale≈`0.4819`（contain-fit 缩小）、完整、四边≥3mm；
+- A4 rot90：MediaBox **交换为 landscape**（先 swap bbox 再 fit，INV-M7 ✅）；
+- A5 rot180：几何结果与 A1 **完全一致**（180° 不改变 bbox，仅内部内容方向反转）；
+- 全部输出 PDF 经解析确认**单一 `cm` + 单一 `Do`**（INV-M8，无二次 rasterize/parse）。
+
+**Layer B 关键结论（验证 §9.4 R6 Translator）**：
+- 8 例 `{orientation,rotate}` → Translator → `policy_a` 全部输出 == Truth.orientation（**无双重 swap**）；
+- **T5 candidate `landscape,rotate=180` 经 Translator + `policy_a` 收敛为 landscape，与 Truth 一致**（待 Gate 3 真机复核升 frozen）；
+- 负向控制：naïve landscape+90 直接传 landscape 原生纸 → `policy_a` 再 swap 为 portrait，证明 Translator 的 swap **不可省略**。
+
+**纪律与范围**：本执行只证明 **几何引擎 + Translator 链内部自洽、与 hand-derived 真值一致**；**不**替代 Gate 2（非 T5 case 物理 A/B）与 Gate 3（T5 真机复核）。这两步仍是把 rotate=180 从 candidate 升 frozen 的唯一路径。

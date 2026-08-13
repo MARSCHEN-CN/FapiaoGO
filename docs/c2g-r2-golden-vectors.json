@@ -1,0 +1,177 @@
+{
+  "$schema": "internal://print-margin-contract/c2g-r2-golden-vectors-1.0",
+  "version": "1.0.0",
+  "gate": "Gate 2 / Gate 3 (G2-R2 golden, pre-implementation)",
+  "contract": "docs/print_margin_contract.md v1.1 (FROZEN 2026-08-10) + frontend/test/printGate/marginContract/c2g-r2-fit-margin-resolution.md §9/§10",
+  "purpose": "G2-R2 几何黄金向量集。分两层：Layer A 验证几何引擎 apply_pdf（纯几何 + 单一 CTM + 输出 MediaBox/Rotate）；Layer B 验证 Geometry Translator（§9.4 R6：{orientation,rotate} → {nativePaperW/H, contentRotation}）。用于 Gate 2 A/B 与 Gate 3 T5 复核前的链路钉死。",
+  "discipline": {
+    "expectationSource": "hand-derived",
+    "expectationRule": "所有 expected 均由契约 §1.1 冻结公式 / §2.1a Policy A / §9.4 Translator 规则以有理数精确推导得出，未运行任何生产实现。禁止用任何实现的输出回填或修正本文件；实现与本文件不符时，错的是实现。",
+    "numericAuthority": "scale 权威值取最简分数 scaleExact（pt 比值或 mm 比值）；浮点字段仅为运行期比较便利。harness 若具备有理数能力应优先解析 scaleExact。",
+    "coordinateSpace": "pdf-user-space，origin=bottom-left，Y up（D3）",
+    "unit": "pt（1mm = 2.834645669291339pt）",
+    "separateFileRationale": "Translator（§9.4）是尚未落地的独立契约，与 margin_contract 几何引擎属不同代码单元；为避免污染 Gate-1 几何契约 JSON（docs/margin_contract_vectors.json v1.0.1，其 consumers 假定固定 schema），本黄金集独立成文件，但遵守同一 hand-derived 纪律。"
+  },
+  "tolerance": {
+    "analyticPt": 1e-06,
+    "guardPt": 0.1,
+    "_note": "guardPt 对齐 §6 G-2 / INV-1；analyticPt 用于纯公式一致性。"
+  },
+  "marginOrder": ["left", "right", "top", "bottom"],
+  "paper": {
+    "A4_portrait_pt": [595.2755905511812, 841.8897637795276],
+    "A4_landscape_pt": [841.8897637795276, 595.2755905511812]
+  },
+  "constants": {
+    "mmToPt": 2.834645669291339,
+    "margin_3mm_pt": 8.503937007874016
+  },
+  "invariantsChecked": {
+    "M1": "MediaBox == target paper",
+    "M2": "/Rotate == 0",
+    "M3": "scaleX == scaleY（相似变换，单 scale）",
+    "M4": "scale <= 1（不放大）",
+    "M5": "content bbox ⊆ inner paper box（G-5 运行时 Guard，本集以 effectiveMargins>=margin 间接证明）",
+    "M6": "inner box = paper - margin",
+    "M7": "rotation happens before fit（rot90 先 swap bbox 再 contain-fit）",
+    "M8": "geometry calculated exactly once（单一 cm + 单一 Do，无二次 rasterize/parse）",
+    "M9": "Sumatra receives noscale（下游常量 D2，本集仅标注）",
+    "M10": "Margin layer never derives Print Truth（apply_pdf 无 orientation 参数；Translator 一次性消费 orientation）"
+  },
+  "layers": {
+    "A": {
+      "name": "Geometry Engine vectors (validate apply_pdf)",
+      "method": "合成单页源 PDF（MediaBox = source dims，画满页矩形使 form BBox == MediaBox）→ 调真实 apply_pdf → 比对 expected；同时解析输出 PDF 的 cm/Do 计数验证 INV-M8。",
+      "cases": [
+        {
+          "id": "A1-eqsize-rot0",
+          "purpose": "同尺寸满版：纸=内容=A4 竖，margin 3mm 对称，rot 0。基线，验证 scale<1 / 四边≥3mm / MediaBox 不变。",
+          "catches": ["INV-M4 未压到 scale<1", "INV-M1 MediaBox 漂移", "INV-M6 边距未正确 inset"],
+          "input": {
+            "paper": {"widthPt": 595.2755905511812, "heightPt": 841.8897637795276},
+            "source": {"widthPt": 595.2755905511812, "heightPt": 841.8897637795276, "pageRotate": 0},
+            "spec": {"contentRotation": 0, "allowUpscale": false},
+            "margin": {"left": 8.503937007874016, "right": 8.503937007874016, "top": 8.503937007874016, "bottom": 8.503937007874016}
+          },
+          "expected": {
+            "scale": 0.9714285714285714,
+            "scaleExact": "34/35",
+            "mediaBox": {"widthPt": 595.2755905511812, "heightPt": 841.8897637795276},
+            "pageRotate": 0,
+            "contentBox": {"x": 8.503937007874016, "y": 12.026996625421818, "widthPt": 578.2677165354332, "heightPt": 817.8357705286852},
+            "effectiveMargins": {"left": 8.503937007874017, "right": 8.503937007874015, "bottom": 12.026996625421818, "top": 12.026996625421816}
+          },
+          "derivation": "usable = (210-6) x (297-6) mm = 204 x 291 mm; sx = 204/210 = 34/35; sy = 291/297 = 97/99; scale = min = 34/35。宽度方向为约束边（contentWidth==usableWidth），offsetX 无居中增量；高度方向居中增量 3.52306mm。",
+          "invariants": ["M1", "M2", "M3", "M4", "M6", "M7", "M8"]
+        },
+        {
+          "id": "A2-smaller-rot0",
+          "purpose": "内容小于 usableRect：内容 280×190pt，rot 0。验证默认禁止放大（INV-M3/M4），居中。",
+          "catches": ["INV-M3 把小内容放大（scale>1）", "未居中"],
+          "input": {
+            "paper": {"widthPt": 595.2755905511812, "heightPt": 841.8897637795276},
+            "source": {"widthPt": 280.0, "heightPt": 190.0, "pageRotate": 0},
+            "spec": {"contentRotation": 0, "allowUpscale": false},
+            "margin": {"left": 8.503937007874016, "right": 8.503937007874016, "top": 8.503937007874016, "bottom": 8.503937007874016}
+          },
+          "expected": {
+            "scale": 1.0,
+            "scaleExact": "1/1",
+            "mediaBox": {"widthPt": 595.2755905511812, "heightPt": 841.8897637795276},
+            "pageRotate": 0,
+            "contentBox": {"x": 157.63779527559057, "y": 325.9448818897638, "widthPt": 280.0, "heightPt": 190.0},
+            "effectiveMargins": {"left": 157.63779527559058, "right": 157.63779527559058, "bottom": 325.9448818897638, "top": 325.9448818897638}
+          },
+          "derivation": "sx = 578.2677/280 = 2.0652; sy = 824.8819/190 = 4.3415; min(1,...) = 1。offsetX = 8.503937 + (578.2677-280)/2 = 157.637795; offsetY = 8.503937 + (824.8819-190)/2 = 325.944882。",
+          "invariants": ["M1", "M2", "M3", "M4", "M6", "M7", "M8"]
+        },
+        {
+          "id": "A3-huge-rot0",
+          "purpose": "内容远大于纸：内容 1200×600pt，rot 0。验证 contain-fit 缩小、完整、四边≥3mm。",
+          "catches": ["INV-M4 未缩小（scale>1）", "内容溢出 usableRect（INV-M5）"],
+          "input": {
+            "paper": {"widthPt": 595.2755905511812, "heightPt": 841.8897637795276},
+            "source": {"widthPt": 1200.0, "heightPt": 600.0, "pageRotate": 0},
+            "spec": {"contentRotation": 0, "allowUpscale": false},
+            "margin": {"left": 8.503937007874016, "right": 8.503937007874016, "top": 8.503937007874016, "bottom": 8.503937007874016}
+          },
+          "expected": {
+            "scale": 0.48188976377952766,
+            "scaleExact": "578.2677165354332/1200",
+            "mediaBox": {"widthPt": 595.2755905511812, "heightPt": 841.8897637795276},
+            "pageRotate": 0,
+            "contentBox": {"x": 8.503937007874016, "y": 276.37795275590554, "widthPt": 578.2677165354332, "heightPt": 289.1338582677166},
+            "effectiveMargins": {"left": 8.503937007874017, "right": 8.503937007874015, "bottom": 276.37795275590554, "top": 276.3779527559054}
+          },
+          "derivation": "sx = 578.2677165354332/1200 = 0.481889764; sy = 824.8818897637796/600 = 1.374803; scale = min = 0.481889764（宽度约束边）。contentW*scale = 578.2677 = usableW → offsetX = 8.503937；offsetY = 8.503937 + (824.8819-289.1339)/2 = 276.377953。四边：L=R=3mm，T=B≈97.5mm（≥3mm）。",
+          "invariants": ["M1", "M2", "M3", "M4", "M5", "M6", "M7", "M8"]
+        },
+        {
+          "id": "A4-rot90",
+          "purpose": "90° 旋转：内容=A4 竖（595.28×841.89），rot 90。验证先 swap bbox 再 fit（INV-M7），输出 MediaBox 交换为 landscape。",
+          "catches": ["INV-M7 先 fit 后 rotate（得到错误 scale / 方向）", "输出 MediaBox 未按 Policy A 交换", "双重交换"],
+          "input": {
+            "paper": {"widthPt": 595.2755905511812, "heightPt": 841.8897637795276},
+            "source": {"widthPt": 595.2755905511812, "heightPt": 841.8897637795276, "pageRotate": 0},
+            "spec": {"contentRotation": 90, "allowUpscale": false},
+            "margin": {"left": 8.503937007874016, "right": 8.503937007874016, "top": 8.503937007874016, "bottom": 8.503937007874016}
+          },
+          "expected": {
+            "scale": 0.9714285714285714,
+            "scaleExact": "34/35",
+            "mediaBox": {"widthPt": 841.8897637795276, "heightPt": 595.2755905511812},
+            "pageRotate": 0,
+            "contentBox": {"x": 12.026996625421818, "y": 8.503937007874016, "widthPt": 817.8357705286852, "heightPt": 578.2677165354332},
+            "effectiveMargins": {"left": 12.026996625421818, "right": 12.026996625421816, "bottom": 8.503937007874017, "top": 8.503937007874015}
+          },
+          "derivation": "θ%180==90 → 内容 swap 841.89×595.28；policy_a swap 输出纸 841.89×595.28；usable = (297-6)x(210-6) mm = 291x204 mm；sx=291/297=97/99; sy=204/210=34/35; scale=min=34/35。x 方向（原高度）居中增量 3.52306mm；y 方向（原宽度）约束边 offsetY=8.503937。",
+          "invariants": ["M1", "M2", "M3", "M4", "M6", "M7", "M8"]
+        },
+        {
+          "id": "A5-rot180",
+          "purpose": "180° 旋转（对应 T5 几何）：内容=A4 竖，rot 180。验证 180° 不改变 bbox（w×h 不变），仅内容方向反转；几何结果与 A1 完全一致。",
+          "catches": ["INV-M7 误把 180° 当 swap（M1 MediaBox 被换）", "scale 不一致"],
+          "input": {
+            "paper": {"widthPt": 595.2755905511812, "heightPt": 841.8897637795276},
+            "source": {"widthPt": 595.2755905511812, "heightPt": 841.8897637795276, "pageRotate": 0},
+            "spec": {"contentRotation": 180, "allowUpscale": false},
+            "margin": {"left": 8.503937007874016, "right": 8.503937007874016, "top": 8.503937007874016, "bottom": 8.503937007874016}
+          },
+          "expected": {
+            "scale": 0.9714285714285714,
+            "scaleExact": "34/35",
+            "mediaBox": {"widthPt": 595.2755905511812, "heightPt": 841.8897637795276},
+            "pageRotate": 0,
+            "contentBox": {"x": 8.503937007874016, "y": 12.026996625421818, "widthPt": 578.2677165354332, "heightPt": 817.8357705286852},
+            "effectiveMargins": {"left": 8.503937007874017, "right": 8.503937007874015, "bottom": 12.026996625421818, "top": 12.026996625421816}
+          },
+          "derivation": "θ=180 → θ%180==0 → 内容不 swap（w×h 保持 595.28×841.89），policy_a 不 swap 纸（竖）。scale / contentBox / MediaBox 与 A1 完全相同；内部 CTM 含 180° 旋转使内容倒置，但几何包围盒不变。",
+          "invariants": ["M1", "M2", "M3", "M4", "M6", "M7", "M8"]
+        }
+      ]
+    },
+    "B": {
+      "name": "Geometry Translator vectors (validate §9.4 R6)",
+      "method": "独立实现 §9.4 Translator（不 import 任何生产 Translator）；对每 case 计算 {nativePaperW/H_pt, contentRotation} 并断言 policy_a(native, contentRotation) 输出方向 == Truth.orientation（无双重 swap）；contentRotation 须 == Truth.rotate（直通）。另含双重交换负向控制。",
+      "paperType": {"mm": [210, 297], "note": "A4；nativeOri=landscape → (297,210)mm，portrait → (210,297)mm"},
+      "rule": "r = rotate%180; nativeOri = (r==90) ? swapped(orientation) : orientation; native = landscape?(max,min):(min,max); contentRotation = rotate（直通）。",
+      "cases": [
+        {"id": "B1-landscape-rot0", "truth": {"orientation": "landscape", "rotate": 0}, "expected": {"nativePaper_pt": [841.8897637795276, 595.2755905511812], "contentRotation": 0, "policyA_output_orientation": "landscape"}, "derivation": "r=0 → nativeOri=landscape → native=297x210mm=841.89x595.28pt；policy_a(841.89x595.28, 0) 不 swap → landscape ✓"},
+        {"id": "B2-landscape-rot90", "truth": {"orientation": "landscape", "rotate": 90}, "expected": {"nativePaper_pt": [595.2755905511812, 841.8897637795276], "contentRotation": 90, "policyA_output_orientation": "landscape"}, "derivation": "r=90 → nativeOri=swapped(landscape)=portrait → native=595.28x841.89pt；policy_a(595.28x841.89, 90) swap → landscape ✓（无双重 swap）"},
+        {"id": "B3-landscape-rot180-T5", "truth": {"orientation": "landscape", "rotate": 180}, "expected": {"nativePaper_pt": [841.8897637795276, 595.2755905511812], "contentRotation": 180, "policyA_output_orientation": "landscape"}, "derivation": "r=0 → nativeOri=landscape → native=841.89x595.28pt；policy_a(841.89x595.28, 180%180=0) 不 swap → landscape ✓。**T5 candidate**"},
+        {"id": "B4-landscape-rot270", "truth": {"orientation": "landscape", "rotate": 270}, "expected": {"nativePaper_pt": [595.2755905511812, 841.8897637795276], "contentRotation": 270, "policyA_output_orientation": "landscape"}, "derivation": "r=270%180=90 → nativeOri=portrait → native=595.28x841.89pt；policy_a(…,270%180=90) swap → landscape ✓"},
+        {"id": "B5-portrait-rot0", "truth": {"orientation": "portrait", "rotate": 0}, "expected": {"nativePaper_pt": [595.2755905511812, 841.8897637795276], "contentRotation": 0, "policyA_output_orientation": "portrait"}, "derivation": "r=0 → portrait → native=595.28x841.89pt；policy_a 不 swap → portrait ✓"},
+        {"id": "B6-portrait-rot90", "truth": {"orientation": "portrait", "rotate": 90}, "expected": {"nativePaper_pt": [841.8897637795276, 595.2755905511812], "contentRotation": 90, "policyA_output_orientation": "portrait"}, "derivation": "r=90 → swapped(portrait)=landscape → native=841.89x595.28pt；policy_a(841.89x595.28,90) swap → portrait ✓"},
+        {"id": "B7-portrait-rot180", "truth": {"orientation": "portrait", "rotate": 180}, "expected": {"nativePaper_pt": [595.2755905511812, 841.8897637795276], "contentRotation": 180, "policyA_output_orientation": "portrait"}, "derivation": "r=0 → portrait → native=595.28x841.89pt；policy_a(…,0) 不 swap → portrait ✓"},
+        {"id": "B8-portrait-rot270", "truth": {"orientation": "portrait", "rotate": 270}, "expected": {"nativePaper_pt": [841.8897637795276, 595.2755905511812], "contentRotation": 270, "policyA_output_orientation": "portrait"}, "derivation": "r=90 → landscape → native=841.89x595.28pt；policy_a(841.89x595.28,90) swap → portrait ✓"}
+      ],
+      "negativeControl": {
+        "id": "B9-naive-double-swap",
+        "description": "负向控制：naïve 把 landscape+90 直接传 landscape 原生纸（841.89x595.28pt）给 apply_pdf，再由 policy_a 因 rotate=90 再 swap → 输出 portrait，与 Truth.landscape 矛盾。证明 Translator 的 swap 不可省略。",
+        "input": {"nativePaper_pt": [841.8897637795276, 595.2755905511812], "contentRotation": 90},
+        "expected_policyA_output_orientation": "portrait",
+        "assert": "output != truth.orientation (landscape) → Translator 必要"
+      }
+    }
+  }
+}
