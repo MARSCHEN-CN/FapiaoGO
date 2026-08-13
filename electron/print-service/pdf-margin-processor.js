@@ -256,9 +256,12 @@ function resolvePaperMmFromSettings(settings) {
  * @param {string} [orientation] - ⚠️ 已废弃：不再参与几何（Python 侧忽略并告警）。
  *   保留参数位仅为兼容旧调用方。
  * @param {object} [opts] - Phase 1-B 新增：
- *   { paperW_mm, paperH_mm, timeout }
+ *   { paperW_mm, paperH_mm, contentRotation, timeout }
  *   - paperW_mm/paperH_mm: 目标物理纸尺寸（mm）。PDF 路径缺省时 Python 侧以
  *     源 MediaBox 兜底（不换纸）；图片路径必填。
+ *   - contentRotation: G1c 新增。Truth.rotate（0/90/180/270）直通为 apply_pdf 的
+ *     content_rotation（Policy A 内容旋转）。仅透传，本层不做任何几何/swap；
+ *     几何 swap 由 Geometry Translator（geometry-translator.js §9.4 R6）唯一负责。
  *   - timeout: 子进程超时毫秒，默认 60000
  * @returns {Promise<{path: string, orientation: string|null}>}
  *   path: 处理后的 PDF 路径。降级或出错时返回原 inputPath。
@@ -289,10 +292,14 @@ async function process(inputPath, margins, isImage, orientation, opts, timeout =
     return { path: inputPath, orientation: null }
   }
 
-  // ── Phase 1-B opts：目标纸尺寸（mm）+ 超时 ──
+  // ── Phase 1-B opts：目标纸尺寸（mm）+ 内容旋转 + 超时 ──
   const optsObj = (opts && typeof opts === 'object') ? opts : {}
   const paperW = Number(optsObj.paperW_mm) > 0 ? Number(optsObj.paperW_mm) : null
   const paperH = Number(optsObj.paperH_mm) > 0 ? Number(optsObj.paperH_mm) : null
+  // G1c：Truth.rotate → apply_pdf content_rotation（直通，零几何）。CLI --content-rotation 已支持。
+  const VALID_ROTATIONS = [0, 90, 180, 270]
+  const rawRot = Number(optsObj.contentRotation)
+  const contentRotation = VALID_ROTATIONS.includes(rawRot) ? rawRot : 0
   if (typeof optsObj.timeout === 'number' && optsObj.timeout > 0) {
     timeout = optsObj.timeout
   }
@@ -331,6 +338,11 @@ async function process(inputPath, margins, isImage, orientation, opts, timeout =
     if (paperW !== null && paperH !== null) {
       args.push('--paper-width-mm', String(paperW))
       args.push('--paper-height-mm', String(paperH))
+    }
+
+    // G1c：Truth.rotate → apply_pdf content_rotation（直通；rotate=0 时 Python 侧默认值即 0，省略）
+    if (contentRotation !== 0) {
+      args.push('--content-rotation', String(contentRotation))
     }
 
     // ⚠️ 不再传 --orientation：旧「orientation→纸张方向」推断已在 Python 侧废弃，
