@@ -590,3 +590,4 @@ electron/.el-mini-main.js
 electron/.el-ver-check.js
 electron/.ver.txt
 frontend/test/geo-check.mjs
+.workbuddy
