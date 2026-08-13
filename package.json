@@ -4,6 +4,7 @@
   "description": "发票打印工具",
   "main": "electron/main.js",
   "scripts": {
+    "start": "chcp 65001 > nul && electron .",
     "test:print": "node --test frontend/tests/print/e2e/printPipeline.test.mjs",
     "ci:print-contract": "node frontend/tests/print/PRINT_ARCHITECTURE_LOCK.js && node --test frontend/tests/print/e2e/printPipeline.test.mjs"
   },
