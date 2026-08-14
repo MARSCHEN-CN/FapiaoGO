@@ -191,7 +191,7 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
         // PDF 文件
         const fileData = await ipc.invoke('read-file', f.printPath)
         if (fileData.success) {
-          items.push({ ...f, _pdfData: new Uint8Array(await fileData.data.arrayBuffer()) })
+          items.push({ ...f, _pdfData: new Uint8Array(fileData.data) })
         } else {
           console.error('[usePrint] 读取 PDF 文件失败:', f.printPath)
           return null
@@ -419,7 +419,7 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
           if (f.fileFormat === 'pdf' || (!f.fileFormat && !f.previewImage)) {
             const fileData = await ipc.invoke('read-file', f.printPath)
             if (fileData.success) {
-              return { ...f, _pdfData: new Uint8Array(await fileData.data.arrayBuffer()) }
+              return { ...f, _pdfData: new Uint8Array(fileData.data) }
             }
           } else if (f.fileFormat === 'ofd') {
             // OFD：docId → /print 优先，previewImage 兜底（旧 session）
@@ -1137,7 +1137,7 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
         // ── 3. Build DTO items (clean, no underscore prefixes) ──
         const dtoItems = []
         if (file.fileFormat === 'pdf' || (!file.fileFormat && !file.previewImage)) {
-          dtoItems.push({ key: file.key, name: file.name, fileFormat: 'pdf', pdfData: new Uint8Array(await fileData.data.arrayBuffer()) })
+          dtoItems.push({ key: file.key, name: file.name, fileFormat: 'pdf', pdfData: new Uint8Array(fileData.data) })
         } else {
           const blob = new Blob([fileData.data])
           const blobUrl = URL.createObjectURL(blob)
