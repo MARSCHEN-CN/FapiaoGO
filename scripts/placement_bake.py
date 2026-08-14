@@ -40,6 +40,7 @@ Placement 字段（RotationResolver.resolveContentPlacement 输出，px@dpi）�
 """
 import argparse
 import json
+import os
 import sys
 import traceback
 
@@ -52,6 +53,10 @@ except ImportError:
 # 复用 margin_contract 的机械组装（几何引擎零改动——compute_transform 已是 INV-7a）
 sys.path.insert(0, __file__.rsplit("/", 1)[0] if "/" in __file__ else ".")
 from margin_contract import _form_extent, compute_transform, _content_size, _CW_UNIT  # noqa: E402
+
+# ⭐ AP-DR-6: Annotation Preservation Shared Module (Content Integrity Patch)
+sys.path.insert(0, os.path.join(__file__.rsplit("/", 1)[0] if "/" in __file__ else ".", "shared"))
+from shared.flatten_annotations import flatten_stamp_annotations  # noqa: E402
 
 PT_PER_MM = 72.0 / 25.4
 
@@ -112,6 +117,10 @@ def bake(spec):
             raise ValueError(f"源页 /UserUnit = {user_unit} != 1，拒绝处理（契约 §1.5）")
 
         out = pikepdf.new()
+        # ⭐ AP-DR-6: Annotation Preservation - Flatten Stamp AP before Form XObject
+        flatten_count = flatten_stamp_annotations(src_page, src_pdf=src)
+        if flatten_count > 0:
+            print(f"[AP-DR-6] Flattened {flatten_count} Stamp annotation(s) into page contents", file=sys.stderr)
         form = out.copy_foreign(src_page.as_form_xobject())
         src_rect = _form_extent(form)
 

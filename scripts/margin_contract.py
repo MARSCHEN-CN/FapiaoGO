@@ -36,6 +36,10 @@ import traceback
 
 import pikepdf
 
+# ⭐ AP-DR-6: Annotation Preservation Shared Module (Content Integrity Patch)
+sys.path.insert(0, os.path.join(__file__.rsplit("/", 1)[0] if "/" in __file__ else ".", "shared"))
+from shared.flatten_annotations import flatten_stamp_annotations  # noqa: E402
+
 # ────────────────────────────────────────────────────────────────────────────
 # 纯几何层（无 PDF 依赖）—— 契约 §1.1 / §1.4 / §2.1a
 # ────────────────────────────────────────────────────────────────────────────
@@ -270,6 +274,10 @@ def apply_pdf(src_path, out_path, paper_w_pt, paper_h_pt, margin_lrtb,
 
         # Form XObject 跨 Pdf 复制（src → out）：copy_foreign 目标必须是 out
         out = pikepdf.new()
+        # ⭐ AP-DR-6: Annotation Preservation - Flatten Stamp AP before Form XObject
+        flatten_count = flatten_stamp_annotations(src_page, src_pdf=src)
+        if flatten_count > 0:
+            print(f"[AP-DR-6] Flattened {flatten_count} Stamp annotation(s) into page contents", file=sys.stderr)
         form = out.copy_foreign(src_page.as_form_xobject())
         src_rect = _form_extent(form)
 
