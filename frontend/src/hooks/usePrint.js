@@ -16,6 +16,9 @@ import { applySourceOriginPlacement, transformPaperRotation } from '../print/pla
 import { resolveContentPlacement } from '../layout/RotationResolver'
 import { resolvePaperSpec } from '../print/paperSpec'
 import { fileContentPx } from '../print/PrintPreviewModel'
+import { renderMergeFinalArtifact, loadMergePrintItems, getMergeArtifactInputSignature } from '../print/mergeFinalArtifact'
+import { resolveMergeModeContract } from '../print/mergeModeContract'
+import { createGenerationGuard } from '../print/mergeGenerationGuard'
 import { fetchPrintRaster, buildPrintJobItem } from '../utils/printAdapter'
 // A1/A1.5：已证等价的 Plan 事实来源 + 影子比较 helper（Commit 2 source / Commit 3 merge 分支消费）
 import { buildPrintExecutionPlan, createPrintPlanInput } from '../print/buildPrintExecutionPlan'
@@ -408,105 +411,36 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
     }
   }, [fileRotations, settings.paperSize, settings.landscape])
 
-  // ── 合并模式渲染多文件到一页 ──
-  const renderMergeGroupToPrintImage = useCallback(async (group, ipc, groupSize) => {
-    const localBlobUrls = []
-
-    try {
-      // 加载每个文件的渲染数据（与预览路径相同的结构）
-      const items = await Promise.all(group.map(async (f) => {
-        try {
-          if (f.fileFormat === 'pdf' || (!f.fileFormat && !f.previewImage)) {
-            const fileData = await ipc.invoke('read-file', f.printPath)
-            if (fileData.success) {
-              return { ...f, _pdfData: new Uint8Array(fileData.data) }
-            }
-          } else if (f.fileFormat === 'ofd') {
-            // OFD：docId → /print 优先，previewImage 兜底（旧 session）
-            let blob = null
-            if (f.docId) {
-              try {
-                blob = await fetchPrintRaster(f.docId, 1)
-              } catch (e) {
-                console.warn('[usePrint] 合并项 OFD docId 栅格失败，回退 previewImage:', f.docId, e?.message)
-              }
-            }
-            if (!blob && f.previewImage) {
-              blob = b64toBlob(f.previewImage, 'image/png')
-            }
-            if (!blob) {
-              console.error('[usePrint] 合并项 OFD 无 docId 且无 previewImage:', f.name)
-              return null
-            }
-            const blobUrl = URL.createObjectURL(blob)
-            localBlobUrls.push(blobUrl)
-            return { ...f, _previewImageUrl: blobUrl }
-          } else if (f.fileFormat === 'image') {
-            // 图片：read-file 优先（保留原图分辨率），previewImage 兜底
-            let blob = null
-            const fileData = await ipc.invoke('read-file', f.printPath)
-            if (fileData.success) {
-              blob = new Blob([fileData.data])
-            }
-            if (!blob && f.previewImage) {
-              blob = b64toBlob(f.previewImage, 'image/png')
-            }
-            if (!blob) return null
-            const blobUrl = URL.createObjectURL(blob)
-            localBlobUrls.push(blobUrl)
-            return { ...f, _previewImageUrl: blobUrl }
-          }
-        } catch (e) {
-          console.error('加载合并项失败:', f.name, e)
-        }
-        return null
-      }))
-
-      const validItems = items.filter(Boolean)
-      if (validItems.length === 0) return null
-
-      // ✅ 懒加载 PDF 渲染器
-      const { renderMultipleItemsToCanvas } = await getPrintRenderers()
-
-      // ✅ 合并模式强制方向（merge2/3=竖向, merge4=横向），纸张用用户设置
-      const forcedLandscape = getForcedLandscape(settings.mergeMode, settings.landscape)
-
-      // ✅ V16 slotted path: paperLayout 驱动 MultiTicketComposer（slotMarginPx 已对齐 createLayout 的 slot margin）
-      const printPaperLayout = computePaperLayout({
-        paperSize: settings.paperSize,
-        customPaper: settings.customPaper,
-        margins: {
-          left: settings.marginLeft ?? 3, right: settings.marginRight ?? 3,
-          top: settings.marginTop ?? 3, bottom: settings.marginBottom ?? 3,
-        },
-      })
-
-      const canvas = await renderMultipleItemsToCanvas(
-        validItems,
-        settings.paperSize || 'A4',
-        PREVIEW_DPI,
-        forcedLandscape,
-        fileRotations,
-        groupSize,
-        false,  // ✅ isPrint = false（与预览保持一致）
-        false,  // showSafeMargin
-        { strategy: groupSize === 4 ? 'grid' : 'vertical', gridCols: 2, gridRows: 2, customPaper: settings.customPaper },
-        printPaperLayout  // V16 slotted path: slot geometry now matches createLayout
-      )
-
-      // ✅ 返回 Uint8Array 而非 blob URL
-      const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png', 1.0))
-      if (!blob) return null
-      const buffer = await blob.arrayBuffer()
-      return {
-        key: group.map(f => f.key).join('+'),
-        names: group.map(f => f.name),
-        data: new Uint8Array(buffer),
-      }
-    } finally {
-      localBlobUrls.forEach(url => revokeBlobUrl(url, pendingBlobUrlsRef.current))
+  // ── M3-1：合并渲染降级为 Artifact → PNG adapter ──
+  // 不再 loadMergePrintItems / renderMergeFinalArtifact：该步已由 prepareMergeArtifacts 在
+  // 弹窗打开时完成，结果存入 mergeArtifacts（同一份被 Preview 与 Print 消费）。
+  // 此处只把已生成的 Final Artifact.canvas 编码为 PNG bytes，保持原返回结构
+  // { key, names, data }，下游 PDF / Sumatra 链路零改动。groupSize 自然消失（不再计算布局）。
+  const renderMergeGroupToPrintImage = useCallback(async (artifact, group, jobKey) => {
+    const _groupId = jobKey || (group || []).map(f => f.key).join('+')
+    if (!artifact || !artifact.canvas) {
+      console.warn('[M3-1] group=%s artifact 缺失（canvas 为空）⇒ return null', _groupId)
+      return null
     }
-  }, [fileRotations, settings.paperSize, settings.landscape, settings.mergeMode])
+    const canvas = artifact.canvas
+    try {
+      // ✅ 复用 M2-2 已生成的 Final Artifact，禁止二次 render
+      const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png', 1.0))
+      if (!blob) {
+        console.warn('[M3-1][PNG] group=%s blob=NULL（编码失败）', _groupId)
+        return null
+      }
+      const pngBytes = new Uint8Array(await blob.arrayBuffer())
+      return {
+        key: _groupId,
+        names: (group || []).map(f => f.name),
+        data: pngBytes,
+      }
+    } catch (e) {
+      console.error('[M3-1][PNG] group=%s 编码异常:', _groupId, e)
+      return null
+    }
+  }, [])
 
 
   const handlePrintClose = useCallback(() => {
@@ -620,15 +554,127 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
     return () => { cancelled = true }
   }, [files, electronAPIRef, setDimsVersion])
 
+  // ✅ M2-2：Merge-only Final Artifact 生命周期 state（仅 Merge 模式使用，
+  // 不进入公共 printPreviewModel）。Preview 与 M3 Print 消费同一份。
+  const [mergeArtifacts, setMergeArtifacts] = useState(null)
+  // ✅ M3-1：用 ref 透出最新 mergeArtifacts。doPrint 是 useCallback 且其依赖未含 mergeArtifacts，
+  // 若直接读闭包变量会在打印点击时拿到旧（null）值。render 时同步 .current，调用时读最新，Normal 路径不受影响。
+  const mergeArtifactsRef = useRef(null)
+  mergeArtifactsRef.current = mergeArtifacts
+
+  // ✅ F3：Modal 开闭守卫 ref。freshness watcher 的依赖严格只含「影响 Final Artifact 的输入」，
+  // 故意不含 printConfirmModal 本身——否则 Modal 打开（false→true）会触发一次多余的重生成。
+  // 用 ref 读取最新开闭态：关闭时即使输入变化也不生成 Artifact（F3-E）。
+  const printConfirmModalRef = useRef(false)
+  printConfirmModalRef.current = printConfirmModal
+
+  // ✅ F4：Generation Ownership 守卫（提取为纯模块，单一权威源）。
+  // prepareMergeArtifacts 每次「真实 generation」调用 guard.begin() 取唯一 myGeneration；
+  // 仅 guard.isCurrent(myGeneration) 为 true（仍最新）才允许 commit mergeArtifacts，
+  // 旧 generation 即使晚完成也被拒，防止异步竞态下旧 render 覆盖新 Artifact（F4-A/B/C）。
+  // 不依赖 React state；覆盖整个 async 生命周期（入口取号 → commit 前校验）。
+  const mergeGenerationGuardRef = useRef(null)
+  if (!mergeGenerationGuardRef.current) mergeGenerationGuardRef.current = createGenerationGuard()
+
+  // ✅ M2-2：Merge 打印确认预览打开前，提前生成 Final Artifact（替代“打印时才生成”）。
+  // 仅服务 Merge；Normal 模式不调用。artifact 一旦生成即自包含（canvas/dataURL），
+  // 加载产生的 blob URL 在渲染完成后立即回收（canvas 已栅格化，无需保留）。
+  const prepareMergeArtifacts = useCallback(async () => {
+    if (!isMergeMode(settings.mergeMode)) return
+    const ipc = electronAPIRef.current?.ipcRenderer
+    if (!ipc || typeof ipc.invoke !== 'function') return
+    // ✅ F4：本 generation 取得唯一 id（原子自增）。放在真实渲染入口之后、try 之前，
+    // 仅真实 generation 消耗序号；myGeneration 为闭包局部常量，贯穿整个 async 生命周期。
+    const myGeneration = mergeGenerationGuardRef.current.begin()
+    try {
+      const { files: planFiles, options: planOptions } = createPrintPlanInput(files, settings, fileRotations)
+      const plan = buildPrintExecutionPlan(planFiles, planOptions)
+      const mergeJobs = deriveMergePrintJobs(plan, files)
+      if (!mergeJobs.length) {
+        // ✅ F4：空结果同样受 generation 守卫约束——旧 generation 的空结果不得覆盖新结果（F4-C）。
+        if (mergeGenerationGuardRef.current.isCurrent(myGeneration)) { setMergeArtifacts([]) }
+        return
+      }
+      // ✅ R2.3-A.1：Virtual Paper topology 由 MergeMode Contract 决定（slotCount 与文件数彻底分离）。
+      //    groupSize 不再是 mergeJobs[0].files.length（=实际文件数）——那会导致 merge3+2文件 退化成一页两票。
+      //    缺失文件 → EMPTY Virtual Paper（composer sourceIndex=-1，区域保留不绘制）。
+      const mergeContract = resolveMergeModeContract(settings.mergeMode)
+      const groupSize = mergeContract.slotCount
+      const forcedLandscape = mergeContract.forcedLandscape
+      const printPaperLayout = computePaperLayout({
+        paperSize: settings.paperSize,
+        customPaper: settings.customPaper,
+        margins: {
+          left: settings.marginLeft ?? 3, right: settings.marginRight ?? 3,
+          top: settings.marginTop ?? 3, bottom: settings.marginBottom ?? 3,
+        },
+      })
+      const results = []
+      for (const job of mergeJobs) {
+        const loaded = await loadMergePrintItems(job.files, ipc)
+        if (!loaded.validItems.length) {
+          loaded.blobUrls.forEach(u => URL.revokeObjectURL(u))
+          continue
+        }
+        const artifact = await renderMergeFinalArtifact(loaded.validItems, {
+          paperSize: settings.paperSize || 'A4',
+          dpi: PREVIEW_DPI,
+          mergeMode: settings.mergeMode,
+          forcedLandscape,
+          fileRotations,
+          groupSize,
+          paperLayout: printPaperLayout,
+          layoutOptions: { strategy: mergeContract.strategy, gridCols: mergeContract.gridCols, gridRows: mergeContract.gridRows, customPaper: settings.customPaper },
+        })
+        // 渲染完成即栅格化，blob URL 可回收
+        loaded.blobUrls.forEach(u => URL.revokeObjectURL(u))
+        if (artifact) {
+          // ✅ F2：为每个 Artifact 绑定其生成输入的 inputSignature（复用同一
+          // getMergeArtifactInputSignature，禁止另造一套字符串），供 F3 freshness 比较。
+          // jobKey 公式保持不变：files.map(f => f.key).join('+')。
+          const sig = getMergeArtifactInputSignature({ files: job.files, settings, fileRotations })
+          results.push({ key: job.files.map(f => f.key).join('+'), signature: sig, artifact })
+        }
+      }
+      // ✅ F4：commit 前校验仍为最新 generation，否则丢弃本 generation 全部结果（F4-B/C）。
+      if (!mergeGenerationGuardRef.current.isCurrent(myGeneration)) return
+      setMergeArtifacts(results)
+    } catch (err) {
+      console.error('[usePrint] M2-2 生成 Merge Artifact 失败:', err)
+      // ✅ F4：异常时同样仅当本 generation 最新才 commit null，避免旧 generation 异常覆盖新结果（F4-C）。
+      if (mergeGenerationGuardRef.current.isCurrent(myGeneration)) { setMergeArtifacts(null) }
+    }
+  }, [files, settings, fileRotations])
+
+  // ✅ F3：freshness trigger（signature-driven）。仅当「影响 Final Artifact 的输入」变化且
+  // Modal 已打开时，重新生成同一生产者 prepareMergeArtifacts()。
+  // 依赖严格限定 F1 矩阵（paperSize/customPaper/mergeMode/marginL/R/T/B/fileRotations），
+  // 不含 printConfirmModal（避免打开时重复生成），Modal 开闭用 printConfirmModalRef 守卫（F3-E）。
+  // 不另造 producer、不改 jobKey、不碰 Normal Preview / renderer / PrintPreviewModel（F3-G/H）。
+  useEffect(() => {
+    if (!printConfirmModalRef.current) return
+    if (!isMergeMode(settings.mergeMode)) return
+    prepareMergeArtifacts()
+  }, [
+    settings.paperSize, settings.customPaper, settings.mergeMode,
+    settings.marginLeft, settings.marginRight, settings.marginTop, settings.marginBottom,
+    fileRotations, prepareMergeArtifacts,
+  ])
+
   // ── 打印前确认弹窗 ──
-  const handlePrintShowConfirm = useCallback(() => {
+  const handlePrintShowConfirm = useCallback(async () => {
     if (previewFile) {
       const detectedOrient = detectDocumentOrientation(previewFile)
       const shouldLandscape = detectedOrient === 'landscape'
       setSettings(prev => (prev.landscape !== shouldLandscape ? { ...prev, landscape: shouldLandscape } : prev))
     }
+    // ✅ M2-2：Merge 模式提前生成 Final Artifact（Preview 与 M3 Print 共用同一份），
+    // 生成完成再打开弹窗，避免预览首帧空白。Normal 模式跳过。
+    if (isMergeMode(settings.mergeMode)) {
+      await prepareMergeArtifacts()
+    }
     setPrintConfirmModal(true)
-  }, [previewFile, setSettings])
+  }, [previewFile, setSettings, settings.mergeMode, prepareMergeArtifacts])
 
   const handlePrintConfirm = useCallback(() => {
     setPrintConfirmModal(false)
@@ -713,6 +759,15 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
       const { files: planFiles, options: planOptions } = createPrintPlanInput(files, settings, fileRotations)
       const plan = buildPrintExecutionPlan(planFiles, planOptions)
       const mergeJobs = deriveMergePrintJobs(plan, files)
+      // [P0] 探针 A：合并 job 派生证据（证伪 H3 job 派生层）
+      // 仅诊断，不改任何行为；复现 merge2/3/4 打印失败后据此判断是否进入 P1。
+      console.log('[P0][JOB] mergeMode=%s groupSize=%d jobCount=%d',
+        mergeMode, groupSize, mergeJobs.length)
+      mergeJobs.forEach((j, gi) => {
+        const fs = j.files || []
+        console.log('[P0][JOB] groupIndex=%d fileCount=%d fileKeys=%s',
+          gi, fs.length, fs.map(f => f.key).join(','))
+      })
       // 开发期影子比对（DEV + localStorage 开关，绝不进 production）：新 plan vs Legacy Oracle
       if (printPlanCompareEnabled()) {
         compareLegacyPlan(plan, { files, settings, fileRotations })
@@ -728,6 +783,13 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
       printQueueRef.current.pending = parsedFiles.map(f => assignTaskId(f))
       setPrintFilesAndRef(parsedFiles.map(f => ({ key: f.key, printPath: f.printPath, name: f.name })))
     }
+
+    // ✅ M3-1-A：按 job.key 消费 M2-2 已生成的同一份 mergeArtifacts（禁止二次 render）。
+    // key 公式与 prepareMergeArtifacts 一致：files.map(f => f.key).join('+')。
+    const artifactByKey = isMerge
+      ? new Map((mergeArtifactsRef.current || []).map(item => [item.key, item.artifact]))
+      : null
+
     updateQueueStatus()
 
     // 超时保护
@@ -748,10 +810,18 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
       const renderFn = async (task) => {
         if (signal.aborted) return null
         try {
-          const result = isMerge
-            ? await renderMergeGroupToPrintImage(task.data || task, ipc, groupSize)
-            : await renderFileToPrintImage(task.data || task, ipc)
-          return result
+          if (isMerge) {
+            const group = task.data || task
+            const jobKey = (group || []).map(f => f.key).join('+')
+            const artifact = artifactByKey?.get(jobKey)
+            if (!artifact) {
+              console.warn('[M3-1] jobKey=%s 无对应 Artifact（Prepare 未生成？）⇒ return null', jobKey)
+              return null
+            }
+            // ✅ M3-1：消费 M2-2 同一份 Artifact，不再二次 render
+            return await renderMergeGroupToPrintImage(artifact, group, jobKey)
+          }
+          return await renderFileToPrintImage(task.data || task, ipc)
         } catch (error) {
           console.error('渲染失败:', task.name || task.data?.name, error)
           return null
@@ -1293,6 +1363,7 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
     alertModal, closeAlert,
     printConfirmModal,
     printPreviewModel,
+    mergeArtifacts,  // ✅ M2-2：Merge-only Final Artifact（仅 Merge 模式非空；Normal 恒 null）
     handlePrint: handlePrintShowConfirm, handlePrintConfirm, handlePrintCancel,
     handlePrintClose, clearPrintState,
     cancelPrint,
