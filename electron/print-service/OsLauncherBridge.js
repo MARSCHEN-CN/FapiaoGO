@@ -26,6 +26,9 @@ const fs = require('fs');
 const { detectPdfOrientation: _detectPdfOrientation } = require('../shared/pdf-orientation');
 const { EventEmitter } = require('events');
 const { resolveOrientationCommands, getPaperShapeOrientation } = require('./print-settings');
+// ⚠️ R2.3-A.3 baked-rotate mapping 实施已回滚（E3 PostScript 实机击穿，2026-08-15）：
+//   resolveBakedRotate 保留在 baked-rotate-resolver.js 作为实验性模块（未接入生产）。
+//   E3 取证完成后按实机结果决定是否重新接入 + require。
 
 // detectPdfOrientation 委托到共享模块（带结果缓存，避免重复磁盘读）；
 // 保持原契约：MediaBox||CropBox，未知时默认 portrait
@@ -260,8 +263,20 @@ function decidePrintSpec(job) {
     paperName = SUMATRA_PAPER_SIZES[job.paperSize] || job.paperSize
   }
 
-  // 纸张方向由所选纸张的宽高比硬编码决定（如 A4 竖向、PostScript 240×140 横向）
-  const orientation = getPaperShapeOrientation(job.paperSize, job.customPaper);
+  // ── R2.3-A.2（Print Orientation Authority Precedence Fix，2026-08-15）──
+  // 契约：PrintJob.orientation 是显式 orientation authority（上游 DirectPrintHandler
+  //   已把 normalize() 的 spec.paper.orientation —— 即用户/merge 模式请求后的 Real Paper
+  //   方向 —— 写入 job.orientation，见 DirectPrintHandler.js:177）。
+  //   decidePrintSpec **必须尊重**它；getPaperShapeOrientation（纸型固有方向，A4→portrait）
+  //   **仅**在 job.orientation 缺失/非法时作为 fallback，绝不允许 override。
+  // 合法值域：'portrait' | 'landscape'（normalize 恒产出其一；任何其它值视为未提供）。
+  // 背景（N6 系列取证）：merge4 的 landscape PNG→PDF 恒被旧逻辑 getPaperShapeOrientation(A4)
+  //   = 'portrait' 覆盖 → Sumatra "disable-auto-rotation" 纵向打印。修复后 command 正确为
+  //   "landscape,fit,paper=a4"。
+  const jobOrient = job.orientation
+  const orientation = (jobOrient === 'portrait' || jobOrient === 'landscape')
+    ? jobOrient
+    : getPaperShapeOrientation(job.paperSize, job.customPaper)
 
   return {
     paper: paperName,
@@ -331,6 +346,14 @@ function toSumatraArgs(spec, job) {
     // 内容旋转 direct 轨暂不接（contentRotation=0，C-2 Step 4 接线 Plan placement）。
     // detectPdfOrientation 保留：direct 轨无法获取 spec.contentOrientation 时的诊断兜底
     //（不再参与纸向/旋转决策——两通道语义分离，G-RG3-1/2/3）。
+    //
+    // ⚠️ R2.3-A.3 baked-rotate mapping 实施已被 E3 PostScript 实机击穿并回滚（2026-08-15）：
+    //   之前假设 landscape baked × landscape paper → rotate=90（E1 "横向纸型" 实机），但 PostScript
+    //   实机证明该规则 ≠ 正确（仍需再顺时针 90°）。"横向纸型"二值抽象不足以决定 Sumatra rotate——
+    //   paper=PostScript 的具体纸张定义/方向处理与 E1 用的"横向纸型"不等价。详见
+    //   .workbuddy/R2.3-A.3-Content-Rotation-vs-C2-Command-Mapping-Forensics.md §E3。
+    //   等待 E3 取证（rotate=0/90/270 在 PostScript 下的实机物理方向）后再决策。
+    //   baked-rotate-resolver.js 保留为实验性模块（未接入 toSumatraArgs）。
     const pdfOrientation = detectPdfOrientation(filePath);
     const orientResult = resolveOrientationCommands({
       paperOrientation: spec.orientation || 'portrait',

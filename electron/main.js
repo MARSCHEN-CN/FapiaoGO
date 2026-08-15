@@ -928,7 +928,10 @@ ipcMain.handle('print-merged-images', async (_event, { images, settings }) => {
     console.log('[print-merged-images] 已写入 %d 个 PNG 到 %s', filePaths.length, tempDir)
 
     // 2. ✅ 批量 PNG → PDF 转换（一次 Python 进程处理全部，节省 spawn 开销）
-    const margins = pdfMargin.extractMargins(settings)
+    // P1-2 修复（批次一，仅改此 merge-print 路径，不动 pdf_tool.py 全局语义 / 单票路径）：
+    // merge-print 的 Canvas 已通过 usableRect 烤入 3mm 安全边距，PNG 像素即目标纸张；
+    // 故 PDF 层禁止二次外扩 MediaBox，否则打印件比预览多一圈边距 + fit-to-page 整体缩小。
+    const margins = { left: 0, right: 0, top: 0, bottom: 0 }
     const pdfPaths = filePaths.map((_, i) => path.join(tempDir, `page_${i + 1}.pdf`))
     const batchFiles = filePaths.map((png, i) => ({ png, pdf: pdfPaths[i] }))
 
@@ -964,8 +967,10 @@ ipcMain.handle('print-merged-images', async (_event, { images, settings }) => {
 
     // 4. 走 DirectPrintHandler 打印每个 PDF（与非合并模式相同的管线）
     //    复用其 SumatraPDF 参数构建、spawn、超时、清理逻辑
+    //    R2.3-A.3：baked: true —— 这批 PDF 是 Baked Real Paper Artifact（MediaBox=Real Paper,
+    //    /Rotate=0），rotate 参数走 baked 映射表（E1 实证），与 print-file-direct（源发票）区分。
     for (let i = 0; i < pdfPaths.length; i++) {
-      const result = await DirectPrintHandler.handle(pdfPaths[i], settings)
+      const result = await DirectPrintHandler.handle(pdfPaths[i], { ...settings, baked: true })
       if (!result.success) {
         throw new Error(`PDF ${i + 1} 打印失败: ${result.error}`)
       }
