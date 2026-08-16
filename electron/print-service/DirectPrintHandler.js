@@ -183,10 +183,6 @@ async function handle(filePath, settings) {
     // scalePolicy / rotation（C-1-c 已切断该链路；noscale override 属 C-2 PrintExecutionPlan 闭环）。
     scale: spec.scalePolicy,
     geometryMaterialized,
-    // R2.3-A.3：Baked Real Paper Artifact 标记（merge 链 = true，print-file-direct 缺省 false）。
-    // 供 OsLauncherBridge.toSumatraArgs 决定 rotate 是否走 baked 映射表（E1 实证），
-    // 隔离 Source Invoice PDF 语义（C-2 16-case 域），不改变任何既有行为。
-    baked: settings?.baked === true,
   };
 
   // ========== [DEBUG] 链路追踪 ==========
