@@ -25,7 +25,11 @@ _apply_margins / calculateFit / fit_scale.
 import fitz
 
 from services.source_adapter import read_source_bytes
-from services.render_executor import draw_render_command, paper_px, render_command_to_page
+from services.render_executor import draw_render_command, paper_px
+from services.pdf_handlers.image_handler import ImageExportHandler
+
+# 方案 A：image → 单页 PDF → insert_pdf 复用 ImageExportHandler（方向/比例/无重采样已验证）
+_image_handler = ImageExportHandler()
 
 
 def _detect_source_kind(source_bytes):
@@ -150,8 +154,8 @@ def execute_export_render(commands, progress=None, page_per_command=False):
       * page_per_command=False（scheme B, 默认 / 拼版）：所有 image command 共享
         一个 sheet 页；PDF command 透传（每个自己的页）。
       * page_per_command=True（合并导出）：每个 command 独立一个输出页，严格
-        保持 commands 输入顺序（image → render_command_to_page 独立页，
-        pdf → insert_pdf 单页）。这使「输入物理页数 = 输出物理页数」成立。
+        保持 commands 输入顺序（image → 单页 PDF → insert_pdf，页尺寸=图片尺寸、
+        方向/比例跟随图片；pdf → insert_pdf 单页）。这使「输入物理页数 = 输出物理页数」成立。
 
     Geometry is consumed from the RenderCommands; this module never recomputes
     fit / scale / center / rotation.
@@ -187,7 +191,8 @@ def execute_export_render(commands, progress=None, page_per_command=False):
     try:
         if page_per_command:
             # 合并导出契约（P0-C/P0-D）：每 command 一个输出页，严格保持输入顺序。
-            # image → render_command_to_page（独立页）；pdf → insert_pdf 单页。
+            # PDF → insert_pdf 单页透传；image → 单页 PDF → insert_pdf（方案 A，
+            # 复用 ImageExportHandler，方向/比例/无重采样天然正确）。
             for cmd in commands:
                 src_ref = cmd.get('sourceRef') or {}
                 path = src_ref.get('path')
@@ -212,7 +217,8 @@ def execute_export_render(commands, progress=None, page_per_command=False):
                         source_bytes = read_source_bytes(src_ref)
                         if path in _repeated:
                             _source_cache[path] = source_bytes
-                    render_command_to_page(doc, cmd, source_bytes)
+                    # 方案 A：image → 单页 PDF → insert_pdf（页尺寸=图片尺寸，方向/比例跟随图片）
+                    _image_handler.export_merge(source_bytes, path, doc)
         else:
             # scheme B：所有 image command 拼同一个 sheet 页；pdf 每 command 一页。
             image_group = []
