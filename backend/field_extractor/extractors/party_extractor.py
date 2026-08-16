@@ -78,6 +78,7 @@ from .party_constants import (
 from .region_strategies import Bounds, select_region_strategy
 from .party_validation import NameCleaner
 from .anchor_detector import AnchorDetector
+from .party_geometry import build_party_geometry, PartySide
 from .extraction_context import ExtractionContext, AnchorContext, RegionContext, ScoreContext
 
 logger = logging.getLogger(__name__)
@@ -1515,23 +1516,27 @@ class PartyExtractor:
 
             return primary_score, secondary_score, reason_suffix
 
-        # 坐标增强分配
+        # 坐标增强分配（PartyGeometry Facade / 轨道 A Batch 1）
+        # 用 anchor cx 中点做互斥水平分割，side 由 side_of(token) 唯一决定。
+        # 绝不使用 Δcy；UNKNOWN 不回退、不静默转侧；侧别确定后只向该侧发射。
         if line_map:
+            pg = build_party_geometry(buyer_anchor_line, seller_anchor_line)
+
             for i, name in companies:
                 line_obj = line_map.get(i)
-                buyer_dist = abs(line_obj.cy - buyer_anchor_line.cy) if (
-                    line_obj and buyer_anchor_line) else 999999
-                seller_dist = abs(line_obj.cy - seller_anchor_line.cy) if (
-                    line_obj and seller_anchor_line) else 999999
-                is_buyer = buyer_dist <= seller_dist
+                if line_obj is None:
+                    continue
+                side = pg.side_of(line_obj)
+                if side is PartySide.UNKNOWN:
+                    continue  # 绝不恢复 Δcy / nearest anchor / 默认 Party
 
+                is_buyer = side is PartySide.BUYER
                 is_label_bound = self._is_value_right_of_label_in_line(
                     line_obj, name, _NAME_LABELS)
 
                 primary_field = 'gmfmc' if is_buyer else 'xsfmc'
-                secondary_field = 'xsfmc' if is_buyer else 'gmfmc'
 
-                p_score, s_score, reason_suffix = _compute_score(
+                p_score, _, reason_suffix = _compute_score(
                     name, 'name', line_obj, is_buyer, is_label_bound)
 
                 candidates.append(FieldCandidate(
@@ -1540,29 +1545,22 @@ class PartyExtractor:
                     source='text_l4', line_index=i,
                     reason=f'全电发票公司名（{reason_suffix}）',
                 ))
-                if s_score > 0:
-                    candidates.append(FieldCandidate(
-                        field=secondary_field, value=name,
-                        score=s_score, confidence=s_score / 100.0,
-                        source='text_l4', line_index=i,
-                        reason='全电发票公司名',
-                    ))
 
             for i, tax in tax_ids:
                 line_obj = line_map.get(i)
-                buyer_dist = abs(line_obj.cy - buyer_anchor_line.cy) if (
-                    line_obj and buyer_anchor_line) else 999999
-                seller_dist = abs(line_obj.cy - seller_anchor_line.cy) if (
-                    line_obj and seller_anchor_line) else 999999
-                is_buyer = buyer_dist <= seller_dist
+                if line_obj is None:
+                    continue
+                side = pg.side_of(line_obj)
+                if side is PartySide.UNKNOWN:
+                    continue
 
+                is_buyer = side is PartySide.BUYER
                 is_label_bound = self._is_value_right_of_label_in_line(
                     line_obj, tax, _TAX_LABELS)
 
                 primary_field = 'gmfsh' if is_buyer else 'xsfsh'
-                secondary_field = 'xsfsh' if is_buyer else 'gmfsh'
 
-                p_score, s_score, reason_suffix = _compute_score(
+                p_score, _, reason_suffix = _compute_score(
                     tax, 'tax', line_obj, is_buyer, is_label_bound)
 
                 candidates.append(FieldCandidate(
@@ -1571,13 +1569,6 @@ class PartyExtractor:
                     source='text_l4', line_index=i,
                     reason=f'全电发票税号（{reason_suffix}）',
                 ))
-                if s_score > 0:
-                    candidates.append(FieldCandidate(
-                        field=secondary_field, value=tax,
-                        score=s_score, confidence=s_score / 100.0,
-                        source='text_l4', line_index=i,
-                        reason='全电发票税号',
-                    ))
         else:
             # 无坐标回退
             for idx, (i, name) in enumerate(companies):
