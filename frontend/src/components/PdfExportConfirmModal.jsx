@@ -6,8 +6,8 @@ import { useState, useCallback } from 'react'
  * 职责：展示配置选项 → 输出 config（不触发导出）
  * 状态机约束：
  *   single → 允许 source / folder
- *   merge  → 允许 source / folder（与 single 一致）
- *   mode 切换时不改变 outputType
+ *   merge  → 固定 folder（取消「与文件同源」下拉，直接选文件夹）
+ *   mode 切换：single→merge 时 outputType 置为 folder；merge→single 保持当前值
  */
 const PdfExportConfirmModal = ({
   visible,
@@ -23,7 +23,12 @@ const PdfExportConfirmModal = ({
   })
 
   const changeMode = useCallback((nextMode) => {
-    setExportConfig(prev => ({ ...prev, mode: nextMode }))
+    setExportConfig(prev => ({
+      ...prev,
+      mode: nextMode,
+      // merge 模式固定输出到「指定文件夹」，取消「与文件同源」选项
+      outputType: nextMode === 'merge' ? 'folder' : prev.outputType,
+    }))
   }, [])
 
   const changeOutputType = useCallback((nextType) => {
@@ -66,6 +71,29 @@ const PdfExportConfirmModal = ({
 
   if (!visible) return null
 
+  // ── 输出位置的文件夹路径行（merge 模式默认显示，single 模式选「指定文件夹」时显示） ──
+  const folderRow = (
+    <div className="pe-folder-row" style={{ marginTop: 6 }}>
+      <input
+        className="pe-path-input"
+        type="text"
+        placeholder="选择或输入导出路径..."
+        value={exportConfig.folderPath}
+        onChange={changeFolderPath}
+      />
+      <button
+        className="pe-folder-btn"
+        onClick={handleSelectFolder}
+        title="选择文件夹"
+        type="button"
+      >
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M2 4.5A1.5 1.5 0 013.5 3h3.84a1.5 1.5 0 011.06.44l1.1 1.1a1.5 1.5 0 001.06.44H16.5A1.5 1.5 0 0118 6.48V16a2 2 0 01-2 2H4a2 2 0 01-2-2V4.5z" />
+        </svg>
+      </button>
+    </div>
+  )
+
   return (
     <div className="modal-overlay pe-overlay">
       <div className="pe-panel">
@@ -103,41 +131,30 @@ const PdfExportConfirmModal = ({
             </div>
           </div>
 
-          {/* ── 输出位置（单文件和合并都用） ── */}
+          {/* ── 输出位置 ──
+              single：下拉选择「与文件同源 / 指定文件夹」，选文件夹才展开路径输入
+              merge：固定为「指定文件夹」，直接展开路径输入（无下拉） */}
           <div className="pe-section">
             <span className="pe-section-label">输出位置</span>
-            <div className="pe-select-row">
-              <select
-                className="pe-select"
-                value={exportConfig.outputType}
-                onChange={(e) => changeOutputType(e.target.value)}
-              >
-                <option value="source">与文件同源</option>
-                <option value="folder">指定文件夹</option>
-              </select>
-            </div>
 
-            {/* 指定文件夹时展开路径输入 */}
-            {exportConfig.outputType === 'folder' && (
-              <div className="pe-folder-row" style={{ marginTop: 6 }}>
-                <input
-                  className="pe-path-input"
-                  type="text"
-                  placeholder="选择或输入导出路径..."
-                  value={exportConfig.folderPath}
-                  onChange={changeFolderPath}
-                />
-                <button
-                  className="pe-folder-btn"
-                  onClick={handleSelectFolder}
-                  title="选择文件夹"
-                  type="button"
-                >
-                  <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M2 4.5A1.5 1.5 0 013.5 3h3.84a1.5 1.5 0 011.06.44l1.1 1.1a1.5 1.5 0 001.06.44H16.5A1.5 1.5 0 0118 6.48V16a2 2 0 01-2 2H4a2 2 0 01-2-2V4.5z" />
-                  </svg>
-                </button>
-              </div>
+            {exportConfig.mode === 'merge' ? (
+              folderRow
+            ) : (
+              <>
+                <div className="pe-select-row">
+                  <select
+                    className="pe-select"
+                    value={exportConfig.outputType}
+                    onChange={(e) => changeOutputType(e.target.value)}
+                  >
+                    <option value="source">与文件同源</option>
+                    <option value="folder">指定文件夹</option>
+                  </select>
+                </div>
+
+                {/* 指定文件夹时展开路径输入 */}
+                {exportConfig.outputType === 'folder' && folderRow}
+              </>
             )}
           </div>
 
