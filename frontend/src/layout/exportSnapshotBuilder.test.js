@@ -39,7 +39,7 @@ test('computeContentRectAtDpi: @EXPORT_DPI 重算（陷阱 A）且与 @PREVIEW_D
   assert.ok(at300.width > at72.width * 4, 'contentRect 必须随 dpi 放大，否则转发 Preview command 会缩角')
 })
 
-test('buildExportSnapshot: sourceRef 必填（陷阱 C）+ page 0-based（P0-A）+ rotation 来自 fileRotations', () => {
+test('buildExportSnapshot: sourceRef 必填（陷阱 C）+ page 0-based（P0-A）+ per-file 尺寸（P0-Image-Geometry）', () => {
   const files = [
     { key: 'img1', path: '/p/a.png', status: 'parsed' },           // 无 pageNum → page 0
     { key: 'pdf1', path: '/p/b.pdf', status: 'parsed', pageNum: 2 }, // 1-based 第 2 页 → page 1
@@ -47,17 +47,22 @@ test('buildExportSnapshot: sourceRef 必填（陷阱 C）+ page 0-based（P0-A�
     { key: 'skip', path: '/p/c.pdf', status: 'failed' },
   ]
   const fileRotations = { img1: 90, pdf1: 0, pdf0: 0 }
+  const dimensions = new Map([
+    ['img1', { width: 2480, height: 3508 }],   // image natural px
+    ['pdf1', { width: 595, height: 842 }],     // PDF points（透传，不参与渲染）
+    ['pdf0', { width: 595, height: 842 }],
+  ])
 
-  // page 逐 file 由 pageNum-1 决定（0-based），不再由 documentState.sourceType 全局决定；
-  // image / 缺失 pageNum → page=0。previewPage 不参与。
-  const pdfDoc = { pageSize: { w: 1240, h: 1754 }, pageNum: 2, sourceType: 'pdf' }
-  const pdfCmds = buildExportSnapshot({ files, documentState: pdfDoc, fileRotations, settings: A4 })
-  assert.equal(pdfCmds.length, 3, 'failed 文件应被过滤')
-  assert.deepEqual(pdfCmds[0].sourceRef, { path: '/p/a.png', page: 0 })
-  assert.equal(pdfCmds[0].contentRotation, 90)
-  assert.deepEqual(pdfCmds[1].sourceRef, { path: '/p/b.pdf', page: 1 })
-  assert.deepEqual(pdfCmds[2].sourceRef, { path: '/p/b0.pdf', page: 0 })
-  assert.deepEqual(pdfCmds[0].paper, { widthMm: 210, heightMm: 297, dpi: EXPORT_DPI })
+  // page 逐 file 由 pageNum-1 决定（0-based）；sourceWidth/Height 逐 file 取 dimensions（P0-Image-Geometry）。
+  const cmds = buildExportSnapshot({ files, fileRotations, settings: A4, dimensions })
+  assert.equal(cmds.length, 3, 'failed 文件应被过滤')
+  assert.deepEqual(cmds[0].sourceRef, { path: '/p/a.png', page: 0 })
+  assert.equal(cmds[0].contentRotation, 90)
+  // img1 旋转 90 → rotatedBounds 宽高互换（effectiveW=height=3508），证明 per-file 尺寸生效
+  assert.deepEqual(cmds[0].rotatedBounds, { width: 3508, height: 2480 })
+  assert.deepEqual(cmds[1].sourceRef, { path: '/p/b.pdf', page: 1 })
+  assert.deepEqual(cmds[2].sourceRef, { path: '/p/b0.pdf', page: 0 })
+  assert.deepEqual(cmds[0].paper, { widthMm: 210, heightMm: 297, dpi: EXPORT_DPI })
 })
 
 test('buildExportSnapshot 零自有几何：委托 createPlacement（c1-a 静态验收）', () => {
@@ -70,10 +75,10 @@ test('buildExportSnapshot 零自有几何：委托 createPlacement（c1-a 静态
 })
 
 test('Producer 同源：buildExportSnapshot ≡ buildSingleFileRenderCommand（同输入，无额外变换）', () => {
-  const documentState = { pageSize: { w: 1240, h: 1754 }, pageNum: 2, sourceType: 'pdf' }
   const fileRotations = { k: 90 }
   const files = [{ key: 'k', path: '/p/x.pdf', status: 'parsed', pageNum: 2 }]
-  const cmds = buildExportSnapshot({ files, documentState, fileRotations, settings: A4 })
+  const dimensions = new Map([['k', { width: 1240, height: 1754 }]])
+  const cmds = buildExportSnapshot({ files, fileRotations, settings: A4, dimensions })
 
   const expected = buildSingleFileRenderCommand({
     sourceWidth: 1240,
@@ -107,7 +112,8 @@ test('Preview producer ≡ Export producer：同输入 placement/rotatedBounds/c
   const previewCmd = buildRenderCommand(paperLayoutAt300, documentState)
   const exportCmd = buildExportSnapshot({
     files: [{ key: 'k', path: '/p/x.pdf', status: 'parsed', pageNum: 2 }],
-    documentState, fileRotations: { k: 90 }, settings: A4,
+    fileRotations: { k: 90 }, settings: A4,
+    dimensions: new Map([['k', { width: 1240, height: 1754 }]]),
   })[0]
 
   assert.deepEqual(previewCmd.placement, exportCmd.placement)

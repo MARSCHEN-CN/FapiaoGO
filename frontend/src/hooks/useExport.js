@@ -2,6 +2,7 @@ import { useState, useCallback, useRef, useSyncExternalStore } from 'react'
 import { exportExcel, startPdfExport, startRenderExport, cancelPdfExport } from '../services/ExportService'
 import { EXPORT_RENDER_ENABLED } from '../layout/exportConstants.js'
 import { buildExportSnapshot } from '../layout/exportSnapshotBuilder.js'
+import { resolveExportFilesDimensions } from '../layout/exportFileDimensions.js'
 import { isRenderExportEligible } from '../layout/exportCapabilities.js'
 import { createExportTask, EXPORT_TYPE, EXPORT_MODE } from '../models/ExportTask'
 import { createSuccessfulExport, createFailedExport, createCancelledExport } from '../models/ExportResult'
@@ -160,11 +161,14 @@ export function useExport({ files, excelFiles, electronAPIRef, previewState, set
         // 新管线（D2-2-c1）：几何由 Preview 状态经薄桥组装，ExportService 保持几何无关。
         // 仅当 merge 模式、flag 开启、Preview 几何状态可用、且所有文件格式受 render 管线支持时启用；
         // 否则（含 OFD 等不被支持的类型）回落 legacy /api/export-pdf。
+        // P0-Image-Geometry：先补齐每个文件的物理尺寸（image=natural px；缺失时走 /metadata），
+        // 不再依赖全局 documentState.pageSize，也不触发 UI 预览。
+        const dimensions = await resolveExportFilesDimensions(exportFiles)
         const commands = buildExportSnapshot({
           files: exportFiles,
-          documentState: previewState.documentState,
           fileRotations: previewState.fileRotations,
           settings,
+          dimensions,
         })
 
         // 计算 merge 模式输出路径
