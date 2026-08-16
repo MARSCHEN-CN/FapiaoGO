@@ -75,18 +75,24 @@ export function computeContentRectAtDpi(settings, dpi) {
  * @param {Object} params.settings - { paperSize, customPaper, marginTop, marginRight, marginBottom, marginLeft }
  * @returns {Array} RenderCommand[]（经 buildExportRenderCommand → createPlacement）
  */
-export function buildExportSnapshot({ files, documentState, fileRotations, previewPage = 1, settings }) {
+export function buildExportSnapshot({ files, documentState, fileRotations, settings }) {
   const paperSpec = buildExportPaperSpec(settings)
   const contentRect = computeContentRectAtDpi(settings, EXPORT_DPI)
   const sourceWidth = documentState?.pageSize?.w ?? 0
   const sourceHeight = documentState?.pageSize?.h ?? 0
-  const isPdf = documentState?.sourceType === 'pdf'
 
+  // [merge 导出契约 · P0-A/P0-B/P0-D]
+  // 一个输入 file（page-level，多页 PDF 已在导入阶段被 /split_pdf 拆成单页 fileObj）
+  // → 一个输出页。sourceRef.page 恒为 0-based：
+  //   pageNum 是 1-based SOURCE evidence（buildFileObj 冻结），在此边界 -1 转 0-based；
+  //   单页文件 / 图片 pageNum=null → page=0。
+  // previewPage（UI 1-based 页码）不参与导出页范围决策（验收 M-09）。
   return (files || [])
     .filter(f => f.status === 'parsed')
     .map(f => {
       const rotation = (fileRotations && fileRotations[f.key]) || 0
-      const page = isPdf ? (previewPage || documentState?.pageNum || 0) : 0
+      const pageNum = (typeof f.pageNum === 'number' && f.pageNum >= 1) ? f.pageNum : 1
+      const page = pageNum - 1  // 0-based，与后端 fitz / insert_pdf(from_page) 对齐
       return buildExportRenderCommand({
         sourceWidth,
         sourceHeight,

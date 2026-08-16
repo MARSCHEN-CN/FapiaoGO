@@ -25,7 +25,7 @@ _apply_margins / calculateFit / fit_scale.
 import fitz
 
 from services.source_adapter import read_source_bytes
-from services.render_executor import draw_render_command, paper_px
+from services.render_executor import draw_render_command, paper_px, render_command_to_page
 
 
 def _detect_source_kind(source_bytes):
@@ -142,17 +142,25 @@ def render_sheet_commands(doc, command_group, source_cache=None, repeated=None):
     # non-empty image group) so the output PDF is never empty.
 
 
-def execute_export_render(commands, progress=None):
+def execute_export_render(commands, progress=None, page_per_command=False):
     """Orchestrate a list of RenderCommands into a single merged PDF (bytes).
 
-    Scheme B same-sheet: all image commands share ONE sheet page; PDF commands
-    are passthrough (each its own page). Geometry is consumed from the
-    RenderCommands; this module never recomputes fit / scale / center / rotation.
+    Two composition semantics, selected by `page_per_command`:
+
+      * page_per_command=False（scheme B, 默认 / 拼版）：所有 image command 共享
+        一个 sheet 页；PDF command 透传（每个自己的页）。
+      * page_per_command=True（合并导出）：每个 command 独立一个输出页，严格
+        保持 commands 输入顺序（image → render_command_to_page 独立页，
+        pdf → insert_pdf 单页）。这使「输入物理页数 = 输出物理页数」成立。
+
+    Geometry is consumed from the RenderCommands; this module never recomputes
+    fit / scale / center / rotation.
 
     Args:
         commands: validated RenderCommand dicts (sourceRef + paper + geometry).
         progress: optional callable(label) invoked once per command (in request
                   order) for task progress reporting.
+        page_per_command: True = 每 command 一个输出页（合并）；False = 同 sheet 拼版。
 
     Returns:
         bytes -- the merged PDF document.
@@ -177,42 +185,70 @@ def execute_export_render(commands, progress=None):
     _source_cache = {}      # path -> bytes (repeated sources only)
     _pdf_doc_cache = {}     # path -> fitz.Document (repeated PDF sources only)
     try:
-        # Route: sniff KIND cheaply (5 bytes) and split into the same-sheet image
-        # group vs the PDF passthrough list. Full bytes are read once later.
-        image_group = []
-        pdf_items = []
-        for cmd in commands:
-            src_ref = cmd.get('sourceRef') or {}
-            path = src_ref.get('path')
-            if not path:
-                raise ValueError("sourceRef.path is required for every command")
-            if _peek_source_kind(path) == 'pdf':
-                pdf_items.append(cmd)
-            else:
-                image_group.append(cmd)
+        if page_per_command:
+            # 合并导出契约（P0-C/P0-D）：每 command 一个输出页，严格保持输入顺序。
+            # image → render_command_to_page（独立页）；pdf → insert_pdf 单页。
+            for cmd in commands:
+                src_ref = cmd.get('sourceRef') or {}
+                path = src_ref.get('path')
+                if not path:
+                    raise ValueError("sourceRef.path is required for every command")
+                page = int(src_ref.get('page', 0) or 0)
+                if _peek_source_kind(path) == 'pdf':
+                    cached_doc = _pdf_doc_cache.get(path)
+                    if cached_doc is not None:
+                        _append_pdf_source(doc, None, page, pdf_doc=cached_doc)
+                        continue
+                    source_bytes = read_source_bytes(src_ref)
+                    if path in _repeated:
+                        src_doc = fitz.open(stream=source_bytes)
+                        _pdf_doc_cache[path] = src_doc
+                        _append_pdf_source(doc, None, page, pdf_doc=src_doc)
+                    else:
+                        _append_pdf_source(doc, source_bytes, page)
+                else:
+                    source_bytes = _source_cache.get(path)
+                    if source_bytes is None:
+                        source_bytes = read_source_bytes(src_ref)
+                        if path in _repeated:
+                            _source_cache[path] = source_bytes
+                    render_command_to_page(doc, cmd, source_bytes)
+        else:
+            # scheme B：所有 image command 拼同一个 sheet 页；pdf 每 command 一页。
+            image_group = []
+            pdf_items = []
+            for cmd in commands:
+                src_ref = cmd.get('sourceRef') or {}
+                path = src_ref.get('path')
+                if not path:
+                    raise ValueError("sourceRef.path is required for every command")
+                if _peek_source_kind(path) == 'pdf':
+                    pdf_items.append(cmd)
+                else:
+                    image_group.append(cmd)
 
-        if image_group:
-            render_sheet_commands(doc, image_group, _source_cache, _repeated)
+            if image_group:
+                render_sheet_commands(doc, image_group, _source_cache, _repeated)
 
-        for cmd in pdf_items:
-            src_ref = cmd.get('sourceRef') or {}
-            path = src_ref.get('path')
-            page = int(src_ref.get('page', 0) or 0)
-            cached_doc = _pdf_doc_cache.get(path)
-            if cached_doc is not None:
-                # Same source reused by another command: insert its page from the
-                # already-open doc (no disk read, no re-parse).
-                _append_pdf_source(doc, None, page, pdf_doc=cached_doc)
-                continue
-            source_bytes = read_source_bytes(src_ref)
-            if path in _repeated:
-                # Open once, keep for sibling commands, close in finally below.
-                src_doc = fitz.open(stream=source_bytes)
-                _pdf_doc_cache[path] = src_doc
-                _append_pdf_source(doc, None, page, pdf_doc=src_doc)
-            else:
-                # Distinct source: original per-command open/close (no retained memory).
-                _append_pdf_source(doc, source_bytes, page)
+            for cmd in pdf_items:
+                src_ref = cmd.get('sourceRef') or {}
+                path = src_ref.get('path')
+                page = int(src_ref.get('page', 0) or 0)
+                cached_doc = _pdf_doc_cache.get(path)
+                if cached_doc is not None:
+                    # Same source reused by another command: insert its page from the
+                    # already-open doc (no disk read, no re-parse).
+                    _append_pdf_source(doc, None, page, pdf_doc=cached_doc)
+                    continue
+                source_bytes = read_source_bytes(src_ref)
+                if path in _repeated:
+                    # Open once, keep for sibling commands, close in finally below.
+                    src_doc = fitz.open(stream=source_bytes)
+                    _pdf_doc_cache[path] = src_doc
+                    _append_pdf_source(doc, None, page, pdf_doc=src_doc)
+                else:
+                    # Distinct source: original per-command open/close (no retained memory).
+                    _append_pdf_source(doc, source_bytes, page)
 
         if progress:
             for cmd in commands:

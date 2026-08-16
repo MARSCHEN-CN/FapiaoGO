@@ -1698,7 +1698,7 @@ def _export_render_output_path(task_id):
     return os.path.join(tempfile.gettempdir(), f'export-render-{task_id}.pdf')
 
 
-def _run_export_render_task(task_id, commands, output_path=''):
+def _run_export_render_task(task_id, commands, output_path='', page_per_command=False):
     """D3-3b-3 real executor — command -> fitz page -> merged PDF on disk.
 
     Orchestration is delegated to services.export_render_service.execute_export_render
@@ -1708,9 +1708,10 @@ def _run_export_render_task(task_id, commands, output_path=''):
     RenderCommand. Grep ban: _apply_margins / calculateFit / fit_scale.
 
     Args:
-        task_id:     任务 ID。
-        commands:    已通过 validate_export_render_request 的归一化命令列表。
-        output_path: 前端指定的输出路径；为空则写入临时路径。
+        task_id:          任务 ID。
+        commands:         已通过 validate_export_render_request 的归一化命令列表。
+        output_path:      前端指定的输出路径；为空则写入临时路径。
+        page_per_command: True = 每 command 一个输出页（合并）；False = 同 sheet 拼版。
     """
     task = task_registry.get(task_id)
     if task is None:
@@ -1719,7 +1720,8 @@ def _run_export_render_task(task_id, commands, output_path=''):
 
     try:
         task.start()
-        pdf_bytes = execute_export_render(commands, progress=lambda lbl: task.advance(lbl))
+        pdf_bytes = execute_export_render(commands, progress=lambda lbl: task.advance(lbl),
+                                          page_per_command=page_per_command)
 
         if output_path:
             out_dir = os.path.dirname(output_path)
@@ -1750,12 +1752,12 @@ def api_export_render():
     可选参数 outputPath：前端指定的输出路径；不传则写入临时路径（path 通过 SSE 终态消息返回）。
     """
     data = request.get_json(silent=True) or {}
-    commands, err, output_path = validate_export_render_request(data)
+    commands, err, output_path, page_per_command = validate_export_render_request(data)
     if err:
         return jsonify({"success": False, "error": err}), 400
 
     task = task_registry.create(total=len(commands))
-    _export_render_executor.submit(_run_export_render_task, task.id, commands, output_path)
+    _export_render_executor.submit(_run_export_render_task, task.id, commands, output_path, page_per_command)
     return jsonify({"success": True, "taskId": task.id})
 
 

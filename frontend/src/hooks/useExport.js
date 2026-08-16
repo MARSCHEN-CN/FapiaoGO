@@ -164,7 +164,6 @@ export function useExport({ files, excelFiles, electronAPIRef, previewState, set
           files: exportFiles,
           documentState: previewState.documentState,
           fileRotations: previewState.fileRotations,
-          previewPage: previewState.previewPage,
           settings,
         })
 
@@ -182,7 +181,7 @@ export function useExport({ files, excelFiles, electronAPIRef, previewState, set
           renderOutputPath = `${outputDir}\\${fname}`
         }
 
-        const res = await startRenderExport(commands, { outputPath: renderOutputPath }, handlers)
+        const res = await startRenderExport(commands, { outputPath: renderOutputPath, pagePerCommand: true }, handlers)
         backendTaskId = res.taskId
         close = res.close
       } else {

@@ -414,10 +414,11 @@ export async function startPdfExport(config, handlers = {}) {
  */
 export async function startRenderExport(commands, options = {}, handlers = {}) {
   const { onProgress, onTerminal, onError } = handlers
-  const { outputPath = '' } = options || {}
+  const { outputPath = '', pagePerCommand = false } = options || {}
 
   const body = { commands: Array.isArray(commands) ? commands : [] }
   if (outputPath) body.outputPath = outputPath
+  if (pagePerCommand) body.pagePerCommand = true
 
   const response = await fetch(`${BACKEND_URL}/api/export-render`, {
     method: 'POST',
