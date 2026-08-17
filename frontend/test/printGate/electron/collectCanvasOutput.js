@@ -56,6 +56,24 @@ function b64toBlob(b64, mime = 'image/png') {
   return new Blob([arr], { type: mime })
 }
 
+/** previewImage base64 → Blob（Gate A 修复镜像）：嗅探真实 MIME，避免 WebP 内容被声明成 image/png 解码失败 → 白纸。 */
+function detectImageMime(b64) {
+  let raw = b64
+  if (raw.startsWith('data:')) raw = raw.split(',')[1] || ''
+  let bin
+  try { bin = atob(raw.slice(0, 16)) } catch { return 'image/png' }
+  const bytes = new Uint8Array(bin.length)
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+  if (bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4E && bytes[3] === 0x47) return 'image/png'
+  if (bytes[0] === 0xFF && bytes[1] === 0xD8 && bytes[2] === 0xFF) return 'image/jpeg'
+  if (bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46 &&
+      bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50) return 'image/webp'
+  return 'image/png'
+}
+function previewImageToBlob(b64) {
+  return b64toBlob(b64, detectImageMime(b64))
+}
+
 /**
  * makePrintItem —— 固化 usePrint.js:180-278 三分支（参数逐字镜像）
  * @param {object} caseDef GATE_CASES 项
@@ -97,7 +115,7 @@ export async function makePrintItem(caseDef) {
       const blob = await fetchPrintRaster(f.docId, 1)
       if (blob) { f._previewImageUrl = URL.createObjectURL(blob); return f }
     }
-    if (f.previewImage) { f._previewImageUrl = URL.createObjectURL(b64toBlob(f.previewImage)); return f }
+    if (f.previewImage) { f._previewImageUrl = URL.createObjectURL(previewImageToBlob(f.previewImage)); return f }
     throw new Error('OFD 无 docId 且无 previewImage，无法加载')
   }
 
@@ -109,7 +127,7 @@ export async function makePrintItem(caseDef) {
       f._previewImageUrl = URL.createObjectURL(new Blob([normalizeReadFileData(fileData)]))
       return f
     }
-    if (f.previewImage) { f._previewImageUrl = URL.createObjectURL(b64toBlob(f.previewImage)); return f }
+    if (f.previewImage) { f._previewImageUrl = URL.createObjectURL(previewImageToBlob(f.previewImage)); return f }
     throw new Error('image 加载失败')
   }
 

@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import { PREVIEW_DPI, PRINT_PIPELINE, PRINT_SETTINGS_DEFAULTS, BACKEND_URL } from '../config'
 import {
-  isMergeMode, b64toBlob, getExtension,
+  isMergeMode, previewImageToBlob, getExtension,
 } from '../utils'
 import { getForcedLandscape } from '../utils/mergeMode'
 import { renderPrintContent } from '../utils/printRenderer'
@@ -215,7 +215,7 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
               console.warn('[usePrint] OFD 逐页栅格获取失败 page=%d:', page.index + 1, job.docId, e?.message)
             }
             if (!blob && f.previewImage) {
-              blob = b64toBlob(f.previewImage, 'image/png')
+              blob = previewImageToBlob(f.previewImage)
               console.warn('[usePrint] OFD 第 %d 页使用 previewImage 兜底（旧 session 无 docId）:', page.index + 1, f.name)
             }
             if (!blob) {
@@ -257,7 +257,7 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
           }
         }
         if (!blob && f.previewImage) {
-          blob = b64toBlob(f.previewImage, 'image/png')
+          blob = previewImageToBlob(f.previewImage)
           console.warn('[usePrint] OFD 使用 previewImage 兜底（旧 session 无 docId）:', f.name)
         }
         if (!blob) {
@@ -274,7 +274,7 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
           blob = new Blob([fileData.data])
         }
         if (!blob && f.previewImage) {
-          blob = b64toBlob(f.previewImage, 'image/png')
+          blob = previewImageToBlob(f.previewImage)
         }
         if (!blob) {
           console.error('[usePrint] 读取图片文件失败:', f.printPath)

@@ -96,6 +96,67 @@ export function b64toBlob(b64Data, contentType = 'image/png') {
   }
 }
 
+/**
+ * 检测 base64 编码图片的真实文件类型（魔数嗅探）。
+ *
+ * 背景：fae7805 起 `previewImage` 字段语义已从「PNG」升级为「Raster
+ * （PNG / JPEG / WEBP 任一）」——Renderer 为展示/缓存/传输统一输出 WebP，
+ * 消费端（Blob / Image.decode）必须识别真实类型，不能假设 image/png。
+ * 否则 WebP 字节 + image/png MIME → 浏览器解码失败 → contentSource 缺失
+ * → canvas 跳过绘制 → 白纸打印（Gate A 根因）。
+ *
+ * @param {string} b64Data base64（可带 `data:` 前缀或纯 base64）
+ * @returns {'image/png'|'image/jpeg'|'image/webp'} 识别不出回退 image/png（旧行为兼容）
+ */
+export function detectImageMime(b64Data) {
+  if (!b64Data) return 'image/png'
+  let raw = b64Data
+  if (raw.startsWith('data:')) {
+    raw = raw.split(',')[1] || ''
+  }
+  // 前 12 字节足够覆盖 PNG / JPEG / WEBP 魔数
+  let bin
+  try {
+    bin = atob(raw.slice(0, 16))
+  } catch {
+    return 'image/png'
+  }
+  const bytes = new Uint8Array(bin.length)
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+
+  // PNG: 89 50 4E 47
+  if (bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4E && bytes[3] === 0x47) {
+    return 'image/png'
+  }
+  // JPEG: FF D8 FF
+  if (bytes[0] === 0xFF && bytes[1] === 0xD8 && bytes[2] === 0xFF) {
+    return 'image/jpeg'
+  }
+  // WEBP: RIFF .... WEBP（offset 0-3 = RIFF，8-11 = WEBP）
+  if (
+    bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46 &&
+    bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50
+  ) {
+    return 'image/webp'
+  }
+  // 识别不出：回退 image/png（与旧行为一致，最安全）
+  return 'image/png'
+}
+
+/**
+ * previewImage base64 → Blob（统一 Raster 消费入口）。
+ *
+ * 替换散落的 `b64toBlob(f.previewImage, 'image/png')`：
+ * 嗅探真实 MIME，避免 WebP/JPEG 内容被声明成 image/png 导致解码失败（Gate A）。
+ *
+ * @param {string} b64Data
+ * @returns {Blob|null}
+ */
+export function previewImageToBlob(b64Data) {
+  if (!b64Data) return null
+  return b64toBlob(b64Data, detectImageMime(b64Data))
+}
+
 export function naturalSort(a, b) {
   const ax = [], bx = []
   a.replace(/(\d+)|(\D+)/g, (_, $1, $2) => { ax.push([$1 || Infinity, $2 || '']) })

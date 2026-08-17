@@ -17,7 +17,7 @@
 // 共享 renderer 内部已有 L2 缓存（相同参数直接命中），天然保证「Merge 内几何只算一次」。
 
 import { PREVIEW_DPI } from '../config'
-import { b64toBlob } from '../utils'
+import { previewImageToBlob } from '../utils'
 import { fetchPrintRaster } from '../utils/printAdapter'
 import { renderMultipleItemsToCanvas } from '../renderers.js'
 import { renderMergeFinalArtifactCanonical } from './mergeFinalArtifactCanonical.js'
@@ -115,7 +115,7 @@ export async function loadMergePrintItems(group, ipc) {
           }
         }
         if (!blob && f.previewImage) {
-          blob = b64toBlob(f.previewImage, 'image/png')
+          blob = previewImageToBlob(f.previewImage)
         }
         if (!blob) {
           console.error('[usePrint] 合并项 OFD 无 docId 且无 previewImage:', f.name)
@@ -132,7 +132,7 @@ export async function loadMergePrintItems(group, ipc) {
           blob = new Blob([fileData.data])
         }
         if (!blob && f.previewImage) {
-          blob = b64toBlob(f.previewImage, 'image/png')
+          blob = previewImageToBlob(f.previewImage)
         }
         if (!blob) return null
         const blobUrl = URL.createObjectURL(blob)
