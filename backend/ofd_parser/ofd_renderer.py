@@ -212,9 +212,17 @@ class _OFDRenderer:
         例如 1412424.ofd：Content PhysicalBox=600.938×397.013（横向），
         Document PageArea=210×297（A4 竖向）。两者不一致时，信任 Content.xml。
 
+        DPI 语义（R-DPI 修复，2026-08-17）：
+          300dpi 基准宽度 = min(3508, content_w × 300/25.4) —— 3508 即 A4 宽 @300dpi，
+          是 fae7805 已确认的内容几何锚点（内容缩放到 A4 宽度，297mm）。
+          各 DPI 按物理尺寸线性缩放：target_w = base_w_300 × dpi / 300，
+          保证 200dpi ≈ 2/3 × 300dpi、150dpi ≈ 1/2 × 300dpi（W300/W200≈1.5，物理尺寸不变）。
+          修复前用 min(3508, content_w × scale) 硬钳制 → 200/300dpi 同尺寸（dpi 失效）。
+
         unit_to_mm 由目标像素宽度反推，保证内容完整可见不变形。
         """
-        target_w = max(400, min(3508, round(content_w * self.scale)))
+        base_w_300 = min(3508, round(content_w * (300 / 25.4)))
+        target_w = max(400, round(base_w_300 * self.scale * 25.4 / 300))
         target_h = max(300, round(target_w * content_h / content_w))
         self.img_w, self.img_h = target_w, target_h
         self.unit_to_mm = target_w / (content_w * self.scale)

@@ -117,6 +117,45 @@ def test_good_sample_metadata_unchanged():
         f"2644 metadata 尺寸回归: {dims}"
 
 
+# ═══════════════════════════════════════════
+# R-DPI Gate：requested DPI → raster pixel 线性缩放（R-DPI 修复回归）
+#   物理尺寸不变、像素按 DPI 比例缩放（W300/W200≈1.5）、方向/比例不变。
+# ═══════════════════════════════════════════
+
+def test_bad_sample_dpi_scaling():
+    """1412424：150/200/300dpi 物理尺寸一致，像素按 DPI 比例线性缩放。"""
+    raw = _load(SAMPLE_BAD)
+    dims300 = ofd_page_dimensions(raw, 300)[0]
+    dims200 = ofd_page_dimensions(raw, 200)[0]
+    dims150 = ofd_page_dimensions(raw, 150)[0]
+
+    # R-DPI-4：像素比例 ≈ DPI 比例
+    assert abs(dims300['width'] / dims200['width'] - 1.5) < 0.01, \
+        f"W300/W200 应≈1.5: {dims300['width']}/{dims200['width']}"
+    assert abs(dims300['width'] / dims150['width'] - 2.0) < 0.01, \
+        f"W300/W150 应≈2.0: {dims300['width']}/{dims150['width']}"
+
+    # R-DPI-3：physical size 不变量（px/dpi×25.4 一致）
+    ph300 = dims300['width'] / 300 * 25.4
+    ph200 = dims200['width'] / 200 * 25.4
+    assert abs(ph300 - ph200) < 0.5, f"physicalW 应一致: {ph300:.2f} vs {ph200:.2f}mm"
+
+    # 宽高比保持（Content 1.51）
+    assert abs(dims300['width'] / dims300['height'] - 600.938 / 397.013) < 0.02
+
+
+def test_good_sample_dpi_scaling():
+    """2644：DPI 线性缩放不回归（W300/W200≈1.5，physical 一致）。"""
+    raw = _load(SAMPLE_GOOD)
+    dims300 = ofd_page_dimensions(raw, 300)[0]
+    dims200 = ofd_page_dimensions(raw, 200)[0]
+    assert abs(dims300['width'] / dims200['width'] - 1.5) < 0.01, \
+        f"2644 W300/W200 应≈1.5: {dims300['width']}/{dims200['width']}"
+    ph300 = dims300['width'] / 300 * 25.4
+    ph200 = dims200['width'] / 200 * 25.4
+    assert abs(ph300 - ph200) < 0.5, f"2644 physicalW 应一致: {ph300:.2f} vs {ph200:.2f}mm"
+
+
 if __name__ == '__main__':
     test_bad_sample_abs_mediafile_resource_registered()
     test_bad_sample_a4_dimensions()

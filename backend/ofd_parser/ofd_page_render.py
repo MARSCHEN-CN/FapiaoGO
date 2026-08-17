@@ -171,17 +171,13 @@ def ofd_page_dimensions(raw_bytes, dpi=300):
     for idx, content_clean in enumerate(contents):
         w, h = _page_physical_box(content_clean)
         if w > 500 and doc_page_size:
-            # Content.xml 使用独立坐标系 → 信任 Content.xml 的 PhysicalBox
-            # 以内容尺寸为画布，缩放到 DPI 对应的像素（上限 3508 宽度）
-            scale = dpi / 25.4
-            raw_w = w * scale
-            if raw_w > 3508:
-                factor = 3508 / raw_w
-                pw = 3508
-                ph = max(300, round(h * scale * factor))
-            else:
-                pw = max(400, round(raw_w))
-                ph = max(300, round(h * scale))
+            # Content.xml 使用独立坐标系 → 信任 Content.xml 的 PhysicalBox，
+            # 与 _OFDRenderer._init_dimensions_with_content 同语义（R-DPI 修复）：
+            # 300dpi 基准宽锚点（3508 = A4 宽 @300dpi）→ 各 DPI 线性缩放，
+            # 保证 200dpi ≈ 2/3 × 300dpi、150dpi ≈ 1/2 × 300dpi（物理尺寸不变）。
+            base_w_300 = min(3508, round(w * (300 / 25.4)))
+            pw = max(400, round(base_w_300 * dpi / 300))
+            ph = max(300, round(pw * h / w))
         else:
             pw, ph = _page_pixel_dims(w, h, dpi)
         result.append({
