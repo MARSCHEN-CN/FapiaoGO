@@ -3,6 +3,27 @@ import { filterFiles, isMergeMode, getPreviousYearInfo } from '../utils'
 import { buildDocumentViewModel, buildPageDuplicateInfo, buildDocumentDuplicateInfo } from '../utils/documentViewModel'
 import { amountToChinese } from '../utils/amountConverter'
 import { getActiveSessionId, getSession, subscribe, getDocumentVersion } from '../stores/ImportSessionStore'
+import { db } from '../db'
+
+// ── P1：发票重复导入历史（advisory 旁路）工具 ──────────────────
+// 号码归一化与后端 import_history.normalize_invoice_number 保持一致：trim → 去内部空白 → uppercase
+function normalizeInvoiceNumber(raw) {
+  if (raw == null) return null
+  const s = String(raw).trim().replace(/\s+/g, '').toUpperCase()
+  return s || null
+}
+
+// 并发受限执行器：保持 concurrency 个在途 Promise
+function runPool(items, concurrency, worker) {
+  let i = 0
+  const exec = () => {
+    if (i >= items.length) return
+    const cur = i++
+    Promise.resolve(worker(items[cur])).finally(exec)
+  }
+  const n = Math.min(concurrency, items.length)
+  for (let c = 0; c < n; c++) exec()
+}
 
 // ── Reducer ──────────────────────────────────────────────────
 
@@ -37,6 +58,9 @@ export function FileProvider({ children }) {
   }, [])
 
   const files = state.files
+
+  // ── P1：发票重复导入历史（advisory 旁路，纯风险呈现，不拦截导入） ──
+  const [importHistoryInfo, setImportHistoryInfo] = useState(() => new Map())
 
   // 搜索过滤。filterFiles 是纯 O(n) 遍历，对预期数据量（几千条以内）开销可忽略，
   // 因此查询直接同步，不使用 useDeferredValue——后者在本场景无可证收益却引入时序复杂度。
@@ -133,6 +157,82 @@ export function FileProvider({ children }) {
     return { previousYearInfo: prevYear, duplicatePageInfo: pageDup, duplicateDocumentInfo: docDup }
   }, [files, documentView.duplicateGroups])
 
+  // ── P1：发票重复导入历史查询（advisory，fire-and-forget，绝不作为导入 pipeline 的 dependency） ──
+  // 竞态防护：
+  //  - importHistoryReqIdRef：每轮查询自增令牌，过期回写直接丢弃（防旧请求回写）
+  //  - firedSigRef：签名去重避免同集合重复查询；cleanup 重置 → StrictMode remount 不会错误跳过查询
+  //  - liveKeys 快照：回写/剔除只对当前仍存活的 file.key 生效（防结果晚于文件生命周期）
+  //  - 同号去重：归一化号 → fileKey[]，一次 GET 广播到多个 file.key
+  //  - 失败静默：dbError / 抛错均忽略，不影响正常导入
+  const importHistoryReqIdRef = useRef(0)
+  const firedSigRef = useRef('')
+  const importHistoryTimerRef = useRef(null)
+  useEffect(() => {
+    // 仅关注已解析且带发票号码的文件
+    const liveKeys = new Set(files.map(f => f.key))
+    const byNumber = new Map()
+    for (const f of files) {
+      if (f.status !== 'parsed' || !f.invoiceNumber) continue
+      const norm = normalizeInvoiceNumber(f.invoiceNumber)
+      if (!norm) continue
+      if (!byNumber.has(norm)) byNumber.set(norm, [])
+      byNumber.get(norm).push(f.key)
+    }
+    if (byNumber.size === 0) {
+      // 无查询目标：清理可能残留的过期条目（仅剔除已不存在的 file.key）
+      setImportHistoryInfo(prev => {
+        if (prev.size === 0) return prev
+        const next = new Map()
+        for (const [k, v] of prev) if (liveKeys.has(k)) next.set(k, v)
+        return next.size === prev.size ? prev : next
+      })
+      return
+    }
+
+    const sig = Array.from(byNumber.keys()).sort().join('|')
+    if (firedSigRef.current === sig) return  // 同集合已查过，跳过（StrictMode 双调用靠 cleanup 重置）
+
+    if (importHistoryTimerRef.current) clearTimeout(importHistoryTimerRef.current)
+    importHistoryTimerRef.current = setTimeout(() => {
+      importHistoryTimerRef.current = null
+      const myReq = ++importHistoryReqIdRef.current
+      firedSigRef.current = sig
+      const entries = Array.from(byNumber.entries())
+      runPool(entries, 6, ([norm, fileKeys]) =>
+        db.getImportHistory(norm).then(res => {
+          if (myReq !== importHistoryReqIdRef.current) return  // 已被新轮换取代
+          if (res && res.__error) return                       // 静默失败
+          if (!res || res.exists !== true) return             // 未命中
+          setImportHistoryInfo(prev => {
+            const next = new Map()
+            for (const [k, v] of prev) if (liveKeys.has(k)) next.set(k, v)  // 剔除已移除
+            for (const k of fileKeys) {
+              if (liveKeys.has(k)) {
+                next.set(k, {
+                  exists: true,
+                  invoiceDate: res.invoiceDate,
+                  firstImportedAt: res.firstImportedAt,
+                  lastImportedAt: res.lastImportedAt,
+                  importCount: res.importCount,
+                  dateMismatchCount: res.dateMismatchCount,
+                })
+              }
+            }
+            return next
+          })
+        }).catch(() => { /* 静默降级 */ })
+      )
+    }, 300)
+
+    return () => {
+      if (importHistoryTimerRef.current) {
+        clearTimeout(importHistoryTimerRef.current)
+        importHistoryTimerRef.current = null
+      }
+      firedSigRef.current = ''  // StrictMode remount 后允许重新查询
+    }
+  }, [files])
+
   const fileStats = useMemo(() => {
     // 可打印计数：Print Pipeline 域，打印以页为单位，保持 page 级
     let printableCount = 0
@@ -189,6 +289,7 @@ export function FileProvider({ children }) {
     previousYearInfo,
     duplicatePageInfo,
     duplicateDocumentInfo,
+    importHistoryInfo,
     // 文件统计
     totalAmount,
     printableCount,
@@ -202,6 +303,7 @@ export function FileProvider({ children }) {
     mergeMode,
     documentView,
     previousYearInfo, duplicatePageInfo, duplicateDocumentInfo,
+    importHistoryInfo,
     totalAmount, printableCount, hasFailedFiles, failedFilesCount,
     totalAmountInt, totalAmountDecimal, chineseAmount,
   ])

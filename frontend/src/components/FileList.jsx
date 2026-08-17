@@ -7,7 +7,7 @@ const ROW_HEIGHT = 64
 const OVERSCAN = 5
 
 // ─── FileCard 行组件 ─────────────────────────────────────────────
-const FileCardRow = memo(({ index, style, files, previewFileKey, previewFileDocId, mergeActive, mergeCount, duplicateInfo, previousYearInfo, fileRotations, onPreview, onRemove, onRotate, onHoverFile }) => {
+const FileCardRow = memo(({ index, style, files, previewFileKey, previewFileDocId, mergeActive, mergeCount, duplicateInfo, previousYearInfo, importHistoryInfo, fileRotations, onPreview, onRemove, onRotate, onHoverFile }) => {
   const fileObj = files?.[index]
   if (!fileObj) return null
 
@@ -23,12 +23,16 @@ const FileCardRow = memo(({ index, style, files, previewFileKey, previewFileDocI
   // 往年发票（derived flag，优先级低于失败、低于重复）
   const prevInfo = previousYearInfo?.get(fileObj.key)
   const isPrevYear = !!prevInfo?.isPreviousYear
+  // 发票重复导入历史（advisory，纯风险呈现，不拦截导入）
+  const ihInfo = importHistoryInfo?.get(fileObj.key)
+  const isImportHistory = !!ihInfo?.exists
   // 统一判定：失败文件 = 解析错误 / failedFields 非空 / parseMethod 含「缺失」
   // （原先仅用 failedFields.length>0，导致 status==='error' 或「缺失」类解析失败
   //   的空白图片能显示「解析失败」文字却拿不到 has-failed 类 → 左侧红条/状态圆点不红）
   const hasFailed = isFailedFile(fileObj)
   const showDuplicate = !hasFailed && isDuplicate
   const showPrevYear = !hasFailed && !showDuplicate && isPrevYear
+  const showImportHistory = !hasFailed && !showDuplicate && !isPrevYear && isImportHistory
 
   const handleClick = () => {
     if (typeof onPreview === 'function') onPreview(fileObj)
@@ -65,6 +69,7 @@ const FileCardRow = memo(({ index, style, files, previewFileKey, previewFileDocI
   } else if (fileObj.status === 'parsed') {
     if (showDuplicate) statusDotClass = 'duplicate'
     else if (showPrevYear) statusDotClass = 'prevyear'
+    else if (showImportHistory) statusDotClass = 'importhistory'
     else statusDotClass = 'ready'
   }
 
@@ -82,7 +87,7 @@ const FileCardRow = memo(({ index, style, files, previewFileKey, previewFileDocI
   return (
     <div
       style={style}
-      className={`file-card ${isActive ? 'active' : ''} ${isGroupFirst ? 'merge-group-first' : ''} ${isGroupLast ? 'merge-group-last' : ''} ${hasFailed ? 'has-failed' : ''} ${fileObj.status === 'parsing' ? 'parsing' : ''} ${showDuplicate ? 'duplicate' : ''} ${showPrevYear ? 'previous-year' : ''} ${isMultipage ? 'multipage' : ''}`}
+      className={`file-card ${isActive ? 'active' : ''} ${isGroupFirst ? 'merge-group-first' : ''} ${isGroupLast ? 'merge-group-last' : ''} ${hasFailed ? 'has-failed' : ''} ${fileObj.status === 'parsing' ? 'parsing' : ''} ${showDuplicate ? 'duplicate' : ''} ${showPrevYear ? 'previous-year' : ''} ${showImportHistory ? 'import-history' : ''} ${isMultipage ? 'multipage' : ''}`}
       onClick={handleClick}
       onMouseEnter={handleMouseEnter}
     >
@@ -90,6 +95,12 @@ const FileCardRow = memo(({ index, style, files, previewFileKey, previewFileDocI
         <>
           <div className="prev-year-bar"></div>
           <div className="prev-year-label">往年发票</div>
+        </>
+      )}
+      {showImportHistory && (
+        <>
+          <div className="import-history-bar"></div>
+          <div className="import-history-label">重复导入提醒</div>
         </>
       )}
       {showDuplicate && isDupFirst && <div className="duplicate-bar"></div>}
@@ -189,6 +200,7 @@ const FileCardRow = memo(({ index, style, files, previewFileKey, previewFileDocI
   if (prev.mergeActive !== next.mergeActive || prev.mergeCount !== next.mergeCount) return false
   if (prev.duplicateInfo !== next.duplicateInfo) return false
   if (prev.previousYearInfo !== next.previousYearInfo) return false
+  if (prev.importHistoryInfo !== next.importHistoryInfo) return false
   if (prev.fileRotations !== next.fileRotations) return false
   return true
 })
@@ -200,6 +212,7 @@ export default memo(function FileList({
   paperSize,
   duplicateInfo,
   previousYearInfo,
+  importHistoryInfo,
   fileRotations,
   onPreview,
   onRemove,
@@ -226,12 +239,13 @@ export default memo(function FileList({
     mergeCount,
     duplicateInfo,
     previousYearInfo,
+    importHistoryInfo,
     fileRotations,
     onPreview,
     onRemove,
     onRotate,
     onHoverFile,
-  }), [files, previewFileKey, previewFileDocId, mergeActive, mergeCount, duplicateInfo, previousYearInfo, fileRotations, onPreview, onRemove, onRotate, onHoverFile])
+  }), [files, previewFileKey, previewFileDocId, mergeActive, mergeCount, duplicateInfo, previousYearInfo, importHistoryInfo, fileRotations, onPreview, onRemove, onRotate, onHoverFile])
 
   // 选中文件自动滚动（react-window v2 API：scrollToRow({ index, align })）
   useEffect(() => {

@@ -61,7 +61,8 @@ export default React.memo(function Sidebar({
 }) {
   const [removeSourceFile, setRemoveSourceFile] = useState(false)
   const [showPreviousYearWarning, setShowPreviousYearWarning] = useState(true)
-  const { files, searchQuery, setSearchQuery, filteredFiles, isSearching, documentView, totalAmount, hasFailedFiles, failedFilesCount, previousYearInfo, duplicateDocumentInfo } = useFileContext()
+  const [showImportHistoryWarning, setShowImportHistoryWarning] = useState(true)
+  const { files, searchQuery, setSearchQuery, filteredFiles, isSearching, documentView, totalAmount, hasFailedFiles, failedFilesCount, previousYearInfo, importHistoryInfo, duplicateDocumentInfo } = useFileContext()
   const mergeActive = isMergeMode(paperSize)
 
   // ── 排序下拉（纯 UI 状态，不上升到 App 级） ──
@@ -98,6 +99,9 @@ export default React.memo(function Sidebar({
   // previousYearInfo 已由 FileContext 集中计算
   const previousYearCount = documentView.previousYearCount
   const hasPreviousYear = previousYearCount > 0
+
+  // 发票重复导入历史（advisory）：命中文件数 = Map 条目数
+  const importHistoryCount = importHistoryInfo ? importHistoryInfo.size : 0
 
   // ── Step 10.5+：文件列表 document-level 聚合 ──
   // 优先消费装配结果 documentView.documents（InvoiceDocument 聚合条目），
@@ -372,6 +376,7 @@ export default React.memo(function Sidebar({
                   paperSize={paperSize}
                   duplicateInfo={duplicateInfo}
                   previousYearInfo={previousYearInfo}
+                  importHistoryInfo={importHistoryInfo}
                   fileRotations={fileRotations}
                   onPreview={handlePreview}
                   onHoverFile={handleHoverFile}
@@ -457,6 +462,36 @@ export default React.memo(function Sidebar({
               <button
                 className="sb-stats-close"
                 onClick={(e) => { e.stopPropagation(); setShowPreviousYearWarning(false) }}
+                title="关闭提示（视为正常状况）"
+              >
+                {ICONS.clear}
+              </button>
+            </>
+          ) : importHistoryCount > 0 && showImportHistoryWarning ? (
+            <>
+              <div className="sb-stat-summary">
+                共 <b>{documentView.documentCount}</b> 个文件 · 其中 <span className="sb-stat-summary-year">{importHistoryCount} 个可能为重复报销</span>
+              </div>
+              <div className="sb-seg-control">
+                <button
+                  className="sb-seg-btn sb-seg-btn-year"
+                  onClick={(e) => { e.stopPropagation(); removeImportHistoryFiles(removeSourceFile) }}
+                  title="移除重复导入提醒的文件"
+                >
+                  {ICONS.trash}
+                  <span>移除此类</span>
+                </button>
+                <label className="sb-seg-option">
+                  <input type="checkbox" checked={removeSourceFile} onChange={(e) => setRemoveSourceFile(e.target.checked)} />
+                  <span className="sb-seg-toggle-track">
+                    <span className="sb-seg-toggle-thumb"></span>
+                  </span>
+                  <span className="sb-seg-option-label">删源文件</span>
+                </label>
+              </div>
+              <button
+                className="sb-stats-close"
+                onClick={(e) => { e.stopPropagation(); setShowImportHistoryWarning(false) }}
                 title="关闭提示（视为正常状况）"
               >
                 {ICONS.clear}

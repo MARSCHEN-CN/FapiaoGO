@@ -108,7 +108,11 @@ function AppContent() {
   // ============================
   // 共享状态
   // ============================
-  const { files, setFiles, setMergeMode, printableCount, documentView, filteredFiles, isSearching, duplicatePageInfo, previousYearInfo } = useFileContext()
+  const { files, setFiles, setMergeMode, printableCount, documentView, filteredFiles, isSearching, duplicatePageInfo, previousYearInfo, importHistoryInfo } = useFileContext()
+
+  // P1：将 importHistoryInfo 同步到 ref，供 removeImportHistoryFiles 读取最新值（不进其 deps）
+  const importHistoryInfoRef = useRef(importHistoryInfo)
+  importHistoryInfoRef.current = importHistoryInfo
 
   // ── Step 10.5+: displayFiles（与 Sidebar 逻辑一致） ──
   // 优先使用装配结果 documentView.documents（InvoiceDocument 聚合条目），
@@ -625,6 +629,51 @@ function AppContent() {
     }
   }, [cleanupPreviewUrl])
 
+  // P1：移除「重复导入提醒」标记的文件（镜像 removePreviousYearFiles，仅 key 来源换成 importHistoryInfo Map）
+  const removeImportHistoryFiles = useCallback((removeSource = false) => {
+    const liveFiles = filesRef.current
+    const ih = importHistoryInfoRef.current
+    const ihKeys = new Set(ih ? Array.from(ih.keys()) : [])
+    if (ihKeys.size === 0) return
+    const pathsToDelete = []
+    if (removeSource) {
+      for (const k of ihKeys) {
+        const f = liveFiles.find(x => x.key === k)
+        if (f?.path) pathsToDelete.push(f.path)
+      }
+    }
+    if (pathsToDelete.length > 0) {
+      const ipc = electronAPIRef.current?.ipcRenderer
+      if (ipc) {
+        ipc.invoke('delete-files', pathsToDelete).then(res => {
+          if (res.failed?.length) console.warn('[removeImportHistory] 部分文件删除失败:', res.failed)
+        }).catch(err => console.error('[removeImportHistory] 删除源文件出错:', err))
+      }
+    }
+    const livePreview = previewFileRef.current
+    if (livePreview && ihKeys.has(livePreview.key)) cleanupPreviewUrl()
+    // 优先使用 deleteInvoiceDocument（与 removePreviousYearFiles 一致）
+    const ihSid = getActiveSessionId()
+    let deletedViaDocument = false
+    if (ihSid && ihKeys.size > 0) {
+      const session = getSession(ihSid)
+      if (session?.documents?.length) {
+        for (const doc of session.documents) {
+          const pageKeys = doc._pageKeys || []
+          if (pageKeys.some(k => ihKeys.has(k))) {
+            const instanceKey = resolveDocumentInstanceKey(doc)
+            const result = deleteInvoiceDocument(ihSid, instanceKey)
+            if (result.success) { result.removedPageKeys.forEach(k => ihKeys.add(k)); deletedViaDocument = true }
+          }
+        }
+      }
+    }
+    setFiles(prev => prev.filter(fileObj => !ihKeys.has(fileObj.key)))
+    if (!deletedViaDocument && ihSid && ihKeys.size > 0) {
+      removeFilesFromSession(ihSid, [...ihKeys])
+    }
+  }, [cleanupPreviewUrl])
+
   // ============================
   // mergeMode 同步到 FileContext（用于 printableCount 合并调整）
   // ============================
@@ -981,6 +1030,7 @@ function AppContent() {
         removeFailedFiles={removeFailedFiles}
         removeDuplicateFiles={removeDuplicateFiles}
         removePreviousYearFiles={removePreviousYearFiles}
+        removeImportHistoryFiles={removeImportHistoryFiles}
         handleRotate={handleRotate}
         // sort
         sortBy={sortBy}

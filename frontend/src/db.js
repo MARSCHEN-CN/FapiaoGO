@@ -125,6 +125,11 @@ export const db = {
     return apiGet(`/api/db/duplicates/${encodeURIComponent(number)}`)
   },
 
+  /** 发票重复导入历史查询（advisory，不拦截导入） */
+  getImportHistory(number) {
+    return apiGet(`/api/import-history/${encodeURIComponent(number)}`)
+  },
+
   /** 插入或更新发票记录（按 hash 去重） */
   upsert(row) {
     return api('/api/db/upsert', {
