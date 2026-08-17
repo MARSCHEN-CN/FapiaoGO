@@ -96,6 +96,8 @@ def parse_ofd(file):
             # 步骤 1：预览图片
             best_img_data = None
             best_img_pixels = 0
+            best_img_w = 0
+            best_img_h = 0
             for name in all_names:
                 nl = name.lower()
                 if nl.endswith(('.png', '.jpg', '.jpeg', '.bmp')):
@@ -107,13 +109,27 @@ def parse_ofd(file):
                             if pixels > best_img_pixels:
                                 best_img_data = img_data
                                 best_img_pixels = pixels
+                                best_img_w = w
+                                best_img_h = h
                     except Exception:
                         continue
 
-            # 13-B.5 C2: 旧链 render_ofd_page_preview（CTM 重渲染）已删除。
-            # preview_image 仅来自 OFD 内嵌图（无重渲染），缺失则留空。
+            # 优先使用 OFD 内嵌图作为预览（快速路径）。
+            # 当内嵌图太小（<10000 像素，或任何一边 <100px 多为 Logo/图标）时，
+            # 回退到 render_ofd_page() 渲染整个页面，保证预览可见。
             if best_img_data and best_img_pixels > 10000:
                 result["preview_image"] = base64.b64encode(best_img_data).decode('utf-8')
+            elif best_img_data and best_img_pixels > 2000 and best_img_w >= 100 and best_img_h >= 100:
+                result["preview_image"] = base64.b64encode(best_img_data).decode('utf-8')
+            else:
+                # 回退：使用 OFD 渲染管线生成预览（96 DPI，平衡质量与速度）
+                try:
+                    from .ofd_page_render import render_ofd_page
+                    webp_bytes = render_ofd_page(raw, 0, dpi=96)
+                    if webp_bytes:
+                        result["preview_image"] = base64.b64encode(webp_bytes).decode('utf-8')
+                except Exception:
+                    pass
 
             # 步骤 2：搜索发票 XML
             invoice_xml = None

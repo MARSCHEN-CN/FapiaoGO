@@ -1360,6 +1360,20 @@ export function usePreview({ files, settings, electronAPIRef }) {
             pendingBlobUrlsRef.current.push(_previewImageUrl)
           }
         }
+        // OFD 兜底：从 previewImage base64 生成 blob URL（无 docId 的旧 session）
+        else if (fmt === 'ofd' && fObj.previewImage) {
+          try {
+            const byteChars = atob(fObj.previewImage)
+            const byteNumbers = new Array(byteChars.length)
+            for (let i = 0; i < byteChars.length; i++) {
+              byteNumbers[i] = byteChars.charCodeAt(i)
+            }
+            const byteArray = new Uint8Array(byteNumbers)
+            const blob = new Blob([byteArray], { type: 'image/webp' })
+            _previewImageUrl = URL.createObjectURL(blob)
+            pendingBlobUrlsRef.current.push(_previewImageUrl)
+          } catch (_) { /* base64 解码失败则 _previewImageUrl 保持 null */ }
+        }
 
         // 提取图片/OFD 尺寸用于方向检测（复用 fetchImageDims）
         if (_previewImageUrl && !fObj._imageWidth && !fObj.previewWidth) {

@@ -108,7 +108,20 @@ class _OFDRenderer:
         # 修复前优先取 Content.xml → unit_to_mm 启发式 `>500 → 0.01` 误判 →
         # 画布掉到 400×560 下限且全部坐标×0.01（内容缩成左上角小块 → 白图）。
         page_w, page_h = self._resolve_doc_page_size(content_clean)
-        self._init_dimensions(page_w, page_h)
+
+        # 当 Content.xml 使用独立坐标系（>500）且与 Document.xml 页面尺寸
+        # 不匹配时，按页面宽度等比缩放内容坐标系，确保完整渲染。
+        content_box = RE_PHYSICAL_BOX.search(content_clean)
+        if content_box:
+            cw = float(content_box.group(3))
+            ch = float(content_box.group(4))
+            if cw > 500 and cw > page_w:
+                self._init_dimensions_with_content(page_w, page_h, cw, ch)
+            else:
+                self._init_dimensions(page_w, page_h)
+        else:
+            self._init_dimensions(page_w, page_h)
+
         self.img = PILImage.new('RGB', (self.img_w, self.img_h), '#ffffff')
         self.draw = ImageDraw.Draw(self.img)
         self.glyph_engine.set_draw(self.draw)
@@ -191,6 +204,20 @@ class _OFDRenderer:
         page_h_mm = page_h * self.unit_to_mm
         self.img_w = max(400, round(page_w_mm * self.scale))
         self.img_h = max(560, round(page_h_mm * self.scale))
+
+    def _init_dimensions_with_content(self, page_w, page_h, content_w, content_h):
+        """当 Content.xml 使用独立坐标系（与 Document.xml 页面尺寸不匹配）时，
+        以 Content.xml 的 PhysicalBox 为画布，内容 100% 填充，按 DPI 缩放到合理像素。
+
+        例如 1412424.ofd：Content PhysicalBox=600.938×397.013（横向），
+        Document PageArea=210×297（A4 竖向）。两者不一致时，信任 Content.xml。
+
+        unit_to_mm 由目标像素宽度反推，保证内容完整可见不变形。
+        """
+        target_w = max(400, min(3508, round(content_w * self.scale)))
+        target_h = max(300, round(target_w * content_h / content_w))
+        self.img_w, self.img_h = target_w, target_h
+        self.unit_to_mm = target_w / (content_w * self.scale)
 
     def reset_caches(self):
         """清空所有内部缓存。"""

@@ -64,10 +64,14 @@ def test_bad_sample_abs_mediafile_resource_registered():
 
 
 def test_bad_sample_a4_dimensions():
-    """Bug A：1412424 页面尺寸必须为 A4 2480×3508 @300dpi（非 400×560）。"""
+    """1412424 横向发票：以 Content.xml PhysicalBox 为画布 @300dpi，
+    宽高比应匹配内容（600.938/397.013≈1.511），尺寸在 (2800-3508, 2000-2500) 合理范围。"""
     raw = _load(SAMPLE_BAD)
     w, h, ratio = _render_stats(raw)
-    assert (w, h) == (2480, 3508), f"期望 A4 2480×3508, 实际 {w}×{h}"
+    assert w == 3508, f"期望宽度 3508（上限）, 实际 {w}"
+    assert 2200 <= h <= 2500, f"期望高度 2200-2500（内容比例 ~1.51）, 实际 {h}"
+    assert abs(w / h - 600.938 / 397.013) < 0.02, \
+        f"宽高比偏离内容原始比例: {w/h:.4f} vs {600.938/397.013:.4f}"
 
 
 def test_bad_sample_content_present():
@@ -94,11 +98,15 @@ def test_good_sample_unchanged():
 # ═══════════════════════════════════════════
 
 def test_bad_sample_metadata_a4():
-    """1412424 metadata 尺寸必须为 A4 2480×3508（非 400×560）。"""
+    """1412424 metadata：宽高比匹配内容比例，宽度 3508。"""
     raw = _load(SAMPLE_BAD)
     dims = ofd_page_dimensions(raw, 300)
-    assert dims and dims[0]['width'] == 2480 and dims[0]['height'] == 3508, \
-        f"1412424 metadata 尺寸错误: {dims}"
+    assert dims and dims[0]['width'] == 3508, f"宽度应为 3508, 实际 {dims}"
+    assert 2200 <= dims[0]['height'] <= 2500, f"高度应在 2200-2500, 实际 {dims[0]['height']}"
+    actual_ratio = dims[0]['width'] / dims[0]['height']
+    expected_ratio = 600.938 / 397.013
+    assert abs(actual_ratio - expected_ratio) < 0.02, \
+        f"宽高比偏离: {actual_ratio:.4f} vs {expected_ratio:.4f}"
 
 
 def test_good_sample_metadata_unchanged():
