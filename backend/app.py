@@ -1965,6 +1965,9 @@ if __name__ == '__main__':
     try:
         import import_history as _ih
         _ih.cleanup_expired()
+        # 一次性诊断：确认运行时已加载新代码，并打印实际持久化路径
+        # （路径与 invoices 数据库同目录；若此处未出现，说明后端仍是旧进程）
+        logger.info("[import_history] 模块已加载，持久化路径 = %s", _ih._get_path())
     except Exception as _e:  # noqa: BLE001
         logger.warning("[App] 导入历史 3 年清理失败（已忽略）: %s", _e)
     _page_cache_cleanup_thread = threading.Thread(
