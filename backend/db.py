@@ -1044,6 +1044,15 @@ def batch_upsert_invoices(rows: List[Dict]) -> List[Dict]:
                 _invoice_index_by_hash[new_invoice['hash_sha256']] = idx
             _refresh_search_text(new_invoice)
             _append_oplog("upsert", new_id, new_invoice)
+            # ── 重复导入历史（InvoiceImportHistory）──
+            # 仅在「新建发票记录」成功后记录；invoiceDate 不可变，后续导入只更新 last/count。
+            # 与 Oplog（WAL）、7天清理机制完全独立。
+            # （注意：批路径此前漏接此 hook，导致批量导入不记录历史；此处与 upsert_invoice 对齐）
+            try:
+                import import_history as _ih
+                _ih.record_import(new_invoice.get('number'), new_invoice.get('date'))
+            except Exception as _e:  # noqa: BLE001 - 历史记录失败不应阻断主入库流程
+                logger.warning("[import_history] 记录导入历史失败（已忽略）: %s", _e)
             results.append({'id': new_id, 'is_new': True, 'is_duplicate': bool(duplicate_of_id)})
 
         # 批量操作后主动 flush + 单次压缩检查

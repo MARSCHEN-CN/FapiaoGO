@@ -140,6 +140,38 @@ def test_compaction_and_7day_exemption():
     assert ih.has_imported(num) is True
 
 
+def test_batch_upsert_records_history():
+    """🔴 回归：批量入库（batch_upsert_invoices）必须触发 import_history 挂钩。
+
+    曾经的实际 bug：挂钩只接在单张 upsert_invoice，批路径（拖入多文件 /
+    import_batch_manager / app.py 批量接口）只 flush 不 record，导致批量导入
+    完全不记录历史。修复后批路径每张新发票都应写入历史。
+    """
+    _reset_db_memory()
+    num1, inv_date1 = "BATCH-001", "2026-06-01"
+    num2, inv_date2 = "BATCH-002", "2026-06-02"
+    results = db.batch_upsert_invoices([
+        {'file_name': 'b1.pdf', 'hash_sha256': 'batchhash1',
+         'number': num1, 'date': inv_date1, 'amount': '10'},
+        {'file_name': 'b2.pdf', 'hash_sha256': 'batchhash2',
+         'number': num2, 'date': inv_date2, 'amount': '20'},
+    ])
+    assert all(r['is_new'] for r in results)        # 两张均为新增
+    ih.flush()
+    assert ih.has_imported(num1) is True
+    assert ih.has_imported(num2) is True
+    assert ih.get_import_history(num1)['invoiceDate'] == inv_date1
+    assert ih.get_import_history(num2)['invoiceDate'] == inv_date2
+
+    # 重复导入同批文件（同 hash + 同 file_name）→ is_new=False → 不应污染历史
+    results2 = db.batch_upsert_invoices([
+        {'file_name': 'b1.pdf', 'hash_sha256': 'batchhash1',
+         'number': num1, 'date': inv_date1, 'amount': '10'},
+    ])
+    assert results2[0]['is_new'] is False
+    assert ih.get_import_history(num1)['importCount'] == 1
+
+
 def test_default_path_is_project_root_database():
     """🔴 冻结约束：未注入 FAPIAOGO_DB_PATH 时，默认路径必须落在
     <项目根>/database/invoice_import_history.json（项目级持久化，非后端私有）。"""
