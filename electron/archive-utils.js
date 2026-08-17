@@ -57,7 +57,12 @@ function generateArchiveName(prefix, dateFormat, archiveFormat, fieldOrder, sepa
  *   1. 对 PDF/图片/Office 等已压缩格式使用 STORE（不压缩，直接打包），速度接近文件系统拷贝
  *   2. 流式写入，高水位线 1MB 平衡背压与吞吐
  *   3. 使用同步 stat 校验源文件存在，避免异步竞态
- *   4. 双重完成判定：同时监听 archive finalize 和 output close，确保异常场景下也能正确完成
+ * 完成语义（archiver 8.x 官方契约，替代已不存在的 'finalize' 事件）：
+ *   4. archive.finalize() 返回的 Promise 是唯一官方完成信号（zip-stream 模块 'end' 事件驱动；
+ *      archiver 8.x core.js 中已无任何 emit('finalize')，监听该事件会永久挂起 —— 2026-08-17 修复）
+ *   5. output 'close' 作为文件流落盘确认，与 finalize() Promise 按序到达后 resolve
+ *   6. error 路径（archive error / output error / finalize() reject）随时 settle，
+ *      保证 Promise 一定 settle、绝不挂死
  * @param {Array} files - [{ originalPath, targetName }]
  * @param {string} archivePath - 输出路径
  * @param {{strictNames?: boolean}} [options] - strictNames: 重名时抛错而非自动去重
@@ -88,11 +93,13 @@ async function createZipArchive(files, archivePath, { strictNames = false } = {}
       forceZip64: false,
     })
 
-    let archiveFinalized = false
+    // 完成判定：finalizeDone 由 archive.finalize() 的官方 Promise 置位（不再依赖
+    // archiver 8.x 已不发射的 'finalize' 事件），outputClosed 由 output 'close' 置位。
+    let finalizeDone = false
     let outputClosed = false
 
     const checkComplete = () => {
-      if (archiveFinalized && outputClosed) settle(null)
+      if (finalizeDone && outputClosed) settle(null)
     }
 
     output.on('close', () => {
@@ -108,11 +115,6 @@ async function createZipArchive(files, archivePath, { strictNames = false } = {}
       } else {
         settle(err)
       }
-    })
-
-    archive.on('finalize', () => {
-      archiveFinalized = true
-      checkComplete()
     })
 
     archive.pipe(output)
@@ -132,7 +134,14 @@ async function createZipArchive(files, archivePath, { strictNames = false } = {}
       })
     }
 
-    archive.finalize()
+    // 官方完成信号：finalize() 返回的 Promise 在 zip-stream 'end' 时 resolve。
+    archive.finalize().then(
+      () => {
+        finalizeDone = true
+        checkComplete()
+      },
+      (err) => settle(err),
+    )
   })
 }
 
