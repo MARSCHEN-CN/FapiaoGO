@@ -110,6 +110,15 @@ def load_ofd_resources(zf, all_names):
                     if not file_path:
                         continue
 
+                    # P1-B: MediaFile 支持包内绝对路径（以 / 开头的规范写法）。
+                    # 修复前按相对路径拼接成 `Doc_0//Doc_0/Res/...` → 匹配失败 →
+                    # MultiMedia ID 未注册 → ImageObject 全部跳过（1412424.ofd 白图主因）。
+                    if file_path.startswith('/'):
+                        abs_path = file_path.lstrip('/')
+                        if abs_path in all_names:
+                            resources[rid] = abs_path
+                            continue
+
                     base_dir = '/'.join(res_file.split('/')[:-1])
                     full_path = f"{base_dir}/{file_path}" if base_dir else file_path
                     full_path = full_path.replace('\\', '/')

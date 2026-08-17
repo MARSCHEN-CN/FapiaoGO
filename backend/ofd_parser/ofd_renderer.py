@@ -85,6 +85,7 @@ class _OFDRenderer:
         self.img = None
         self.draw = None
         self.resources = {}
+        self.draw_params = {}  # P1-C: DocumentRes.xml DrawParams 映射 {id: {FillColor, StrokeColor, LineWidth}}
         self.font_id_map = {}
         self.font_cache = {}
         self.img_cache = {}
@@ -101,35 +102,88 @@ class _OFDRenderer:
         self._global_font_index = {}
 
     def setup(self, content_clean):
-        page_w, page_h = 210.0, 297.0
-        content_box = RE_PHYSICAL_BOX.search(content_clean)
-        if content_box:
-            page_w = float(content_box.group(3))
-            page_h = float(content_box.group(4))
-        else:
-            for name in self.all_names:
-                nl = name.lower()
-                if ('document.xml' in nl
-                        and 'res' not in nl
-                        and 'annot' not in nl):
-                    try:
-                        doc_raw = self.zf.read(name).decode('utf-8', errors='ignore')
-                        m = RE_PHYSICAL_BOX.search(doc_raw)
-                        if m:
-                            page_w, page_h = float(m.group(3)), float(m.group(4))
-                            break
-                    except Exception:
-                        logger.debug("Failed to read %s for page size", name,
-                                     exc_info=True)
-                        continue
+        # P1-A: 页面物理尺寸权威来源 = Document.xml PageArea（210×297 等标准值）。
+        # Content.xml 的 Area/PhysicalBox 是内容绘制区域，可能携带生成器私有坐标
+        # （如 1412424.ofd 的 `600.938 397.013`），不能覆盖物理尺寸。
+        # 修复前优先取 Content.xml → unit_to_mm 启发式 `>500 → 0.01` 误判 →
+        # 画布掉到 400×560 下限且全部坐标×0.01（内容缩成左上角小块 → 白图）。
+        page_w, page_h = self._resolve_doc_page_size(content_clean)
         self._init_dimensions(page_w, page_h)
         self.img = PILImage.new('RGB', (self.img_w, self.img_h), '#ffffff')
         self.draw = ImageDraw.Draw(self.img)
         self.glyph_engine.set_draw(self.draw)
         self.resources = load_ofd_resources(self.zf, self.all_names)
+        # P1-C: 解析 DrawParams（PathObject/TextObject 通过 DrawParam="ID" 引用颜色）
+        self.draw_params = self._parse_draw_params()
         self._load_font_resources()
         self._build_global_font_index()
         self._load_fallback_fonts()
+
+    def _resolve_doc_page_size(self, content_clean):
+        """页面物理尺寸来源（P1-A，保守语义）：
+
+        1. Content.xml Area/PhysicalBox 数值正常（<=500，即 mm 页面坐标）时，
+           保持修复前行为——正常 OFD（如 2644：211.5×182.36 横向票面）尺寸路径不变。
+        2. 仅当 Content.xml Area 数值异常（>500，触发 0.01 单位启发式，说明是
+           生成器私有坐标而非 mm 页面尺寸，如 1412424.ofd 的 600.938×397.013）
+           时，回退 Document.xml PageArea（210×297 等权威物理尺寸）。
+        3. 两者都不可用时默认 A4。
+        """
+        content_box = RE_PHYSICAL_BOX.search(content_clean)
+        if content_box:
+            cw = float(content_box.group(3))
+            if cw <= 500:
+                return cw, float(content_box.group(4))
+        for name in self.all_names:
+            nl = name.lower()
+            if ('document.xml' in nl
+                    and 'res' not in nl
+                    and 'annot' not in nl):
+                try:
+                    doc_raw = self.zf.read(name).decode('utf-8', errors='ignore')
+                    m = RE_PHYSICAL_BOX.search(doc_raw)
+                    if m:
+                        return float(m.group(3)), float(m.group(4))
+                except Exception:
+                    logger.debug("Failed to read %s for page size", name,
+                                 exc_info=True)
+        return 210.0, 297.0
+
+    def _parse_draw_params(self):
+        """解析各 res.xml 中 DrawParams → {id: {FillColor, StrokeColor, LineWidth}}。"""
+        result = {}
+        for name in self.all_names:
+            nl = name.lower()
+            if not (nl.endswith('res.xml') or nl.endswith('resources.xml')):
+                continue
+            try:
+                content = self.zf.read(name).decode('utf-8', errors='ignore')
+                clean = _strip_ofd_ns(content)
+                root = ET.fromstring(clean)
+            except Exception as e:
+                logger.debug("Failed to parse DrawParams in %s: %s", name, e)
+                continue
+            for elem in root.iter():
+                tag = elem.tag.split('}')[-1] if '}' in elem.tag else elem.tag
+                if tag != 'DrawParam':
+                    continue
+                pid = elem.get('ID', elem.get('id', ''))
+                if not pid:
+                    continue
+                dp = {}
+                for child in elem:
+                    ctag = child.tag.split('}')[-1] if '}' in child.tag else child.tag
+                    if ctag in ('FillColor', 'StrokeColor') and child.get('Value'):
+                        parsed = _parse_ofd_color(child.get('Value'))
+                        if parsed:
+                            dp[ctag] = parsed
+                    elif ctag == 'LineWidth':
+                        try:
+                            dp['LineWidth'] = float(child.text)
+                        except (TypeError, ValueError):
+                            pass
+                result[pid] = dp
+        return result
 
     def _init_dimensions(self, page_w, page_h):
         self.unit_to_mm = 0.01 if page_w > 500 else 1.0
@@ -559,7 +613,19 @@ class _OFDRenderer:
                     if parsed:
                         return parsed
         val = elem.get(child_name, '')
-        return _parse_ofd_color(val) if val else None
+        if val:
+            parsed = _parse_ofd_color(val)
+            if parsed:
+                return parsed
+        # P1-C: DrawParam 引用解析（OFD 标准：PathObject/TextObject 通过
+        # DrawParam="ID" 引用 DocumentRes.xml 中集中定义的颜色/线宽）。
+        # 保持直接 FillColor/StrokeColor 写法兼容，仅在其缺失时解析引用。
+        dp_id = elem.get('DrawParam', '')
+        if dp_id:
+            dp = self.draw_params.get(dp_id)
+            if dp and child_name in dp:
+                return dp[child_name]
+        return None
 
     def _parse_boundary_mm(self, boundary_str):
         if not boundary_str:
