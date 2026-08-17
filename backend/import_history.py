@@ -11,6 +11,12 @@
 三者生命周期不同，本模块的数据文件 **独立于** invoices / Oplog / 现有 7 天清理机制：
   - 绝不参与 db._compact_oplog（invoices.oplog 的清空）
   - 绝不参与 db.cleanup_expired_invoices（7 天清理）
+
+存储路径（冻结约束）：<项目根>/database/invoice_import_history.json
+  —— 本质是【项目级业务持久化数据】，不是后端代码私有数据；取径基准与 db._resolve_db_dir
+     严格一致（见 _resolve_path），保证与 invoices 数据库同目录（开发=项目根/database/，
+     打包回退 ~/.fapiaogo，受 FAPIAOGO_DB_PATH 注入覆盖）。
+
 本文件在导入成功（新建发票记录）后才追加，文件拖入即取消不会产生假记录。
 
 数据模型（一个发票号码 = 一条聚合记录，非事件日志）：
@@ -31,6 +37,7 @@ import os
 import re
 import time
 from datetime import date, datetime, timedelta
+from pathlib import Path
 
 from readerwriterlock import rwlock as _rwlock_mod
 
@@ -53,12 +60,37 @@ _last_flush = 0.0
 # ──────────────────────────────────────────────────────────────────────────
 
 def _resolve_path():
-    env = os.environ.get('FAPIAOGO_DB_PATH')
+    """解析持久化 JSON 路径。
+
+    冻结约束：数据文件位于【项目级 database/ 目录】（即 <项目根>/database/
+    invoice_import_history.json），本质是项目级业务持久化数据，而非后端私有数据。
+
+    取径基准与 db._resolve_db_dir 严格一致，确保本文件与 invoices 数据库永远同目录：
+      1. 环境变量 FAPIAOGO_DB_PATH（Electron/打包注入；可为文件或目录）
+      2. 开发兜底：本文件向上两层的 database/ 目录（即项目根/database/）——仅当该目录存在
+      3. 打包后无本地 database/ 时回退用户家目录 ~/.fapiaogo
+    """
+    env = os.environ.get('FAPIAOGO_DB_PATH', '').strip()
+    base = None
     if env:
-        base = env
-    else:
-        # 开发/兜底：相对于本文件向上两层的 database/ 目录
-        base = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'database')
+        try:
+            normalized = os.path.normpath(env)
+            abs_path = os.path.abspath(normalized)
+            if os.path.isfile(abs_path):
+                base = os.path.dirname(abs_path)
+            elif os.path.isdir(abs_path):
+                base = abs_path
+            else:
+                parent = os.path.dirname(abs_path)
+                base = parent if parent else abs_path
+        except (OSError, ValueError):
+            base = None
+    if not base:
+        dev_path = Path(__file__).resolve().parent.parent / 'database'
+        if dev_path.exists():
+            base = str(dev_path)
+    if not base:
+        base = str(Path.home() / '.fapiaogo')
     return os.path.join(base, 'invoice_import_history.json')
 
 

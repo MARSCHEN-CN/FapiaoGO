@@ -138,3 +138,34 @@ def test_compaction_and_7day_exemption():
     # db 7 天清理（invoice 可能丢失）—— 导入历史必须仍在
     db.cleanup_expired_invoices(days=0)  # 极端：立即过期全部发票
     assert ih.has_imported(num) is True
+
+
+def test_default_path_is_project_root_database():
+    """🔴 冻结约束：未注入 FAPIAOGO_DB_PATH 时，默认路径必须落在
+    <项目根>/database/invoice_import_history.json（项目级持久化，非后端私有）。"""
+    saved = os.environ.pop('FAPIAOGO_DB_PATH', None)
+    try:
+        # 测试文件位于 backend/tests/，项目根为向上三层
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        expected = os.path.join(project_root, 'database', 'invoice_import_history.json')
+        # 项目根 database/ 目录应存在（否则 dev_path.exists() 回退 home，不符冻结约束）
+        assert os.path.isdir(os.path.join(project_root, 'database')), "项目根/database 不存在"
+        assert ih._resolve_path() == expected
+    finally:
+        if saved is not None:
+            os.environ['FAPIAOGO_DB_PATH'] = saved
+
+
+def test_env_path_overrides_default():
+    """FAPIAOGO_DB_PATH 注入时，路径必须落在该目录下（与 db._resolve_db_dir 一致）。"""
+    import tempfile
+    saved = os.environ.get('FAPIAOGO_DB_PATH')
+    d = tempfile.mkdtemp(prefix="ih_env_")
+    os.environ['FAPIAOGO_DB_PATH'] = d
+    try:
+        assert ih._resolve_path() == os.path.join(d, 'invoice_import_history.json')
+    finally:
+        if saved is None:
+            os.environ.pop('FAPIAOGO_DB_PATH', None)
+        else:
+            os.environ['FAPIAOGO_DB_PATH'] = saved

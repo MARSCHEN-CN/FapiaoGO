@@ -49,12 +49,15 @@
 
 ```text
 invoiceNumber       TEXT 唯一检测键（归一化后）
-invoiceDate         DATE 开票日期（决定生命周期）
-firstImportedAt     DATETIME 首次导入时间
-lastImportedAt      DATETIME 最近导入时间
-importCount         INT 累计导入次数
+invoiceDate         DATE 开票日期（决定 3 年生命周期；首次记录后不可变，后续导入不得覆盖）
+firstImportedAt     DATETIME 首次导入时间（不可覆盖）
+lastImportedAt      DATETIME 最近导入时间（每次导入更新）
+importCount         INT 累计导入次数（每次导入 +1）
+dateMismatchCount   INT 同号码再次导入时开票日期不一致的次数（仅诊断观测，不污染业务字段）
 ```
 
+> **🔴 `invoiceDate` / `firstImportedAt` 首次记录后冻结**：后续重复导入只更新 `lastImportedAt` 与 `importCount+1`；若新解析的 `invoiceDate` 与历史不同，**保留首次日期、累计 `dateMismatchCount`、记 warning**（首版仅日志，不做 UI）——避免覆盖影响 3 年清理边界。
+>
 > **系统实体身份 ≠ 重复检测身份**：`InvoiceDocument.id`（uuid hex）继续承担"这次导入的实体"；本表的检测身份**只有 `invoiceNumber`**。越简单越不容易和现有 identity 体系再次耦合——**不要放入 `source_doc_id` / `invoiceDocumentId`**。
 
 ### 2.2 存储选型（终版结论：JSON + 内存索引，不上 SQLite）
@@ -67,23 +70,26 @@ importCount         INT 累计导入次数
 | 塞进 InvoiceDocument | ⭐ | 生命周期语义错 + 随 7 天清理丢失 |
 | 文件 JSON snapshot | ⭐ | 不适合全局去重 |
 
-**文件**：`database/invoice_import_history.json`（顶层为一个 dict，key=归一化号码）。
-**内存**：`_history_by_number: Dict[str, {invoiceDate, first, last, count}]`，启动时整文件加载（10 万条约几 MB，毫秒级）。
+**文件（🔴 冻结约束）**：`<项目根>/database/invoice_import_history.json`（即与 `invoices` 数据库同目录，但**独立于**它；本质是**项目级业务持久化数据**，不是后端代码私有数据）。
+**取径对齐**：`import_history._resolve_path()` 与 `db._resolve_db_dir()` 保持严格一致——`FAPIAOGO_DB_PATH` 注入优先，开发兜底到 `<项目根>/database/`（仅当该目录存在），打包后无本地 database 时回退 `~/.fapiaogo`。保证本文件与 invoices 数据库**永远同目录**，且不受"后端目录结构"变化影响。
+**内存**：`_history_by_number: Dict[str, {invoiceDate, firstImportedAt, lastImportedAt, importCount, dateMismatchCount}]`，启动时整文件加载（10 万条约几 MB，毫秒级）。
 **持久化**：内存即时更新（O(1)）；落盘用**原子写**（临时文件 + `os.replace`）——为降低高频导入时的整文件重写开销，**每个 batch upsert 或单张 upsert 结束时各 flush 一次**（而非每条记录重写一次）。
 
 ```json
 {
-  "123456789012": {
-    "invoiceDate": "2026-08-09",
-    "firstImportedAt": "2026-08-10T09:12:31+08:00",
-    "lastImportedAt": "2026-08-17T15:32:10+08:00",
-    "importCount": 2
+  "12345678901234567890": {
+    "invoiceDate": "2026-08-01",
+    "firstImportedAt": "2026-08-10T12:30:00",
+    "lastImportedAt": "2026-08-17T21:10:00",
+    "importCount": 2,
+    "dateMismatchCount": 0
   },
-  "987654321098": {
+  "98765432109876543210": {
     "invoiceDate": "2026-08-10",
-    "firstImportedAt": "2026-08-11T10:20:00+08:00",
-    "lastImportedAt": "2026-08-11T10:20:00+08:00",
-    "importCount": 1
+    "firstImportedAt": "2026-08-11T10:20:00",
+    "lastImportedAt": "2026-08-11T10:20:00",
+    "importCount": 1,
+    "dateMismatchCount": 0
   }
 }
 ```
