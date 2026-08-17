@@ -496,7 +496,7 @@ def assemble(pages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             f"[InvoiceAssembly] 组装完成: number={log_number}, "
             f"pages={len(sorted_group)}, "
             f"status={ag['status']}, "
-            f"items={len(merged.get('extra_fields', {}).get('line_items', []))}"
+            f"items={len((merged.get('extra_fields') or {}).get('line_items') or [])}"
         )
 
     return results

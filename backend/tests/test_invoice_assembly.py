@@ -177,10 +177,79 @@ def test_page_result_store():
     print("  ✅ PASS")
 
 
+# ═══════════════════════════════════════════
+# Case E: extra_fields 缺失/None 契约（2026-08-17 P0 回归）
+#   真实故障：OFD 数据缺失时 invoice_service 返回 extra_fields=None，
+#   assemble 日志行 `merged.get('extra_fields', {}).get('line_items', [])`
+#   因 dict.get 对「key 存在但值为 None」返回 None 而崩溃（AttributeError）。
+#   契约：extra_fields 缺失 / None / {} / line_items=None 均不得让 Assembly 崩溃。
+# ═══════════════════════════════════════════
+
+def _make_ofd_degraded_page(extra_fields):
+    """构造 OFD 数据缺失的模拟页面（text 为空、无字段提取）"""
+    return {
+        'invoice_number': '未知号码',
+        'invoice_type': '其他',
+        'amount': '0.00',
+        'invoice_date': '未知日期',
+        'raw_text': '',
+        'extra_fields': extra_fields,  # 可能是 None / {} / 带 line_items 的 dict
+        'file_format': 'ofd',
+        'parse_method': 'OFD 解析（数据缺失）',
+        'page_num': 0,
+        'total_pages': 1,
+    }
+
+
+def test_assembly_extra_fields_none():
+    """真实故障 reproducer：extra_fields=None → Assembly 必须成功"""
+    results = assemble([_make_ofd_degraded_page(None)])
+    assert len(results) == 1, f"期望 1 个发票文档，实际 {len(results)}"
+    assert results[0].get('extra_fields') is None or \
+        results[0].get('extra_fields', {}).get('line_items', []) == []
+    print("  ✅ PASS")
+
+
+def test_assembly_extra_fields_empty_dict():
+    """extra_fields={} → Assembly 成功"""
+    results = assemble([_make_ofd_degraded_page({})])
+    assert len(results) == 1, f"期望 1 个发票文档，实际 {len(results)}"
+    print("  ✅ PASS")
+
+
+def test_assembly_extra_fields_line_items_none():
+    """extra_fields={'line_items': None} → Assembly 成功"""
+    results = assemble([_make_ofd_degraded_page({'line_items': None})])
+    assert len(results) == 1, f"期望 1 个发票文档，实际 {len(results)}"
+    print("  ✅ PASS")
+
+
+def test_assembly_extra_fields_line_items_empty():
+    """extra_fields={'line_items': []} → Assembly 成功"""
+    results = assemble([_make_ofd_degraded_page({'line_items': []})])
+    assert len(results) == 1, f"期望 1 个发票文档，实际 {len(results)}"
+    print("  ✅ PASS")
+
+
+def test_assembly_extra_fields_line_items_preserved():
+    """extra_fields={'line_items': [...]} → 行项目正常保留"""
+    items = [{'name': '香料原料*迷迭香', 'qty': '1'}, {'name': '水果*苹果', 'qty': '2'}]
+    results = assemble([_make_ofd_degraded_page({'line_items': items})])
+    assert len(results) == 1, f"期望 1 个发票文档，实际 {len(results)}"
+    assert results[0].get('extra_fields', {}).get('line_items') == items, \
+        "行项目应原样保留"
+    print("  ✅ PASS")
+
+
 if __name__ == '__main__':
     test_page_result_store()
     test_single_page()
     test_three_pages_same_invoice()
     test_three_pages_three_invoices()
     test_mixed_pages()
+    test_assembly_extra_fields_none()
+    test_assembly_extra_fields_empty_dict()
+    test_assembly_extra_fields_line_items_none()
+    test_assembly_extra_fields_line_items_empty()
+    test_assembly_extra_fields_line_items_preserved()
     print("\n🎉 全部测试通过")
