@@ -1318,6 +1318,26 @@ export function usePreview({ files, settings, electronAPIRef }) {
           // 1-based Source → 1-based render locator (?page=) 是 IDENTITY，禁止 +1。
           const pageForPreview = fObj.pageNum ?? 1
           _previewImageUrl = buildPreviewUrl(effectiveDocId, pageForPreview)
+          // ── P1 frontend preview fix ──
+          // OFD 走 Render Engine Preview 直接 return，从未设置 _imageWidth/_imageHeight
+          // → fileContentPx()=null → PrintPreviewModel 无法 placement（DIAG-11 no placement）
+          // → 资源图被当展示内容（二维码/错位）。此处从后端 /metadata 取「当前预览页」
+          // 尺寸注入（pageForPreview 1-based → pages[] 0-based，勿盲取 pages[0] 造成多页
+          // 尺寸错位）；metadata 为 px@300dpi，与 fileContentPx 的 px@dpi(PREVIEW_DPI=300)
+          // 空间一致。不改 fileContentPx（其 fallback 契约本身正确）。
+          if (fmt === 'ofd') {
+            try {
+              const { fetchDocumentMetadata } = await import('../services/renderDocument.js')
+              const meta = await fetchDocumentMetadata(effectiveDocId)
+              const pageDims = meta?.pages?.[pageForPreview - 1]
+              if (pageDims && pageDims.width > 0 && pageDims.height > 0) {
+                fObj._imageWidth = pageDims.width
+                fObj._imageHeight = pageDims.height
+              }
+            } catch (_) {
+              // metadata 失败降级：尺寸保持 0，行为与修复前一致，不抛出
+            }
+          }
           return { ...fObj, _previewImageUrl, _fileFormat: fmt }
         }
 
