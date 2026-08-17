@@ -116,7 +116,7 @@ export async function fetchDocumentMetadata(docId, options = {}) {
 
   let resp
   try {
-    resp = await fetch(`${BACKEND_URL}/api/metadata/${encodeURIComponent(docId)}`, {
+    resp = await fetch(`${BACKEND_URL}/metadata/${encodeURIComponent(docId)}`, {
       method: 'GET',
       signal,
     })

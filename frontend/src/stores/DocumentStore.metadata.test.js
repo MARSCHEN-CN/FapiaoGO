@@ -8,11 +8,11 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-// ── mock fetch（/api/metadata/{docId}）──
+// ── mock fetch（/metadata/{docId}）──
 // 默认成功返回 metadataResponses 中预设的 pages[]；可被单测临时覆盖为 404。
 const metadataResponses = new Map()
 globalThis.fetch = async (url) => {
-  const m = String(url).match(/\/api\/metadata\/(.+)$/)
+  const m = String(url).match(/\/metadata\/(.+)$/) || String(url).match(/\/api\/metadata\/(.+)$/)
   const docId = m ? decodeURIComponent(m[1]) : null
   const pages = metadataResponses.get(docId) || []
   return {

@@ -25,7 +25,7 @@ sys.path.insert(0, os.path.join(_root, 'backend'))
 
 import numpy as np
 from PIL import Image
-from ofd_parser.ofd_page_render import render_ofd_page
+from ofd_parser.ofd_page_render import render_ofd_page, ofd_page_dimensions
 from ofd_parser.xml_utils import load_ofd_resources
 import zipfile
 
@@ -89,9 +89,31 @@ def test_good_sample_unchanged():
     assert ratio > 0.01, f"2644 内容异常: 非白 {ratio:.2%}"
 
 
+# ═══════════════════════════════════════════
+# metadata 尺寸（ofd_page_dimensions 与渲染器一致，P1-A 同步）
+# ═══════════════════════════════════════════
+
+def test_bad_sample_metadata_a4():
+    """1412424 metadata 尺寸必须为 A4 2480×3508（非 400×560）。"""
+    raw = _load(SAMPLE_BAD)
+    dims = ofd_page_dimensions(raw, 300)
+    assert dims and dims[0]['width'] == 2480 and dims[0]['height'] == 3508, \
+        f"1412424 metadata 尺寸错误: {dims}"
+
+
+def test_good_sample_metadata_unchanged():
+    """2644 metadata 尺寸保持 2498×2154（不回归）。"""
+    raw = _load(SAMPLE_GOOD)
+    dims = ofd_page_dimensions(raw, 300)
+    assert dims and dims[0]['width'] == 2498 and dims[0]['height'] == 2154, \
+        f"2644 metadata 尺寸回归: {dims}"
+
+
 if __name__ == '__main__':
     test_bad_sample_abs_mediafile_resource_registered()
     test_bad_sample_a4_dimensions()
     test_bad_sample_content_present()
     test_good_sample_unchanged()
+    test_bad_sample_metadata_a4()
+    test_good_sample_metadata_unchanged()
     print('\n🎉 双样本 Gate 全部通过')

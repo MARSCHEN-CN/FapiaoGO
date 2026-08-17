@@ -139,7 +139,8 @@ def ofd_page_dimensions(raw_bytes, dpi=300):
     """公开：每页元数据列表 [{index,width,height,sourceRotation}]。"""
     try:
         with zipfile.ZipFile(io.BytesIO(raw_bytes), 'r') as zf:
-            paths = _enumerate_ofd_pages(zf, zf.namelist())
+            all_names = zf.namelist()
+            paths = _enumerate_ofd_pages(zf, all_names)
             contents = []
             for p in paths:
                 try:
@@ -147,11 +148,30 @@ def ofd_page_dimensions(raw_bytes, dpi=300):
                         _strip_ofd_ns(zf.read(p).decode('utf-8', errors='ignore')))
                 except Exception:
                     contents.append('')
+            # P1-A 同步：Document.xml PageArea 作物理尺寸权威回退
+            # （与 _OFDRenderer._resolve_doc_page_size 一致：Content.xml Area
+            #  为生成器私有坐标（>500 触发 0.01 单位启发式）时回退 Document.xml）。
+            doc_page_size = None
+            for name in all_names:
+                nl = name.lower()
+                if ('document.xml' in nl
+                        and 'res' not in nl
+                        and 'annot' not in nl):
+                    try:
+                        doc_raw = zf.read(name).decode('utf-8', errors='ignore')
+                        m = RE_PHYSICAL_BOX.search(doc_raw)
+                        if m:
+                            doc_page_size = (float(m.group(3)), float(m.group(4)))
+                            break
+                    except Exception:
+                        continue
     except Exception:
         return []
     result = []
     for idx, content_clean in enumerate(contents):
         w, h = _page_physical_box(content_clean)
+        if w > 500 and doc_page_size:
+            w, h = doc_page_size
         pw, ph = _page_pixel_dims(w, h, dpi)
         result.append({
             'index': idx,
