@@ -582,6 +582,18 @@ def api_db_duplicates(number):
     return jsonify({"success": True, "data": result})
 
 
+@app.route('/api/import-history/<number>', methods=['GET'])
+def api_import_history(number):
+    """查询某发票号码的重复导入历史（用于前端软提醒，不拦截导入）。"""
+    from urllib.parse import unquote
+    import import_history as _ih
+    number = unquote(number)
+    rec = _ih.get_import_history(number)
+    if rec:
+        return jsonify({"success": True, "data": {"exists": True, **rec}})
+    return jsonify({"success": True, "data": {"exists": False}})
+
+
 @app.route('/api/config/get', methods=['GET'])
 def api_config_get():
     key = request.args.get('key', '')
@@ -1949,6 +1961,12 @@ if __name__ == '__main__':
     if ttl_cleaned > 0:
         logger.info("[Cache] TTL 清理: %d 个过期文件", ttl_cleaned)
     db_module.cleanup_expired_invoices()
+    # 重复导入历史按「开票日期 + 3 年」独立清理（与发票 7 天清理生命周期不同，互不影响）
+    try:
+        import import_history as _ih
+        _ih.cleanup_expired()
+    except Exception as _e:  # noqa: BLE001
+        logger.warning("[App] 导入历史 3 年清理失败（已忽略）: %s", _e)
     _page_cache_cleanup_thread = threading.Thread(
         target=_page_cache_periodic_cleanup, daemon=True, name="page-cache-cleanup"
     )

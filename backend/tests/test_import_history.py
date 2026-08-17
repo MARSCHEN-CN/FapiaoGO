@@ -1,0 +1,140 @@
+"""InvoiceImportHistory 单元测试（冻结方案验证）。
+
+覆盖：
+- 基本记录 / 查询
+- invoiceDate 首次记录后不可被后续导入覆盖；firstImportedAt 不变；lastImportedAt/count 更新
+- 同号码再次导入开票日期不一致 → 保留首次日期 + 累计 dateMismatchCount + warning（不污染）
+- 发票号码归一化（空白/大小写）
+- 空号码不记录
+- 3 年清理按开票日期边界（差 1 天也保留；invoiceDate 缺失回退 firstImportedAt）
+- 🔴 豁免回归：db 压缩(_compact_oplog) 与 7 天清理(cleanup_expired_invoices) 不影响导入历史
+"""
+import os
+import sys
+import tempfile
+
+# 必须在 import 之前设置，db / import_history 均在模块加载时解析 DB 路径
+_TMP_DB = tempfile.mkdtemp(prefix="import_history_db_")
+os.environ['FAPIAOGO_DB_PATH'] = _TMP_DB
+_BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _BACKEND_DIR not in sys.path:
+    sys.path.insert(0, _BACKEND_DIR)
+
+import import_history as ih  # noqa: E402
+import db  # noqa: E402
+from datetime import date  # noqa: E402
+
+
+def _reset_db_memory():
+    db._invoices = []
+    db._invoice_index_by_id.clear()
+    db._invoice_index_by_filename.clear()
+    db._invoice_index_by_hash.clear()
+    db._invoice_index_by_number.clear()
+    db._loaded = True
+    for p in (db.OPLOG_PATH, db.INVOICES_PATH):
+        if os.path.exists(p):
+            os.remove(p)
+
+
+def setup_function(_):
+    # 每个用例使用独立历史文件，避免相互污染
+    ih.configure(os.path.join(tempfile.mkdtemp(prefix="ih_"), "x"))
+    ih._history_by_number.clear()
+
+
+def test_record_and_get():
+    ih.record_import("123456", "2026-08-01")
+    ih.flush()
+    rec = ih.get_import_history("123456")
+    assert rec is not None
+    assert rec['invoiceDate'] == '2026-08-01'
+    assert rec['importCount'] == 1
+    assert rec['firstImportedAt'] == rec['lastImportedAt']
+    assert ih.has_imported("123456") is True
+    assert ih.has_imported("999999") is False
+
+
+def test_reimport_keeps_first_date_and_count():
+    ih.record_import("Y123", "2026-01-01")
+    first = ih.get_import_history("Y123")
+    first_at = first['firstImportedAt']
+    # 再次导入同号码同日期
+    ih.record_import("Y123", "2026-01-01")
+    second = ih.get_import_history("Y123")
+    assert second['invoiceDate'] == '2026-01-01'          # 不可变
+    assert second['firstImportedAt'] == first_at           # 首次时间不可变
+    assert second['lastImportedAt'] >= first_at            # 最近时间更新
+    assert second['importCount'] == 2
+
+
+def test_date_mismatch_keeps_first_and_warns():
+    ih.record_import("X1", "2025-01-01")
+    first_at = ih.get_import_history("X1")['firstImportedAt']
+    # 再次导入，开票日期不一致
+    ih.record_import("X1", "2025-01-02")
+    rec = ih.get_import_history("X1")
+    assert rec['invoiceDate'] == '2025-01-01'             # 保留首次，不覆盖
+    assert rec['firstImportedAt'] == first_at
+    assert rec['dateMismatchCount'] == 1                   # 累计不一致次数
+    assert rec['importCount'] == 2
+
+
+def test_normalize_equality():
+    ih.record_import("  abc-123 ", "2026-03-03")
+    ih.record_import("ABC-123", "2026-03-03")             # 归一化后应视为同一号码
+    rec = ih.get_import_history("abc-123")
+    assert rec is not None
+    assert rec['importCount'] == 2
+
+
+def test_empty_number_not_recorded():
+    ih.record_import("", "2026-01-01")
+    ih.record_import(None, "2026-01-01")
+    assert ih.get_import_history("") is None
+    assert ih.get_import_history(None) is None
+
+
+def test_three_year_cleanup_boundary():
+    today = date(2026, 8, 17)
+    ih.record_import("A", "2023-08-01")   # expiry 2026-08-01 < today → 删
+    ih.record_import("B", "2023-08-20")   # expiry 2026-08-20 > today → 留
+    ih.record_import("C", "2025-01-10")   # 留
+    ih.record_import("E", "2026-08-10")   # 留
+    # D：无 invoiceDate，回退 firstImportedAt=2023-01-01 → expiry 2026-01-01 < today → 删
+    ih._history_by_number["D"] = {
+        'invoiceDate': None,
+        'firstImportedAt': '2023-01-01T00:00:00+08:00',
+        'lastImportedAt': '2023-01-01T00:00:00+08:00',
+        'importCount': 1, 'dateMismatchCount': 0,
+    }
+    removed = ih.cleanup_expired(today=today)
+    assert removed == 2
+    assert ih.has_imported("A") is False
+    assert ih.has_imported("D") is False
+    assert ih.has_imported("B") is True
+    assert ih.has_imported("C") is True
+    assert ih.has_imported("E") is True
+
+
+def test_compaction_and_7day_exemption():
+    """🔴 回归：db 压缩与 7 天清理不得触及导入历史。"""
+    _reset_db_memory()
+    num, inv_date = "IMPORT-EXM", "2026-05-02"
+    # 通过 db 正式入库（触发 import_history 挂钩）
+    db.upsert_invoice({
+        'file_name': 'exm.png', 'hash_sha256': 'exmhash',
+        'number': num, 'date': inv_date, 'amount': '10',
+    })
+    ih.flush()
+    assert ih.has_imported(num) is True
+
+    # db 压缩（invoices.oplog 会被清空）—— 导入历史必须仍在
+    db._compact_oplog()
+    assert os.path.exists(db.OPLOG_PATH) is False or os.path.getsize(db.OPLOG_PATH) == 0
+    assert ih.has_imported(num) is True
+    assert ih.get_import_history(num)['invoiceDate'] == inv_date
+
+    # db 7 天清理（invoice 可能丢失）—— 导入历史必须仍在
+    db.cleanup_expired_invoices(days=0)  # 极端：立即过期全部发票
+    assert ih.has_imported(num) is True

@@ -37,6 +37,8 @@ test_fixtures/
 # 仅放行这两个精确路径，不放开整个 backend/tests。A/B 两通道刻意分文件，禁止合并表述。
 !backend/tests/test_m1a_split_pdf_page_base.py
 !backend/tests/test_m1a_batch_import_page_base.py
+# 发票重复导入历史（ImportHistory）测试：与上方同策略刻意纳入版本控制
+!backend/tests/test_import_history.py
 
 # IS-1 契约回归测试（前端）：刻意纳入版本控制，与 backend/tests 白名单同策略
 # 仅放行 contract 子目录；其余前端 *.test.js 仍按仓库既有规则忽略。
