@@ -112,7 +112,7 @@ export function validateRenderCommand(cmd) {
  *   提供时，fit/居中作用于该票位而非整页；null/缺省退化为整页单票（向后兼容）。
  * @returns {ReturnType<typeof emptyRenderCommand>}
  */
-export function buildRenderCommand(paperLayout, documentState, slotRect = null) {
+export function buildRenderCommand(paperLayout, documentState, slotRect = null, printGeometry = null) {
   // V16 F1/F2 守卫：非法/坍缩的 PaperLayout 不应进入 Render 派生层。
   // 不变量校验收口到 isPaperLayoutInvalid（previewState.js 单一来源）：
   //   • 信任 Layout 不变量（contentRect.w/h>0）而非一个可能过期的 valid 字段；
@@ -146,9 +146,13 @@ export function buildRenderCommand(paperLayout, documentState, slotRect = null) 
   //   contentRotation  : 内容旋转角(0/90/180/270)          → 决定 rotatedBounds 是否交换 + 输出 rotation。
   const paperOrientation =
     documentState?.paperOrientation || documentState?.pageOrientation || 'portrait'
-  const contentRotation = normalizeRotation(
-    documentState?.contentRotation ?? documentState?.rotation ?? 0
-  )
+  // Gate 3-4A (B-10 / B-10a): 当调用方提供 PrintGeometry，contentRotation 直接消费其已 canonicalize 的
+  // effectiveRotation，Factory 不再二次 normalize（否则 Builder canonical + Factory canonical = 第二 resolver，违 B-10a）。
+  // 旧 documentState rotation fallback 仅作迁移 shim：新生产路径（renderers V16 / composePlans）均传 printGeometry，
+  // 该 shim 不可达；preview 3-arg 调用亦走此 shim（保持 user-intent rotation，B-11）。
+  const contentRotation = printGeometry
+    ? printGeometry.effectiveRotation
+    : normalizeRotation(documentState?.contentRotation ?? documentState?.rotation ?? 0)
   // 有效纸张是否横向：直接由 PaperOrientation Fact 派生，根除旧 totalRot 推导的 180° bug。
   const paperLandscape = paperOrientation === 'landscape'
   // B1 修复：geometry swap 必须基于「有效方向 ≠ 原生形状」，而非「有效方向 === landscape」。

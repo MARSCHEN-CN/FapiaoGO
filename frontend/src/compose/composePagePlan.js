@@ -18,6 +18,8 @@
  * @module composePagePlan
  */
 
+import { buildPrintGeometry } from '../geometry/PrintGeometryBuilder.js'
+
 /**
  * 由 FileObj（merge 入口项）构造 ComposePagePlan。
  *
@@ -46,6 +48,15 @@ export function fileObjToComposePagePlan(item, index = 0, cs = null, forcedOrien
   const fileRotation = it.rotation || 0
   const rotation = (rotations && rotations[id]) ? rotations[id] : fileRotation
 
+  // Gate 3-4A (D2/B-10): 内容旋转决策收敛到 PrintGeometryBuilder（单一 resolver）。
+  // 与既有的 w/h/pageSize/forcedOrient/rotation 同源输入，不引入新的内容几何来源；
+  // 输出的 effectiveRotation 已是 canonical {0,90,180,270}，供 RenderCommand Factory 直接消费（B-10a 不二次 normalize）。
+  const printGeometry = buildPrintGeometry({
+    rawDocumentGeometry: { widthPx: w, heightPx: h },
+    requestedPaperGeometry: { orientation: forcedOrient },
+    userRotation: { degrees: rotation },
+  })
+
   const documentState = {
     pageSize: { w, h },
     pageOrientation: (w >= h) ? 'landscape' : 'portrait',
@@ -59,6 +70,9 @@ export function fileObjToComposePagePlan(item, index = 0, cs = null, forcedOrien
     // v1 保留占位：slot 几何由 compose 层 computeTicketSlots 自有，plan 不持有，
     // 严格隔离「身份层」与「几何层」（slot 不应知道来源）。
     placement: { slot: null },
+    // Gate 3-4A: 挂载 PrintGeometry（含 canonical effectiveRotation），供 composePlans → buildRenderCommand 消费；
+    // documentStateToPlan 路径不挂此字段 → 走 legacy shim（B-11 兼容）。
+    printGeometry,
     documentState,
   }
 }

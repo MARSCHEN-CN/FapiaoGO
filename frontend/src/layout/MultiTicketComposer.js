@@ -85,7 +85,9 @@ export function composePlans({ paperLayout, plans, ticketCount, strategy = 'vert
       console.warn(`[composePlans] plans[${i}] skipped: no slot (slot count=${slots.length}, plan count=${plans.length})`)
       continue
     }
-    const renderCommand = buildRenderCommand(paperLayout, plan.documentState, slot)
+    // Gate 3-4A (D2/B-10): 把 plan 上挂载的 PrintGeometry 传给 Factory，作为 contentRotation 唯一来源；
+    // 旧 3 参数路径（preview / compose() adapter）不传 printGeometry → 走 legacy shim（B-11）。
+    const renderCommand = buildRenderCommand(paperLayout, plan.documentState, slot, plan.printGeometry)
     // 13-E.1：附加来源身份（drawRenderCommand / validateRenderCommand 均忽略 meta，冻结契约不受损）
     result.push({
       plan,
