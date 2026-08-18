@@ -23,7 +23,6 @@
   invoiceNumber    TEXT 唯一检测键（归一化后）
   invoiceDate      DATE 开票日期（决定 3 年生命周期；一旦首次记录则不可被后续导入覆盖）
   firstImportedAt  DATETIME 首次导入时间（不可覆盖）
-  lastImportedAt   DATETIME 最近导入时间（每次导入更新）
   importCount      INT 累计导入次数（每次导入 +1）
   dateMismatchCount INT 同号码再次导入时开票日期不一致的次数（仅观测，不污染业务字段）
 
@@ -202,7 +201,7 @@ def record_import(number, invoice_date=None):
 
     规则（冻结）：
       - invoiceDate / firstImportedAt 一旦首次记录，**不可被后续导入覆盖**；
-      - 后续导入只更新 lastImportedAt、importCount += 1；
+      - 后续导入只更新 importCount += 1；
       - 若后续导入的开票日期与历史不同，保留首次日期、累计 dateMismatchCount、记 warning
         （首版仅日志，不做 UI；保证数据不被污染）。
     """
@@ -219,7 +218,6 @@ def record_import(number, invoice_date=None):
             _history_by_number[norm] = {
                 'invoiceDate': date_iso,
                 'firstImportedAt': now_iso,
-                'lastImportedAt': now_iso,
                 'importCount': 1,
                 'dateMismatchCount': 0,
             }
@@ -232,7 +230,6 @@ def record_import(number, invoice_date=None):
                     "历史=%s 本次=%s，保留首次日期，已记录 warning（可能 OCR 错误或异常票种）",
                     norm, rec['invoiceDate'], date_iso,
                 )
-            rec['lastImportedAt'] = now_iso
             rec['importCount'] = rec.get('importCount', 0) + 1
 
         # 节流落盘：0.5s 内只写一次
@@ -244,7 +241,7 @@ def record_import(number, invoice_date=None):
 
 
 def get_import_history(number):
-    """返回 {invoiceDate, firstImportedAt, lastImportedAt, importCount, dateMismatchCount}
+    """返回 {invoiceDate, firstImportedAt, importCount, dateMismatchCount}
     或 None（未导入过）。"""
     norm = normalize_invoice_number(number)
     if not norm:

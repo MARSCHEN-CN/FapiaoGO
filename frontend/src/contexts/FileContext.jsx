@@ -212,7 +212,6 @@ export function FileProvider({ children }) {
                   exists: true,
                   invoiceDate: res.invoiceDate,
                   firstImportedAt: res.firstImportedAt,
-                  lastImportedAt: res.lastImportedAt,
                   importCount: res.importCount,
                   dateMismatchCount: res.dateMismatchCount,
                 })

@@ -920,7 +920,7 @@ def upsert_invoice(row: Dict) -> Dict:
                     orig['updated_at'] = now_str
                     _refresh_search_text(orig)
                     _append_oplog("update", orig['id'], {k: v for k, v in row.items() if k not in _PRESERVED_KEYS})
-                    # ── 重复导入历史：重复导入（同一文件重新解析）也必须更新 lastImportedAt/importCount ──
+                    # ── 重复导入历史：重复导入（同一文件重新解析）也必须更新 importCount ──
                     # record_import 内部保证 invoiceDate/firstImportedAt 不可变，仅更新 last/count
                     try:
                         import import_history as _ih
@@ -1023,7 +1023,7 @@ def batch_upsert_invoices(rows: List[Dict]) -> List[Dict]:
                         _refresh_search_text(orig)
                         _append_oplog("update", orig['id'],
                                       {k: v for k, v in row.items() if k not in _PRESERVED_KEYS})
-                        # ── 重复导入历史：重复导入（同一文件重新解析）也必须更新 lastImportedAt/importCount ──
+                        # ── 重复导入历史：重复导入（同一文件重新解析）也必须更新 importCount ──
                         try:
                             import import_history as _ih
                             _ih.record_import(row.get('number'), row.get('date'))

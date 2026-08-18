@@ -2,7 +2,7 @@
 
 覆盖：
 - 基本记录 / 查询
-- invoiceDate 首次记录后不可被后续导入覆盖；firstImportedAt 不变；lastImportedAt/count 更新
+- invoiceDate 首次记录后不可被后续导入覆盖；firstImportedAt 不变；importCount 更新
 - 同号码再次导入开票日期不一致 → 保留首次日期 + 累计 dateMismatchCount + warning（不污染）
 - 发票号码归一化（空白/大小写）
 - 空号码不记录
@@ -50,7 +50,7 @@ def test_record_and_get():
     assert rec is not None
     assert rec['invoiceDate'] == '2026-08-01'
     assert rec['importCount'] == 1
-    assert rec['firstImportedAt'] == rec['lastImportedAt']
+    assert rec['firstImportedAt']                       # 首次导入时间存在
     assert ih.has_imported("123456") is True
     assert ih.has_imported("999999") is False
 
@@ -64,7 +64,6 @@ def test_reimport_keeps_first_date_and_count():
     second = ih.get_import_history("Y123")
     assert second['invoiceDate'] == '2026-01-01'          # 不可变
     assert second['firstImportedAt'] == first_at           # 首次时间不可变
-    assert second['lastImportedAt'] >= first_at            # 最近时间更新
     assert second['importCount'] == 2
 
 
@@ -138,7 +137,6 @@ def test_three_year_cleanup_boundary():
     ih._history_by_number["D"] = {
         'invoiceDate': None,
         'firstImportedAt': '2023-01-01T00:00:00+08:00',
-        'lastImportedAt': '2023-01-01T00:00:00+08:00',
         'importCount': 1, 'dateMismatchCount': 0,
     }
     removed = ih.cleanup_expired(today=today)
@@ -196,7 +194,7 @@ def test_batch_upsert_records_history():
     assert ih.get_import_history(num1)['invoiceDate'] == inv_date1
     assert ih.get_import_history(num2)['invoiceDate'] == inv_date2
 
-    # 重复导入同批文件（同 hash + 同 file_name）→ is_new=False，但历史必须更新 last/count
+    # 重复导入同批文件（同 hash + 同 file_name）→ is_new=False，但历史必须更新 count
     results2 = db.batch_upsert_invoices([
         {'file_name': 'b1.pdf', 'hash_sha256': 'batchhash1',
          'number': num1, 'date': inv_date1, 'amount': '10'},
@@ -205,12 +203,11 @@ def test_batch_upsert_records_history():
     rec_after = ih.get_import_history(num1)
     assert rec_after['importCount'] == 2            # 🔴 重复导入必须 +1（曾为 1，bug）
     assert rec_after['invoiceDate'] == inv_date1    # 开票日期仍不可变
-    assert rec_after['firstImportedAt'] <= rec_after['lastImportedAt']  # last 更新
+    assert rec_after['firstImportedAt']             # 首次导入时间不变
 
 
 def test_upsert_reimport_updates_history():
-    """单张路径重复导入（同 hash + 同 file_name → is_new=False）也必须更新
-    lastImportedAt/importCount（lastImportedAt = 第二次导入时间）。"""
+    """单张路径重复导入（同 hash + 同 file_name → is_new=False）也必须更新 importCount。"""
     _reset_db_memory()
     num, inv_date = "REIMP-001", "2026-07-01"
     row = {'file_name': 'r.pdf', 'hash_sha256': 'reimphash',
@@ -219,14 +216,14 @@ def test_upsert_reimport_updates_history():
     assert r1['is_new'] is True
     ih.flush()
     assert ih.get_import_history(num)['importCount'] == 1
-    # 再次导入同一文件 → is_new=False，但 lastImportedAt/importCount 必须更新
+    # 再次导入同一文件 → is_new=False，但 importCount 必须更新
     r2 = db.upsert_invoice(row)
     assert r2['is_new'] is False
     ih.flush()
     rec = ih.get_import_history(num)
     assert rec['importCount'] == 2
     assert rec['invoiceDate'] == inv_date            # 首次开票日期不可变
-    assert rec['firstImportedAt'] <= rec['lastImportedAt']
+    assert rec['firstImportedAt']                    # 首次导入时间不变
 
 
 def test_default_path_is_project_root_database():
