@@ -32,7 +32,7 @@ const FileCardRow = memo(({ index, style, files, previewFileKey, previewFileDocI
   const hasFailed = isFailedFile(fileObj)
   const showDuplicate = !hasFailed && isDuplicate
   const showPrevYear = !hasFailed && !showDuplicate && isPrevYear
-  const showImportHistory = !hasFailed && !showDuplicate && !isPrevYear && isImportHistory
+  const showImportHistory = !hasFailed && !showDuplicate && isImportHistory
 
   const handleClick = () => {
     if (typeof onPreview === 'function') onPreview(fileObj)

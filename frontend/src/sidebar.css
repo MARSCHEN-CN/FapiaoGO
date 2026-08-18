@@ -669,6 +669,7 @@
 .fc-dot.failed { background: var(--red); box-shadow: 0 0 0 3px var(--red-soft); }
 .fc-dot.duplicate { background: var(--orange); box-shadow: 0 0 0 3px var(--orange-soft); }
 .fc-dot.prevyear { background: var(--year); box-shadow: 0 0 0 3px var(--year-soft); }
+.fc-dot.importhistory { background: var(--purple); box-shadow: 0 0 0 3px var(--purple-soft); }
 
 .fc-row-bottom {
   display: flex;
@@ -1218,6 +1219,49 @@
 
 .merge-group-first ~ .prev-year-label,
 .file-card:has(.merge-group-label) .prev-year-label {
+  right: 80px;
+}
+
+/* -- 重复导入提醒标记 -- */
+.file-card.import-history { position: relative; overflow: hidden; }
+
+.import-history-bar {
+  position: absolute;
+  left: 0; top: 10px; bottom: 10px;
+  width: 3px;
+  background: var(--purple);
+  border-radius: 0 3px 3px 0;
+  z-index: 2;
+}
+
+.file-card.active .import-history-bar {
+  display: none;
+}
+
+.import-history-label {
+  position: absolute;
+  top: -1px; right: 28px;
+  font-size: 9px;
+  background: var(--purple);
+  color: #fff;
+  padding: 1px 6px;
+  border-radius: 0 0 4px 4px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  z-index: 1;
+}
+
+.merge-group-first ~ .import-history-label,
+.file-card:has(.merge-group-label) .import-history-label {
+  right: 80px;
+}
+
+/* 重复导入 + 往年 共存：往年左条右移 6px 避让，标签并排 */
+.file-card:has(.import-history-bar) .prev-year-bar {
+  left: 6px;
+}
+
+.file-card:has(.prev-year-label) .import-history-label {
   right: 80px;
 }
 

@@ -467,7 +467,25 @@ export default React.memo(function Sidebar({
                 {ICONS.clear}
               </button>
             </>
-          ) : importHistoryCount > 0 && showImportHistoryWarning ? (
+          ) : (
+            <>
+              <div className="sb-stat">
+                <div className="sb-stat-icon blue">
+                  {ICONS.file}
+                </div>
+                <span className={`sb-stat-val${poppingStats.count ? ' pop' : ''}`}>{documentView.documentCount}</span>
+                <span className="sb-stat-label">发票数</span>
+              </div>
+              <div className="sb-stat">
+                <div className="sb-stat-icon green">
+                  {ICONS.check}
+                </div>
+                <span className={`sb-stat-val${poppingStats.amount ? ' pop' : ''} brand`}>¥{totalAmount.toFixed(2)}</span>
+                <span className="sb-stat-label">总金额</span>
+              </div>
+            </>
+          )}
+          {importHistoryCount > 0 && showImportHistoryWarning ? (
             <>
               <div className="sb-stat-summary">
                 共 <b>{documentView.documentCount}</b> 个文件 · 其中 <span className="sb-stat-summary-year">{importHistoryCount} 个可能为重复报销</span>
@@ -497,24 +515,7 @@ export default React.memo(function Sidebar({
                 {ICONS.clear}
               </button>
             </>
-          ) : (
-            <>
-              <div className="sb-stat">
-                <div className="sb-stat-icon blue">
-                  {ICONS.file}
-                </div>
-                <span className={`sb-stat-val${poppingStats.count ? ' pop' : ''}`}>{documentView.documentCount}</span>
-                <span className="sb-stat-label">发票数</span>
-              </div>
-              <div className="sb-stat">
-                <div className="sb-stat-icon green">
-                  {ICONS.check}
-                </div>
-                <span className={`sb-stat-val${poppingStats.amount ? ' pop' : ''} brand`}>¥{totalAmount.toFixed(2)}</span>
-                <span className="sb-stat-label">总金额</span>
-              </div>
-            </>
-          )}
+          ) : null}
         </div>
       )}
     </aside>
