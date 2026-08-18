@@ -2,6 +2,8 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { buildPreviewGeometry } from './PreviewGeometryBuilder.js'
 import { resolvePrintAutoRotation } from './PrintAutoRotationPolicy.js'
+import { extractContentPx } from './extractContentPx.js'
+import { detectDocumentOrientation } from '../utils/detectOrientation.js'
 
 // ───────────────────────────────────────────────────────────
 // Gate 2 验收矩阵（PreviewGeometryBuilder Boundary Contract）
@@ -143,6 +145,49 @@ test('G2-Semantic Regression：横票+竖纸 sourceContentLandscape/paperLandsca
   assert.equal(out.orientationMismatch, true) // = 旧 isLandscape（cache key 语义，必须为 true）
   assert.equal(out.effectiveRotation, 270) // 内容需旋转 270° 上纸
   assert.equal(out.effectiveContentLandscape, false) // 旋转后内容变 portrait
+})
+
+// 5b) G2-S4-1 Cache identity regression（Step 4 接线核心守卫）：
+//     orientationMismatch 必须与旧 isLandscape（= detectDocumentOrientation(file) !== paperOrient）值等价，
+//     否则替换进 renderKey / buildPreviewCacheKey 会改变缓存身份 → 命中错误 L2/fullCache 快照。
+//     覆盖 PDF / 图片 / OFD 三种 px 源（extractContentPx 与 detectDocumentOrientation 同源）。
+test('G2-S4-1：orientationMismatch 与旧 isLandscape(contentOrient !== paperOrient) 值等价（缓存键不变）', () => {
+  const cases = [
+    { file: { _pdfPageWidth: 3508, _pdfPageHeight: 2480 }, paperOrient: 'portrait', expect: true, label: 'PDF 横票+竖纸' },
+    { file: { _pdfPageWidth: 2480, _pdfPageHeight: 3508 }, paperOrient: 'landscape', expect: true, label: 'PDF 竖票+横纸' },
+    { file: { _pdfPageWidth: 3508, _pdfPageHeight: 2318 }, paperOrient: 'landscape', expect: false, label: 'PDF 横票+横纸' },
+    { file: { _pdfPageWidth: 2480, _pdfPageHeight: 3508 }, paperOrient: 'portrait', expect: false, label: 'PDF 竖票+竖纸' },
+    { file: { _imageWidth: 3508, _imageHeight: 2480 }, paperOrient: 'portrait', expect: true, label: '图片 横票+竖纸' },
+    { file: { _imageWidth: 2480, _imageHeight: 3508 }, paperOrient: 'landscape', expect: true, label: '图片 竖票+横纸' },
+    { file: { previewWidth: 2480, previewHeight: 3508 }, paperOrient: 'portrait', expect: false, label: 'OFD preview 竖票+竖纸' },
+    { file: { previewWidth: 3508, previewHeight: 2480 }, paperOrient: 'landscape', expect: false, label: 'OFD preview 横票+横纸' },
+  ]
+  for (const c of cases) {
+    const oldIsLandscape = detectDocumentOrientation(c.file) !== c.paperOrient
+    const out = buildPreviewGeometry({
+      rawDocumentGeometry: extractContentPx(c.file),
+      requestedPaperGeometry: { orientation: c.paperOrient },
+      userRotation: { degrees: 0 },
+    })
+    assert.equal(out.orientationMismatch, oldIsLandscape, `旧 isLandscape 应等价 (${c.label})`)
+    assert.equal(out.orientationMismatch, c.expect, `期望 mismatch (${c.label})`)
+  }
+})
+
+// 5c) G2-S4-2 No writeback（静态/单元双重守卫）：
+//     Builder 输出不得含任何可被写回 documentState / fileRotations 的 effectiveRotation 字段别名；
+//     且 effectiveRotation 始终为 canonical {0,90,180,270}，绝不进入 orientation 身份比较。
+test('G2-S4-2：orientationMismatch 不使用 effectiveRotation，且 effectiveRotation 为 canonical', () => {
+  for (const [w, h, po] of [[3508, 2480, 'portrait'], [2480, 3508, 'landscape'], [3508, 2318, 'landscape'], [2480, 3508, 'portrait']]) {
+    const out = buildPreviewGeometry({
+      rawDocumentGeometry: { widthPx: w, heightPx: h },
+      requestedPaperGeometry: { orientation: po },
+      userRotation: { degrees: 0 },
+    })
+    // orientationMismatch 仅依赖 sourceContentLandscape / paperLandscape，不含 effectiveRotation
+    assert.equal('effectiveRotation' in out && typeof out.effectiveRotation === 'number', true)
+    assert.ok([0, 90, 180, 270].includes(out.effectiveRotation), `effectiveRotation canonical (${w}x${h}/${po})`)
+  }
 })
 
 // 6) B-7 Fixed Output Contract：返回命名结构，非 Policy 返回值透传

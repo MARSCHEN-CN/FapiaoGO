@@ -11,6 +11,8 @@ import { emptyContentLayout, initialRenderState, computePaperLayout, getDocNatur
 import { buildRenderCommand } from '../layout/RenderLayoutFactory.js'
 import { buildRenderSpec, RENDER_SPEC_VERSION, renderSpecSignature } from '../layout/renderSpec.js'
 import { resolvePaper, paperKeyFragment } from '../layout/resolvePaper.js'
+import { buildPreviewGeometry } from '../geometry/PreviewGeometryBuilder.js'
+import { extractContentPx } from '../geometry/extractContentPx.js'
 import { computeInitialDocFacts } from '../layout/docFacts.js'
 import { nextZoomStep } from './zoomStep.mjs'
 import { applyWheelZoom } from './continuousZoom.mjs'
@@ -677,18 +679,24 @@ export function usePreview({ files, settings, electronAPIRef }) {
     }
 
     const { paperSize } = settings
-    // isLandscape = paperShouldShowAsLandscape
+    // orientationMismatch = paperShouldShowAsLandscape
     // 规则：纸张与内容方向不同时才 swap（让内容能铺满）
-    //   横向内容+横向纸 → isLandscape=false（纸保持横向，内容不旋转直接铺）
-    //   竖向内容+横向纸 → isLandscape=true （纸 swap 成竖向，内容旋转 90° 铺）
-    const contentOrient = detectDocumentOrientation(previewFile)
+    //   横向内容+横向纸 → orientationMismatch=false（纸保持横向，内容不旋转直接铺）
+    //   竖向内容+横向纸 → orientationMismatch=true （纸 swap 成竖向，内容旋转 90° 铺）
     const paper = resolvePaper(paperSize, settings.customPaper)
     const paperOrient = paper.widthMM > paper.heightMM ? 'landscape' : 'portrait'
-    const isLandscape = contentOrient !== paperOrient
+    // Gate 2 (PreviewGeometryBuilder)：orientation-mismatch 决策统一委托 Policy，
+    // 不再手算 contentOrient !== paperOrient（消除第二套算法）。值等价，缓存键不变。
+    const previewGeometry = buildPreviewGeometry({
+      rawDocumentGeometry: extractContentPx(previewFile),
+      requestedPaperGeometry: { orientation: paperOrient },
+      userRotation: { degrees: previewRotation },
+    })
+    const orientationMismatch = previewGeometry.orientationMismatch
     // ✅ renderKey 必须包含合并模式、合并组所有文件的旋转值，以确保模式切换和多文件旋转都能触发重渲染
     const mergeRotations = mergePair?.map(m => `${m?.key}:${fileRotations[m?.key] || 0}`).join(',') || ''
     const paperFrag = paperKeyFragment(paper)
-    const renderKey = `${previewFile.key}-${paperSize}-${isLandscape}-${currentRotation}-${settings.mergeMode || ''}-${mergePair?.map(m => m?.key).join(',') || ''}-${mergeRotations}-m${settings.marginLeft}_${settings.marginRight}_${settings.marginTop}_${settings.marginBottom}-${paperFrag}-re${reBlockedDocId || ''}`
+    const renderKey = `${previewFile.key}-${paperSize}-${orientationMismatch}-${currentRotation}-${settings.mergeMode || ''}-${mergePair?.map(m => m?.key).join(',') || ''}-${mergeRotations}-m${settings.marginLeft}_${settings.marginRight}_${settings.marginTop}_${settings.marginBottom}-${paperFrag}-re${reBlockedDocId || ''}`
     // ⚡ Commit B：移除 Effect 层的 renderKey 守卫。此守卫曾阻塞整个 Effect
     // （RE/Canvas/probe/Loading 生命周期全部被阻断），导致导入后卡 Loading。
     // renderKey 的去重职责应下沉到 Canvas 渲染内部（renderToCanvas），
@@ -859,7 +867,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
 
           if (isMerge) {
             // ✅ 合并模式强制方向（merge2/3=竖向, merge4=横向），纸张用用户设置
-            const forcedLandscape = getForcedLandscape(settings.mergeMode, isLandscape)
+            const forcedLandscape = getForcedLandscape(settings.mergeMode, orientationMismatch)
             const userMargins = {
               left: settings.marginLeft ?? 3, right: settings.marginRight ?? 3,
               top: settings.marginTop ?? 3, bottom: settings.marginBottom ?? 3,
@@ -878,7 +886,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
             // ✅ 单文件：统一使用全局 Canvas（PDF / 图片 / OFD 都走此路径）
             const { getGlobalPreviewCanvas, switchPreviewFile, switchPreviewImage, getOrLoadPdfDocument } = await getRenderers()
             // 🆕 V17：canvas 回退按 paperLandscape 绘制（内容自然、横纸），与 RE 对齐
-            const effectiveLandscape = renderCommand?.paperLandscape ?? isLandscape
+            const effectiveLandscape = renderCommand?.paperLandscape ?? orientationMismatch
             const paperKey = paperSize || 'A4'
 
             // 初始化全局 Canvas（配置不变则复用同一 Canvas）
@@ -951,7 +959,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
             { fileKey: previewFile.key, rotation },
             {
               paperSize: settings.paperSize,
-              isLandscape,
+              orientationMismatch,
               // 🔴 V17 不变式：缓存身份必须包含每一个影响 RenderCommand 的 Fact。
               //    paperLandscape 由 PaperOrientation Fact 驱动绘制，缺失会导致强制方向后命中错误快照。
               paperLandscape: renderCommand?.paperLandscape ?? false,
@@ -1570,13 +1578,20 @@ export function usePreview({ files, settings, electronAPIRef }) {
     }
 
     let rotation = (fileRotationsRef.current[loadedFile.key] || 0)
-    // 与 render effect 保持一致的 isLandscape 计算：统一走 resolvePaper（Single Decision Point）。
+    // 与 render effect 保持一致的 orientationMismatch 计算：统一走 resolvePaper（Single Decision Point）。
     // 否则 Custom 纸型下 PAPER_SIZE_MAP 与 resolvePaper 结果不一致 → L2 缓存键与渲染键漂移 →
     // 点击命中陈旧 Canvas，与自动预览（RE）视觉不一致。
-    const contentOrient = detectDocumentOrientation(loadedFile)
+    const contentOrient = detectDocumentOrientation(loadedFile) // 仍用于 documentState.pageOrientation 派生（L1628），非 orientation-mismatch 决策
     const paper = resolvePaper(settingsRef.current.paperSize, settingsRef.current.customPaper)
     const paperOrient = paper.widthMM > paper.heightMM ? 'landscape' : 'portrait'
-    const isLandscape = contentOrient !== paperOrient
+    // Gate 2 (PreviewGeometryBuilder)：orientation-mismatch 决策统一委托 Policy，
+    // 不再手算 contentOrient !== paperOrient（消除第二套算法）。值等价，缓存键不变。
+    const previewGeometry = buildPreviewGeometry({
+      rawDocumentGeometry: extractContentPx(loadedFile),
+      requestedPaperGeometry: { orientation: paperOrient },
+      userRotation: { degrees: rotation },
+    })
+    const orientationMismatch = previewGeometry.orientationMismatch
 
     // ── PaperLayout 现在由 useMemo 纯派生（settings → computePaperLayout），此处不再重复 ──
     // PaperLayout 仅依赖 PaperSpec，与当前文档无关；文件切换不改变 PaperLayout
@@ -1652,7 +1667,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
     }
     // 🔴 V17 不变式：缓存身份必须包含每一个影响 RenderCommand 的 Fact。
     //    paperLandscape 由 PaperOrientation Fact 驱动绘制（renderCommand.paperLandscape），
-    //    但旧缓存键只用 isLandscape（内容 vs 纸张）→ 强制方向后键不变、canvas 变 → 命中错误快照。
+    //    但旧缓存键只用 orientationMismatch（内容 vs 纸张）→ 强制方向后键不变、canvas 变 → 命中错误快照。
     //    此处用与渲染路径完全一致的 buildRenderCommand 派生 paperLandscape，喂给缓存键；
     //    同时复用同一 l2Command 构造 L2 命中的 RE URL（contentRotation 以 documentStateRef.current 为真值，不覆盖）。
     let paperLandscape = false
@@ -1665,7 +1680,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
       { fileKey: loadedFile.key, rotation },
       {
         paperSize: settingsRef.current.paperSize,
-        isLandscape,
+        orientationMismatch,
         // 🔴 V17 不变式：paperLandscape 必须进缓存身份（见上方说明）
         paperLandscape,
         mergeMode: settingsRef.current.mergeMode,
