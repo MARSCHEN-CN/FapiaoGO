@@ -77,8 +77,8 @@ import { resolvePrintAutoRotation } from './PrintAutoRotationPolicy.js'
  *     effectiveRotation,           // canonical clockwise {0,90,180,270}   (from Policy)
  *     paperGeometry,               // { orientation } — physical paper, external constraint, NEVER from effectiveRotation
  *     effectiveContentGeometry,    // { widthPx, heightPx } — post-auto-rotation content geometry (from Policy)
- *     contentLandscape,            // derived from effectiveContentGeometry (post-rotation)
- *     paperLandscape,              // derived from paperGeometry (physical paper orientation)
+ *     contentLandscape,            // boolean: content is landscape, from effectiveContentGeometry (post-rotation)
+ *     paperLandscape,              // boolean: paper is landscape, from PaperGeometry (physical paper orientation)
  *     isLandscape,                 // preview container swap — combination of the two, computed ONLY inside Builder
  *   }
  */
@@ -100,8 +100,8 @@ export function buildPreviewGeometry({ rawDocumentGeometry, requestedPaperGeomet
   // effectiveRotation MUST NOT become the source of paperLandscape: that would couple content
   // rotation back into physical paper, violating INV-2 and corrupting Sumatra / MediaBox / Margin Contract.
   const paperLandscape = requestedPaperGeometry.orientation === 'landscape'
-  const contentLandscape = effectiveContentHeight > effectiveContentWidth ? 'portrait' : 'landscape'
-  const isLandscape = contentLandscape !== paperLandscape
+  const contentLandscape = effectiveContentWidth > effectiveContentHeight  // boolean: content is landscape (post-rotation)
+  const isLandscape = contentLandscape !== paperLandscape                  // both booleans — mirrors old `contentOrient !== paperOrient`
 
   // FIXED OUTPUT CONTRACT (B-7): return a named PreviewPlacementGeometry object, NOT the raw
   // resolvePrintAutoRotation(...) return. Consumption domain (Preview) connects to the decision
