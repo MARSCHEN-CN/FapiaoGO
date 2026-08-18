@@ -30,9 +30,10 @@ const FileCardRow = memo(({ index, style, files, previewFileKey, previewFileDocI
   // （原先仅用 failedFields.length>0，导致 status==='error' 或「缺失」类解析失败
   //   的空白图片能显示「解析失败」文字却拿不到 has-failed 类 → 左侧红条/状态圆点不红）
   const hasFailed = isFailedFile(fileObj)
-  const showDuplicate = !hasFailed && isDuplicate
-  const showPrevYear = !hasFailed && !showDuplicate && isPrevYear
-  const showImportHistory = !hasFailed && !showDuplicate && isImportHistory
+  // 互斥优先级链：失败 > 重复报销 > 重复组 > 往年（同一时刻只显示一种）
+  const showImportHistory = !hasFailed && isImportHistory
+  const showDuplicate = !hasFailed && !showImportHistory && isDuplicate
+  const showPrevYear = !hasFailed && !showImportHistory && !showDuplicate && isPrevYear
 
   const handleClick = () => {
     if (typeof onPreview === 'function') onPreview(fileObj)
@@ -67,9 +68,9 @@ const FileCardRow = memo(({ index, style, files, previewFileKey, previewFileDocI
   if (hasFailed) {
     statusDotClass = 'failed'
   } else if (fileObj.status === 'parsed') {
-    if (showDuplicate) statusDotClass = 'duplicate'
+    if (showImportHistory) statusDotClass = 'importhistory'
+    else if (showDuplicate) statusDotClass = 'duplicate'
     else if (showPrevYear) statusDotClass = 'prevyear'
-    else if (showImportHistory) statusDotClass = 'importhistory'
     else statusDotClass = 'ready'
   }
 
@@ -100,7 +101,7 @@ const FileCardRow = memo(({ index, style, files, previewFileKey, previewFileDocI
       {showImportHistory && (
         <>
           <div className="import-history-bar"></div>
-          <div className="import-history-label">重复导入提醒</div>
+          <div className="import-history-label">重复报销</div>
         </>
       )}
       {showDuplicate && isDupFirst && <div className="duplicate-bar"></div>}

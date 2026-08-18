@@ -414,6 +414,36 @@ export default React.memo(function Sidebar({
                 </label>
               </div>
             </>
+          ) : importHistoryCount > 0 && showImportHistoryWarning ? (
+            <>
+              <div className="sb-stat-summary">
+                共 <b>{documentView.documentCount}</b> 个文件 · 其中 <span className="sb-stat-summary-year">{importHistoryCount} 个重复报销</span>
+              </div>
+              <div className="sb-seg-control">
+                <button
+                  className="sb-seg-btn sb-seg-btn-year"
+                  onClick={(e) => { e.stopPropagation(); removeImportHistoryFiles(removeSourceFile) }}
+                  title="移除重复报销的文件"
+                >
+                  {ICONS.trash}
+                  <span>移除此类</span>
+                </button>
+                <label className="sb-seg-option">
+                  <input type="checkbox" checked={removeSourceFile} onChange={(e) => setRemoveSourceFile(e.target.checked)} />
+                  <span className="sb-seg-toggle-track">
+                    <span className="sb-seg-toggle-thumb"></span>
+                  </span>
+                  <span className="sb-seg-option-label">删源文件</span>
+                </label>
+              </div>
+              <button
+                className="sb-stats-close"
+                onClick={(e) => { e.stopPropagation(); setShowImportHistoryWarning(false) }}
+                title="关闭提示（视为正常状况）"
+              >
+                {ICONS.clear}
+              </button>
+            </>
           ) : duplicateGroupCount > 0 ? (
             <>
               <div className="sb-stat-summary">
@@ -485,37 +515,6 @@ export default React.memo(function Sidebar({
               </div>
             </>
           )}
-          {importHistoryCount > 0 && showImportHistoryWarning ? (
-            <>
-              <div className="sb-stat-summary">
-                共 <b>{documentView.documentCount}</b> 个文件 · 其中 <span className="sb-stat-summary-year">{importHistoryCount} 个可能为重复报销</span>
-              </div>
-              <div className="sb-seg-control">
-                <button
-                  className="sb-seg-btn sb-seg-btn-year"
-                  onClick={(e) => { e.stopPropagation(); removeImportHistoryFiles(removeSourceFile) }}
-                  title="移除重复导入提醒的文件"
-                >
-                  {ICONS.trash}
-                  <span>移除此类</span>
-                </button>
-                <label className="sb-seg-option">
-                  <input type="checkbox" checked={removeSourceFile} onChange={(e) => setRemoveSourceFile(e.target.checked)} />
-                  <span className="sb-seg-toggle-track">
-                    <span className="sb-seg-toggle-thumb"></span>
-                  </span>
-                  <span className="sb-seg-option-label">删源文件</span>
-                </label>
-              </div>
-              <button
-                className="sb-stats-close"
-                onClick={(e) => { e.stopPropagation(); setShowImportHistoryWarning(false) }}
-                title="关闭提示（视为正常状况）"
-              >
-                {ICONS.clear}
-              </button>
-            </>
-          ) : null}
         </div>
       )}
     </aside>
