@@ -203,6 +203,9 @@ export function FileProvider({ children }) {
           if (myReq !== importHistoryReqIdRef.current) return  // 已被新轮换取代
           if (res && res.__error) return                       // 静默失败
           if (!res || res.exists !== true) return             // 未命中
+          // 🔴 首次导入不算重复报销：历史记录由本次导入创建（count 含本次），
+          //    仅当 count>=2 才说明本次之前已导入过（=重复报销）；count==1 是首次导入。
+          if ((res.importCount ?? 0) < 2) return
           setImportHistoryInfo(prev => {
             const next = new Map()
             for (const [k, v] of prev) if (liveKeys.has(k)) next.set(k, v)  // 剔除已移除
