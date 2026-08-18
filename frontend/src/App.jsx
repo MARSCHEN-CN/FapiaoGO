@@ -575,69 +575,15 @@ function AppContent() {
     }
   }, [cleanupPreviewUrl])
 
-  const removePreviousYearFiles = useCallback((removeSource = false) => {
-    // ✅ 先读取最新列表计算往年发票集合（不在 updater 内做副作用）
+  // ── 按 key 集合移除文件（共享核心：往年发票 / 重复报销 / 未来同类提醒共用）──
+  // 流程：①可选物理删源 ②预览清理 ③优先 deleteInvoiceDocument（保留文档级装配）④会话/列表移除
+  const removeFilesByKeys = useCallback((keys, removeSource = false, logTag = 'remove') => {
+    if (!keys || keys.size === 0) return
     const liveFiles = filesRef.current
-    const prevYearInfo = getPreviousYearInfo(liveFiles)
-    const prevYearKeys = new Set()
-    const pathsToDelete = []
-    prevYearInfo.forEach((info, key) => {
-      if (info.isPreviousYear) {
-        prevYearKeys.add(key)
-        if (removeSource) {
-          const f = liveFiles.find(x => x.key === key)
-          if (f?.path) pathsToDelete.push(f.path)
-        }
-      }
-    })
     // ✅ 物理删除源文件（异步，不阻塞 UI）
-    if (pathsToDelete.length > 0) {
-      const ipc = electronAPIRef.current?.ipcRenderer
-      if (ipc) {
-        ipc.invoke('delete-files', pathsToDelete).then(res => {
-          if (res.failed?.length) {
-            console.warn('[removePrevYear] 部分文件删除失败:', res.failed)
-          }
-        }).catch(err => {
-          console.error('[removePrevYear] 删除源文件出错:', err)
-        })
-      }
-    }
-    const livePreview = previewFileRef.current
-    if (livePreview && prevYearKeys.has(livePreview.key)) {
-      cleanupPreviewUrl()
-    }
-    // Step 4: 优先使用 deleteInvoiceDocument
-    const pySid = getActiveSessionId()
-    let deletedViaDocument = false
-    if (pySid && prevYearKeys.size > 0) {
-      const session = getSession(pySid)
-      if (session?.documents?.length) {
-        for (const doc of session.documents) {
-          const pageKeys = doc._pageKeys || []
-          if (pageKeys.some(k => prevYearKeys.has(k))) {
-            const instanceKey = resolveDocumentInstanceKey(doc)
-            const result = deleteInvoiceDocument(pySid, instanceKey)
-            if (result.success) { result.removedPageKeys.forEach(k => prevYearKeys.add(k)); deletedViaDocument = true }
-          }
-        }
-      }
-    }
-    setFiles(prev => prev.filter(fileObj => !prevYearKeys.has(fileObj.key)))
-    if (!deletedViaDocument && pySid && prevYearKeys.size > 0) {
-      removeFilesFromSession(pySid, [...prevYearKeys])
-    }
-  }, [cleanupPreviewUrl])
-
-  // P1：移除「重复导入提醒」标记的文件（镜像 removePreviousYearFiles，仅 key 来源换成 importHistoryInfo Map）
-  const removeImportHistoryFiles = useCallback((removeSource = false) => {
-    const liveFiles = filesRef.current
-    const ih = importHistoryInfoRef.current
-    const ihKeys = new Set(ih ? Array.from(ih.keys()) : [])
-    if (ihKeys.size === 0) return
     const pathsToDelete = []
     if (removeSource) {
-      for (const k of ihKeys) {
+      for (const k of keys) {
         const f = liveFiles.find(x => x.key === k)
         if (f?.path) pathsToDelete.push(f.path)
       }
@@ -646,33 +592,48 @@ function AppContent() {
       const ipc = electronAPIRef.current?.ipcRenderer
       if (ipc) {
         ipc.invoke('delete-files', pathsToDelete).then(res => {
-          if (res.failed?.length) console.warn('[removeImportHistory] 部分文件删除失败:', res.failed)
-        }).catch(err => console.error('[removeImportHistory] 删除源文件出错:', err))
+          if (res.failed?.length) console.warn(`[${logTag}] 部分文件删除失败:`, res.failed)
+        }).catch(err => console.error(`[${logTag}] 删除源文件出错:`, err))
       }
     }
     const livePreview = previewFileRef.current
-    if (livePreview && ihKeys.has(livePreview.key)) cleanupPreviewUrl()
-    // 优先使用 deleteInvoiceDocument（与 removePreviousYearFiles 一致）
-    const ihSid = getActiveSessionId()
+    if (livePreview && keys.has(livePreview.key)) cleanupPreviewUrl()
+    // ✅ 优先使用 deleteInvoiceDocument（文档级装配：连带该文档所有页）
+    const sid = getActiveSessionId()
     let deletedViaDocument = false
-    if (ihSid && ihKeys.size > 0) {
-      const session = getSession(ihSid)
+    if (sid && keys.size > 0) {
+      const session = getSession(sid)
       if (session?.documents?.length) {
         for (const doc of session.documents) {
           const pageKeys = doc._pageKeys || []
-          if (pageKeys.some(k => ihKeys.has(k))) {
+          if (pageKeys.some(k => keys.has(k))) {
             const instanceKey = resolveDocumentInstanceKey(doc)
-            const result = deleteInvoiceDocument(ihSid, instanceKey)
-            if (result.success) { result.removedPageKeys.forEach(k => ihKeys.add(k)); deletedViaDocument = true }
+            const result = deleteInvoiceDocument(sid, instanceKey)
+            if (result.success) { result.removedPageKeys.forEach(k => keys.add(k)); deletedViaDocument = true }
           }
         }
       }
     }
-    setFiles(prev => prev.filter(fileObj => !ihKeys.has(fileObj.key)))
-    if (!deletedViaDocument && ihSid && ihKeys.size > 0) {
-      removeFilesFromSession(ihSid, [...ihKeys])
+    setFiles(prev => prev.filter(fileObj => !keys.has(fileObj.key)))
+    if (!deletedViaDocument && sid && keys.size > 0) {
+      removeFilesFromSession(sid, [...keys])
     }
   }, [cleanupPreviewUrl])
+
+  const removePreviousYearFiles = useCallback((removeSource = false) => {
+    // ✅ 先读取最新列表计算往年发票集合（不在 updater 内做副作用）
+    const prevYearInfo = getPreviousYearInfo(filesRef.current)
+    const keys = new Set()
+    prevYearInfo.forEach((info, key) => { if (info.isPreviousYear) keys.add(key) })
+    removeFilesByKeys(keys, removeSource, 'removePrevYear')
+  }, [removeFilesByKeys])
+
+  // P1：移除「重复报销」标记的文件（与往年发票共用 removeFilesByKeys，仅 key 来源换成 importHistoryInfo Map）
+  const removeImportHistoryFiles = useCallback((removeSource = false) => {
+    const ih = importHistoryInfoRef.current
+    const keys = new Set(ih ? Array.from(ih.keys()) : [])
+    removeFilesByKeys(keys, removeSource, 'removeImportHistory')
+  }, [removeFilesByKeys])
 
   // ============================
   // mergeMode 同步到 FileContext（用于 printableCount 合并调整）

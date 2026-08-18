@@ -55,7 +55,7 @@ export default React.memo(function Sidebar({
   getRootProps, getInputProps, isDragActive,
   // actions
   handleOpenDialog, handleOpenFolder, handlePreview, handleHoverFile, removeFile, clearFiles,
-  removeFailedFiles, removeDuplicateFiles, removePreviousYearFiles, handleRotate,
+  removeFailedFiles, removeDuplicateFiles, removePreviousYearFiles, removeImportHistoryFiles, handleRotate,
   // sort
   sortBy, sortOrder, toggleSort,
 }) {
