@@ -1,7 +1,7 @@
 # Gate 3 — PrintGeometryBuilder Boundary Contract (APPROVED WITH AMENDMENTS)
 
 > **Gate 3 Design-Freeze Draft** — appendix to `docs/print_auto_rotation_contract_v1.md` (v1.0 FINAL, frozen) and `docs/preview_geometry_builder_boundary_contract.md` (Gate 2, frozen).
-> **Does NOT modify v1.0 FINAL nor the Gate 2 contract.** This document is the **design draft** for Gate 3 only. **Status: APPROVED WITH AMENDMENTS (2026-08-18) — three amendments applied: D2 wording softened to "ownership migration, Gate 5 cleanup"; new B-10 (RenderCommand rotation ownership); new B-11 (Preview/Print rotation independence during Gate 3). Docs to be committed; Gate 3 build NOT started.**
+> **Does NOT modify v1.0 FINAL nor the Gate 2 contract.** This document is the **design draft** for Gate 3 only. **Status: APPROVED WITH AMENDMENTS (2026-08-18) — three amendments applied: D2 wording softened to "ownership migration, Gate 5 cleanup"; new B-10 (RenderCommand rotation ownership); new B-11 (Preview/Print rotation independence during Gate 3). Gate 3-0 Build Prep PASSED (2026-08-18); two reviewer addenda locked: (1) buildRenderCommand 4th param = PrintGeometry OBJECT not bare number (§7.2/§8.4/B-10a); (2) B-10a Factory no re-normalize + G3-B-13 guard + R6 case. Entering Gate 3-1.**
 >
 > Gate 2 verdict: **PASS ✅** (commit chain `5552375 → 7ce5d09 → c4c20cd → 06b284a → 8cd223b → 6689a61`). Gate 3 enters **Design Review** only; pipeline code stays frozen.
 
@@ -143,6 +143,7 @@ export function buildPrintGeometry({ rawDocumentGeometry, requestedPaperGeometry
 - **B-8 (paperLandscape boundary, D3)**: `PrintGeometryBuilder` MUST NOT output `paperLandscape`, and `buildRenderCommand` MUST continue deriving `paperLandscape` from `paperOrientation` Fact (`RenderLayoutFactory.js:153`). `effectiveRotation` MUST NOT become a `paperLandscape` source anywhere.
 - **B-9 (domain separation, X-1)**: `PrintGeometryBuilder` consumes `PrintAutoRotationPolicy` only. It MUST NOT call `RotationResolver.resolveContentPlacement` and MUST NOT duplicate its `layoutRotation` semantics. The print-plan layer (`resolveContentPlacement`) remains a separate frozen domain; Gate 3 changes only the *input* it receives (see §7.3 / §7.5), never its logic.
 - **B-10 (RenderCommand rotation ownership)**: `RenderCommand.contentRotation` MUST originate from `PrintGeometry.effectiveRotation`. `RenderLayoutFactory` MUST NOT derive rotation from `documentState` fields. A legacy fallback may exist **only** during migration and MUST NOT be reachable from new production paths (per the D2 migration framing above). This is the print-layer analogue of B-7 (single resolver) and INV-D4-1 (no second decision point) — the core Gate 3 invariant.
+- **B-10a (Factory consumes, does NOT interpret — Gate 3-0 reviewer addendum)**: `RenderLayoutFactory` MUST NOT accept any rotation value that requires interpretation — no `normalizeRotation(printGeometry.effectiveRotation)`, no `normalizeRotation(printGeometry.autoRotation + documentState.rotation)`, no raw degrees needing canonicalization. It may **only read** the canonical `{0,90,180,270}` result already produced by `PrintGeometryBuilder` via `resolvePrintAutoRotation`. The Builder canonicalizes; the Factory forwards. A second canonicalization = a second resolver (forbidden, see B-7). Therefore the `buildRenderCommand` seam receives the **whole `PrintGeometry` (or `resolvedPlacementGeometry`) object**, never a bare `contentRotation` number — a bare-number parameter weak-holds B-10 by implying the Factory still owns rotation (see §7.2 / §8 step 4).
 - **B-11 (Preview/Print rotation independence during Gate 3)**: Gate 3 MUST NOT change preview rotation semantics. Preview user-intent rotation (`previewRotation` = `fileRotations`) remains owned by the preview pipeline until a separate **Gate 3-A** (Preview/Print visual convergence) handles it. Implementers MUST NOT "reuse `effectiveRotation`" inside `usePreview` simply because the field exists — preview and print rotation are intentionally decoupled in Gate 3, and are permitted to differ.
 
 ---
@@ -184,6 +185,8 @@ Gate 5  ⏸ LAST: relax detectOrientation.js:5-6 + regression (OFD guard 3/3, Ga
 ### 7.2 Gate 3-D2 — RenderCommandFactory rotation ownership → A: PrintGeometryBuilder → RenderCommand (CONFIRMED by reviewer)
 `buildRenderCommand` consumes `printGeometry.effectiveRotation`. It does NOT re-resolve from `documentState`. The historical `documentState`-based derivation becomes a migration-only shim whose **ownership** is transferred to `PrintGeometryBuilder`; Gate 3 does **not** delete the shim (cleanup is Gate 5's job). New call sites MUST NOT reach the shim.
 
+**Seam interface (Gate 3-0 addendum)**: `buildRenderCommand`'s 4th parameter MUST be the `PrintGeometry` (or `resolvedPlacementGeometry`) **object**, not a bare `contentRotation` number. A bare `contentRotationOverride` parameter implies the Factory still owns rotation and invites a future `autoRotationOverride` / `finalRotationOverride` re-assembly layer — directly weakening B-10. The Factory reads `printGeometry.effectiveRotation` and forwards it (`contentRotation = printGeometry.effectiveRotation`); it MUST NOT re-normalize (B-10a).
+
 ### 7.3 Gate 3-D3 — paperLandscape ownership → RenderLayoutFactory (CONFIRMED by reviewer)
 `paperLandscape` stays `paperOrientation === 'landscape'` (`RenderLayoutFactory.js:153`). `PrintGeometryBuilder` does not output it.
 
@@ -205,15 +208,15 @@ Currently `usePreview.js:584` injects `contentRotation: previewRotation` (= `fil
 Build order (mirrors Gate 2's proven sequence):
 
 1. `PrintGeometryBuilder.js` pure function (no production wiring) — standalone, per §3.
-2. Vector tests: D3 4-cell + G3-R1 (coordinate) + G3-R2 (auto+user) + G3-R4 (paperLandscape boundary) + G3-R5 (no writeback) + G3-R6 (RotationResolver zero-diff, static).
-3. Static grep guards: G3-R3 (buildRenderCommand no `documentState?.contentRotation ?? documentState?.rotation` fallback), G3-R5 (usePrint no writeback).
-4. Wiring: `usePrint.js` / `buildRenderCommand` consume `printGeometry.effectiveRotation` (add `opts.contentRotation` 4th param to `buildRenderCommand`). **Print path wired only**; the preview path stays on `previewRotation` (deferred to Gate 3-A, see B-11 / §7.4) — do NOT pass `effectiveRotation` into `usePreview` in Gate 3.
+2. Vector tests — explicit case matrix (mirrors reviewer Gate 3-2):\n   - **R1** 横票 `3508×2480` + A4 portrait → auto rotation 生效 (`effectiveRotation=270`)\n   - **R2** 竖票 `2480×3508` + A4 portrait → `effectiveRotation=0`\n   - **R3** 横票 + landscape paper → 不强制旋转 (`effectiveRotation=0`, autoRotation=0)\n   - **R4** `userRotation≠autoRotation` (横票+portrait, `userRotation=90`) → `normalize(270+90)=0` 正确（保留此易误判 case，Gate 2 已证）\n   - **R5** RenderCommand rotation ownership — Builder 输出成为 `effectiveRotation` 唯一来源（B-10）\n   - **R6** user cancel auto（Gate 3-0 新增必保留）：横票+portrait+`userRotation=90` → `autoRotation=270`, `effectiveRotation=normalize(270+90)=0`。**目的：防止实现者写成 `effectiveRotation=autoRotation`（auto 恒赢）或 `userRotation replaces autoRotation`（覆盖）**——验证 `effectiveRotation = normalize(autoRotation + userRotation)` 的**叠加**语义，而非覆盖。\n   另覆盖：G3-R1 (print≡preview 同 resolver) + G3-R4 (paperLandscape 边界, Builder 不输出) + G3-R5 (no writeback, 静态).
+3. Static grep guards (Gate 3 Build-Time Guards G3-B-10 ~ G3-B-13):\n   - **G3-B-10** `RenderLayoutFactory` 禁新增 `documentState.contentRotation ?? documentState.rotation` 推导（落实 B-10）。\n   - **G3-B-11** Preview 禁 `effectiveRotation` 注入 `previewRotation`（落实 B-11）。\n   - **G3-B-12** `layout/RotationResolver.js` diff 必须为空（落实 G3-R6 / X-1）。\n   - **G3-B-13** grep `RenderLayoutFactory.js` 中 `normalizeRotation(`：除合法 import / helper 定义外，不允许出现**新的** rotation normalization（防 Factory 接 Builder 后再 normalize 一次 = 第二 resolver，B-10a）。
+4. Wiring: `usePrint.js` / `buildRenderCommand` consume `printGeometry.effectiveRotation`. **Seam parameter = the `PrintGeometry` / `resolvedPlacementGeometry` object** (NOT a bare `contentRotation` number, per §7.2 / B-10a). Factory reads `printGeometry.effectiveRotation` and forwards — no re-normalize. **Print path wired first (Gate 3-4A); then print-plan caller (Gate 3-4B)**; do NOT wire both simultaneously (isolate diagnosis). The preview path stays on `previewRotation` (deferred to Gate 3-A, see B-11 / §7.4) — do NOT pass `effectiveRotation` into `usePreview` in Gate 3.
 
 Allowed:
 - ✅ 新增 `frontend/src/geometry/PrintGeometryBuilder.js`
 - ✅ 新增 vector tests
 - ✅ 修改 `usePrint.js` 接入口（仅消费 Builder 输出）
-- ✅ 修改 `buildRenderCommand` 增加 `contentRotation` 入参（消费 Builder 输出；历史 `documentState` fallback 降级为迁移期 shim，所有权移交 Builder，Gate 5 清理，Gate 3 不删）
+- ✅ 修改 `buildRenderCommand` 增加 `printGeometry` / `resolvedPlacementGeometry` 对象入参（消费 `Builder.effectiveRotation`；Factory 不 re-normalize，B-10a；历史 `documentState` fallback 降级为迁移期 shim，所有权移交 Builder，Gate 5 清理，Gate 3 不删）
 
 Forbidden (unchanged from freeze):
 - ❌ 修改 `PrintAutoRotationPolicy` 契约
