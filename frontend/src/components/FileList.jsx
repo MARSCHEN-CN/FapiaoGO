@@ -131,7 +131,7 @@ const FileCardRow = memo(({ index, style, files, previewFileKey, previewFileDocI
       </div>
 
       <div className="fc-row-bottom">
-        <span className={`fc-invoice-no${isFailedFile(fileObj) ? ' fc-failed-reason' : ''}`}
+        <span className={`fc-invoice-no${isFailedFile(fileObj) ? ' fc-failed-reason' : ''}${ihFirstDate ? ' fc-invoice-no-ih' : ''}`}
               title={isFailedFile(fileObj) ? fileObj.failedFields?.join('；') : ''}>
           {(() => {
             if (fileObj.status === 'parsing') return '解析中...'
@@ -168,7 +168,7 @@ const FileCardRow = memo(({ index, style, files, previewFileKey, previewFileDocI
               }
               return reasons.join('；')
             }
-            if (ihFirstDate) return ihFirstDate  // 重复报销：显示首次导入日期
+            if (ihFirstDate) return `首次导入时间为 ${ihFirstDate}`  // 重复报销：显示首次导入日期
             return fileObj.invoiceDate && fileObj.invoiceDate !== '未知日期' ? fileObj.invoiceDate : '未知日期'
           })()}
         </span>

@@ -688,6 +688,12 @@
   min-width: 0;
 }
 
+/* 重复报销：首次导入日期黄字（#ffa631） */
+.fc-invoice-no.fc-invoice-no-ih {
+  color: var(--yellow);
+  font-weight: 600;
+}
+
 .fc-amount {
   font-family: 'MiSans', 'NotoSansSymbols', 'NotoSansSymbols2', 'PingFang SC', 'Microsoft YaHei', -apple-system, BlinkMacSystemFont, sans-serif;
   font-size: var(--fs-base);
@@ -1585,11 +1591,11 @@
   color: var(--yellow);
 }
 .sb-seg-btn.sb-seg-btn-year.sb-ih {
-  background: linear-gradient(135deg, #fde047 0%, #fbd948 100%);
-  box-shadow: 0 2px 6px rgba(251, 217, 72, 0.35);
+  background: linear-gradient(135deg, #ffc24d 0%, #ffa631 100%);
+  box-shadow: 0 2px 6px rgba(255, 166, 49, 0.35);
 }
 .sb-seg-btn.sb-seg-btn-year.sb-ih:hover {
-  box-shadow: 0 3px 10px rgba(251, 217, 72, 0.45);
+  box-shadow: 0 3px 10px rgba(255, 166, 49, 0.45);
 }
 .sb-seg-control:has(.sb-seg-btn-year.sb-ih) .sb-seg-option input:checked + .sb-seg-toggle-track {
   background: var(--yellow);

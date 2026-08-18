@@ -52,9 +52,9 @@
   --purple: #7c3aed;
   --purple-soft: rgba(124, 58, 237, 0.10);
 
-  /* 重复报销提示色（yellow #fbd948，区别于橙/红/紫/青） */
-  --yellow: #fbd948;
-  --yellow-soft: rgba(251, 217, 72, 0.12);
+  /* 重复报销提示色（yellow #ffa631，区别于橙/红/紫/青） */
+  --yellow: #ffa631;
+  --yellow-soft: rgba(255, 166, 49, 0.12);
 
   /* 往年发票提示色（teal，区别于红/橙/紫，语义：非错误，仅提醒） */
   --year: #0d9488;
@@ -184,9 +184,9 @@
   --purple: #a78bfa;
   --purple-soft: rgba(167, 139, 250, 0.10);
 
-  /* 重复报销提示色（亮黄 #fbd948，暗色主题同样适用） */
-  --yellow: #fbd948;
-  --yellow-soft: rgba(251, 217, 72, 0.12);
+  /* 重复报销提示色（#ffa631，暗色主题同样适用） */
+  --yellow: #ffa631;
+  --yellow-soft: rgba(255, 166, 49, 0.12);
 
   /* 往年发票提示色（暗色提亮保持辨识度） */
   --year: #2dd4bf;
