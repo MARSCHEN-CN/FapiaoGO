@@ -95,6 +95,39 @@ def test_empty_number_not_recorded():
     assert ih.get_import_history(None) is None
 
 
+def test_db_upsert_empty_number_not_recorded():
+    """🔴 回归：发票号码为空的发票经 db 完整链路（单张+批量）也绝不写入导入历史。
+
+    否则所有空号码发票会塌缩到同一键，全部被误判为「重复报销」。
+    覆盖 '' / None / 纯空白三种形态，验证 db.py 挂钩→record_import 归一化守卫整链路。
+    """
+    _reset_db_memory()
+    db.upsert_invoice({
+        'file_name': 'empty-num.pdf', 'hash_sha256': 'emptyhash1',
+        'number': '', 'date': '2026-01-01', 'amount': '10',
+    })
+    db.upsert_invoice({
+        'file_name': 'no-num-field.pdf', 'hash_sha256': 'emptyhash2',
+        'number': None, 'date': '2026-01-02', 'amount': '20',
+    })
+    db.batch_upsert_invoices([
+        {'file_name': 'blank-num.pdf', 'hash_sha256': 'emptyhash3',
+         'number': '   ', 'date': '2026-01-03', 'amount': '30'},
+    ])
+    ih.flush()
+    assert ih._history_by_number == {}, "空号码不得写入导入历史任何键"
+
+    # 对照组：有号码的发票正常写入
+    db.upsert_invoice({
+        'file_name': 'has-num.pdf', 'hash_sha256': 'emptyhash4',
+        'number': 'EMP-123', 'date': '2026-01-04', 'amount': '40',
+    })
+    ih.flush()
+    assert ih.has_imported('EMP-123') is True
+    assert ih._history_by_number.get('') is None
+    assert ih._history_by_number.get(None) is None
+
+
 def test_three_year_cleanup_boundary():
     today = date(2026, 8, 17)
     ih.record_import("A", "2023-08-01")   # expiry 2026-08-01 < today → 删
