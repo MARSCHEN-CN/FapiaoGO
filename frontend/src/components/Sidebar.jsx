@@ -416,12 +416,12 @@ export default React.memo(function Sidebar({
             </>
           ) : importHistoryCount > 0 && showImportHistoryWarning ? (
             <>
-              <div className="sb-stat-summary">
+              <div className="sb-stat-summary sb-ih">
                 共 <b>{documentView.documentCount}</b> 个文件 · 其中 <span className="sb-stat-summary-year">{importHistoryCount} 个重复报销</span>
               </div>
               <div className="sb-seg-control">
                 <button
-                  className="sb-seg-btn sb-seg-btn-year"
+                  className="sb-seg-btn sb-seg-btn-year sb-ih"
                   onClick={(e) => { e.stopPropagation(); removeImportHistoryFiles(removeSourceFile) }}
                   title="移除重复报销的文件"
                 >
