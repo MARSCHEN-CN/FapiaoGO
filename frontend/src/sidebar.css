@@ -1208,11 +1208,6 @@
   display: none;
 }
 
-/* 多状态条共存：按优先级左→右错位（重复报销 > 重复组 > 往年） */
-.import-history-bar ~ .duplicate-bar { left: 3px; }
-.import-history-bar ~ .prev-year-bar { left: 3px; }
-.duplicate-bar ~ .prev-year-bar { left: 6px; }
-
 /* -- 提示标签条（右上角，按优先级左→右可共存） -- */
 .file-card-tags {
   position: absolute;

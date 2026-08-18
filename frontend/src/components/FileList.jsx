@@ -97,9 +97,10 @@ const FileCardRow = memo(({ index, style, files, previewFileKey, previewFileDocI
       onClick={handleClick}
       onMouseEnter={handleMouseEnter}
     >
+      {/* 左缘状态条按优先级互斥：重复报销 > 重复组 > 往年（同一时刻只显示一条） */}
       {showImportHistory && <div className="import-history-bar"></div>}
-      {showDuplicate && isDupFirst && <div className="duplicate-bar"></div>}
-      {showPrevYear && <div className="prev-year-bar"></div>}
+      {!showImportHistory && showDuplicate && isDupFirst && <div className="duplicate-bar"></div>}
+      {!showImportHistory && !showDuplicate && showPrevYear && <div className="prev-year-bar"></div>}
       {(showImportHistory || showDuplicate || showPrevYear) && (
         <div className="file-card-tags">
           {showImportHistory && <span className="file-card-tag tag-import-history">重复报销</span>}
