@@ -203,35 +203,3 @@ export async function printMergedImages(images, ipc, printOptions) {
   }
 }
 
-/**
- * 统一打印入口 — 根据 task.mode 路由到对应执行路径。
- *
- * @param {object} task - PrintTask 对象
- * @param {object} ipc - Electron ipcRenderer
- * @param {object} context - 上下文（含 userSettings, fileRotations, detectFn, images 等）
- * @returns {Promise<object>} PrintResult
- */
-export async function print(task, ipc, context) {
-  if (!task) return createFailedResult({ taskId: 'unknown', error: '打印任务为空' })
-  if (!ipc) return createFailedResult({ taskId: task.id || 'unknown', error: 'Electron IPC 不可用' })
-
-  const mode = task.mode || 'source'
-
-  switch (mode) {
-    case 'source': {
-      const { userSettings, fileRotations, detectFn } = context || {}
-      return printSingleSourceFile(task.file || task, ipc, userSettings || {}, fileRotations, detectFn)
-    }
-
-    case 'merged': {
-      const { images, printOptions } = context || {}
-      return printMergedImages(images || [], ipc, printOptions)
-    }
-
-    default:
-      return createFailedResult({
-        taskId: task.id || 'unknown',
-        error: `不支持打印模式: ${mode}`,
-      })
-  }
-}

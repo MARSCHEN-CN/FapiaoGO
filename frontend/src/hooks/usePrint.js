@@ -898,115 +898,6 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
     }
   }, [triggerPrint, doPrint])
 
-  // ═══════════════════════════════════════════════════════════
-  // executeSourcePrint — 新管道：源文件直通 Sumatra
-  // ═══════════════════════════════════════════════════════════
-  const executeSourcePrint = useCallback(async (previewFile, printSettings) => {
-    if (!previewFile) return
-    const file = files.find(f => f.key === previewFile.key)
-    if (!file) {
-      console.error('[print] File not found in files[]:', previewFile.key)
-      return
-    }
-
-    setPrinting(true)
-    setPrintFilesAndRef([{ key: file.key, name: file.name }])
-    setPrintProgress({ [file.key]: { status: 'printing' } })
-
-    const failProgress = (msg) => {
-      setPrintProgress(prev => ({
-        ...prev,
-        [file.key]: { status: 'error', error: msg },
-      }))
-    }
-
-    try {
-      // 确定文件格式
-      let fileFormat = file.fileFormat || 'pdf'
-      const ext = getExtension(file.name)
-      if (!fileFormat || fileFormat === 'unknown') {
-        if (ext === 'ofd') fileFormat = 'ofd'
-        else if (['jpg', 'jpeg', 'png', 'bmp', 'tiff', 'tif', 'gif'].includes(ext)) fileFormat = 'image'
-        else fileFormat = 'pdf'
-      }
-
-      // 确定文件路径
-      const filePath = file.printPath || file.path
-      if (!filePath) {
-        failProgress('文件路径不存在')
-        return
-      }
-
-      // 确定打印机名称
-      const printerName = printSettings?.printerName
-        || printSettings?.printer
-        || settings.printerName
-        || ''
-      if (!printerName) {
-        failProgress('请选择打印机')
-        return
-      }
-
-      // 构建 PrintSettings（rotation 按文件独立，从 fileRotations 读取）
-      const fileRotation = fileRotations?.[file.key] || 0
-
-      // 从文件元数据获取内容方向（前端在导入时已检测）
-      const contentOrientation = detectDocumentOrientation(file)
-
-      const ps = {
-        rotation: fileRotation,   // deprecated alias（兼容 electron 旧版本）
-        sourceRotation: fileRotation,  // Commit 3-B-2-A: 清晰命名，区别于 contentRotation/layoutRotation
-        paperkind: settings.paperkind || printSettings?.paperkind,
-        paper: printSettings?.paperSize || settings.paperSize || PRINT_SETTINGS_DEFAULTS.paper,
-        fit: printSettings?.fit || PRINT_SETTINGS_DEFAULTS.fit,
-        contentOrientation,
-        duplex: printSettings?.duplex ?? PRINT_SETTINGS_DEFAULTS.duplex,
-        grayscale: printSettings?.grayscale ?? settings.grayscale ?? PRINT_SETTINGS_DEFAULTS.grayscale,
-        copies: printSettings?.copies ?? settings.copies ?? PRINT_SETTINGS_DEFAULTS.copies,
-        marginLeft: settings.marginLeft ?? 3,
-        marginRight: settings.marginRight ?? 3,
-        marginTop: settings.marginTop ?? 3,
-        marginBottom: settings.marginBottom ?? 3,
-        customPaper: settings.customPaper,
-      }
-
-      console.log('[PRINT] contentOrientation:', contentOrientation, '(from detectDocumentOrientation)')
-
-      const ipc = electronAPIRef.current?.ipcRenderer
-      if (!ipc) {
-        failProgress('Electron IPC 不可用')
-        return
-      }
-
-      console.log('[PRINT] Source pipeline: file=%s format=%s printer=%s', filePath, fileFormat, printerName)
-      console.log('[PRINT] PrintSettings:', JSON.stringify(ps))
-
-      const userSettings = { ...settings, ...(printSettings || {}) }
-      const filePlacement = placements[file.key] || null
-      const result = await printSingleSource(file, ipc, userSettings, fileRotations, detectDocumentOrientation, filePlacement)
-
-      console.log('[PRINT] Source pipeline result:', result)
-
-      if (result?.success) {
-        setPrintProgress(prev => ({
-          ...prev,
-          [file.key]: { status: 'done' },
-        }))
-        setTimeout(() => {
-          setPrinting(false)
-          setPrintProgress({})
-          setAlertModal({ visible: true, title: '打印成功', message: '已发送至打印机队列', type: 'success' })
-        }, 1200)
-      } else {
-        const msg = result?.message || result?.error || '打印失败'
-        failProgress(msg)
-        console.error('[PRINT] Source pipeline failed:', msg)
-      }
-    } catch (err) {
-      console.error('[print] Source pipeline error:', err)
-      failProgress(err?.message || '未知异常')
-    }
-  }, [files, settings, fileRotations, electronAPIRef])
 
   /**
    * 打印单个源文件（调用 IPC 直通 Sumatra，不管理全局进度）
@@ -1021,6 +912,8 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
     // 再经 printMergedImages → print-merged-images 输出。这样 OFD == Image，且不绕过原生
     // print-source-file（Sumatra 直送）会缺失的几何变换，也不会触发旧 print-target.js OFD
     // 分支「尚未解析完成」的误抛。PDF/图片仍走原生路径（不变）。
+    // OFD single-file printing must stay on the raster/canvas pipeline.
+    // Do not route OFD to print-source-file: it bypasses placement/rotation/margin.
     if (f.fileFormat === 'ofd') {
       const rendered = await renderFileToPrintImage(f, ipc)
       if (!rendered || !rendered.data || rendered.data.length === 0) {
