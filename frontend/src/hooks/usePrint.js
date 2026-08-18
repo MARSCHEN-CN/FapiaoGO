@@ -1016,6 +1016,21 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
     const ipc = electronAPIRef.current?.ipcRenderer
     if (!ipc) return { success: false, error: 'IPC 不可用' }
 
+    // v2（Raster 接入版）：OFD 单文件打印改走前端 Canvas 管线，与 merge 路径图片同构。
+    // renderMultipleItemsToCanvas 在此施加 placement/rotation/margin（几何变换唯一发生处），
+    // 再经 printMergedImages → print-merged-images 输出。这样 OFD == Image，且不绕过原生
+    // print-source-file（Sumatra 直送）会缺失的几何变换，也不会触发旧 print-target.js OFD
+    // 分支「尚未解析完成」的误抛。PDF/图片仍走原生路径（不变）。
+    if (f.fileFormat === 'ofd') {
+      const rendered = await renderFileToPrintImage(f, ipc)
+      if (!rendered || !rendered.data || rendered.data.length === 0) {
+        return { success: false, error: 'OFD 栅格渲染失败，无法打印' }
+      }
+      const images = Array.isArray(rendered.data) ? rendered.data : [rendered.data]
+      const r = await printMergedImages(images, ipc, { ...settings, ...(printSettings || {}) })
+      return { success: !!r?.success, message: r?.error || '', error: r?.error || null }
+    }
+
     // 合并 settings + printSettings 作为 userSettings
     const userSettings = { ...settings, ...(printSettings || {}) }
     // C-2 Step 4-1：优先消费 job 携带的 Plan truth（deriveSourcePrintJobs 从 plan 搬运）；
@@ -1030,7 +1045,7 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
       message: result.error || '',
       error: result.error || null,
     }
-  }, [settings, fileRotations, electronAPIRef, detectDocumentOrientation, placements])
+  }, [settings, fileRotations, electronAPIRef, detectDocumentOrientation, placements, renderFileToPrintImage, printMergedImages])
 
   /**
    * 批量打印（source 管线），管理总进度

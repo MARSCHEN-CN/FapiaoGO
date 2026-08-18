@@ -145,7 +145,7 @@ export async function printSingleSourceFile(file, ipc, userSettings, fileRotatio
 
   try {
     const result = await ipc.invoke('print-source-file', {
-      target: { printer: printerName, filePath, fileFormat },
+      target: { printer: printerName, filePath, fileFormat, docId: file?.docId || file?.documentId || '' },
       settings: ps,
       pipeline: { backend: 'sumatra' },
     })

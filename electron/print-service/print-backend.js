@@ -106,7 +106,7 @@ function detectPdfOrientation(pdfPath) {
  */
 async function buildSumatraCommand(target, settings) {
   const exe = getSumatraPath();
-  const resolved = resolvePrintTarget(target);
+  const resolved = await resolvePrintTarget(target);
 
   // Phase 1-C-1：不再在此做 paperSize→paper 字段映射——统一由
   // print-settings.normalize（PrintSpec 唯一解释层）处理（G-C1-1）。
