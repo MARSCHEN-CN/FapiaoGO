@@ -26,6 +26,10 @@ const FileCardRow = memo(({ index, style, files, previewFileKey, previewFileDocI
   // 发票重复导入历史（advisory，纯风险呈现，不拦截导入）
   const ihInfo = importHistoryInfo?.get(fileObj.key)
   const isImportHistory = !!ihInfo?.exists
+  // 重复报销：fc-invoice-no 位置改显首次导入日期（仅年月日；ISO 取前 10 位并校验）
+  const ihFirstDate = isImportHistory && ihInfo?.firstImportedAt
+    ? (() => { const d = String(ihInfo.firstImportedAt).slice(0, 10); return /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : null })()
+    : null
   // 统一判定：失败文件 = 解析错误 / failedFields 非空 / parseMethod 含「缺失」
   // （原先仅用 failedFields.length>0，导致 status==='error' 或「缺失」类解析失败
   //   的空白图片能显示「解析失败」文字却拿不到 has-failed 类 → 左侧红条/状态圆点不红）
@@ -164,6 +168,7 @@ const FileCardRow = memo(({ index, style, files, previewFileKey, previewFileDocI
               }
               return reasons.join('；')
             }
+            if (ihFirstDate) return ihFirstDate  // 重复报销：显示首次导入日期
             return fileObj.invoiceDate && fileObj.invoiceDate !== '未知日期' ? fileObj.invoiceDate : '未知日期'
           })()}
         </span>
