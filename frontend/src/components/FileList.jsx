@@ -30,10 +30,11 @@ const FileCardRow = memo(({ index, style, files, previewFileKey, previewFileDocI
   // （原先仅用 failedFields.length>0，导致 status==='error' 或「缺失」类解析失败
   //   的空白图片能显示「解析失败」文字却拿不到 has-failed 类 → 左侧红条/状态圆点不红）
   const hasFailed = isFailedFile(fileObj)
-  // 互斥优先级链：失败 > 重复报销 > 重复组 > 往年（同一时刻只显示一种）
+  // 提示标签可共存（仅失败文件互斥屏蔽）；圆点仍按优先级单选
+  // 渲染顺序即优先级：重复报销 > 重复组 > 往年（标签条从左到右）
   const showImportHistory = !hasFailed && isImportHistory
-  const showDuplicate = !hasFailed && !showImportHistory && isDuplicate
-  const showPrevYear = !hasFailed && !showImportHistory && !showDuplicate && isPrevYear
+  const showDuplicate = !hasFailed && isDuplicate
+  const showPrevYear = !hasFailed && isPrevYear
 
   const handleClick = () => {
     if (typeof onPreview === 'function') onPreview(fileObj)
@@ -92,20 +93,16 @@ const FileCardRow = memo(({ index, style, files, previewFileKey, previewFileDocI
       onClick={handleClick}
       onMouseEnter={handleMouseEnter}
     >
-      {showPrevYear && (
-        <>
-          <div className="prev-year-bar"></div>
-          <div className="prev-year-label">往年发票</div>
-        </>
-      )}
-      {showImportHistory && (
-        <>
-          <div className="import-history-bar"></div>
-          <div className="import-history-label">重复报销</div>
-        </>
-      )}
+      {showImportHistory && <div className="import-history-bar"></div>}
       {showDuplicate && isDupFirst && <div className="duplicate-bar"></div>}
-      {showDuplicate && <div className="duplicate-label">重复组 {dupGroupIndex}</div>}
+      {showPrevYear && <div className="prev-year-bar"></div>}
+      {(showImportHistory || showDuplicate || showPrevYear) && (
+        <div className="file-card-tags">
+          {showImportHistory && <span className="file-card-tag tag-import-history">重复报销</span>}
+          {showDuplicate && <span className="file-card-tag tag-duplicate">重复组 {dupGroupIndex}</span>}
+          {showPrevYear && <span className="file-card-tag tag-prev-year">往年发票</span>}
+        </div>
+      )}
       {isMultipage && <div className="multipage-label">共{fileObj._pageCount}页</div>}
       {isGroupFirst && mergeActive && <div className="merge-group-label">合并组 {Math.floor(index / mergeCount) + 1}</div>}
 

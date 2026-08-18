@@ -1127,7 +1127,7 @@
   z-index: 3;
 }
 
-/* -- 重复发票标记 -- */
+/* -- 重复发票标记（左缘竖条） -- */
 .file-card.duplicate { position: relative; overflow: hidden; }
 
 .duplicate-bar {
@@ -1142,24 +1142,6 @@
 .file-card.active .duplicate-bar,
 .file-card.has-failed .duplicate-bar {
   display: none;
-}
-
-.duplicate-label {
-  position: absolute;
-  top: -1px; right: 28px;
-  font-size: 9px;
-  background: #f59e0b;
-  color: #fff;
-  padding: 1px 6px;
-  border-radius: 0 0 4px 4px;
-  font-weight: 600;
-  letter-spacing: 0.3px;
-  z-index: 1;
-}
-
-.merge-group-first ~ .duplicate-label,
-.file-card:has(.merge-group-label) .duplicate-label {
-  right: 80px;
 }
 
 /* -- 多页文档标记（共N页） -- */
@@ -1178,17 +1160,17 @@
   z-index: 1;
 }
 
-/* 多页 + 重复 共存：重复标签左移避让 */
-.file-card:has(.multipage-label) .duplicate-label {
-  right: 80px;
-}
-
 /* 多页 + 合并组 共存：多页标签左移避让 */
 .file-card:has(.merge-group-label) .multipage-label {
   right: 80px;
 }
 
-/* -- 往年发票标记 -- */
+/* 多页 + 提示标签条 共存：多页标签左移避让（置于合并组规则之后优先生效） */
+.file-card:has(.file-card-tags) .multipage-label {
+  right: 150px;
+}
+
+/* -- 往年发票标记（左缘竖条） -- */
 .file-card.previous-year { position: relative; overflow: hidden; }
 
 .prev-year-bar {
@@ -1204,25 +1186,7 @@
   display: none;
 }
 
-.prev-year-label {
-  position: absolute;
-  top: -1px; right: 28px;
-  font-size: 9px;
-  background: var(--year);
-  color: #fff;
-  padding: 1px 6px;
-  border-radius: 0 0 4px 4px;
-  font-weight: 600;
-  letter-spacing: 0.3px;
-  z-index: 1;
-}
-
-.merge-group-first ~ .prev-year-label,
-.file-card:has(.merge-group-label) .prev-year-label {
-  right: 80px;
-}
-
-/* -- 重复报销提醒标记 -- */
+/* -- 重复报销标记（左缘竖条） -- */
 .file-card.import-history { position: relative; overflow: hidden; }
 
 .import-history-bar {
@@ -1238,23 +1202,33 @@
   display: none;
 }
 
-.import-history-label {
+/* 多状态条共存：按优先级左→右错位（重复报销 > 重复组 > 往年） */
+.import-history-bar ~ .duplicate-bar { left: 3px; }
+.import-history-bar ~ .prev-year-bar { left: 3px; }
+.duplicate-bar ~ .prev-year-bar { left: 6px; }
+
+/* -- 提示标签条（右上角，按优先级左→右可共存） -- */
+.file-card-tags {
   position: absolute;
   top: -1px; right: 28px;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  z-index: 1;
+}
+
+.file-card-tag {
   font-size: 9px;
-  background: var(--yellow);
-  color: #1f2937;  /* 黄底深字保证对比度 */
   padding: 1px 6px;
   border-radius: 0 0 4px 4px;
   font-weight: 600;
   letter-spacing: 0.3px;
-  z-index: 1;
+  white-space: nowrap;
 }
 
-.merge-group-first ~ .import-history-label,
-.file-card:has(.merge-group-label) .import-history-label {
-  right: 80px;
-}
+.file-card-tag.tag-import-history { background: var(--yellow); color: #1f2937; }
+.file-card-tag.tag-duplicate { background: #f59e0b; color: #fff; }
+.file-card-tag.tag-prev-year { background: var(--year); color: #fff; }
 
 /* -- 解析中进度条 -- */
 .file-card.parsing { overflow: hidden; }
