@@ -2,7 +2,7 @@
 
 > **Gate 2 Implementation Appendix** to `docs/print_auto_rotation_contract_v1.md` (v1.0 FINAL, frozen).
 > **Does NOT modify v1.0 FINAL.** This document is the design-freeze for Gate 2 only.
-> Status: **APPROVED FOR GATE 2 BUILD** (after D2 amendment: §7.2 + B-3). No production code changed (`usePreview.js` / `PrintAutoRotationPolicy.js` untouched).
+> Status: **APPROVED FOR GATE 2 BUILD** (after D2 amendment: §7.2 + B-3). **Gate 2-2 semantic correction applied**: `isLandscape` dual-semantic split → `orientationMismatch` (pre-rotation, cache key) + `effectiveContentLandscape` (post-rotation display). Step 4 (usePreview wiring) deferred pending this correction. `usePreview.js` / `PrintAutoRotationPolicy.js` untouched.
 
 ---
 
@@ -74,12 +74,14 @@ import { resolvePrintAutoRotation } from './PrintAutoRotationPolicy.js'
  *   { degrees }       // fileRotations[file.key] || 0  (manual rotation, session authority)
  * @returns {PreviewPlacementGeometry}
  *   {
- *     effectiveRotation,           // canonical clockwise {0,90,180,270}   (from Policy)
- *     paperGeometry,               // { orientation } — physical paper, external constraint, NEVER from effectiveRotation
- *     effectiveContentGeometry,    // { widthPx, heightPx } — post-auto-rotation content geometry (from Policy)
- *     contentLandscape,            // boolean: content is landscape, from effectiveContentGeometry (post-rotation)
- *     paperLandscape,              // boolean: paper is landscape, from PaperGeometry (physical paper orientation)
- *     isLandscape,                 // preview container swap — combination of the two, computed ONLY inside Builder
+ *     effectiveRotation,            // canonical clockwise {0,90,180,270}      (from Policy)
+ *     sourceContentGeometry,        // { widthPx, heightPx, orientation } — 旋转前原始内容几何
+ *     effectiveContentGeometry,     // { widthPx, heightPx, orientation } — 旋转后内容几何 (from Policy)
+ *     paperGeometry,                // { orientation } — 物理纸张，外部约束，NEVER from effectiveRotation
+ *     sourceContentLandscape,       // boolean: 旋转前内容是否横置（来自 sourceContentGeometry）
+ *     effectiveContentLandscape,    // boolean: 旋转后内容是否横置（来自 effectiveContentGeometry）
+ *     paperLandscape,               // boolean: 物理纸是否横置（来自 PaperGeometry，D2 修正）
+ *     orientationMismatch,          // boolean: sourceContentLandscape !== paperLandscape（= 旧 isLandscape，cache key / identity / layout branch 语义）
  *   }
  */
 export function buildPreviewGeometry({ rawDocumentGeometry, requestedPaperGeometry, userRotation }) {
@@ -94,25 +96,27 @@ export function buildPreviewGeometry({ rawDocumentGeometry, requestedPaperGeomet
     resolvePrintAutoRotation({ sourceContentGeometry, targetPaperGeometry, userRotation: userRotation.degrees || 0 })
 
   // FROZEN DIRECTION (D2 amendment — MUST NOT reverse):
-  //   paperLandscape   ← PaperGeometry       (physical paper, external constraint: A4 portrait = 210×297 always)
-  //   contentLandscape ← effectiveContentGeometry (post-rotation)
-  //   isLandscape (display swap) ← combination of the two, computed ONLY here — never from effectiveRotation alone.
-  // effectiveRotation MUST NOT become the source of paperLandscape: that would couple content
-  // rotation back into physical paper, violating INV-2 and corrupting Sumatra / MediaBox / Margin Contract.
+  //   paperLandscape         ← PaperGeometry             (physical paper, external constraint: A4 portrait = 210×297 always)
+  //   sourceContentLandscape ← sourceContentGeometry    (pre-rotation content)
+  //   effectiveContentLandscape ← effectiveContentGeometry (post-rotation content)
+  //   orientationMismatch    ← sourceContentLandscape !== paperLandscape (pre-rotation compare = old isLandscape for cache key)
+  // effectiveRotation / content rotation 均不得成为 paperLandscape 的来源：那会把内容旋转重新耦合物理纸张方向，
+  // 违反 INV-2 并破坏 Sumatra 参数 / MediaBox / Margin Contract。
   const paperLandscape = requestedPaperGeometry.orientation === 'landscape'
-  const contentLandscape = effectiveContentWidth > effectiveContentHeight  // boolean: content is landscape (post-rotation)
-  const isLandscape = contentLandscape !== paperLandscape                  // both booleans — mirrors old `contentOrient !== paperOrient`
+  const orientationMismatch = sourceContentLandscape !== paperLandscape
 
   // FIXED OUTPUT CONTRACT (B-7): return a named PreviewPlacementGeometry object, NOT the raw
   // resolvePrintAutoRotation(...) return. Consumption domain (Preview) connects to the decision
   // domain (Policy) via this data contract, not object pass-through.
   return {
     effectiveRotation,
+    sourceContentGeometry,
+    effectiveContentGeometry,
     paperGeometry: { orientation: requestedPaperGeometry.orientation },
-    effectiveContentGeometry: { widthPx: effectiveContentWidth, heightPx: effectiveContentHeight },
-    contentLandscape,
+    sourceContentLandscape,
+    effectiveContentLandscape,
     paperLandscape,
-    isLandscape,
+    orientationMismatch,
   }
 }
 ```
@@ -127,7 +131,7 @@ export function buildPreviewGeometry({ rawDocumentGeometry, requestedPaperGeomet
 - **B-2 (pure transform, no state)**: `PreviewGeometryBuilder` holds no state, caches nothing, and MUST NOT write back into `documentStateRef`, `fileRotations`, `DocFacts`, or any preview model. Function: geometry-in → geometry-out.
 - **B-3 (no feedback loop / INV-D4-1 guardian at preview layer)**: Builder output is **strictly downstream**. It is never fed back as input to itself, `detectDocumentOrientation`, or `resolvePaper`. Persisted rotation state represents **user intent only**; effective rotation is **runtime geometry output** and MUST NOT be persisted back into document state (`documentStateRef`, `fileRotations`, `DocFacts`). Forbidden reverse: `effectiveRotation → fileRotations`. (Today's L1643–1644 writes the user-rotation part only; this invariant generalizes that to any future user-intent signal — rotate 90 / cancel / keep-orientation — not just `contentRotation`.)
 - **B-4 (renderer isolation)**: Renderer / Canvas / CSS transform receive only `PreviewPlacementGeometry` fields. They never know whether a rotation came from auto or user — both are already merged into `effectiveRotation` by the Policy.
-- **B-5 (single decision point)**: The three existing inline computations (L687, L1076–1088, L1579) MUST collapse into ONE `buildPreviewGeometry` call site (memoized from the same inputs). No other path may compute content-vs-paper orientation.
+- **B-5 (single decision point)**: The three existing inline **orientation-mismatch** computations (L687, L1076–1088, L1579 — each a form of `contentOrient !== paperOrient`) MUST collapse into ONE `buildPreviewGeometry` call site (memoized from the same inputs). No other path may compute `orientationMismatch` / content-vs-paper orientation. (Note: these feed cache key / identity / layout branch, NOT the final post-rotation display orientation — that is `effectiveContentLandscape`.)
 - **B-6 (canonical degrees)**: All rotation values out of the Builder into renderer/Canvas/CSS MUST be canonical clockwise ∈ `{0,90,180,270}` (inherited from Policy INV-D4-3). No `-90`, no arbitrary degrees.
 - **B-7 (single resolver / fixed output contract)**: `PreviewGeometryBuilder` MUST NOT become a second resolver. It MUST NOT independently compute the auto-rotation decision — no self-judged landscape/portrait, no self-computed `±90` mapping, no self-`normalizeRotation`. The rotation decision belongs **solely** to `PrintAutoRotationPolicy` (prevents a dual source of truth / resolver fork). The Builder MAY only *combine* Policy outputs with `PaperGeometry` (`paperLandscape` / `contentLandscape` / `isLandscape`) — combination is not decision. It MUST return its own named `PreviewPlacementGeometry` object (§3); it MUST NOT `return resolvePrintAutoRotation(...)` verbatim (consumption domain vs decision domain are connected by a data contract, not object pass-through).
 
@@ -144,6 +148,7 @@ Reuse v1.0 FINAL **D3 4-cell**. Add:
 - **G2-B-5 (single call site)**: Static — `usePreview.js` imports `buildPreviewGeometry` from `geometry/PreviewGeometryBuilder.js` and contains **zero** direct references to `resolvePrintAutoRotation` / `PrintAutoRotationPolicy`. Grep → 0 matches.
 - **G2-B-3 (no writeback)**: Static + runtime — builder output never assigned to `documentStateRef.current.{pageOrientation,contentRotation,rotation}` or `fileRotations`. Grep builder for `documentStateRef|fileRotations|saveDocFacts` → 0 matches.
 - **Visual**: 横票+竖纸 / 竖票+横纸 render matches expected swap exactly — no double-rotation, no missing rotation.
+- **G2-Semantic Regression (`isLandscape` 双语义分离)**: 横票 `widthPx=3508, heightPx=2480` + A4 portrait paper。`buildPreviewGeometry` 输出须**同时**满足：`sourceContentLandscape=true`（旋转前横票）、`paperLandscape=false`、`orientationMismatch=true`（= 旧 `isLandscape` 的 cache key 语义）、`effectiveRotation=270`、`effectiveContentLandscape=false`（旋转后内容变 portrait）。**关键回归防护**：修正前 `isLandscape = contentLandscape !== paperLandscape`（旋转后比较）会得到 `false`，与既有 cache key（旧 `isLandscape=true`）冲突 → 命中错误 L2/fullCache 快照；修正后 `orientationMismatch` 复用旋转前比较 = `true`，与旧 cache key 一致。→ **Test**: 单用例断言上述 5 字段同时成立。
 
 ---
 
@@ -165,7 +170,7 @@ Gate 5  ⏸ LAST: relax detectOrientation.js:5-6 + regression
 ## 7. Open design decisions (confirm before build)
 
 1. **RawDocumentGeometry source**: `detectDocumentOrientation` (`detectOrientation.js:23`) discards px (returns orientation only). Builder needs `{widthPx,heightPx}`. **Decision**: Builder consumes the file's raw px fields directly (same source `detectDocumentOrientation` reads) and derives orientation internally; `usePreview` passes the file object (or extracted px), **not** the orientation boolean. → *Confirmed.*
-2. **paperLandscape / isLandscape 来源分离 (D2 修正, APPROVED WITH AMENDMENT)**: `paperLandscape` 来源于 `PaperGeometry`（物理纸张方向，外部约束——A4 portrait 恒为 210×297，不随 rotation 改变）；`contentLandscape` 来源于 `effectiveContentGeometry`（`effectiveRotation` 之后的内容几何）；所有 display/placement swap 决策（含 `isLandscape`）必须消费 Builder 输出，禁止重新由 `contentOrientation + paperOrientation` 独立推导。`effectiveRotation` **不得**成为 `paperLandscape` 的来源——否则内容旋转重新耦合物理纸张方向，违反 INV-2 并破坏 Sumatra 参数 / MediaBox / Margin Contract。→ *Confirmed.*
+2. **paperLandscape / orientationMismatch / effectiveContentLandscape 来源分离 (D2 修正 + Gate 2-2 语义修正, CONFIRMED)**: `paperLandscape` 来源于 `PaperGeometry`（物理纸张方向，外部约束——A4 portrait 恒为 210×297，不随 rotation 改变）；`effectiveContentLandscape` 来源于 `effectiveContentGeometry`（`effectiveRotation` 之后的内容几何，用于最终 display 方向）；`orientationMismatch` 来源于 `sourceContentLandscape !== paperLandscape`（旋转前比较 = 旧 `isLandscape` 的 cache key / identity 语义）。三者不得重新由 `contentOrientation + paperOrientation` 独立推导；`effectiveRotation` **不得**成为 `paperLandscape` 的来源——否则内容旋转重新耦合物理纸张方向，违反 INV-2 并破坏 Sumatra 参数 / MediaBox / Margin Contract。→ *Confirmed.*
 3. **Three call-site collapse**: L687 (renderKey), L1076–1088 (container swap), L1579 (load DocumentState) all read the SAME builder output. **Decision**: compute `buildPreviewGeometry` once per `(file, paper, userRotation)` change in a `useMemo`, share to all three sites. → *Confirmed.*
 
 ---

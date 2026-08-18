@@ -15,10 +15,16 @@
  * PaperGeometry 组合成 PreviewPlacementGeometry。组合 ≠ 决策。
  *
  * ⚠️ D2（几何语义修正）：rotation 改内容，不改纸。
- *   - paperLandscape   ← PaperGeometry       （物理纸张方向，外部约束，A4 portrait 恒 210×297，不随 rotation 改变）
- *   - contentLandscape ← effectiveContentGeometry（施加 effectiveRotation 后的内容几何）
- *   - isLandscape（display swap）← 二者组合，仅在此处计算，绝不从 effectiveRotation 单独推导。
- * effectiveRotation 不得成为 paperLandscape 的来源，否则内容旋转重新耦合物理纸张方向，
+ *   - paperLandscape         ← PaperGeometry       （物理纸张方向，外部约束，A4 portrait 恒 210×297，不随 rotation 改变）
+ *   - sourceContentLandscape ← sourceContentGeometry（旋转前内容几何）
+ *   - effectiveContentLandscape ← effectiveContentGeometry（旋转后内容几何）
+ *   - orientationMismatch    ← sourceContentLandscape !== paperLandscape（= 旧 isLandscape 的 cache key / identity 语义）
+ * 注意：isLandscape 在旧代码里被复用了两个语义——
+ *   (a) 旋转前 contentOrient !== paperOrient → 服务 cache key / identity / layout branch；
+ *   (b) 最终内容方向是否横向。
+ * 二者在 4 格里有 2 格不同（横票+竖纸 / 竖票+横纸）。本 Builder 显式拆开：
+ *   orientationMismatch 承担 (a)，effectiveContentLandscape 承担 (b)。
+ * effectiveRotation / 内容旋转 均不得成为 paperLandscape 的来源，否则内容旋转重新耦合物理纸张方向，
  * 违反 INV-2 并破坏 Sumatra 参数 / MediaBox / Margin Contract。
  */
 
@@ -31,15 +37,17 @@ import { resolvePrintAutoRotation } from './PrintAutoRotationPolicy.js'
  * @param {object} requestedPaperGeometry
  *   { orientation }   // from resolvePaper(paperSize, customPaper): widthMM > heightMM ? 'landscape' : 'portrait'
  * @param {object} userRotation
- *   { degrees }       // manual rotation (session authority, e.g. user-set per-file rotation), default 0
+ *   { degrees }       // manual rotation (session authority), default 0
  * @returns {PreviewPlacementGeometry}
  *   {
- *     effectiveRotation,           // canonical clockwise {0,90,180,270}   (from Policy)
- *     paperGeometry,               // { orientation } — physical paper, external constraint, NEVER from effectiveRotation
- *     effectiveContentGeometry,    // { widthPx, heightPx } — post-auto-rotation content geometry (from Policy)
- *     contentLandscape,            // boolean: content is landscape, from effectiveContentGeometry (post-rotation)
- *     paperLandscape,              // boolean: paper is landscape, from PaperGeometry (physical paper orientation)
- *     isLandscape,                 // preview container swap — combination of the two, computed ONLY inside Builder
+ *     effectiveRotation,            // canonical clockwise {0,90,180,270}      (from Policy)
+ *     sourceContentGeometry,        // { widthPx, heightPx, orientation } — 旋转前原始内容几何
+ *     effectiveContentGeometry,     // { widthPx, heightPx, orientation } — 旋转后内容几何 (from Policy)
+ *     paperGeometry,                // { orientation } — 物理纸张，外部约束，NEVER from effectiveRotation
+ *     sourceContentLandscape,       // boolean: 旋转前内容是否横置（来自 sourceContentGeometry）
+ *     effectiveContentLandscape,    // boolean: 旋转后内容是否横置（来自 effectiveContentGeometry）
+ *     paperLandscape,               // boolean: 物理纸是否横置（来自 PaperGeometry，D2 修正）
+ *     orientationMismatch,          // boolean: sourceContentLandscape !== paperLandscape（= 旧 isLandscape，cache key / identity / layout branch 语义）
  *   }
  */
 export function buildPreviewGeometry({ rawDocumentGeometry, requestedPaperGeometry, userRotation }) {
@@ -48,31 +56,42 @@ export function buildPreviewGeometry({ rawDocumentGeometry, requestedPaperGeomet
     heightPx: rawDocumentGeometry.heightPx,
     orientation: rawDocumentGeometry.heightPx > rawDocumentGeometry.widthPx ? 'portrait' : 'landscape',
   }
+  const sourceContentLandscape = rawDocumentGeometry.widthPx > rawDocumentGeometry.heightPx
+
   const targetPaperGeometry = { orientation: requestedPaperGeometry.orientation }
 
   // 旋转决策唯一出口：PrintAutoRotationPolicy（B-7：Builder 不重算 ±90 / normalize）
-  const { autoRotation, effectiveRotation, effectiveContentWidth, effectiveContentHeight } =
+  const { effectiveRotation, effectiveContentWidth, effectiveContentHeight } =
     resolvePrintAutoRotation({ sourceContentGeometry, targetPaperGeometry, userRotation: userRotation.degrees || 0 })
 
+  const effectiveContentGeometry = {
+    widthPx: effectiveContentWidth,
+    heightPx: effectiveContentHeight,
+    orientation: effectiveContentHeight > effectiveContentWidth ? 'portrait' : 'landscape',
+  }
+  const effectiveContentLandscape = effectiveContentWidth > effectiveContentHeight
+
   // FROZEN DIRECTION (D2 amendment — MUST NOT reverse):
-  //   paperLandscape   ← PaperGeometry       (physical paper, external constraint: A4 portrait = 210×297 always)
-  //   contentLandscape ← effectiveContentGeometry (post-rotation)
-  //   isLandscape (display swap) ← combination of the two, computed ONLY here — never from effectiveRotation alone.
-  // effectiveRotation MUST NOT become the source of paperLandscape: that would couple content
-  // rotation back into physical paper, violating INV-2 and corrupting Sumatra / MediaBox / Margin Contract.
+  //   paperLandscape         ← PaperGeometry             (physical paper, external constraint: A4 portrait = 210×297 always)
+  //   sourceContentLandscape ← sourceContentGeometry    (pre-rotation content)
+  //   effectiveContentLandscape ← effectiveContentGeometry (post-rotation content)
+  //   orientationMismatch    ← sourceContentLandscape !== paperLandscape (pre-rotation compare = old isLandscape for cache key)
+  // effectiveRotation / content rotation 均不得成为 paperLandscape 的来源：那会把内容旋转重新耦合物理纸张方向，
+  // 违反 INV-2 并破坏 Sumatra 参数 / MediaBox / Margin Contract。
   const paperLandscape = requestedPaperGeometry.orientation === 'landscape'
-  const contentLandscape = effectiveContentWidth > effectiveContentHeight
-  const isLandscape = contentLandscape !== paperLandscape
+  const orientationMismatch = sourceContentLandscape !== paperLandscape
 
   // FIXED OUTPUT CONTRACT (B-7): return a named PreviewPlacementGeometry object, NOT the raw
   // resolvePrintAutoRotation(...) return. Consumption domain (Preview) connects to the decision
   // domain (Policy) via this data contract, not object pass-through.
   return {
     effectiveRotation,
+    sourceContentGeometry,
+    effectiveContentGeometry,
     paperGeometry: { orientation: requestedPaperGeometry.orientation },
-    effectiveContentGeometry: { widthPx: effectiveContentWidth, heightPx: effectiveContentHeight },
-    contentLandscape,
+    sourceContentLandscape,
+    effectiveContentLandscape,
     paperLandscape,
-    isLandscape,
+    orientationMismatch,
   }
 }
