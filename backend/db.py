@@ -920,6 +920,13 @@ def upsert_invoice(row: Dict) -> Dict:
                     orig['updated_at'] = now_str
                     _refresh_search_text(orig)
                     _append_oplog("update", orig['id'], {k: v for k, v in row.items() if k not in _PRESERVED_KEYS})
+                    # ── 重复导入历史：重复导入（同一文件重新解析）也必须更新 lastImportedAt/importCount ──
+                    # record_import 内部保证 invoiceDate/firstImportedAt 不可变，仅更新 last/count
+                    try:
+                        import import_history as _ih
+                        _ih.record_import(row.get('number'), row.get('date'))
+                    except Exception as _e:  # noqa: BLE001 - 历史记录失败不应阻断主入库流程
+                        logger.warning("[import_history] 记录导入历史失败（已忽略）: %s", _e)
                     _maybe_compact()
                     _invalidate_search_cache()
                     return {'id': orig['id'], 'is_new': False}
@@ -1016,6 +1023,12 @@ def batch_upsert_invoices(rows: List[Dict]) -> List[Dict]:
                         _refresh_search_text(orig)
                         _append_oplog("update", orig['id'],
                                       {k: v for k, v in row.items() if k not in _PRESERVED_KEYS})
+                        # ── 重复导入历史：重复导入（同一文件重新解析）也必须更新 lastImportedAt/importCount ──
+                        try:
+                            import import_history as _ih
+                            _ih.record_import(row.get('number'), row.get('date'))
+                        except Exception as _e:  # noqa: BLE001 - 历史记录失败不应阻断主入库流程
+                            logger.warning("[import_history] 记录导入历史失败（已忽略）: %s", _e)
                         results.append({'id': orig['id'], 'is_new': False})
                         continue
                     # 内容重复的另一份文件 → 标记后走下方新建分支
