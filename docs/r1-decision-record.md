@@ -427,6 +427,63 @@ Gate 4 start (遵守 §8 约束)
 
 ---
 
+## 12. 冻结状态确认（R1 Sign-off）
+
+> 本节约 R1 收尾架构确认时由评审方追加，作为**冻结状态唯一锚点**，供 Gate 4 及后续收敛线引用。
+
+### 12.1 根因定性（再确认）
+
+```
+R1 Rotation Semantic Divergence
+          │
+          ▼
+不是算法错误
+不是单 resolver bug
+不是 OFD 特殊问题
+          │
+          ▼
+字段语义污染：
+userRotation 同时承担 intent / result 两种角色
+```
+
+### 12.2 三个关键裁决确认
+
+1. **Option B 永久否决 ✅** — `effectiveRotation → contentRotation → resolveContentPlacement()` 违反 `contentRotation = user intent（非 final result）`，导致 `auto + effectiveRotation 内已有 auto + resolver 再匹配 = double rotation`；B-2.5（90→270，180° 翻转）为强拒绝证据。纪律：**不允许任何未来优化以「统一 rotation 数值」为理由重新走这条路**。
+2. **Option A 暂停合理 ✅** — A 非技术不可行，而是时间点错误：会令 `Render geometry layer` 重新依赖 `content layout layer`，破坏 Gate 3-4A 刚建立的干净 seam。纪律：**Gate 4 不应重新打开 rotation ownership**。
+3. **Option C 延后正确 ✅** — 正确方向，但现在引入会同时影响 Preview/Print/Merge/OFD/PDF·Image/测试矩阵，扩大 blast radius。正确顺序：`Gate 4（Print seam 稳定）→ Rotation Semantic Migration Gate → Option C`。
+
+### 12.3 OFD 边界确认
+
+OFD **不应该拥有独立打印哲学**，它只是 `Source Format = OFD`，经 `Render` 成为 `Image Resource` 后进入统一打印。当前不马上改 OFD 的原因：会同时混入「rotation ownership 未完全收敛」与「print pipeline boundary 未重新定义」两个问题，把 Rotation issue 与 Print pipeline convergence issue 搅在一起。故 §10 三条线拆分成立，独立推进。
+
+### 12.4 Gate 4 约束确认
+
+进入 Gate 4 时保持：
+
+**允许**：`MultiTicketComposer` / per-slot geometry / slot placement / `RenderCommand` consumption（消费已有 `effectiveRotation`）。
+
+**禁止**（否则 R1 被重新打开）：新增 rotation resolver / 修改 `sourceRotation` / 修改 `effectiveRotation` 定义 / 修改 `resolveContentPlacement` / 修改 OFD 特殊路径 / 补 rotation workaround。
+
+### 12.5 冻结状态快照（Canonical）
+
+```
+Gate 3-4A          ✅ CLOSED
+Gate 3-4B          ✅ CLOSED (Verification Gate, guard installed)
+R1                 ✅ CLOSED (Option 0 adopted, Future Option C)
+OFD                🧊 FROZEN (no special patch, Future Print Pipeline Convergence)
+
+Next:
+Gate 4 — Merge per-slot geometry
+```
+
+### 12.6 Gate 4 唯一关注点
+
+> 在**已经冻结的 effectiveRotation ownership** 下，验证 merge per-slot geometry 是否保持 `RenderCommand` contract。
+
+不要再回头讨论 rotation ownership，除非出现新的实证回归。当前 R1 已把这个边界封住。
+
+---
+
 ## 附录 — 与生产代码关系
 
 ```
