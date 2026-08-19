@@ -1861,12 +1861,9 @@ export function usePreview({ files, settings, electronAPIRef }) {
     const filesChanged = prevFilesKeyStrRef.current !== filesKeyStr
     prevFilesKeyStrRef.current = filesKeyStr
 
-    // ✅ 导入文件后自动进入合并模式预览
+    // ✅ 导入文件后自动预览第一个文件（纯逻辑，不关心状态）
     if (!previewFile && files.length > 0) {
-      const firstParsed = files.find(f => f.status === 'parsed')
-      if (firstParsed) {
-        handlePreviewRef.current?.(firstParsed)
-      }
+      handlePreviewRef.current?.(files[0])
       return
     }
 
@@ -1933,93 +1930,61 @@ export function usePreview({ files, settings, electronAPIRef }) {
     }
   }, [livePreviewDocId])
 
-  // ── 文件状态变化监听：parsed 文件出现时自动预览 ──
-  // 根因：多页文件导入后，占位符先被添加，自动预览触发时文件还未解析。
-  //       当文件从 uploading/parsing 变为 parsed 状态时，filesKeyStr 不变（key 集合不变），
-  //       导致上面的 useEffect 不会重新执行，预览区保持空状态。
-  // 修复：监听已解析文件的 key 列表变化，当有新文件变为 parsed 状态时，
-  //       如果当前没有预览或预览的文件不是 parsed 状态，自动触发预览。
+  // ── 文件列表变化 → 自动切换预览（纯逻辑，不关心文件状态）──
+  // 职责：当文件列表变化时，确保预览目标跟随文件列表。
+  //   - 文件被删除 → 切到第一个文件
+  //   - 新增文件 + 无预览 → 预览第一个文件
+  //   - 文件对象被替换（同一 key 新引用）→ 重新预览
+  // 不处理：文件渲染、状态判定、合并逻辑（由其他 effect 负责）。
   //
-  // V2 FIX: 增加 documentId 匹配检查——多页 PDF 装配完成后，
-  //         displayFiles 条目被替换为带 documentId 的版本（同一个 key，新的引用）。
-  //         此处确保在这种替换场景下（key 存在但引用不同）也会重新触发预览。
-  // V3 FIX: 增加 prevParsedCount 追踪，检测「parsed 数量增加但 previewFile 仍是旧对象」的边界。
-  const parsedFileKeys = useMemo(() => {
-    return files.filter(f => f.status === 'parsed').map(f => f.key).join(',')
+  // 设计原则：自动预览不应该被文件状态（解析失败/重复报销/往年发票等）影响。
+  // 它只负责「跟随文件列表」的切换，具体渲染由下游渲染引擎决定。
+  //
+  // 背景：原逻辑按 parsed 状态过滤，导致「解析失败文件阻断自动切换」的问题。
+  //       多页文件导入时占位符先被添加，解析完成后对象引用被替换；此 effect 负责
+  //       捕获引用替换事件，重新预览已就绪的对象。
+  const allFileKeys = useMemo(() => {
+    return files.map(f => f.key).join(',')
   }, [files])
-  const prevParsedKeysRef = useRef('')
-  const prevParsedCountRef = useRef(0)
+  const prevAllKeysRef = useRef('')
   // 追踪 files 引用的变化，用于检测结构性变更（如 groupFilesByDocument → invoiceDocumentsToRows）
   const prevFilesRef = useRef([])
   useEffect(() => {
-    const parsedFiles = files.filter(f => f.status === 'parsed')
-    const parsedCount = parsedFiles.length
-    const countIncreased = parsedCount > prevParsedCountRef.current
-    prevParsedCountRef.current = parsedCount
-
-    // 即使 parsedFileKeys 未变化（相同 key 集合），也需要检测 files 对象引用是否变化。
-    // 典型场景：groupFilesByDocument → invoiceDocumentsToRows 过渡，key 不变但对象结构改变（新增 documentId 等字段）。
     const filesRefChanged = prevFilesRef.current !== files
     prevFilesRef.current = files
 
-    if (prevParsedKeysRef.current === parsedFileKeys && !filesRefChanged) return
-    prevParsedKeysRef.current = parsedFileKeys
+    if (prevAllKeysRef.current === allFileKeys && !filesRefChanged) return
+    prevAllKeysRef.current = allFileKeys
 
-    if (parsedCount === 0) return
+    if (files.length === 0) return
 
     const pf = previewFileRef.current
     const pfKey = pf?.key
     const live = pfKey ? filesRef.current.find(f => f.key === pfKey) : null
     const pfChanged = live && live !== pf  // 引用替换场景
 
-    // 若当前预览文件已不存在于 filesRef 中（被替换或移除），切换到第一个已解析的文件
+    // 1. 当前预览文件已不存在 → 切到第一个文件
     if (pfKey && !live) {
-      console.log('[PREVIEW_FLOW] parsedFileKeys effect: pf missing → handlePreview(firstParsed)')
-      handlePreviewRef.current?.(parsedFiles[0])
+      console.log('[PREVIEW_FLOW] fileList effect: pf missing → handlePreview(files[0])')
+      handlePreviewRef.current?.(files[0])
       return
     }
 
-    // 场景 A: 当前没有预览文件 → 预览第一个已解析的文件
+    // 2. 当前无预览 → 预览第一个文件
     if (!pf) {
-      console.log('[PREVIEW_FLOW] parsedFileKeys effect: no pf → handlePreview(firstParsed)')
-      handlePreviewRef.current?.(parsedFiles[0])
+      console.log('[PREVIEW_FLOW] fileList effect: no pf → handlePreview(files[0])')
+      handlePreviewRef.current?.(files[0])
       return
     }
 
-    // 场景 B: 预览文件存在但不是 parsed 状态（仍在解析中或解析失败）
-    if (pf.status !== 'parsed') {
-      console.log('[PREVIEW_FLOW] parsedFileKeys effect: pf not parsed → handlePreview(firstParsed)')
-      handlePreviewRef.current?.(parsedFiles[0])
-      return
-    }
-
-    // 场景 C: 预览文件是 parsed，但对象已被替换（新的字段如 docId/documentId 已回填）
+    // 3. 预览文件对象被替换（同一 key，新引用）→ 重新预览
+    //    典型场景：占位符 → 解析完成，groupFilesByDocument → invoiceDocumentsToRows
     if (pfChanged) {
-      console.log('[PREVIEW_FLOW] parsedFileKeys effect: pf replaced → handlePreview(live)')
+      console.log('[PREVIEW_FLOW] fileList effect: pf replaced → handlePreview(live)')
       handlePreviewRef.current?.(live)
       return
     }
-
-    // 场景 D: parsed 数量增加，但当前预览文件仍是旧对象 —— 强制重新预览以确保内容刷新
-    if (countIncreased) {
-      const pfDocId = pf.docId
-      const liveDocId = live?.docId
-      if (pfDocId !== liveDocId) {
-        console.log('[PREVIEW_FLOW] parsedFileKeys effect: docId changed with count+ → handlePreview(live)')
-        handlePreviewRef.current?.(live || parsedFiles[0])
-      }
-    }
-
-    // 场景 E: files 引用已变化但 parsedKeys 未变（结构过渡场景），且 previewFile 的 docId/documentId 与 live 不一致
-    if (filesRefChanged && !pfChanged && pf) {
-      const pfHasDocId = !!(pf.documentId || pf.docId)
-      const liveHasDocId = !!(live?.documentId || live?.docId)
-      if (pfHasDocId !== liveHasDocId) {
-        console.log('[PREVIEW_FLOW] parsedFileKeys effect: docId presence changed → handlePreview(live)')
-        handlePreviewRef.current?.(live || parsedFiles[0])
-      }
-    }
-  }, [parsedFileKeys, files])
+  }, [allFileKeys, files])
 
   // ── Canvas 导航箭头 ──
   const handleCanvasMouseMove = useCallback((e) => {
