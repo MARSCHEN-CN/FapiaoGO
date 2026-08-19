@@ -1,6 +1,6 @@
 # R1 — Rotation Semantic Design Review
 
-> 状态：**DRAFT（设计评审，非实现）**
+> 状态：**CLOSED（设计评审已裁决，见 docs/r1-decision-record.md）**
 > 日期：2026-08-19
 > 分支：`rotation-b1-hardening`
 > 基线：`df7debd`（Gate 3-4A，remote verified）
@@ -343,7 +343,7 @@ B-2 矩阵数值来源同上，本评审 §2 表格逐行引用其输出，未�
 ```
 Gate 3-4A          ✅ CLOSED (df7debd, remote)
 Gate 3-4B          ✅ CLOSED (6aeceeb, remote) — 验证 Gate + guard 已装
-R1 Design Review   📝 DRAFT（本文档）— 待裁决 Option 0 / C
+R1 Design Review   ✅ CLOSED（本文档）— 裁决见 docs/r1-decision-record.md（Option 0 + Future C）
 Production Code    ❄ 零改动
 OFD                ⏸ waiting R1 decision
 ```
