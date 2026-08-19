@@ -326,6 +326,96 @@ PPC 只作为未来输入约束：
 ```
 R1                      ✅ CLOSED（Option 0 + Future C）
 Gate 4                  ⏸ 待启动（Merge per-slot geometry）
-Print Pipeline Convergence  📝 DRAFT design input（本文档）— 待独立 Gate
+Print Pipeline Convergence  📝 DRAFT design input + §10 最终冻结模型（Sign-off）— 待独立 Gate
 Production Code         ❄ 零改动
 ```
+
+---
+
+## 10. 最终冻结模型（Sign-off — 2026-08-19）
+
+本回合确认：**「OFD → 虚拟源文件」这一抽象成立，且把 PPC 核心边界补完整**——OFD 从「第三种打印模式」降级为「第三种输入格式」。以下为可冻结的权威模型。
+
+### 10.1 核心修正纪律（最关键）
+
+> ❌ **不可冻结**：`展示 WebP → PDF → 打印`
+> ✅ **应冻结**：`OFD → Render → PrintResource(Image, 300dpi) → Image→PDF → Sumatra`
+
+理由（质量陷阱）：Preview 与 Print 是**两次独立渲染**，产出文件完全不同：
+
+```
+Preview:  OFD → 96/150dpi → preview.webp
+Print:    OFD → 300dpi     → print.png → PDF
+```
+
+若把 `WebP → PDF` 固定为模型，未来极易被实现成「直接拿 `preview.webp` 当打印源」，重新引入低 DPI 质量问题。因此正式模型永远是：
+
+```
+RenderResource
+      │
+      ├── PreviewResource   (WebP, 96/150dpi)   ← 仅展示
+      │
+      └── PrintResource     (300dpi Image)       ← 仅打印
+```
+
+**展示 WebP 只是 PreviewResource，永不作为打印源。**
+
+### 10.2 正式 `VirtualPrintSource` 定义
+
+虚拟源文件必须命名为 **`VirtualPrintSource`**（而非 `OFDPrintSource`——后者会继续污染模型，让打印链重新感知来源格式）。
+
+```ts
+VirtualPrintSource {
+    sourceType: "ofd",          // 仅审计信息，不参与打印逻辑
+    pages: [
+        {
+            image: "/cache/xxx.webp",  // 实为 PrintResource（300dpi）
+            dpi: 300,
+            width,
+            height
+        }
+    ]
+}
+```
+
+- `sourceType` 只用于业务追溯，**打印链只认 `VirtualPrintSource`**，不认 `OFD` / `PDF` / `Image`。
+- `image` 字段承载的是 **PrintResource**，不是 Preview WebP。
+
+### 10.3 五层冻结模型（Canonical）
+
+```
+Source 层:     PDF │ OFD │ Image          ← 三种输入格式
+                │      │      │
+Render 层:      └──┬───┴───┬──┘
+                   ▼       ▼
+                RenderResource（统一渲染结果；越过此层后不再感知原始格式）
+                │
+        ┌───────┴────────┐
+        ▼                ▼
+Preview 层:       Print 层:
+PreviewResource    PrintResource
+(WebP)             ├─ PDF : Original PDF（保 PDF 特权，策略 A）
+                   └─ OFD/Image : VirtualPrintSource(Image, 300dpi)
+                          │
+Executor 层:             ▼
+                   PrintResource → Sumatra   ← 唯一执行器，只消费 PrintResource
+```
+
+- **OFD 身份表（跨层）**：Import/Parse = `OFD`；Render = `Image Resource`；Preview = `WebP`；Print = `Print PDF`；Executor = `Sumatra`。
+- **PDF 策略 A 维持**：PDF 已是高质量 PrintResource，保留 `原 PDF → Sumatra` shortcut；不做全渲染（策略 B，矢量损失 / 大 PDF 慢，当前不做）。
+
+### 10.4 对原问题的直接答复
+
+> 问题原型：「pdf / ofd / 图片 三种导入均转 webp 用于展示和打印预览，图片转 pdf 打印，pdf 用原文件打印——ofd 是否也能走图片管线、打印时用展示 webp 转 pdf？」
+
+**方向可行，长期架构更优；但必须修正最后一句：**
+
+- ✅ OFD 可以走与图片相同的 `Render → Image→PDF → Sumatra` 打印链（OFD = 第三种输入格式，非第三种打印模式）。
+- ❌ 不可表述为「打印时使用**展示时**的 webp 转 pdf」——打印源必须是 **PrintResource（300dpi）**，与 Preview WebP 解耦。
+- 此模型与 R1 Option C 长期方向一致：rotation 只发生在 `RenderPlacement` 之前，执行器只看到「已摆好的图片」，无需感知 PDF Rotate / OFD PageObject / Image EXIF / Source orientation。
+
+### 10.5 边界纪律（冻结）
+
+- 本 Sign-off **改变 Print Pipeline，不改变 R1 Rotation Ownership**：不修改 `RotationResolver` / `effectiveRotation` / `contentRotation` / `resolveContentPlacement`，不重开 R1。
+- **不影响 Gate 4**：顺序仍为 `R1 CLOSED → Gate 4 → 三格式回归 → PPC Gate`；PPC 仅作未来约束（Gate 4 不得依赖 OFD 特殊路径、不得增 OFD 专属 rotation workaround）。
+- 本回合为 **docs-only Sign-off，生产代码零改动**；作为未来 **Print Pipeline Convergence Gate** 的核心抽象输入。
