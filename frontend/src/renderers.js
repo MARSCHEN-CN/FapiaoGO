@@ -817,7 +817,7 @@ async function _renderViaWorker(items, paperKey, dpi, isLandscape, rotations, sl
   await Promise.all(items.map(async (item) => {
     const id = item.id || item.key
     const rotate = (rotations && rotations[id]) || 0
-    const l1Key = `itemRender_${id}_${dpi}_${rotate}_${paperKey}_${isLandscape ? 'L' : 'P'}`
+    const l1Key = `itemRender_${id}_${dpi}_${rotate}_${paperKey}_${isLandscape ? 'L' : 'P'}${getRenderCachePageId(item) ? `_${getRenderCachePageId(item)}` : ''}`
 
     const l1Hit = itemRenderCache.get(l1Key)
     if (l1Hit) {
@@ -998,6 +998,29 @@ async function _renderViaWorker(items, paperKey, dpi, isLandscape, rotations, sl
 // ═══════════════════════════════════════════════════════════════
 
 /**
+ * 渲染缓存页身份（PPC-OFD-3A5-C1 修复）：cache key 需含 page identity，
+ * 否则多页文档（OFD pageCount>1）逐页渲染时（同 file key、不同页）会命中
+ * 同一条 L2/L1 缓存 → N 张物理页全部输出第 1 页（页内容塌缩）。
+ *
+ * 优先级（用户裁决）：renderPage（1-based，首选，含 renderDocId 组合）→ pageNum
+ * → pageIndex → _previewImageUrl（blob URL 属 artifact identity，生命周期短，
+ * 仅作无结构化页标识时的兜底隔离）→ ''（无页语义，与旧 key 行为一致）。
+ *
+ * @param {Object|null} item - 渲染 item（fileObj / pageItem）
+ * @returns {string} 页身份串（空串 = 无页语义，不影响旧 key）
+ */
+function getRenderCachePageId(item) {
+  if (!item) return ''
+  if (item.renderPage != null) {
+    return (item.renderDocId || '') + ':' + item.renderPage
+  }
+  if (item.pageNum != null) return 'p' + item.pageNum
+  if (item.pageIndex != null) return 'p' + (item.pageIndex + 1)
+  if (item._previewImageUrl) return item._previewImageUrl
+  return ''
+}
+
+/**
  * 构建多项目渲染结果缓存键（L2）。
  * 三个调用点（renderMultipleItemsToCanvas / _renderViaWorker / _renderDirect）必须产出**完全一致**的字串，
  * 否则同一组参数在不同路径下无法命中同一份缓存。请勿在各调用点内联改写此逻辑——统一在此维护。
@@ -1016,7 +1039,13 @@ function buildCacheKey(items, paperKey, dpi, isLandscape, rotations, slotCount, 
     ? `m${layoutOptions.userMargins.left || 0}_${layoutOptions.userMargins.right || 0}_${layoutOptions.userMargins.top || 0}_${layoutOptions.userMargins.bottom || 0}`
     : 'm0'
   const _customKey = layoutOptions.customPaper?.widthMM ? `c${layoutOptions.customPaper.widthMM}x${layoutOptions.customPaper.heightMM}` : ''
-  return `multi_${paperKey}_${dpi}_${isLandscape ? 'L' : 'P'}_${slotCount || items.length}_${layoutOptions.strategy || 'vertical'}_${_rotKeys}_${_marginKey}_${_customKey}_${items.map(i => i.key || i.id).join(',')}`
+  // PPC-OFD-3A5-C1：item 标识追加 page identity（同 file key 多页不再共享缓存）
+  const _itemKeys = items.map((i) => {
+    const k = i.key || i.id || ''
+    const pid = getRenderCachePageId(i)
+    return pid ? `${k}|${pid}` : k
+  }).join(',')
+  return `multi_${paperKey}_${dpi}_${isLandscape ? 'L' : 'P'}_${slotCount || items.length}_${layoutOptions.strategy || 'vertical'}_${_rotKeys}_${_marginKey}_${_customKey}_${_itemKeys}`
 }
 
 export async function renderMultipleItemsToCanvas(
@@ -1093,7 +1122,7 @@ async function _renderDirect(
   await Promise.all(items.map(async (item) => {
     const id = item.id || item.key
     const rotate = (rotations && rotations[id]) || 0
-    const l1Key = `itemRender_${id}_${dpi}_${rotate}_${paperKey}_${isLandscape ? 'L' : 'P'}`
+    const l1Key = `itemRender_${id}_${dpi}_${rotate}_${paperKey}_${isLandscape ? 'L' : 'P'}${getRenderCachePageId(item) ? `_${getRenderCachePageId(item)}` : ''}`
 
     // L1 命中：复用单项渲染结果
     const l1Hit = itemRenderCache.get(l1Key)

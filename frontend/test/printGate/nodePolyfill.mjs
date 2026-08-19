@@ -52,7 +52,7 @@ export class MockCtx {
   clip() {}
   translate() {}
   rotate(rad) { this.rotates.push({ degrees: (rad * 180) / Math.PI }) }
-  drawImage(source, dx, dy, dw, dh) { this.drawImages.push({ dx, dy, dw, dh }) }
+  drawImage(source, dx, dy, dw, dh) { this.drawImages.push({ source, dx, dy, dw, dh }) }
   fillRect(x, y, w, h) { this.fillRects.push({ x, y, w, h }) }
   clearRect() {}
   setLineDash() {}

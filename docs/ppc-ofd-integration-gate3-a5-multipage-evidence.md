@@ -169,16 +169,23 @@ renderers.js:1096 L1 itemRenderCache key = `itemRender_${id}_${dpi}_${rotate}_${
 
 ### 归因（Gate 纪律）
 
-**Consumer chain 缺陷**（renderers.js L2/L1 缓存 key 缺页维度），非 Producer / Rotation / RenderCommand 契约缺陷。修复候选（**不自行实施，待用户裁决**）：
-- **最小**：`buildCacheKey` / L1 key 增加页标识维度（`item.pageNum ?? item._previewImageUrl ?? item.key`）——cache key 是性能层非契约，改动受限。
-- 或 usePrint 页循环每页后 `clearRenderCache()`（保 L1）——性能代价。
-- 候选方向属 PPC 或 4.4 式最小修复，需用户裁决后实施。
+**Consumer chain 缺陷**（renderers.js L2/L1 缓存 key 缺页维度），非 Producer / Rotation / RenderCommand 契约缺陷。
 
-### 状态
+### 修复（用户裁决 2026-08-19，Option A cache identity，已实施）
+
+- **正式记录**：`PPC-OFD-3A5-C1`（Multi-page render cache key missing page identity，Severity: High，Affected: OFD pageCount>1）。
+- **修复点**（`frontend/src/renderers.js`，仅 cache key 生成层）：
+  1. `buildCacheKey`（L2）：item 标识段追加 page identity——`item.key|pageId`。
+  2. L1 `itemRenderCache` key（两处）：追加 page identity。
+  3. 新增 `getRenderCachePageId(item)`：优先级 `renderPage（renderDocId:renderPage）→ pageNum → pageIndex → _previewImageUrl（blob URL 兜底）→ ''`（无页语义时与旧 key 一致）。
+- **明确不采用 Option B**（usePrint 每页 clearRenderCache——治标不治本，破坏 L2 价值）。
+- **harness 验证**：A5.1–A5.5 修复前 FAIL（缺陷暴露）→ 修复后全 PASS；新增 **A5.6 cache identity sentinel**（同 key + renderPage 区分 → canvas 独立，结构性防回归）。
+- 回归全绿：3-A.1 6/6 · 3-A.2 4/4 · 3-A.3 8/8 · 3-A.4 7/7 · 3-A.5 6/6 · Gate 4.3 15/15。
+
+### 状态（修复后）
 
 ```
-Gate 3-A.5: FAIL（A5.1 PASS / A5.2-A5.5 缺陷证据确凿）
-→ 待用户裁决：进入最小修复（Consumer cache key）或升级 PPC Gate 复审
+Gate 3-A.5: PASS（Evidence PASS / Fix: PPC-OFD-3A5-C1 resolved / Harness 6/6）
 ```
 
 ---
@@ -189,7 +196,7 @@ Gate 3-A.5: FAIL（A5.1 PASS / A5.2-A5.5 缺陷证据确凿）
 [R1 CLOSED] [PPC RATIFIED] [Gate 4 CLOSED]
 [PPC-OFD Integration]
   Gate 1: PASS / Gate 2: PASS / Gate 3-A.1: PASS / 3-A.2: PASS / 3-A.3: PASS / 3-A.4: PASS
-  Gate 3-A.5: FAIL（缺陷发现 §8A：多页 OFD 打印页内容塌缩，待裁决修复）
+  Gate 3-A.5: PASS（PPC-OFD-3A5-C1 已修复，harness 6/6）
 ```
 
 待用户批准：进入 3-A.5 harness 实现（test-only）。

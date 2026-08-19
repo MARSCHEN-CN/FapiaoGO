@@ -158,3 +158,21 @@ test('A5.5 render isolation: 3 页 → 3 独立 canvas/buffer（对象不共享�
     '渲染调用顺序 = page.index 升序',
   )
 })
+
+// ─────────────────────────────────────────────────────────────
+// A5.6 cache identity sentinel（PPC-OFD-3A5-C1 结构性保护）
+// ─────────────────────────────────────────────────────────────
+test('A5.6 cache identity sentinel: 同 key + renderPage 区分 → canvas 独立（防未来改回 items.map(i=>i.key)）', async () => {
+  // 用户裁决输入：同 file key，renderPage 1/2 区分（_previewImageUrl 相同——仅验证 renderPage 维度本身，
+  // 不依赖 blob URL 差异，防止「未来移除 URL 维度」时此 sentinel 失效）
+  MOCK_IMAGE_SIZES.set('mock://a56/same', { width: 2100, height: 2970 })
+  const base = { key: 'ofd-file', fileFormat: 'ofd', docId: 'doc-ofd-file' }
+  const c1 = await renderMultipleItemsToCanvas(
+    [{ ...base, renderPage: 1, _previewImageUrl: 'mock://a56/same' }],
+    'A4', PREVIEW_DPI, false, { 'ofd-file': 0 }, 1, false, false, { strategy: 'vertical' })
+  const c2 = await renderMultipleItemsToCanvas(
+    [{ ...base, renderPage: 2, _previewImageUrl: 'mock://a56/same' }],
+    'A4', PREVIEW_DPI, false, { 'ofd-file': 0 }, 1, false, false, { strategy: 'vertical' })
+  assert.ok(c1 !== c2,
+    'cacheKey(renderPage:1) ≠ cacheKey(renderPage:2)——page identity 维度生效（结构性保护）')
+})
