@@ -243,6 +243,84 @@ PDF 可走 shortcut: PDF source ──▶ Sumatra
 
 ---
 
+## 9. 命名纪律与冻结约束（PPC Sign-off）
+
+> 本节约 R1 收盘后架构确认时追加，作为 PPC 的命名纪律与冻结约束锚点（docs-only，不改变 R1 / Gate 4）。
+
+### 9.1 状态确认
+
+提交 `c8dd9c2`（PPC 设计输入）**未越界**：它不是 R1 补丁，也不是 Gate 4 前置改造。
+
+```
+R1 Rotation Semantic ──CLOSED──▶ PPC Design Input ──OPEN DESIGN ONLY──▶ Future PPC Gate
+```
+
+### 9.2 OFD 重新定位（核心原则）
+
+OFD 身份跨层：
+
+| 层 | 身份 |
+| --- | --- |
+| Import | OFD |
+| Parse | OFD |
+| Render | Image Resource |
+| Preview | WebP |
+| Print | Print PDF |
+| Executor | Sumatra |
+
+**核心原则（PPC Gate 核心）**：
+
+> **OFD 是第三种输入格式，不是第三种打印模式。**
+
+### 9.3 三个必须冻结的点
+
+1. **Preview WebP 不能直接成为打印源** — 保持 `PreviewResource ≠ PrintResource`。否则会出现：预览 DPI 改动影响打印、cache 生命周期污染、用户打开预览才生成打印资源等隐式依赖。正确：`RenderResource → Preview Renderer + Print Renderer`。
+2. **OFD 虚拟源文件应是 Print Resource** — 不要 `VirtualSourceFile = preview.webp`，而应是结构化 `VirtualPrintSource { origin: "ofd", pages: [{ image, dpi, width, height }] }`。后续合并打印 / 多票布局 / margin contract 都消费同一种物理页面资源。
+3. **PPC 不应重新打开 Rotation Ownership** — PPC 只做 RenderResource / PrintResource / Executor 收敛，**不是 rotation semantic migration**，否则重新进入 R1。
+
+### 9.4 命名纪律（消歧）
+
+建议未来正式 PPC Gate 文档区分两个名字，避免 `Image Resource` 既代表展示图片又代表打印图片：
+
+- **RenderImage** = 渲染结果（如 `OFD → RenderImage`）；
+- **PrintPDF** = 打印执行载体（如 `RenderImage → PrintPDF`）。
+
+更清晰的模型：
+
+```
+SourceDocument
+       │
+       ▼
+RenderResource
+       │
+       ├───────────────┐
+       ▼               ▼
+PreviewResource   PrintResource
+   (WebP)          (300dpi Image)
+                        │
+                        ▼
+                    PrintPDF
+                        │
+                        ▼
+                     Executor
+```
+
+> 注：本文 §2 / §5 使用的 "Image Resource" 在正式 PPC Gate 文档中应统一替换为 `RenderResource` / `PrintResource` 以消歧，遵循本节命名纪律。
+
+### 9.5 对 Gate 4 的影响
+
+**无影响。** 顺序维持：
+
+```
+R1 CLOSED → Gate 4 (Merge per-slot) → 三格式回归 → PPC Gate
+```
+
+PPC 只作为未来输入约束：
+
+> Gate 4 不得依赖 OFD 特殊路径，不得增加 OFD 专属 rotation workaround。
+
+---
+
 ## Gate 状态（本设计输入阶段）
 
 ```
