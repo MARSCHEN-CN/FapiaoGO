@@ -28,98 +28,13 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
+import { installNodePolyfills, MockImage, MOCK_IMAGE_SIZES } from './nodePolyfill.mjs'
 
 // ─────────────────────────────────────────────────────────────
 // 0. Node 环境 polyfill（须在动态 import renderers.js 之前设置）
-//    · DOMMatrix：pdfjs-dist ESM 顶层 const SCALE_MATRIX = new DOMMatrix()（pdf.mjs:10407）
-//      唯一顶层引用。OFD/image 路径不触发 PDF 矩阵运算，最小 polyfill 仅满足顶层求值。
-//    · document.createElement('canvas')：_getPoolCanvas 用它创建画布。
-//    · Image：Phase 1 预加载 _previewImageUrl 用，按 URL 查表给尺寸并触发 onload。
-//    · HTMLCanvasElement：_returnPoolCanvas instanceof 判断（正常路径不触发，防御）。
+//    共享实现见 ./nodePolyfill.mjs（DOMMatrix / document / Image / window / HTMLCanvasElement）
 // ─────────────────────────────────────────────────────────────
-class FakeDOMMatrix {
-  constructor(init) {
-    const v = init == null ? [1, 0, 0, 1, 0, 0]
-      : Array.isArray(init) ? init.map(Number)
-      : typeof init === 'string' ? init.split(',').map(Number)
-      : [init?.a ?? 1, init?.b ?? 0, init?.c ?? 0, init?.d ?? 1, init?.e ?? 0, init?.f ?? 0]
-    ;[this.a, this.b, this.c, this.d, this.e, this.f] = v
-  }
-  multiplySelf(m) { if (m) { this.e += m.e; this.f += m.f } return this }
-  preMultiplySelf(m) { if (m) { this.e += m.e; this.f += m.f } return this }
-  invertSelf() { return this }
-  translate(x = 0, y = 0) { this.e += x; this.f += y; return this }
-  scale(x = 1, y = 1) { this.a *= x; this.d *= y; return this }
-  static fromMatrix(m) { return new FakeDOMMatrix(m) }
-  static fromFloat32Array(a) { return new FakeDOMMatrix(Array.from(a)) }
-}
-
-// drawImage dest 区域记录（bbox / 无裁切断言用）
-class MockCtx {
-  constructor() {
-    this.rotates = []      // { degrees }
-    this.drawImages = []   // { dx, dy, dw, dh }
-    this.clips = []        // { x, y, w, h }
-    this.fillRects = []
-    this.fillStyle = '#000000'
-    this.strokeStyle = '#000000'
-    this.lineWidth = 1
-  }
-  save() {}
-  restore() {}
-  beginPath() {}
-  rect(x, y, w, h) { this.clips.push({ x, y, w, h }) }
-  clip() {}
-  translate() {}
-  rotate(rad) { this.rotates.push({ degrees: (rad * 180) / Math.PI }) }
-  drawImage(source, dx, dy, dw, dh) { this.drawImages.push({ dx, dy, dw, dh }) }
-  fillRect(x, y, w, h) { this.fillRects.push({ x, y, w, h }) }
-  clearRect() {}
-  setLineDash() {}
-  stroke() {}
-  moveTo() {}
-  lineTo() {}
-}
-
-function makeMockCanvas(w, h) {
-  const ctx = new MockCtx()
-  return { width: w, height: h, getContext: () => ctx, ctx }
-}
-
-// MockImage：src setter → 查 MOCK_IMAGE_SIZES 表 → 微任务触发 onload/onerror
-const MOCK_IMAGE_SIZES = new Map()
-class MockImage {
-  constructor() {
-    this.naturalWidth = 0
-    this.naturalHeight = 0
-    this._src = ''
-    MockImage.instances.push(this)
-  }
-  set src(v) {
-    this._src = v
-    const size = MOCK_IMAGE_SIZES.get(v)
-    if (size) {
-      this.naturalWidth = size.width
-      this.naturalHeight = size.height
-      queueMicrotask(() => this.onload?.())
-    } else {
-      queueMicrotask(() => this.onerror?.())
-    }
-  }
-  get src() { return this._src }
-}
-MockImage.instances = []
-
-globalThis.DOMMatrix = FakeDOMMatrix
-globalThis.HTMLCanvasElement = class HTMLCanvasElement {}
-globalThis.window = { electronAPI: undefined } // renderers.js:61 RESOURCE_BASE（可选链，undefined 即可）
-globalThis.document = {
-  createElement: (tag) => {
-    if (tag === 'canvas') return makeMockCanvas(0, 0)
-    throw new Error(`[harness] unexpected document.createElement('${tag}')`)
-  },
-}
-globalThis.Image = MockImage
+installNodePolyfills()
 
 // ─────────────────────────────────────────────────────────────
 // 1. 加载真实生产链（动态 import：先 polyfill 后加载）
