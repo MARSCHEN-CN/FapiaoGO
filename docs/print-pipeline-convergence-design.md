@@ -325,8 +325,8 @@ PPC 只作为未来输入约束：
 
 ```
 R1                      ✅ CLOSED（Option 0 + Future C）
-Gate 4                  ⏸ 待启动（Merge per-slot geometry）
-Print Pipeline Convergence  📝 DRAFT design input + §10 最终冻结模型（Sign-off）— 待独立 Gate
+Gate 4                  ▶ 可启动（Merge per-slot geometry；R1+PPC 边界已封）
+Print Pipeline Convergence  ✅ CONVERGED（design input ratified，§10/§11/§12；实施待独立 PPC Gate）
 Production Code         ❄ 零改动
 ```
 
@@ -538,3 +538,60 @@ R1 CLOSED → Gate 4 → 三格式回归 → PPC Gate → VirtualPrintSource imp
 ```
 
 R1 + PPC 架构边界已清晰，**可进入 Gate 4**。
+
+---
+
+## 12. 架构收敛完成 / Gate 4 放行（Ratification — 2026-08-19）
+
+用户最终确认：PPC 架构方向已稳定，`NativePrintSource / VirtualPrintSource` 命名补齐了缺失层，本设计输入 **CONVERGED（可放行 Gate 4）**。本回合仅 ratify，不进入实现。
+
+### 12.1 最终规范图（Canonical）
+
+```
+SourceDocument
+      │
+      ▼
+RenderResource
+      │
+      ├─────────────────┐
+      ▼                 ▼
+PreviewResource     PrintResource
+  (WebP)              │
+                      ├──────────────┐
+                      ▼              ▼
+              NativePrintSource  VirtualPrintSource
+              (Original PDF)    (Rendered Image, 300dpi)
+                      │              │
+                      └─────┬────────┘
+                            ▼
+                        PrintPDF
+                            ▼
+                         Sumatra
+```
+
+- **PDF**：`SourceDocument → NativePrintSource → Sumatra`（保原生载体）。
+- **OFD / Image**：`SourceDocument → RenderResource → VirtualPrintSource → Image→PDF → Sumatra`。
+
+### 12.2 三个关键价值（确认）
+
+1. **OFD 身份正确降级**：`PDF / OFD / Image` 三种输入不再对应三条打印路径；OFD/Image 经 `RenderResource → VirtualPrintSource` 收敛，「OFD 是输入格式、非打印格式」在架构上成立。
+2. **「展示 WebP 转 PDF」被正确否决**：Preview 与 Print **共享 Render 来源、不共享产物**（Render Resource 分离原则）——preview DPI 不足 / 生命周期受 UI 控 / 缓存策略污染等问题被规避。
+3. **R1 / PPC 双轴清晰**：`R1 = 几何语义（rotation semantic ownership）`、`PPC = 打印资源（print resource ownership）`，互不越界；PPC 不碰 `RotationResolver / effectiveRotation / resolveContentPlacement`。
+
+### 12.3 PrintResource 生命周期（PPC Gate 实施重点）
+
+架构已定，工程只剩生命周期：
+
+- **A. import-time**：导入即 Render 300dpi。优：打印快；缺：导入成本↑、资源浪费。
+- **B. lazy**：首次打印才生成。优：省资源；缺：首打延迟。
+- **C. cache（最可能）**：`OFD → RenderResource → PrintResource Cache`，生命周期跟随 `DocumentState` alive → delete。← **PPC Gate 重点**。
+
+### 12.4 Gate 4 放行
+
+- 不提前实现 `OFD → VirtualPrintSource`（会打开 Render 生命周期 / PrintResource 管理 / 打印链重构，超出 Gate 4 范围）。
+- Gate 4 唯一目标：`Merge per-slot geometry` 验证 `effectiveRotation → RenderCommand → slot placement` contract。
+- **正式放行**：R1 CLOSED + PPC design CONVERGED → 进入 **Gate 4**。
+
+### 12.5 与既有方向一致性
+
+本模型与项目已有「Render Resource 与 Print Resource 分离」一致，**未引入新架构冲突**；生产代码零改动。
