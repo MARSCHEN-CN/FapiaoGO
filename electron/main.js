@@ -76,6 +76,35 @@ function setMainWindowForBridge(window) {
 }
 
 // ============================
+// 应用图标路径（兼容开发/生产模式）
+// ============================
+function resolveAppIconPath() {
+  const candidates = [
+    // 开发模式：resources/icon.ico（项目根目录）
+    path.resolve(__dirname, '../resources/icon.ico'),
+    // 生产模式：electron-builder 将 buildResources 打包到 process.resourcesPath
+    process.resourcesPath ? path.join(process.resourcesPath, 'icon.ico') : null,
+    // 兜底：PNG 原文件
+    path.resolve(__dirname, '../frontend/public/icon/app.png'),
+  ].filter(Boolean)
+  for (const p of candidates) {
+    try { if (fs.existsSync(p)) return p } catch {}
+  }
+  return null
+}
+const APP_ICON_PATH = resolveAppIconPath()
+if (APP_ICON_PATH) console.log(`[main.js] 应用图标: ${APP_ICON_PATH}`)
+
+// ============================
+// Windows AppUserModelId — 任务栏/开始菜单/任务管理器图标绑定
+// 必须在 app.whenReady() 之前设置，否则 Windows 会用 electron 默认图标分组
+// ============================
+if (process.platform === 'win32') {
+  app.setAppUserModelId('com.FapiaoGO.app')
+  console.log('[main.js] AppUserModelId: com.FapiaoGO.app')
+}
+
+// ============================
 // 窗口状态
 // ============================
 let mainWindow
@@ -130,6 +159,7 @@ function createWindow() {
     frame: false,
     show: false,
     backgroundColor: '#f2f4f8',
+    icon: APP_ICON_PATH || undefined,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -295,6 +325,7 @@ function createSettingsWindow() {
     minHeight: 600,
     show: false,
     frame: false,
+    icon: APP_ICON_PATH || undefined,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -385,6 +416,7 @@ function createCalculatorWindow() {
     show: false,
     frame: false,
     backgroundColor: '#ffffff',
+    icon: APP_ICON_PATH || undefined,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
