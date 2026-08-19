@@ -339,9 +339,11 @@ R3. 对比「producer 输出 cmd.contentRotation」与「executor 实际 rotate 
 ### 10.2 运行命令（遵守既有纪律）
 
 ```
-node --test frontend/test/printGate/gate4Regression.test.mjs
+cd frontend
+node --loader ./test/printGate/env-shim.loader.mjs --test ./test/printGate/gate4Regression.test.mjs
 ```
 
+> ⚠️ **必须带 `--loader ./test/printGate/env-shim.loader.mjs`**：前端 `src/config.js` 使用 `import.meta.env`（Vite 注入），plain Node 下为 undefined，导致 `import.meta.env.BASE_URL` 抛 TypeError。Path A 生产者（`MultiTicketComposer → RenderLayoutFactory → previewState → config`）必然拉入 `config.js`，故必须以 loader 将 `import.meta.env` 中性替换为 `({})` 才能加载。本项目 `src/layout/renderLayoutFactorySlot.test.js` 已确认此技术债（"config.js 依赖 import.meta.env，需 shim"）。loader 仅作用于测试加载期，**不修改任何生产源码**。
 > ⚠️ 勿跑 `node --test test/`（会捞到依赖 `import.meta.env` 的技术债，见项目记忆）。
 
 ### 10.3 验收判定
