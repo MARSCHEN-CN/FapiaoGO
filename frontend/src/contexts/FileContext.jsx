@@ -170,6 +170,20 @@ export function FileProvider({ children }) {
   useEffect(() => {
     // 仅关注已解析且带发票号码的文件
     const liveKeys = new Set(files.map(f => f.key))
+    // 🔴 主动清理残留：importHistoryInfo 是异步旁路缓存，若文件已被移除而新查询
+    //    未命中（exists=false / importCount<2 / __error），旧条目不会被剔除 →
+    //    sb-stats 的 importHistoryCount 残留计数。不依赖查询结果，liveKeys 构建后
+    //    立即剔除，与 previousYearInfo 同步派生语义对齐（往年发票移除即刷新）。
+    setImportHistoryInfo(prev => {
+      if (prev.size === 0) return prev
+      let changed = false
+      const next = new Map()
+      for (const [k, v] of prev) {
+        if (liveKeys.has(k)) next.set(k, v)
+        else changed = true
+      }
+      return changed ? next : prev
+    })
     const byNumber = new Map()
     for (const f of files) {
       if (f.status !== 'parsed' || !f.invoiceNumber) continue
