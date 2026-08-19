@@ -131,7 +131,7 @@ merge4:  [OFD, PDF] / [Image, OFD]
 
 | 验收项 | 断言 | 风险 |
 | --- | --- | --- |
-| 单执行路径 | OFD 与 PDF 都经 `renderMultipleItemsToCanvas` → `drawRenderCommand`（**不得**出现 OFD 走 raster 而 PDF 走 `print-source-file` 直送的分裂） | 双轨污染 |
+| 单执行路径（merge composer 内） | OFD item **必须进入 raster RenderCommand pipeline**（`renderMultipleItemsToCanvas` → `drawRenderCommand`）；任何 source-format-specific bypass 均视为 pipeline split risk | 双轨污染 |
 | 几何同构 | 两 slot 的 `slot.contentRect` 使用**同一** `createPlacement` 公式 | Gate 4 |
 
 > ⚠️ 若发现 PDF 走 native `print-source-file` 而 OFD 走 raster/canvas——这是**既有 PDF 单文件策略**（非 OFD 缺陷），但 merge 场景下二者必须汇入同一 composer。本项验证的是 merge 内无分裂，而非否定 PDF 单文件 native 捷径。
@@ -143,7 +143,7 @@ merge4:  [OFD, PDF] / [Image, OFD]
 | 输入 | 期望 | 禁戒 |
 | --- | --- | --- |
 | `sourceRotation=90, userRotation=0` | `contentRotation=90`；`drawRenderCommand` `ctx.rotate(90)` **恰好 1 次** | — |
-| `sourceRotation=90, userRotation=90` | `effectiveRotation = resolve(source,user)`（按 R1 contract 归一）；仍**只一次**最终 rotation | ❌ OFD renderer 烤 90 + Canvas 再 90 = 180 |
+| `sourceRotation=90, userRotation=90` | `effectiveRotation = existing RotationResolver contract result`（R1 已定义组合语义，本 Gate 不重新定义）；仍**只一次**最终 rotation | ❌ OFD renderer 烤 90 + Canvas 再 90 = 180 |
 | `sourceRotation=0, userRotation=0` | `contentRotation=0`；`ctx.rotate` 0 次 | — |
 
 断言（沿用 Gate 4.3 R1–R3）：
@@ -153,6 +153,8 @@ merge4:  [OFD, PDF] / [Image, OFD]
 
 **关键**：OFD raster 是 source 取向（`render_ofd_page` 不烤旋转，Gate 2 已证），故 rotation 只能来自 `sourceRotation`+`userRotation` 合并后在 `drawRenderCommand` 施加一次——与 PDF 同模型。
 
+> **🔒 Gate 3 rotation 边界（重要）**：Gate 3 是 **ownership verification**，不是 rotation design gate。本项仅验证 `producer metadata → consumer placement → executor rotate` **施加恰好一次**；**不定义** rotation 组合语义（source+user 如何 compose 由既有 `RotationResolver` contract 决定，R1 已冻结）。任何「Gate 3 重新拥有 rotation policy」的解读均属误读。
+
 ---
 
 ## 4. 执行方法论（分步，避免失败原因混叠）
@@ -160,10 +162,44 @@ merge4:  [OFD, PDF] / [Image, OFD]
 ### Gate 3-A：Print pipeline trace + output inspection（沙箱可自动化）
 
 - 用 `env-shim.loader.mjs`（Gate 4.3 已建）加载含 `import.meta.env` 的模块图。
-- `fetchPrintRaster` **可 mock**：返回已知尺寸的 OFD→WebP 测试栅格（或指向仓库内 sample OFD 经后端真实渲染的快照）；Image/PDF 同法 mock 为确定性 fixture。
+- **Gate 3-A 输入必须同时包含两类**（缺一不可，否则可能出现「mock raster PASS / real metadata mismatch FAIL」直到执行期才暴露）：
+  - **A. deterministic fixture**：已知尺寸的 OFD→WebP 测试栅格（确定性尺寸/内容），验证 **consumer geometry/rotation**；
+  - **B. real OFD raster snapshot**：仓库内 sample OFD 经后端真实渲染的输出（运行期经后端渲染一次后缓存复用），验证 **Gate 2 producer contract 与 consumer 接口的实际连接**。
+  - Image/PDF 同法 mock 为确定性 fixture；**两类输入均不修改 Producer**。
 - 驱动 `renderMultipleItemsToCanvas`（或 `usePrint` 的 OFD 打印入口）产出 canvas，断言 §3 全部项（尺寸/无裁切/rotation-once/merge 几何）。
 - **不进入** materialization / Sumatra（沙箱无打印机）。
 - 输出产物：断言报告 + 生成的 canvas 尺寸/方向日志（供 Gate 3-B 对照）。
+
+### Gate 3-A 执行顺序（冻结：不一次跑 A–E）
+
+按序执行，**通过前一项才进入下一项**——若直接跑 merge，失败将无法快速区分是 resource / placement / rotation / page indexing / materialization 哪一层：
+
+| 序 | 用例 | 目的 |
+| --- | --- | --- |
+| 3-A.1 | Single OFD page | 最基础闭环（consumer 链 + rotation once） |
+| 3-A.2 | Rotation once（sourceRotation × userRotation 组合） | 唯一 R1 验证，先于 merge 排除 double-rotate |
+| 3-A.3 | OFD + Image merge2 | 证明 RenderResource 不区分来源（复用 Gate 4.3 G1–G3） |
+| 3-A.4 | OFD + PDF merge2（防双轨） | 检测 source-format-specific bypass |
+| 3-A.5 | OFD 多页（page contract） | 顺序/尺寸/rotation 逐页稳定 |
+
+**Gate 3-A.1 首个 PASS 标准（冻结）**：
+
+```
+Input:
+  one OFD page, known sourceRotation
+
+Trace 必须显示:
+  OFD → fetchPrintRaster → RenderCommand → renderMultipleItemsToCanvas → drawRenderCommand → Canvas
+
+Assertions:
+  ✓ 无 OFD 专属分支（静态断言 + 行为断言）
+  ✓ canvas 尺寸由 paperRect contract 推导（禁硬编码魔法数）
+  ✓ bbox 非空（占比 ≥15% 沿用 Gate 纪律；禁 mask.sum() 失真法）
+  ✓ 无裁切（bbox 落于 contentRect）
+  ✓ rotation 恰好施加一次（复用 Gate 4.3 R2）
+```
+
+3-A.1 通过后，再进入 3-A.2 → … → 3-A.5。
 
 ### Gate 3-B：真实 Sumatra / Windows printer（用户手动）
 
