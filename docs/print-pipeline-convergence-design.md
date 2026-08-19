@@ -1,6 +1,6 @@
 # Print Pipeline Convergence — Design Input
 
-> 状态：**DRAFT（设计输入，非实现；独立于 R1 与 Gate 4）**
+> 状态：**RATIFIED（联合 R1 的 Gate 4 前置冻结锚点；docs-only，实施待独立 PPC Gate）**
 > 日期：2026-08-19
 > 分支：`rotation-b1-hardening`
 > 依赖：R1 CLOSED（Option 0 + Future C，`docs/r1-decision-record.md` §9 / §10 / §12）
@@ -321,12 +321,13 @@ PPC 只作为未来输入约束：
 
 ---
 
-## Gate 状态（本设计输入阶段）
+## Gate 状态（联合 R1+PPC Ratification 终态 — 2026-08-19）
 
 ```
 R1                      ✅ CLOSED（Option 0 + Future C）
-Gate 4                  ▶ 可启动（Merge per-slot geometry；R1+PPC 边界已封）
-Print Pipeline Convergence  ✅ CONVERGED（design input ratified，§10/§11/§12；实施待独立 PPC Gate）
+PPC                     ✅ CONVERGED + 联合 R1 ratification 完成（§0–§14）
+Gate 4                  ▶ 可启动（前置冻结锚点就位；唯一验证 = merge per-slot geometry ⇄ RenderCommand contract）
+Print Pipeline Convergence  ❄ 设计已收敛，实施待独立 PPC Gate（VirtualPrintSource implementation）
 Production Code         ❄ 零改动
 ```
 
@@ -666,3 +667,124 @@ rotation ownership     🔒 不重新讨论
 > **per-slot geometry 是否保持 `RenderCommand` contract。**
 
 不要再混入 OFD / PPC / rotation ownership 讨论——R1 与 PPC 两条边界已封死。
+
+---
+
+## 14. R1 + PPC 联合 Ratification 完成 — Gate 4 启动锚点（Terminal）
+
+> 状态：**本文档 §0–§13 联合 ratification 的终态确认 = 完成**。本回合仅做架构审查确认（docs-only，生产代码零改动），作为 **Gate 4 的前置冻结锚点**。
+> 标记：自本 §14 起，本文档进入 **RATIFICATION CLOSED / implementation pending** 状态——后续任何改动（包括 OFD `VirtualPrintSource` 实施）均属 **独立 PPC Gate（实施）**，不再新增 ratification 章节。
+
+### 14.1 双轴模型终态确认（Two-Axis Model）
+
+```text
+                 R1
+     Rotation Semantic Ownership
+                 │
+                 │  contentRotation / effectiveRotation / sourceRotation
+                 ▼
+       RenderPlacementResult
+===============================   ← 唯一跨域对象（非 PDF/OFD/Image/Rotation）
+                 ▲
+                 │
+                 PPC
+        Print Resource Ownership
+                 │
+                 ▼
+            PrintResource
+        ┌───────────────┐
+        ▼               ▼
+  NativePrintSource  VirtualPrintSource
+       (PDF)            (Image / OFD)
+        │               │
+        └───────┬───────┘
+                ▼
+            PrintPDF
+                ▼
+            Sumatra
+```
+
+切割正确：唯一跨域对象是 `RenderPlacementResult`，而非 `PDF / OFD / Image / Rotation`——这是干净的 seam。
+
+### 14.2 R1 职责边界（冻结）
+
+- **拥有**：`sourceRotation` / `contentRotation` / `effectiveRotation` / `RotationResolver`；产出 `RenderPlacementResult` 后不再关心打印载体。
+- **不拥有**：`PrintResource` / `VirtualPrintSource` / `PrintPDF` / `Executor` seam。
+
+### 14.3 PPC 职责边界（冻结）
+
+- **拥有**：`PrintResource` / `NativePrintSource` / `VirtualPrintSource` / `PrintPDF` / `Executor seam`。
+- **不拥有**：`RotationResolver` / `effectiveRotation` / `sourceRotation` ownership。
+- 已封死的危险路径：`为打印方便 → 重新调整 rotation → 修改 Render geometry → 重新打开 R1`（❌ 禁止）。
+
+### 14.4 OFD 定位终态
+
+| 层        | 身份                    |
+| -------- | --------------------- |
+| Import   | OFD                   |
+| Parse    | OFD                   |
+| Render   | RenderResource        |
+| Preview  | PreviewResource(WebP) |
+| Print    | VirtualPrintSource    |
+| Executor | Sumatra               |
+
+错误模型 `PDF printer / Image printer / OFD printer` 被替换为 **`PrintResource printer`**——这是 PPC 核心价值。
+
+### 14.5 VirtualPrintSource 抽象正确
+
+- ❌ 避免 `OFDPrintSource`（把格式泄漏到打印层）。
+- ✅ 使用 `VirtualPrintSource`，`origin` **仅**用于调试/追踪/日志/回溯，**不是打印决策依据**；打印链只认 `VirtualPrintSource`。
+
+### 14.6 Preview / Print 分离最终冻结
+
+- ❌ 禁止：`OFD → Render → preview.webp → PDF → 打印`。
+- ✅ 冻结：`RenderResource ──┬─▶ PreviewRenderer ─▶ WebP` / `└─▶ PrintRenderer ─▶ 300dpi Image ─▶ VirtualPrintSource`。
+- **共享输入（RenderResource）、不共享输出（PreviewResource / PrintResource）**。
+
+### 14.7 Gate 4 边界明确
+
+- Gate 4 **不应看到**：OFD / VirtualPrintSource / PrintPDF / Sumatra / PPC。
+- Gate 4 **只验证**：`effectiveRotation → RenderCommand → slot placement`。
+- 唯一命题：**merge per-slot geometry 是否保持 `RenderCommand` contract**；其余全部越界。
+
+### 14.8 冻结状态确认表（ratified）
+
+| 事项                    | 状态                      |
+| --------------------- | ----------------------- |
+| R1 Rotation Ownership | ✅ CLOSED                |
+| Option B              | ❌ 永久否决                  |
+| Option A              | ⏸ 暂停                    |
+| Option C              | 🔒 Future Migration     |
+| PPC Architecture      | ✅ CONVERGED             |
+| OFD 特殊打印路径            | ❌ 删除方向                  |
+| VirtualPrintSource    | ❄ Future Implementation |
+| Gate 4                | ▶ 可启动                   |
+
+### 14.9 最终架构判断
+
+本轮最大收获不是「OFD 可以转图片打印」，而是完成**两个维度的解耦**——输入格式 / 打印路径 / 旋转逻辑三者不再纠缠：
+
+```text
+Source Format (PDF/OFD/Image)
+        │
+        ▼
+   RenderResource
+        │
+        ▼
+ RenderPlacementResult  ──◀ R1（旋转语义）
+        │
+        ▼
+   PrintResource        ──◀ PPC（打印资源）
+        │
+        ▼
+    PrintPDF
+        │
+        ▼
+    Executor (Sumatra)
+```
+
+**结论：R1 + PPC 联合 ratification 完成，Gate 4 可以启动。** 后续 Gate 4 审查范围严格锁定为：
+
+> 在 `effectiveRotation` ownership 已冻结前提下，`merge per-slot geometry` 是否保持 `RenderCommand` contract。
+
+不再回溯 rotation，也不提前实现 OFD `VirtualPrintSource`。
