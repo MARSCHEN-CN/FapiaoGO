@@ -404,6 +404,8 @@ R1 CLOSED 后，长期架构收敛分**三条独立线**（互不阻塞）：
 
 > 三者关系：Gate 4 是当前即做的打印 seam 收敛；Option C 是 rotation 语义层收敛；Print Pipeline Convergence 是打印执行器收敛。三条线互不阻塞，但都依赖 R1 先定调 rotation ownership。
 
+> Print Pipeline Convergence 的设计输入见 `docs/print-pipeline-convergence-design.md`（OFD→Image Resource→Image→PDF→Sumatra；含 DPI / Preview 不复用 / PDF 策略 A·B 约束；明确改变 Print Pipeline 而非 R1 Rotation Ownership）。
+
 ---
 
 ## 11. 下一步（Next Steps / Closure）
