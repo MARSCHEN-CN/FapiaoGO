@@ -595,3 +595,74 @@ PreviewResource     PrintResource
 ### 12.5 与既有方向一致性
 
 本模型与项目已有「Render Resource 与 Print Resource 分离」一致，**未引入新架构冲突**；生产代码零改动。
+
+---
+
+## 13. 联合 R1/PPC 边界 Ratification（最终架构边界）
+
+> 状态：本文档 §0–§12 与 `docs/r1-decision-record.md` 的 **联合 ratification**。docs-only，生产代码零改动。
+> 本次确认的核心：R1 与 PPC 是**两条独立轴**，交叉点唯一且不在 PDF/OFD/Image 层。
+
+### 13.1 两条轴的关系（Two-Axis Model）
+
+```text
+                R1
+      Rotation Semantic Ownership
+                │
+     sourceRotation / effectiveRotation /
+     contentRotation 边界冻结
+                │
+                ▼
+          Render Geometry Layer
+                │
+                │ RenderCommand
+                ▼
+================================================
+                PPC
+       Print Resource Ownership
+                │
+     SourceDocument → RenderResource
+        → {PreviewResource, PrintResource}
+        → {NativePrintSource, VirtualPrintSource}
+        → PrintPDF → Sumatra
+```
+
+- R1 产出：`RenderPlacementResult`（已含最终旋转）。
+- PPC 消费：`RenderPlacementResult` 作为 `PrintResource` 的来源。
+- **二者不在 PDF / OFD / Image 层交叉**——这是本 ratification 的关键边界。
+
+### 13.2 职责划分（Responsibility Split）
+
+| 轴 | 管什么 | 负责 | 不碰 |
+|----|--------|------|------|
+| **R1** | 「内容应该旋转多少」 | `contentRotation` / `effectiveRotation` / `sourceRotation` ownership | `PrintResource` / `PrintPDF` / `Executor` |
+| **PPC** | 「什么东西进入打印执行器」 | `PrintResource` / `NativePrintSource` / `VirtualPrintSource` / `PrintPDF` / `Executor` | `RotationResolver` / `effectiveRotation` / `sourceRotation` ownership |
+
+> 交叉点唯一 = **`RenderPlacementResult`**，而非 `PDF` / `OFD` / `Image`。
+
+### 13.3 六项确认（已 ratify）
+
+1. **OFD 不应继续存在 Print 分支**：消灭 `if pdf: pdf-printer / elif image: image-printer / elif ofd: ofd-printer` 模式；执行器只见 `PrintResource`。
+2. **名称纪律**：`VirtualPrintSource` 取代 `OFDPrintSource`（`origin` 仅审计，打印链不关心 `origin === ofd` 还是 `=== image`）。
+3. **不把 WebP 当 VirtualPrintSource**：共享 Render **输入**、不共享 Render **输出**（Preview / Print 双渲染器，preview DPI 不足 / 缓存生命周期不可控等问题被规避）。
+4. **PPC 使 R1 rotation 更干净**：未来执行器只见 `PrintPDF`，不知 `OFD` / `PDF` / `Image`，seam 收敛方向达成。
+5. **Gate 4 不碰 PPC**：验证 `effectiveRotation → RenderCommand → slot placement`，不引入 OFD / PPC / rotation 讨论。
+6. **顺序冻结**：`R1 → Gate 4 → 三格式回归 → PPC Gate`，不变。
+
+### 13.4 最终冻结状态
+
+```text
+R1                     ✅ CLOSED
+PPC                    ✅ CONVERGED
+Gate 4                 ▶ 可以开始
+OFD VirtualPrintSource ❄ 冻结为未来实现方向（不提前改 OFD）
+rotation ownership     🔒 不重新讨论
+```
+
+### 13.5 对 Gate 4 的收口要求
+
+审查范围收缩到唯一命题：
+
+> **per-slot geometry 是否保持 `RenderCommand` contract。**
+
+不要再混入 OFD / PPC / rotation ownership 讨论——R1 与 PPC 两条边界已封死。
