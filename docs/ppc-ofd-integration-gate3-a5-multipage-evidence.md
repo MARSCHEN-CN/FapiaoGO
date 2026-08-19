@@ -135,13 +135,61 @@ return { key, name, data: buffers, printPath }               // buffers = N 物�
 
 ---
 
+## 8A. ⚠️ 缺陷发现（harness 实测，2026-08-19）— 多页 OFD 打印页内容塌缩
+
+### 裁决：**Gate 3-A.5 = FAIL（A5.2–A5.5）——真实 Consumer chain 缺陷**
+
+harness（gate3A5OfdMultiPage.test.mjs）如实模拟 usePrint 多页循环（同 f.key + 每页不同 `_previewImageUrl`），结果：
+
+| 用例 | 结果 | 失败信息 |
+| --- | --- | --- |
+| A5.1 page index mapping | ✅ | fetch 调用序列 (1,2,3) 正确 |
+| A5.2 per-page raster identity | ❌ | 第 2 页 canvas 复用第 1 页 source |
+| A5.3 no dimension collapse | ❌ | 两页落盘尺寸相同（page1 用了 page0 尺寸） |
+| A5.4 file rotation isolation | ❌ | `buffers[0] === buffers[1]`（同 canvas 对象） |
+| A5.5 render isolation | ❌ | `canvas0 === canvas1 === canvas2`（对象共享） |
+
+### 根因（代码级证据链）
+
+```
+usePrint.js:226   pageItem = { ...f, _previewImageUrl: blobUrl }   ← 每页 key 不变（f.key）
+usePrint.js:984   clearRenderCache() 只在打印【完成后】            ← 页循环期间缓存持续有效
+renderers.js:1013 buildCacheKey = `multi_${paperKey}_${dpi}_${P/L}_${slotCount}_${strategy}_${rotKeys}_${margin}_${custom}_${items.map(i=>i.key).join(',')}`
+                  ← 只含 items key，【不含页标识】（_previewImageUrl / page index / renderPage）
+renderers.js:1038 renderResultCache.get(_cacheKey) 命中 → 直接返回第一页 canvas
+renderers.js:1096 L1 itemRenderCache key = `itemRender_${id}_${dpi}_${rotate}_${paperKey}_${P/L}`
+                  ← 同样不含页维度
+```
+
+**决定性验证**：同 key 两次渲染（不同 `_previewImageUrl`）返回**同一 canvas 对象**（`c1 === c2 === true`，实测）。
+
+### 影响
+
+多页 OFD 打印（pageCount ≥ 2，如 2 页电子发票）→ **N 张物理页全部输出第 1 页内容**（页内容塌缩）。单页 OFD 不受影响；PDF/Image 多页场景不存在（PDF 前端渲染仅第 1 页、Image 单页）。
+
+### 归因（Gate 纪律）
+
+**Consumer chain 缺陷**（renderers.js L2/L1 缓存 key 缺页维度），非 Producer / Rotation / RenderCommand 契约缺陷。修复候选（**不自行实施，待用户裁决**）：
+- **最小**：`buildCacheKey` / L1 key 增加页标识维度（`item.pageNum ?? item._previewImageUrl ?? item.key`）——cache key 是性能层非契约，改动受限。
+- 或 usePrint 页循环每页后 `clearRenderCache()`（保 L1）——性能代价。
+- 候选方向属 PPC 或 4.4 式最小修复，需用户裁决后实施。
+
+### 状态
+
+```
+Gate 3-A.5: FAIL（A5.1 PASS / A5.2-A5.5 缺陷证据确凿）
+→ 待用户裁决：进入最小修复（Consumer cache key）或升级 PPC Gate 复审
+```
+
+---
+
 ## 8. 状态
 
 ```
 [R1 CLOSED] [PPC RATIFIED] [Gate 4 CLOSED]
 [PPC-OFD Integration]
   Gate 1: PASS / Gate 2: PASS / Gate 3-A.1: PASS / 3-A.2: PASS / 3-A.3: PASS / 3-A.4: PASS
-  Gate 3-A.5: 取证完成，待批准实现（T1-T4 草案见 §7）
+  Gate 3-A.5: FAIL（缺陷发现 §8A：多页 OFD 打印页内容塌缩，待裁决修复）
 ```
 
 待用户批准：进入 3-A.5 harness 实现（test-only）。
