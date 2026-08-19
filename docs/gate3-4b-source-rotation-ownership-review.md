@@ -1,10 +1,14 @@
 # Gate 3-4B — Source Rotation Ownership 架构纠偏记录（Verification Gate）
 
-> 状态：**REDEFINED**（迁移 Gate → 验证 Gate）
+> 状态：**REDEFINED**（迁移 Gate → 验证 Gate）→ **✅ PASS CLOSED**（`6aeceeb` 远程已验证）
 > 日期：2026-08-19
-> 分支：`rotation-b1-hardening`（HEAD = `df7debd`，Gate 3-4A）
+> 分支：`rotation-b1-hardening`
+> 基线：`df7debd`（Gate 3-4A，远程已验证）
+> 上游已并入：`eb61c7e → 97e4a43 → aa1edef`（import-history 三提交，用户 2026-08-19 推送，非 Gate 3 产物）
+> Gate 3-4B 验证 Gate：`6aeceeb`（**remote verified ✅**，用户已 push）
+> 当前 HEAD：`2fa2739`（close status + R1 issue 记录，本地已提交，push 待用户执行）
 > 裁决：用户 APPROVED（三选一 → **(a) 重构为验证 Gate**）
-> 权威文件：本文件 + `frontend/src/layout/Gate3-4B-SourceRotationOwnership.test.mjs`（可复现脚本）
+> 权威文件：本文件 + `frontend/src/layout/Gate3-4B-SourceRotationOwnership.test.mjs`（可复现脚本）+ `docs/r1-merge-source-rotation-semantic-divergence.md`（R1 issue 记录）
 
 ---
 
@@ -194,14 +198,18 @@ Gate 3-0 Contract Amendments        ✅ PASS
 Gate 3-1 PrintGeometryBuilder       ✅ PASS
 Gate 3-2 CodeReview                 ✅ PASS
 Gate 3-3 Static Guard               ✅ ALL PASS
-Gate 3-4A RenderCommand Seam        ✅ PASS CLOSED (df7debd)
+Gate 3-4A RenderCommand Seam        ✅ PASS CLOSED (df7debd, remote verified)
 
 Gate 3-4B Source Ownership
-        ⏸ REDEFINED → Verification Gate
-        ✅ Verification Matrix + Guard 落地（本文件 + 测试）
-        ✅ 实证：非法迁移被禁止（180° 回归护栏）
+        ✅ PASS CLOSED (6aeceeb, remote verified)
+        理由：非「迁移成功」而关闭，而是
+          (1) 迁移被证伪（B-2.4/B-2.5 实测 180° 回归，双重纸面匹配）；
+          (2) guard 测试已安装（docs + Gate3-4B-SourceRotationOwnership.test.mjs）；
+          (3) ownership 契约已澄清（effectiveRotation=最终旋转 / contentRotation=用户输入意图）。
         ❄ 生产代码零改动（usePrint.js / resolveContentPlacement 均未动）
-
-开放项：
-  R1 issue（merge vs source 用户旋转语义分裂，B-2.4/B-2.5）→ Gate 4/5 前裁决
 ```
+
+## 8. 开放项
+
+- **R1（OPEN ISSUE）**：Merge Path vs Source Path Rotation Semantic Divergence（B-2.4/B-2.5 最终净旋转不一致）。
+  只记录、不修；Gate 4/5 前裁决。详见 `docs/r1-merge-source-rotation-semantic-divergence.md`。
