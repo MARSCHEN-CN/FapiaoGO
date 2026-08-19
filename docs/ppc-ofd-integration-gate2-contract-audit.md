@@ -2,7 +2,8 @@
 
 > **性质**：docs-only，纯取证审计。**不修改任何生产代码**，不重开 R1 / PPC / Gate 4。
 > **目标（单一验证命题）**：OFD raster 输出是否满足现有 Image RenderResource contract（即「OFD 作为 RenderResource 后，与 Image/PDF 等价地进入已封存打印链」的前置契约）？
-> **状态**：🔒 **Gate 2 = PASS（后端 RenderResource 契约满足）** —— 见 §8，含 1 个移交 Gate 3 的验证项。
+> **状态**：🔒 **Gate 2 = PASS（RenderResource Producer Contract 满足）** —— 见 §8，含 1 个移交 Gate 3 的验证项。
+> **措辞边界**：本 PASS 冻结的是 **Producer Contract**（`OFD Adapter → RenderResource → 现有 Render Pipeline` 的产出契约），**不含** `RenderResource → Print Physical Output` 的端到端闭环——后者属 Gate 3 E2E。
 
 ---
 
@@ -121,7 +122,9 @@ OFD 的 width/height 在 300dpi 基线计算（`ofd_page_dimensions(dpi=300)`）
 
 ## 9. Decision（Gate 2 Verdict）
 
-### 🔒 Gate 2 = PASS（后端 RenderResource 契约满足）
+### 🔒 Gate 2 = PASS（RenderResource Producer Contract 满足）
+
+> **Producer Contract 边界**：本裁决证明 `OFD Adapter → RenderResource → 现有 Render Pipeline` 的**产出契约**一致。它**尚未**证明 `RenderResource → 物理打印输出` 的闭环（DPI 落纸、裁切、比例、rotation 实际施加）——那是 Gate 3 E2E 的验证对象。此边界严禁回读成本 Gate 2 已覆盖物理打印。
 
 | 用户检查项 | 结果 | 证据 |
 | --- | --- | --- |
@@ -166,6 +169,6 @@ OFD 的 width/height 在 300dpi 基线计算（`ofd_page_dimensions(dpi=300)`）
 
 [PPC-OFD Integration]
 Gate 1: PASS (Architecture Seam Verified)
-Gate 2: PASS (RenderResource Contract Audited)   ← 本文档
+Gate 2: PASS (RenderResource Producer Contract Verified)   ← 本文档
 Gate 3: Pending (Print E2E Validation — 含 rotation single-application 验证)
 ```
