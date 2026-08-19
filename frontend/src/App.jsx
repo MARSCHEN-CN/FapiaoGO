@@ -140,7 +140,7 @@ function AppContent() {
 
   const {
     sortBy, sortOrder, toggleSort, sortByRef, sortOrderRef,
-  } = useSort(setFiles, files, duplicatePageInfo, previousYearInfo)
+  } = useSort(setFiles, files, duplicatePageInfo, previousYearInfo, importHistoryInfo)
 
   const preview = usePreview({ files: displayFiles, settings, electronAPIRef })
   // ✅ 从正确的分组中解构属性

@@ -155,3 +155,69 @@ test('applySort: 不传 previousYearInfo 时不破坏既有分区（向后兼容
   // 重复段 d1a(b-dup)/d1b(c-dup) 按名称 → d1a, d1b；正常段 py1(a-py)/n1(d-norm) → py1, n1
   assert.deepEqual(keys, ['d1a', 'd1b', 'py1', 'n1'])
 })
+
+// ─────────────────── applySort 重复报销分区（P1 新增） ───────────────────
+// 语义与 FileContext 一致：importHistoryInfo 只含 count>=2 的重复报销文件，
+// value = { exists: true, ... }，判定用 get(file.key)?.exists
+function buildImportHistoryInfo(keys) {
+  const map = new Map()
+  for (const k of keys) map.set(k, { exists: true })
+  return map
+}
+
+test('applySort: 分区顺序 失败 > 重复 > 重复报销 > 往年 > 正常（置顶）', () => {
+  const files = [
+    { key: 'n1', name: 'n-zzz', status: 'parsed', invoiceDate: '2026-03-03', invoiceNumber: 'N1' },
+    { key: 'f1', name: 'f-aaa', status: 'error', invoiceDate: '2026-01-01', invoiceNumber: 'F1' },
+    { key: 'py1', name: 'py-bbb', status: 'parsed', invoiceDate: '2025-12-31', invoiceNumber: 'PY1' },
+    { key: 'ih1', name: 'ih-ccc', status: 'parsed', invoiceDate: '2026-05-05', invoiceNumber: 'IH1' },
+    { key: 'd1a', name: 'd-ddd', status: 'parsed', invoiceDate: '2026-06-06', invoiceNumber: 'DUP' },
+    { key: 'd1b', name: 'd-eee', status: 'parsed', invoiceDate: '2026-07-07', invoiceNumber: 'DUP' },
+  ]
+  const { duplicateInfo, previousYearInfo } = buildInfos(files)
+  const importHistoryInfo = buildImportHistoryInfo(['ih1'])
+  const sorted = applySort(files, 'fileName', 'asc', duplicateInfo, previousYearInfo, importHistoryInfo)
+  const keys = sorted.map(f => f.key)
+  assert.deepEqual(keys, ['f1', 'd1a', 'd1b', 'ih1', 'py1', 'n1'])
+})
+
+test('applySort: 重复报销+往年 同体文件归入「重复报销」段（优先于往年段）', () => {
+  const files = [
+    { key: 'ih_py', name: 'a-ihpy', status: 'parsed', invoiceDate: '2025-01-01', invoiceNumber: 'IH_PY' },
+    { key: 'py1', name: 'b-py', status: 'parsed', invoiceDate: '2024-02-02', invoiceNumber: 'PY1' },
+    { key: 'n1', name: 'c-norm', status: 'parsed', invoiceDate: '2026-09-09', invoiceNumber: 'N1' },
+  ]
+  const { previousYearInfo } = buildInfos(files)
+  const importHistoryInfo = buildImportHistoryInfo(['ih_py'])
+  const sorted = applySort(files, 'fileName', 'asc', null, previousYearInfo, importHistoryInfo)
+  const keys = sorted.map(f => f.key)
+  // ih_py 同时满足往年与重复报销，按优先级落在重复报销段（在往年段之前）
+  assert.deepEqual(keys, ['ih_py', 'py1', 'n1'])
+})
+
+test('applySort: 重复组+重复报销 同体文件归入「重复」段（优先于重复报销段）', () => {
+  const files = [
+    { key: 'd_ih', name: 'a-dih', status: 'parsed', invoiceDate: '2026-01-01', invoiceNumber: 'DUP' },
+    { key: 'd2', name: 'b-dup', status: 'parsed', invoiceDate: '2026-02-02', invoiceNumber: 'DUP' },
+    { key: 'ih1', name: 'c-ih', status: 'parsed', invoiceDate: '2026-03-03', invoiceNumber: 'IH1' },
+  ]
+  const { duplicateInfo } = buildInfos(files)
+  const importHistoryInfo = buildImportHistoryInfo(['d_ih', 'ih1'])
+  const sorted = applySort(files, 'fileName', 'asc', duplicateInfo, null, importHistoryInfo)
+  const keys = sorted.map(f => f.key)
+  // d_ih 同时满足重复组与重复报销，重复段优先级更高；重复段 d_ih(a)/d2(b) → d_ih, d2；重复报销 ih1 随后
+  assert.deepEqual(keys, ['d_ih', 'd2', 'ih1'])
+})
+
+test('applySort: 不传 importHistoryInfo 时不破坏既有分区（向后兼容）', () => {
+  const files = [
+    { key: 'py1', name: 'a-py', status: 'parsed', invoiceDate: '2025-01-01', invoiceNumber: 'PY1' },
+    { key: 'ih1', name: 'b-ih', status: 'parsed', invoiceDate: '2026-02-02', invoiceNumber: 'IH1' },
+    { key: 'n1', name: 'c-norm', status: 'parsed', invoiceDate: '2026-03-03', invoiceNumber: 'N1' },
+  ]
+  const { previousYearInfo } = buildInfos(files)
+  const sorted = applySort(files, 'fileName', 'asc', null, previousYearInfo)
+  const keys = sorted.map(f => f.key)
+  // 未传 importHistoryInfo 时，重复报销文件回到正常段；往年段仍置顶于正常段
+  assert.deepEqual(keys, ['py1', 'ih1', 'n1'])
+})

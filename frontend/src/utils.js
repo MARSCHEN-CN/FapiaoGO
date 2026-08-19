@@ -421,7 +421,7 @@ export function isFailedFile(file) {
   return false
 }
 
-export function applySort(list, field, order, duplicateInfo = null, previousYearInfo = null) {
+export function applySort(list, field, order, duplicateInfo = null, previousYearInfo = null, importHistoryInfo = null) {
   const dir = order === 'desc' ? -1 : 1
   const n = list.length
   if (n <= 1) return list
@@ -429,6 +429,7 @@ export function applySort(list, field, order, duplicateInfo = null, previousYear
   // 单次遍历分区 + 预计算排序键
   const failedFiles = []
   const duplicateGroups = new Map()
+  const importHistoryFiles = []
   const previousYearFiles = []
   const normalFiles = []
 
@@ -442,6 +443,9 @@ export function applySort(list, field, order, duplicateInfo = null, previousYear
         duplicateGroups.set(groupIndex, [])
       }
       duplicateGroups.get(groupIndex).push(file)
+    } else if (importHistoryInfo && importHistoryInfo.get(file.key)?.exists) {
+      // 重复报销（advisory，非失败）：仅当 count>=2（本次之前已导入过）时 FileContext 才写入该 Map
+      importHistoryFiles.push(file)
     } else if (previousYearInfo && previousYearInfo.get(file.key)?.isPreviousYear) {
       previousYearFiles.push(file)
     } else {
@@ -495,6 +499,7 @@ export function applySort(list, field, order, duplicateInfo = null, previousYear
 
   // 分别对各分区应用排序
   const sortedFailed = sortPartition(failedFiles)
+  const sortedImportHistory = sortPartition(importHistoryFiles)
   const sortedPreviousYear = sortPartition(previousYearFiles)
 
   // 重复组：先按组索引升序排列组，组内按用户选定字段排序
@@ -508,8 +513,8 @@ export function applySort(list, field, order, duplicateInfo = null, previousYear
 
   const sortedNormal = sortPartition(normalFiles)
 
-  // 合并：失败文件在前，然后是重复组，然后是往年发票，最后是非重复文件
-  return [...sortedFailed, ...sortedDuplicateGroups, ...sortedPreviousYear, ...sortedNormal]
+  // 合并：失败文件在前，然后是重复组，然后是重复报销，然后是往年发票，最后是非重复文件
+  return [...sortedFailed, ...sortedDuplicateGroups, ...sortedImportHistory, ...sortedPreviousYear, ...sortedNormal]
 }
 
 // ============================
