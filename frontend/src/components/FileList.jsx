@@ -26,9 +26,12 @@ const FileCardRow = memo(({ index, style, files, previewFileKey, previewFileDocI
   // 发票重复导入历史（advisory，纯风险呈现，不拦截导入）
   const ihInfo = importHistoryInfo?.get(fileObj.key)
   const isImportHistory = !!ihInfo?.exists
-  // 重复报销：fc-invoice-no 位置改显首次导入日期（仅年月日；ISO 取前 10 位并校验）
-  const ihFirstDate = isImportHistory && ihInfo?.firstImportedAt
-    ? (() => { const d = String(ihInfo.firstImportedAt).slice(0, 10); return /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : null })()
+  // 重复报销：fc-invoice-no 位置改显首次导入时间（YY/MM/DD HH:mm；ISO 正则提取年月日时分并校验）
+  const ihFirstTime = isImportHistory && ihInfo?.firstImportedAt
+    ? (() => {
+        const m = String(ihInfo.firstImportedAt).match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/)
+        return m ? `${m[1].slice(2)}/${m[2]}/${m[3]} ${m[4]}:${m[5]}` : null
+      })()
     : null
   // 统一判定：失败文件 = 解析错误 / failedFields 非空 / parseMethod 含「缺失」
   // （原先仅用 failedFields.length>0，导致 status==='error' 或「缺失」类解析失败
@@ -132,7 +135,7 @@ const FileCardRow = memo(({ index, style, files, previewFileKey, previewFileDocI
       </div>
 
       <div className="fc-row-bottom">
-        <span className={`fc-invoice-no${isFailedFile(fileObj) ? ' fc-failed-reason' : ''}${ihFirstDate ? ' fc-invoice-no-ih' : ''}`}
+        <span className={`fc-invoice-no${isFailedFile(fileObj) ? ' fc-failed-reason' : ''}${ihFirstTime ? ' fc-invoice-no-ih' : ''}`}
               title={isFailedFile(fileObj) ? fileObj.failedFields?.join('；') : ''}>
           {(() => {
             if (fileObj.status === 'parsing') return '解析中...'
@@ -169,7 +172,7 @@ const FileCardRow = memo(({ index, style, files, previewFileKey, previewFileDocI
               }
               return reasons.join('；')
             }
-            if (ihFirstDate) return `首次导入时间为 ${ihFirstDate}`  // 重复报销：显示首次导入日期
+            if (ihFirstTime) return `首次导入时间:${ihFirstTime}`  // 重复报销：显示首次导入时间（YY/MM/DD HH:mm）
             return fileObj.invoiceDate && fileObj.invoiceDate !== '未知日期' ? fileObj.invoiceDate : '未知日期'
           })()}
         </span>
