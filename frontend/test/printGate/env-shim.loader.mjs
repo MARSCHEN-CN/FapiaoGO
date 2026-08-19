@@ -11,7 +11,41 @@
 // 生产源码。仅作用于测试加载期，不改变被测模块的运行时语义（config 仅用于常量，
 // 测试断言不依赖其值）。
 //
+// 另处理两类 Vite-only 语法（renderers.js 等 consumer 链引入）：
+//   · `?url`/`?raw` 等资源查询后缀（如 'pdfjs-dist/build/pdf.worker.min.mjs?url'）
+//     → 解析为虚拟空模块（默认导出空字符串）。Node 无法解析这些后缀，且被测路径
+//     （OFD/image raster）不会真正消费 worker 资源。
+//   · extensionless 相对导入（如 './config'、'./layout'）→ 若磁盘存在对应
+//     `.js` 文件则补扩展名（Vite 默认补全，Node ESM 不补）。
+//
 // 使用：node --loader ./env-shim.loader.mjs --test <test-file>
+import { existsSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+
+const QUERY_OR_HASH_RE = /[?#]/
+const HAS_EXT_RE = /\.[a-zA-Z0-9]+$/
+
+export async function resolve(specifier, context, nextResolve) {
+  // 1) Vite 资源查询后缀 → 虚拟空模块（默认导出空字符串）
+  if (QUERY_OR_HASH_RE.test(specifier) && !/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(specifier)) {
+    const base = specifier.split(/[?#]/)[0]
+    if (!base.startsWith('node:') && !base.startsWith('/')) {
+      return { url: 'data:text/javascript,export default ""', shortCircuit: true }
+    }
+  }
+  // 2) extensionless 相对导入 → 磁盘存在对应 .js 则补扩展名
+  if ((specifier.startsWith('./') || specifier.startsWith('../')) && context.parentURL) {
+    const pathPart = specifier.split(/[?#]/)[0]
+    if (!HAS_EXT_RE.test(pathPart)) {
+      const candidate = new URL(pathPart + '.js', context.parentURL)
+      if (existsSync(fileURLToPath(candidate))) {
+        return { url: candidate.href, shortCircuit: true }
+      }
+    }
+  }
+  return nextResolve(specifier, context)
+}
+
 export async function load(url, context, nextLoad) {
   const result = await nextLoad(url, context)
   if (result.format === 'module' && result.source != null) {
