@@ -75,6 +75,46 @@ node --loader ./test/printGate/env-shim.loader.mjs --test ./test/printGate/<file
 - **失败归因**（矩阵 §5）：3-B 与 3-A canvas 不一致 → materialization/Sumatra 层 defect（单列）；根因指向 Producer 需 Gate 2 证据。
 - **新外部变量**（用户提示）：Windows printer driver / Sumatra CLI / spooler / physical media geometry——3-A 归档后物理问题不再混入 render contract。
 
+## 6A. 3-A 的工程意义：OFD world → Image world（2026-08-19 用户确认）
+
+> 用户架构陈述：「OFD 在进入统一渲染链之后，本质上已经被归一化成『图片资源』。后续展示、打印预览、打印，走的就是图片的通用路径。真正困难的是保证 OFD 转成图片后**能正确接入已有图片链路，且不破坏原有 PDF/Image 路径的契约**。3-A 做的事情，本质就是把 OFD world 压缩成 Image world，并证明中间没有偷偷留下第二套规则。」
+
+### 完整工程模型（5 层）
+
+```
+OFD
+ │ ① format adapter
+ ↓
+page raster image
+ │ ② identity / page contract
+ ↓
+RenderResource
+ │ ③ unified geometry
+ ↓
+Canvas
+ │ ④ materialization
+ ↓
+PNG / PDF
+ │ ⑤ printer
+ ↓
+Sumatra
+```
+
+### 4 个隐藏问题（全部被 3-A 捕获，非「接线」这么简单）
+
+| 隐藏问题 | 风险 | 捕获 Gate | 结论 |
+| --- | --- | --- | --- |
+| OFD 页模型 ≠ 图片模型（pages[] 多页/页尺寸/页旋转） | page1 变 page0 | 3-A.5 | PPC-OFD-3A5-C1 修复（cache 页身份） |
+| Rotation 语义（谁负责旋转） | 后端烤 + 前端转 = 180° | 3-A.2 | OFD raster=source 取向，前端 contentRotation=唯一 owner |
+| PDF/Image native 分支 | merge 内三个坐标系 | 3-A.4 | merge 中 PDF 强制 raster（isSinglePdfNative 单文件限定） |
+| 缓存系统不知 OFD 页 | N 页全打印第一页 | 3-A.5 | buildCacheKey / L1 key 加 page identity |
+
+### 收尾
+
+3-A 完成后，**OFD 不再是特殊格式，而是「一种生成 RenderResource 的输入格式」**——后续展示/打印预览/打印全部复用图片通用路径（`_renderDirect → item._previewImageUrl`，3-A.3 已证 `[OFD,Image]` 与 `[Image,Image]` 在 composer 眼里无区别）。下一阶段 3-B 只剩物理打印链（Sumatra / Windows printer）问题，渲染合同已闭合。
+
+---
+
 ## 7. 状态
 
 ```
