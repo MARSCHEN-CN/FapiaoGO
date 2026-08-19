@@ -4,7 +4,7 @@
 > 日期：2026-08-19
 > 分支：`rotation-b1-hardening`
 > 基线：`0b7eb8a`（R1 Design Review, local）+ 链 `… → 6aeceeb`（Gate 3-4B, REMOTE）
-> 关联文档：`docs/r1-rotation-semantic-design-review.md`（设计评审，本文档引用其结论与 B-2 证据）、`docs/r1-merge-source-rotation-semantic-divergence.md`（R1 issue 记录）、`docs/gate3-4b-source-rotation-ownership-review.md`（迁移 Gate→验证 Gate 纠偏）、`docs/print-pipeline-convergence-design.md`（PPC 设计输入，§0–§13 含联合 R1/PPC 边界 ratification：R1=几何语义轴 / PPC=打印资源轴，交叉点唯一为 `RenderPlacementResult`）
+> 关联文档：`docs/r1-rotation-semantic-design-review.md`（设计评审，本文档引用其结论与 B-2 证据）、`docs/r1-merge-source-rotation-semantic-divergence.md`（R1 issue 记录）、`docs/gate3-4b-source-rotation-ownership-review.md`（迁移 Gate→验证 Gate 纠偏）、`docs/print-pipeline-convergence-design.md`（PPC 设计输入，§0–§14 含联合 R1/PPC 边界 ratification 终态：R1=几何语义轴 / PPC=打印资源轴，交叉点唯一为 `RenderPlacementResult`，§14 为 Gate 4 启动锚点）
 > 评审类型：**Architecture Review / Decision（不进入代码、不改变冻结状态）**
 > 补充：本文档 §9 含 OFD 架构澄清（展示路径 / 打印执行路径分离；OFD = 第三种输入格式而非第三种打印模式）
 
