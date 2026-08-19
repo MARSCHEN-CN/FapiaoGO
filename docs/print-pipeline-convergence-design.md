@@ -419,3 +419,122 @@ Executor 层:             ▼
 - 本 Sign-off **改变 Print Pipeline，不改变 R1 Rotation Ownership**：不修改 `RotationResolver` / `effectiveRotation` / `contentRotation` / `resolveContentPlacement`，不重开 R1。
 - **不影响 Gate 4**：顺序仍为 `R1 CLOSED → Gate 4 → 三格式回归 → PPC Gate`；PPC 仅作未来约束（Gate 4 不得依赖 OFD 特殊路径、不得增 OFD 专属 rotation workaround）。
 - 本回合为 **docs-only Sign-off，生产代码零改动**；作为未来 **Print Pipeline Convergence Gate** 的核心抽象输入。
+
+---
+
+## 11. 架构确认（Sign-off 锚点 — 2026-08-19）
+
+用户架构层确认：§10 可作为正式架构锚点。本回合仅确认、不进入实现。
+
+### 11.1 正确模型 vs 禁止模型
+
+```
+❌ 禁止冻结：                         ✅ 正确模型：
+OFD                                 SourceDocument
+ │                                    │
+ ▼                                    ▼
+展示 WebP                       RenderResource
+ │                                    │
+ ▼                          ┌─────────┴─────────┐
+PDF                                ▼                ▼
+ │                          PreviewResource    PrintResource
+ ▼                           (WebP)           (300dpi)
+打印                                │                │
+                                   ▼                ▼
+                            (Preview only)   VirtualPrintSource
+                                                    │
+                                                    ▼
+                                               Image→PDF
+                                                    │
+                                                    ▼
+                                                 Sumatra
+```
+
+### 11.2 OFD 身份重定义表
+
+| 层        | 身份                                |
+| -------- | --------------------------------- |
+| Import   | OFD                               |
+| Parse    | OFD                               |
+| Render   | RenderResource                    |
+| Preview  | PreviewResource(WebP)             |
+| Print    | PrintResource(VirtualPrintSource) |
+| Executor | Sumatra                           |
+
+> 结论成立：**OFD 是第三种输入格式，不是第三种打印模式。**
+
+### 11.3 「虚拟源文件」为何正确
+
+打印系统真正需要的是 **Printable Page Resource**，而非来源格式本身。
+
+```ts
+VirtualPrintSource {
+    origin: "ofd",                 // 追溯信息，非打印逻辑输入
+    pages: [
+        {
+            image: PrintResourceImage,  // 已完成解释/布局/旋转/裁剪的物理页
+            dpi: 300,
+            width,
+            height
+        }
+    ]
+}
+```
+
+打印链 `VirtualPrintSource → Image→PDF → Sumatra` **不关心 `origin === ofd` 还是 `origin === image`**。
+
+### 11.4 与 R1 的关系（澄清）
+
+```
+R1:  Rotation semantic ownership      （userRotation 跨 seam 语义混名）
+PPC: Print resource ownership         （统一物理打印页面来源）
+```
+
+两者相关但**独立**：PPC 收敛后打印阶段只看到「已摆好的页面」，执行器无需感知 PDF Rotate / OFD PageObject / Image EXIF / Source orientation，**降低了 rotation ownership 数量**，但 **PPC 不解决 R1**——R1 仍由 Option 0 冻结、Future Option C 处理。
+
+### 11.5 PDF 策略 A 保留 + 命名建议（未来 PPC Gate）
+
+PDF 保留 `原 PDF → Sumatra`（PDF 本身已是 PrintResource）。
+
+长期建议在 `PrintResource` 下区分两个子类，避免再次出现特殊路径：
+
+```
+PrintResource
+   ├── NativePrintSource(PDF)        ← 原生高质量载体
+   └── VirtualPrintSource(Image)     ← 渲染生成（OFD/Image/SVG/HTML/Canvas/CAD…）
+```
+
+这样未来新增输入格式（SVG / HTML / Canvas / CAD / OFD …）都进入 `RenderResource → PrintResource`，不再产生独立打印链。
+
+> 注：命名纪律沿用 §9——`RenderResource` 下的 "Image Resource" 在正式 Gate 文档应统一为 `PreviewResource` / `PrintResource` 以消歧。
+
+### 11.6 冻结判断 + 唯一待验证项
+
+冻结（已确认）：
+
+```
+✅ OFD 不建立专属打印链
+✅ OFD 不拥有独立 rotation ownership
+✅ Preview WebP 永不作为打印源
+✅ PrintResource 与 PreviewResource 分离
+✅ PDF 保留 native print shortcut
+✅ OFD/Image 使用 VirtualPrintSource
+```
+
+**唯一未来需验证（属 PPC Gate 实施阶段，不影响当前设计冻结）**：
+
+```
+PrintResource 的生成时机与生命周期
+  - 导入时生成？/ 首次打印 lazy 生成？
+  - 是否缓存？
+  - 多页 OFD 如何复用？
+  - 合并打印是否共享同一个 VirtualPrintSource？
+```
+
+### 11.7 进入 Gate 4 的权威链
+
+```
+R1 CLOSED → Gate 4 → 三格式回归 → PPC Gate → VirtualPrintSource implementation
+```
+
+R1 + PPC 架构边界已清晰，**可进入 Gate 4**。
