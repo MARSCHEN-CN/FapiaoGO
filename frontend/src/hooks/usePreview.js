@@ -596,6 +596,13 @@ export function usePreview({ files, settings, electronAPIRef }) {
   // Canvas 路径需要 _pdfData，此处独立 effect 预加载（避免主 render effect 中的 async 时序问题）。
   useEffect(() => {
     if (!previewFile || previewRotation === 0) return
+    // 🔴 P0 fix (2026-08-20)：_pdfData 是 PDF 专用契约——渲染 effect 会把它交给
+    //    getOrLoadPdfDocument (pdfjs) 解析。本 effect 从 printPath 读原始字节，
+    //    若文件非 PDF（OFD=ZIP / 图片），字节不是 PDF → pdfjs 抛 "Invalid PDF structure"。
+    //    非 PDF 的旋转由图片路径处理（switchPreviewImage canvas 变换），无需 _pdfData，
+    //    因此只有 _fileFormat==='pdf' 才预载。_fileFormat 缺省时按 PDF 处理（与
+    //    `_fileFormat || 'pdf'` 的既有约定一致），不改变旧行为。
+    if (previewFile._fileFormat && previewFile._fileFormat !== 'pdf') return
     if (previewFile._pdfData) return  // 已有数据，无需加载
     if (!previewFile.printPath) return
 
