@@ -2,6 +2,10 @@
  * D4-2.1 验收测试：Render Export 能力守卫（纯函数，无 React / 无 shim 依赖）。
  *
  * 运行方式：`node --test src/layout/exportCapabilities.test.js`
+ *
+ * 边界：本测试仅验证前端路由决策（ofd → legacy 回落），
+ *      不验证后端 OFD→PDF 转换是否成功。后端转换见
+ *      backend/services/pdf_handlers/ofd_handler.py（OfdExportHandler，已实跑验证）。
  */
 import test from 'node:test'
 import assert from 'node:assert/strict'

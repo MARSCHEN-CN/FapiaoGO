@@ -4,9 +4,9 @@
  * 把「哪些输入类型能走 RenderCommand 导出管线」从审计文档（d4-3-0）搬进运行时契约。
  * 当前事实（见 d4-3-0-export-legacy-usage-audit.md）：
  *   - render 路径覆盖 PDF（fitz insert_pdf 透传）+ Image（source_adapter → insert_image）
- *   - OFD 在 render 路径零处理器（source_adapter.py 'later OFD'，D3-3c 推迟）
- *   - legacy /api/export-pdf 的 OfdExportHandler 是当前唯一能导出 OFD 的通路
- * 结论：含 OFD 的导出批次必须回落 legacy，否则 OFD 导出会断。
+ *   - OFD 在 render 路径零处理器（RENDER_EXPORT_CAPABILITIES.ofd=false，D3-3c 推迟）
+ *   - legacy /api/export-pdf 的 OfdExportHandler 已实现 OFD→PDF（render_engine 栅格化后嵌入临时 PDF），是当前唯一能导出 OFD 的通路
+ * 结论：含 OFD 的导出批次必须回落 legacy（render 路径无 OFD 处理器），回落后经 OfdExportHandler 正常导出。
  *
  * 设计边界（重要，勿混淆）：
  *   - 此处只表达「能力矩阵」缺口（OFD）。
