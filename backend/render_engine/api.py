@@ -227,39 +227,63 @@ def print_page(doc_id: str):
 
 @render_bp.route("/print_pdf/<doc_id>", methods=["GET"])
 def print_pdf(doc_id: str):
-    """Render an image document as a print-ready A4 PDF.
+    """Render an image (or OFD) document as a print-ready A4 PDF.
 
-    IMAGE PIPELINE ONLY — This endpoint is exclusively for raster images.
-    PDF and OFD documents are explicitly rejected; they use their own
-    print pipelines (SumatraPDF direct for PDF, PrintAutoRotationPolicy
-    + fitz embedding for OFD).
+    IMAGE + OFD PIPELINE — This endpoint is for raster images and OFD
+    documents (converted to images via OFDAdapter). PDF documents are
+    excluded (they use their own SumatraPDF pipeline).
 
     Flow:
-      1. Verify document is an image (not PDF, not OFD)
-      2. Read image dims via Pillow → determine content orientation
-      3. Compute auto-rotation (mirrors frontend PrintAutoRotationPolicy)
-      4. Combine auto-rotation + user rotation → effective rotation
-      5. Render at 200 dpi (print preset) with effective rotation
-      6. Determine A4 page orientation from RENDERED dimensions
-      7. Fit rendered image to page (contain mode, preserve aspect)
-      8. Return PDF bytes
+      1. Verify document is an image or OFD (not PDF)
+      2. If OFD, convert first page to PNG bytes via OFDAdapter
+      3. Read image dims via Pillow → determine content orientation
+      4. Compute auto-rotation (mirrors frontend PrintAutoRotationPolicy)
+      5. Combine auto-rotation + user rotation → effective rotation
+      6. Render at 200 dpi (print preset) with effective rotation
+      7. Determine A4 page orientation from RENDERED dimensions
+      8. Fit rendered image to page (contain mode, preserve aspect)
+      9. Return PDF bytes
 
     Query params:
       content_rotation    int       0 | 90 | 180 | 270  user rotation (default: 0)
       paper_orientation   str       "portrait" | "landscape" (default: portrait)
     """
-    # ── 1. Get document + verify image-only ────────────────────
+    # ── 1. Get document + verify (image or OFD, not PDF) ────────────
     doc = registry.get(doc_id)
     if doc is None:
         return jsonify({"success": False, "error": "DOC_NOT_REGISTERED", "doc_id": doc_id}), 404
 
-    # Reject PDF (has fitz handle) and OFD (has adapter)
+    # Reject PDF (has fitz handle) — PDF uses SumatraPDF pipeline
     if doc.pdf is not None:
-        return jsonify({"success": False, "error": "PRINT_PDF_ONLY_IMAGES", "reason": "document is a PDF, not an image"}), 400
+        return jsonify({"success": False, "error": "PRINT_PDF_REJECTS_PDF", "reason": "document is a PDF, use SumatraPDF pipeline"}), 400
+
+    # Determine source bytes: image uses doc.file_bytes, OFD uses first page render
     if doc.adapter is not None:
-        return jsonify({"success": False, "error": "PRINT_PDF_ONLY_IMAGES", "reason": "document is OFD, not an image"}), 400
-    if not doc.file_bytes:
-        return jsonify({"success": False, "error": "PRINT_PDF_ONLY_IMAGES", "reason": "document has no raw bytes"}), 400
+        # OFD: render first page to PNG bytes
+        try:
+            from PIL import Image as PILImage
+            import io as _io
+
+            # Render OFD first page to WebP, then convert to PNG
+            ofd_webp = doc.adapter.render(0)
+            if ofd_webp is None:
+                return jsonify({"success": False, "error": "OFD_RENDER_FAILED", "reason": "OFD first page rendering failed"}), 500
+
+            # Convert WebP to PNG for engine consumption
+            with PILImage.open(_io.BytesIO(ofd_webp)) as pil_img:
+                png_buf = _io.BytesIO()
+                pil_img.save(png_buf, format='PNG')
+                image_bytes = png_buf.getvalue()
+
+            logger.info("print_pdf: OFD doc=%s converted first page to PNG (%d bytes)", doc_id[:12], len(image_bytes))
+        except Exception as e:
+            logger.exception("print_pdf: OFD to PNG conversion failed for %s", doc_id[:12])
+            return jsonify({"success": False, "error": f"OFD conversion failed: {e}"}), 500
+    else:
+        # Image: use raw bytes
+        if not doc.file_bytes:
+            return jsonify({"success": False, "error": "NO_RAW_BYTES", "reason": "document has no raw bytes"}), 400
+        image_bytes = doc.file_bytes
 
     # ── 2. Get image dimensions via Pillow + compute auto-rotation ──
     # 与前端 PrintAutoRotationPolicy 保持一致的自动旋转逻辑：
@@ -267,7 +291,7 @@ def print_pdf(doc_id: str):
     #   横内容塞竖纸 = 270°；竖内容塞横纸 = 90°；方向一致 = 0°
     try:
         from PIL import Image, ImageOps
-        with Image.open(io.BytesIO(doc.file_bytes)) as pil_img:
+        with Image.open(io.BytesIO(image_bytes)) as pil_img:
             oriented = ImageOps.exif_transpose(pil_img)
             if oriented is not None:
                 pil_img = oriented

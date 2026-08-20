@@ -443,9 +443,11 @@ class RenderEngine:
           → api 层统一映射 404，使「第 N+1 页」得到确定语义而非 500。
         - ``render`` 返回 ``None``（字体缺失 / 单页 XML 损坏 / 资源丢失等）→ 抛
           ``ValueError`` → 统一错误通道，**不影响其他页 / 其他文档**。
-        - adapter 产出 WebP；预览预设默认 webp，<img> 直接消费。即使客户端要求非
-          webp，也原样返回 webp 字节（Content-Type=image/webp），不做格式降级
-          （预览场景 webp 通用；如需严格格式协商可后续扩展）。
+        - adapter 产出 WebP；预览预设默认 webp，<img> 直接消费。
+          当 fmt 为 "png" 时（如 /print_pdf 端点请求），自动转换为 PNG，
+          使下游 fitz.insert_image 等操作能正确处理。
+        - 支持 vs["rotation"] 旋转：与 _render_image_page 对齐的顺时针(CW)→逆时针(CCW)
+          映射，使用 PIL transpose 实现。
         """
         if doc.adapter is None:
             raise ValueError("Document has no format adapter")
@@ -453,9 +455,49 @@ class RenderEngine:
         if page_idx < 0 or page_idx >= n_pages:
             raise ValueError(
                 f"Adapter page {page_idx + 1} out of range ({n_pages} pages)")
-        image = doc.adapter.render(page_idx)
+        image = doc.adapter.render(page_idx, dpi=preset.dpi)
         if image is None:
             raise ValueError(f"Adapter failed to render page {page_idx + 1}")
+
+        # --- rotation ---
+        # 与 _render_image_page 对齐：前端 rotation 为顺时针(CW)规范，
+        # PIL Transpose 正角度为逆时针(CCW)：
+        #   CW 90° = CCW 270° = ROTATE_270
+        #   CW 180° = ROTATE_180
+        #   CW 270° = CCW 90° = ROTATE_90
+        rotation = (vs or {}).get("rotation", 0) % 360
+        if rotation:
+            import io as _io
+            try:
+                from PIL import Image as PILImage
+                transpose_map = {
+                    90: PILImage.Transpose.ROTATE_270,
+                    180: PILImage.Transpose.ROTATE_180,
+                    270: PILImage.Transpose.ROTATE_90,
+                }
+                transpose = transpose_map.get(rotation)
+                if transpose is not None:
+                    with PILImage.open(_io.BytesIO(image)) as pil_img:
+                        rotated = pil_img.transpose(transpose)
+                        out_buf = _io.BytesIO()
+                        rotated.save(out_buf, format='WEBP')
+                        image = out_buf.getvalue()
+            except Exception:
+                logger.warning("Adapter rotation apply failed for page %d, using unrotated", page_idx + 1)
+
+        # 格式转换：当请求 PNG 时自动转换
+        if fmt and fmt.lower() == "png":
+            import io as _io
+            try:
+                from PIL import Image as PILImage
+                with PILImage.open(_io.BytesIO(image)) as pil_img:
+                    png_buf = _io.BytesIO()
+                    pil_img.save(png_buf, format='PNG')
+                    image = png_buf.getvalue()
+                return image, "png"
+            except Exception:
+                # 转换失败降级返回 WebP（由上层处理或报错）
+                pass
         return image, "webp"
 
     def _render_legacy_page(self, doc, preset: RenderPreset, vs: dict,

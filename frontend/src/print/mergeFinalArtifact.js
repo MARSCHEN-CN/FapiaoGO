@@ -104,37 +104,33 @@ export async function loadMergePrintItems(group, ipc) {
         if (fileData.success) {
           return { ...f, _pdfData: new Uint8Array(fileData.data) }
         }
-      } else if (f.fileFormat === 'ofd') {
-        // OFD：docId → /print 优先，previewImage 兜底（旧 session）
+      } else if (f.fileFormat === 'ofd' || f.fileFormat === 'image') {
+        // IMAGE + OFD 统一加载：获取原始图片 blob，然后统一处理
         let blob = null
-        if (f.docId) {
-          try {
-            blob = await fetchPrintRaster(f.docId, 1)
-          } catch (e) {
-            console.warn('[usePrint] 合并项 OFD docId 栅格失败，回退 previewImage:', f.docId, e?.message)
+        if (f.fileFormat === 'ofd') {
+          // OFD：通过 backend /print 栅格化获取图片
+          if (f.docId) {
+            try {
+              blob = await fetchPrintRaster(f.docId, 1)
+            } catch (e) {
+              console.warn('[usePrint] 合并项 OFD docId 栅格失败，回退 previewImage:', f.docId, e?.message)
+            }
+          }
+        } else {
+          // 图片：read-file 优先（保留原图分辨率）
+          const fileData = await ipc.invoke('read-file', f.printPath)
+          if (fileData.success) {
+            blob = new Blob([fileData.data])
           }
         }
+        // 统一兜底：previewImage（旧 session）
         if (!blob && f.previewImage) {
           blob = previewImageToBlob(f.previewImage)
         }
         if (!blob) {
-          console.error('[usePrint] 合并项 OFD 无 docId 且无 previewImage:', f.name)
+          console.error('[usePrint] 合并项 %s 无可用数据源:', f.fileFormat?.toUpperCase(), f.name)
           return null
         }
-        const blobUrl = URL.createObjectURL(blob)
-        blobUrls.push(blobUrl)
-        return { ...f, _previewImageUrl: blobUrl }
-      } else if (f.fileFormat === 'image') {
-        // 图片：read-file 优先（保留原图分辨率），previewImage 兜底
-        let blob = null
-        const fileData = await ipc.invoke('read-file', f.printPath)
-        if (fileData.success) {
-          blob = new Blob([fileData.data])
-        }
-        if (!blob && f.previewImage) {
-          blob = previewImageToBlob(f.previewImage)
-        }
-        if (!blob) return null
         const blobUrl = URL.createObjectURL(blob)
         blobUrls.push(blobUrl)
         return { ...f, _previewImageUrl: blobUrl }

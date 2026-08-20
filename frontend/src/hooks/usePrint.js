@@ -19,7 +19,7 @@ import { fileContentPx } from '../print/PrintPreviewModel'
 import { renderMergeFinalArtifact, loadMergePrintItems, getMergeArtifactInputSignature } from '../print/mergeFinalArtifact'
 import { resolveMergeModeContract } from '../print/mergeModeContract'
 import { createGenerationGuard } from '../print/mergeGenerationGuard'
-import { fetchPrintRaster, buildPrintJobItem } from '../utils/printAdapter'
+import { fetchPrintRaster } from '../utils/printAdapter'
 // A1/A1.5：已证等价的 Plan 事实来源 + 影子比较 helper（Commit 2 source / Commit 3 merge 分支消费）
 import { buildPrintExecutionPlan, createPrintPlanInput } from '../print/buildPrintExecutionPlan'
 // Phase 3.5 Preview Skeleton：Plan → 打印预览描述（纯函数，供 PrintConfirmModal 消费）
@@ -199,85 +199,31 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
           console.error('[usePrint] 读取 PDF 文件失败:', f.printPath)
           return null
         }
-      } else if (f.fileFormat === 'ofd') {        // OFD：无前端可读字节，必须走 Render Contract（docId → /print 逐页）。
-        // 多页 OFD 逐页 fetchPrintRaster(docId, page.index + 1) → 每页一 canvas → 一物理页。
-        const job = buildPrintJobItem(f)
-        const pages = job.pages || []
-
-        if (pages.length > 0) {
-          const { renderMultipleItemsToCanvas } = await getPrintRenderers()
-          const buffers = []
-          for (const page of pages) {
-            let blob = null
+      } else if (f.fileFormat === 'ofd' || f.fileFormat === 'image') {
+        // IMAGE + OFD 统一加载：获取图片 blob → 创建 blob URL → push items
+        // OFD: 通过 backend fetchPrintRaster 栅格化获取
+        // Image: 通过 read-file 直接读取
+        let blob = null
+        if (f.fileFormat === 'ofd') {
+          if (f.docId) {
             try {
-              blob = await fetchPrintRaster(job.docId, page.index + 1)
+              blob = await fetchPrintRaster(f.docId, 1)
             } catch (e) {
-              console.warn('[usePrint] OFD 逐页栅格获取失败 page=%d:', page.index + 1, job.docId, e?.message)
+              console.warn('[usePrint] OFD docId 栅格获取失败，回退 previewImage:', f.docId, e?.message)
             }
-            if (!blob && f.previewImage) {
-              blob = previewImageToBlob(f.previewImage)
-              console.warn('[usePrint] OFD 第 %d 页使用 previewImage 兜底（旧 session 无 docId）:', page.index + 1, f.name)
-            }
-            if (!blob) {
-              console.error('[usePrint] OFD 第 %d 页无栅格且无兜底，无法打印:', page.index + 1, f.name)
-              return null
-            }
-            const blobUrl = createAndTrackBlobUrl(blob, localBlobUrls)
-            const pageItem = { ...f, _previewImageUrl: blobUrl }
-            const canvas = await renderMultipleItemsToCanvas(
-              [pageItem],
-              settings.paperSize || 'A4',
-              PREVIEW_DPI,
-              settings.landscape,
-              { [f.key]: rotation },
-              1,  // slotCount = 1（单页）
-              false,  // ✅ isPrint = false（与预览保持一致）
-              false,  // showSafeMargin
-              { strategy: 'vertical', customPaper: settings.customPaper }
-            )
-            if (!canvas) {
-              console.warn('[usePrint] OFD 第 %d 页渲染失败:', page.index + 1, f.name)
-              return null
-            }
-            const data = await canvasToUint8Array(canvas)
-            if (data) buffers.push(data)
           }
-          if (buffers.length === 0) return null
-          // data 为页 buffer 数组：runMergedPrintTasks 会展开为 N 张物理页
-          return { key: f.key, name: f.name, data: buffers, printPath: f.printPath }
-        }
-
-        // 无 pages（docId 缺 Document）：回退单页取栅格 + previewImage 兜底（保持原行为）
-        let blob = null
-        if (f.docId) {
-          try {
-            blob = await fetchPrintRaster(f.docId, 1)
-          } catch (e) {
-            console.warn('[usePrint] OFD docId 打印栅格获取失败，回退 previewImage:', f.docId, e?.message)
+        } else {
+          const fileData = await ipc.invoke('read-file', f.printPath)
+          if (fileData.success) {
+            blob = new Blob([fileData.data])
           }
         }
-        if (!blob && f.previewImage) {
-          blob = previewImageToBlob(f.previewImage)
-          console.warn('[usePrint] OFD 使用 previewImage 兜底（旧 session 无 docId）:', f.name)
-        }
-        if (!blob) {
-          console.error('[usePrint] OFD 无 docId 且无 previewImage，无法打印:', f.name)
-          return null
-        }
-        const blobUrl = createAndTrackBlobUrl(blob, localBlobUrls)
-        items.push({ ...f, _previewImageUrl: blobUrl })
-      } else if (f.fileFormat === 'image') {
-        // 图片：read-file 优先（docId 无关、保留原图分辨率），previewImage 仅旧 session 兜底
-        let blob = null
-        const fileData = await ipc.invoke('read-file', f.printPath)
-        if (fileData.success) {
-          blob = new Blob([fileData.data])
-        }
+        // 统一兜底：previewImage（旧 session）
         if (!blob && f.previewImage) {
           blob = previewImageToBlob(f.previewImage)
         }
         if (!blob) {
-          console.error('[usePrint] 读取图片文件失败:', f.printPath)
+          console.error('[usePrint] 加载 %s 文件数据失败:', f.fileFormat?.toUpperCase(), f.name)
           return null
         }
         const blobUrl = createAndTrackBlobUrl(blob, localBlobUrls)
@@ -529,7 +475,7 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
       && !(f._pdfPageWidth > 0 && f._pdfPageHeight > 0)
     )
     const imgFiles = files.filter(f =>
-      f && f.docId && f.fileFormat === 'image'
+      f && f.docId && (f.fileFormat === 'image' || f.fileFormat === 'ofd')
       && !(f._imageWidth > 0 && f._imageHeight > 0)
     )
     if (pdfFiles.length === 0 && imgFiles.length === 0) return
@@ -557,7 +503,7 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
         } catch (_) {}
       }
 
-      // ── Image files: load dimensions via backend metadata ──
+      // ── Image + OFD files: load dimensions via backend metadata ──
       if (imgFiles.length > 0) {
         try {
           const { fetchDocumentMetadata } = await import('../services/renderDocument.js')
@@ -569,7 +515,8 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
               if (p && p.width > 0 && p.height > 0) {
                 f._imageWidth = p.width
                 f._imageHeight = p.height
-                console.log('[usePrint dims loaded] IMAGE fileKey=%s size=%dx%d', f.key?.slice(-20), f._imageWidth, f._imageHeight)
+                console.log('[usePrint dims loaded] %s fileKey=%s size=%dx%d',
+                  f.fileFormat?.toUpperCase() || 'IMAGE', f.key?.slice(-20), f._imageWidth, f._imageHeight)
               }
             } catch (_) {}
           }
@@ -935,28 +882,12 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
     const ipc = electronAPIRef.current?.ipcRenderer
     if (!ipc) return { success: false, error: 'IPC 不可用' }
 
-    // v2（Raster 接入版）：OFD 单文件打印改走前端 Canvas 管线，与 merge 路径图片同构。
-    // renderMultipleItemsToCanvas 在此施加 placement/rotation/margin（几何变换唯一发生处），
-    // 再经 printMergedImages → print-merged-images 输出。这样 OFD == Image，且不绕过原生
-    // print-source-file（Sumatra 直送）会缺失的几何变换，也不会触发旧 print-target.js OFD
-    // 分支「尚未解析完成」的误抛。PDF/图片仍走原生路径（不变）。
-    // OFD single-file printing must stay on the raster/canvas pipeline.
-    // Do not route OFD to print-source-file: it bypasses placement/rotation/margin.
-    if (f.fileFormat === 'ofd') {
-      const rendered = await renderFileToPrintImage(f, ipc)
-      if (!rendered || !rendered.data || rendered.data.length === 0) {
-        return { success: false, error: 'OFD 栅格渲染失败，无法打印' }
-      }
-      const images = Array.isArray(rendered.data) ? rendered.data : [rendered.data]
-      const r = await printMergedImages(images, ipc, { ...settings, ...(printSettings || {}) })
-      return { success: !!r?.success, message: r?.error || '', error: r?.error || null }
-    }
-
-    // IMAGE PIPELINE (2026-08-20 Fix): 图片 → 后端 /print_pdf → 临时 PDF → SumatraPDF。
+    // IMAGE + OFD PIPELINE (2026-08-21 Fix): 图片/OFD → 后端 /print_pdf → 临时 PDF → SumatraPDF。
+    // OFD 转换为图片后本质就是图片，统一走图片管线保证行为一致。
     // 原因：SumatraPDF 原生直送图片文件时不做方向判断，横向发票可能按竖向打印。
     // 通过后端 /print_pdf 端点，用 PrintAutoRotationPolicy 决定旋转后嵌入 A4 PDF，
     // 再将 PDF 直送 SumatraPDF，获得与 PDF 管线一致的旋转行为。
-    if (f.fileFormat === 'image') {
+    if (f.fileFormat === 'image' || f.fileFormat === 'ofd') {
       const userSettings = { ...settings, ...(printSettings || {}) }
       const contentRotation = fileRotations[f.key] || 0
       const r = await printImageAsPdf(f, ipc, userSettings, contentRotation)
@@ -977,7 +908,7 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
       message: result.error || '',
       error: result.error || null,
     }
-  }, [settings, fileRotations, electronAPIRef, detectDocumentOrientation, placements, renderFileToPrintImage, printMergedImages, printImageAsPdf])
+  }, [settings, fileRotations, electronAPIRef, detectDocumentOrientation, placements, printImageAsPdf])
 
   /**
    * 批量打印（source 管线），管理总进度
