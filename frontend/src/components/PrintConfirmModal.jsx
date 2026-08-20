@@ -2,6 +2,7 @@ import { memo, useCallback } from 'react'
 import Toggle from './Toggle'
 import PrintPreviewCanvas from './PrintPreviewCanvas'
 import { PAPER_REGISTRY, MARGIN_PRESETS } from '../config'
+import { resolveMergeModeContract } from '../print/mergeModeContract'
 import '../settings-printer.css'
 
 /**
@@ -39,6 +40,12 @@ const PrintConfirmModal = ({
 
   // 纸张选项（合并注册表）
   const mergedPaperOptions = PAPER_REGISTRY
+
+  // 合并模式方向契约：进入合并模式后方向由契约强制锁定（2/3 票纵向、4 票横向），
+  // UI 置灰不可操作；不合并(none)时方向跟随用户自由切换。
+  const mergeContract = resolveMergeModeContract(settings.mergeMode)
+  const orientationLocked = mergeContract.isMerge
+  const displayLandscape = orientationLocked ? mergeContract.forcedLandscape : settings.landscape
 
   return (
     <div className="modal-overlay pcm-overlay">
@@ -223,7 +230,12 @@ const PrintConfirmModal = ({
                 <select
                   className="printer-merge-select"
                   value={settings.mergeMode || 'none'}
-                  onChange={(e) => update({ mergeMode: e.target.value })}
+                  onChange={(e) => {
+                    const mode = e.target.value
+                    const c = resolveMergeModeContract(mode)
+                    // 进入合并模式即把方向锁成契约默认值；切回不合并则保留用户原值
+                    update({ mergeMode: mode, landscape: c.isMerge ? c.forcedLandscape : settings.landscape })
+                  }}
                 >
                   <option value="none">不合并</option>
                   <option value="merge2">两票一页（1页纸2张发票）</option>
@@ -347,7 +359,8 @@ const PrintConfirmModal = ({
                   <div className="printer-orient-toggle">
                     <button
                       type="button"
-                      className={`printer-orient-btn ${!settings.landscape ? 'active' : ''}`}
+                      disabled={orientationLocked}
+                      className={`printer-orient-btn ${!displayLandscape ? 'active' : ''}`}
                       onClick={() => update({ landscape: false })}
                     >
                       <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -357,7 +370,8 @@ const PrintConfirmModal = ({
                     </button>
                     <button
                       type="button"
-                      className={`printer-orient-btn ${settings.landscape ? 'active' : ''}`}
+                      disabled={orientationLocked}
+                      className={`printer-orient-btn ${displayLandscape ? 'active' : ''}`}
                       onClick={() => update({ landscape: true })}
                     >
                       <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5">

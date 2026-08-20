@@ -1135,6 +1135,18 @@ button.pc-btn.outline,
   background: var(--accent);
   color: #fff;
 }
+/* 合并模式下方向由契约强制锁定：控件置灰不可操作（高亮仍指示当前锁定方向） */
+.printer-orient-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  background: transparent !important;
+  color: var(--text-3) !important;
+  box-shadow: none !important;
+}
+.printer-orient-btn:disabled:hover {
+  background: transparent !important;
+  color: var(--text-3) !important;
+}
 
 /* ======================== PDF Export Confirm Modal (pe-) ======================== */
 .pe-header {
