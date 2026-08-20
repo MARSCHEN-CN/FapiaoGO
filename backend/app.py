@@ -1217,6 +1217,16 @@ def parse_invoice():
         # 与 /split_pdf、/preview/{doc_id} 共用同一 doc_id，使单文件 parse 也能闭合身份链（4.2.1-c）。
         doc_id = _make_doc_id(file_bytes, file.filename or "")
 
+        # ── Render Engine 注册：使 /preview/{doc_id} 可服务所有文件类型 ──
+        # 单文件 parse 路径需要显式注册到 render_engine registry，
+        # 否则 DisplayAdapter → DocumentViewer → /preview/{doc_id} 会 404。
+        # registry.open 幂等（content-hash → doc_id），重复注册返回已有条目。
+        # 注册失败不阻塞主解析流程（渲染引擎是增强项）。
+        try:
+            registry.open(file_bytes, filename=file.filename or "")
+        except Exception:
+            logger.debug("[parse_invoice] render_engine 注册跳过（非致命）: %s", file.filename)
+
         auto_orient = request.form.get('autoOrient', '1') == '1'
         enable_auto_ocr = request.form.get('enableAutoOcr', '0') == '1'
         _legacy_start = time.time()
@@ -1496,8 +1506,21 @@ def parse_batch():
                 failed_ids = [f.get('field', '') for f in raw_failed
                               if isinstance(f, dict) and f.get('field')] if raw_failed else []
 
+                # ── Render Engine 注册：使 /preview/{doc_id} 可服务所有文件类型 ──
+                # 批量解析路径需要显式注册到 render_engine registry，
+                # 否则 DisplayAdapter → DocumentViewer → /preview/{doc_id} 会 404。
+                file_bytes = file_inputs[idx]['bytes']
+                filename = file_inputs[idx]['filename']
+                try:
+                    doc = registry.open(file_bytes, filename=filename)
+                    doc_id = doc.doc_id
+                except Exception:
+                    logger.debug("[parse_batch] render_engine 注册跳过（非致命）: %s", filename)
+                    doc_id = _make_doc_id(file_bytes, filename or "")
+
                 item['data'] = {
                     'db_record': svc_result.get('db_record'),
+                    'doc_id': doc_id,
                     'invoice_type': svc_result.get('invoice_type', ''),
                     'invoice_number': svc_result.get('invoice_number', ''),
                     'amount': svc_result.get('amount', ''),

@@ -8,7 +8,7 @@ import { renderPrintContent } from '../utils/printRenderer'
 import { buildRenderModel } from '../utils/renderModelBuilder'
 import { validateRenderModel } from '../utils/renderModelValidator'
 import { detectDocumentOrientation } from '../utils/detectOrientation'
-import { printSingleSourceFile as printSingleSource, printMergedImages } from '../services/PrintService'
+import { printSingleSourceFile as printSingleSource, printMergedImages, printImageAsPdf } from '../services/PrintService'
 import { runMergedPrintTasks } from '../runners/printRunner'
 import { computePaperLayout } from '../previewState'
 import { extendPaperLayoutContract } from '../print/paperLayoutContract'
@@ -519,24 +519,32 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
     }
   }, [printPlanInput, previewFile, dimsVersion])
 
-  // Commit 3 fix: PrintPreview placement 需要文件尺寸（_pdfPageWidth/Height）。
-  // RE 路径文件不预载这些字段，此处通过 IPC 读取 PDF 首页尺寸。
+  // Commit 3 fix (extended): PrintPreview placement needs file dimensions.
+  // PDF: load via pdf.js (existing behavior).
+  // Images: load via backend /metadata/{doc_id} (Pillow dimensions).
+  // Both sets _pdfPageWidth/_pdfPageHeight (PDF) or _imageWidth/_imageHeight (image).
   useEffect(() => {
-    const needDims = files.filter(f =>
-      f && f.printPath && !(f._pdfPageWidth > 0 && f._pdfPageHeight > 0)
+    const pdfFiles = files.filter(f =>
+      f && f.printPath && (f.fileFormat === 'pdf' || (!f.fileFormat && !f.previewImage))
+      && !(f._pdfPageWidth > 0 && f._pdfPageHeight > 0)
     )
-    if (needDims.length === 0) return
+    const imgFiles = files.filter(f =>
+      f && f.docId && f.fileFormat === 'image'
+      && !(f._imageWidth > 0 && f._imageHeight > 0)
+    )
+    if (pdfFiles.length === 0 && imgFiles.length === 0) return
 
     let cancelled = false
     const load = async () => {
       const ipc = electronAPIRef.current?.ipcRenderer
-      if (!ipc) return
-      for (const f of needDims) {
+
+      // ── PDF files: load dimensions via pdf.js ──
+      for (const f of pdfFiles) {
         if (cancelled) break
+        if (!ipc) break
         try {
           const fd = await ipc.invoke('read-file', f.printPath)
           if (cancelled || !fd?.success) continue
-          // 用 pdf.js 获取首页尺寸（轻量，不需要渲染）
           const { getOrLoadPdfDocument } = await import('../renderers.js')
           const pdfDoc = await getOrLoadPdfDocument(new Uint8Array(fd.data))
           if (cancelled || !pdfDoc) continue
@@ -545,9 +553,29 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
           f._pdfPageWidth = Math.round(vp.width)
           f._pdfPageHeight = Math.round(vp.height)
           await page.cleanup()
-          console.log('[usePrint dims loaded] fileKey=%s size=%dx%d', f.key?.slice(-20), f._pdfPageWidth, f._pdfPageHeight)
+          console.log('[usePrint dims loaded] PDF fileKey=%s size=%dx%d', f.key?.slice(-20), f._pdfPageWidth, f._pdfPageHeight)
         } catch (_) {}
       }
+
+      // ── Image files: load dimensions via backend metadata ──
+      if (imgFiles.length > 0) {
+        try {
+          const { fetchDocumentMetadata } = await import('../services/renderDocument.js')
+          for (const f of imgFiles) {
+            if (cancelled) break
+            try {
+              const meta = await fetchDocumentMetadata(f.docId)
+              const p = meta?.pages?.[0]
+              if (p && p.width > 0 && p.height > 0) {
+                f._imageWidth = p.width
+                f._imageHeight = p.height
+                console.log('[usePrint dims loaded] IMAGE fileKey=%s size=%dx%d', f.key?.slice(-20), f._imageWidth, f._imageHeight)
+              }
+            } catch (_) {}
+          }
+        } catch (_) {}
+      }
+
       if (!cancelled) setDimsVersion(v => v + 1)
     }
     load()
@@ -924,6 +952,17 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
       return { success: !!r?.success, message: r?.error || '', error: r?.error || null }
     }
 
+    // IMAGE PIPELINE (2026-08-20 Fix): 图片 → 后端 /print_pdf → 临时 PDF → SumatraPDF。
+    // 原因：SumatraPDF 原生直送图片文件时不做方向判断，横向发票可能按竖向打印。
+    // 通过后端 /print_pdf 端点，用 PrintAutoRotationPolicy 决定旋转后嵌入 A4 PDF，
+    // 再将 PDF 直送 SumatraPDF，获得与 PDF 管线一致的旋转行为。
+    if (f.fileFormat === 'image') {
+      const userSettings = { ...settings, ...(printSettings || {}) }
+      const contentRotation = fileRotations[f.key] || 0
+      const r = await printImageAsPdf(f, ipc, userSettings, contentRotation)
+      return { success: !!r?.success, message: r?.error || '', error: r?.error || null }
+    }
+
     // 合并 settings + printSettings 作为 userSettings
     const userSettings = { ...settings, ...(printSettings || {}) }
     // C-2 Step 4-1：优先消费 job 携带的 Plan truth（deriveSourcePrintJobs 从 plan 搬运）；
@@ -938,7 +977,7 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
       message: result.error || '',
       error: result.error || null,
     }
-  }, [settings, fileRotations, electronAPIRef, detectDocumentOrientation, placements, renderFileToPrintImage, printMergedImages])
+  }, [settings, fileRotations, electronAPIRef, detectDocumentOrientation, placements, renderFileToPrintImage, printMergedImages, printImageAsPdf])
 
   /**
    * 批量打印（source 管线），管理总进度

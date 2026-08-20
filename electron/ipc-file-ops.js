@@ -307,6 +307,35 @@ function registerFileOpsHandlers(ctx) {
 
     return { success: failed.length === 0, deleted, failed }
   })
+
+  // ==========================================
+  // ✅ 保存临时文件（供图片→PDF→打印管线使用）
+  // ==========================================
+  ipcMain.handle('save-print-pdf', async (_event, { buffer, filename }) => {
+    try {
+      const os = require('os')
+      const tmpDir = os.tmpdir()
+      const safeName = (filename || `print_${Date.now()}`).replace(/[^a-zA-Z0-9_.-]/g, '_')
+      const tmpPath = path.join(tmpDir, safeName)
+      await fs.promises.writeFile(tmpPath, Buffer.from(buffer))
+      return { success: true, path: tmpPath }
+    } catch (error) {
+      return { success: false, error: error.message }
+    }
+  })
+
+  // ==========================================
+  // ✅ 删除临时文件（打印完成后清理）
+  // ==========================================
+  ipcMain.handle('delete-print-pdf', async (_event, { filePath }) => {
+    try {
+      if (!filePath) return { success: false, error: 'filePath required' }
+      await fs.promises.unlink(filePath)
+      return { success: true }
+    } catch (error) {
+      return { success: false, error: error.message }
+    }
+  })
 }
 
 module.exports = { registerFileOpsHandlers }

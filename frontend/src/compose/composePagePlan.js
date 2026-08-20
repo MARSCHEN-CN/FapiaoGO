@@ -42,8 +42,23 @@ export function fileObjToComposePagePlan(item, index = 0, cs = null, forcedOrien
   const docId = it.docId ?? id
   const pageId = it.pageId ?? `${docId}#p${(it.pageIndex ?? index) + 1}`
 
-  const w = cs ? cs.width : (it.width || 0)
-  const h = cs ? cs.height : (it.height || 0)
+  const w = cs ? cs.width : (it.width || it._imageWidth || it._pdfPageWidth || it.previewWidth || 0)
+  const h = cs ? cs.height : (it.height || it._imageHeight || it._pdfPageHeight || it.previewHeight || 0)
+
+  // 2026-08-20 Fix: 零尺寸安全降级——当所有尺寸来源均为 0 时，
+  // 使用 A4 默认尺寸（595×842 pt @ 72dpi），避免 PrintAutoRotationPolicy 抛错。
+  const SAFE_W = 595  // A4 width in points
+  const SAFE_H = 842  // A4 height in points
+  const safeW = (w > 0) ? w : SAFE_W
+  const safeH = (h > 0) ? h : SAFE_H
+  if (w <= 0 || h <= 0) {
+    console.warn('[composePagePlan] 尺寸缺失，使用 A4 默认降级:', {
+      id, w, h, csW: cs?.width, csH: cs?.height,
+      imageW: it._imageWidth, imageH: it._imageHeight,
+      pdfW: it._pdfPageWidth, pdfH: it._pdfPageHeight,
+      previewW: it.previewWidth, previewH: it.previewHeight,
+    })
+  }
 
   const fileRotation = it.rotation || 0
   const rotation = (rotations && rotations[id]) ? rotations[id] : fileRotation
@@ -51,15 +66,16 @@ export function fileObjToComposePagePlan(item, index = 0, cs = null, forcedOrien
   // Gate 3-4A (D2/B-10): 内容旋转决策收敛到 PrintGeometryBuilder（单一 resolver）。
   // 与既有的 w/h/pageSize/forcedOrient/rotation 同源输入，不引入新的内容几何来源；
   // 输出的 effectiveRotation 已是 canonical {0,90,180,270}，供 RenderCommand Factory 直接消费（B-10a 不二次 normalize）。
+  // 使用 safeW/safeH 确保 PrintAutoRotationPolicy 始终收到正数尺寸（2026-08-20 Fix）。
   const printGeometry = buildPrintGeometry({
-    rawDocumentGeometry: { widthPx: w, heightPx: h },
+    rawDocumentGeometry: { widthPx: safeW, heightPx: safeH },
     requestedPaperGeometry: { orientation: forcedOrient },
     userRotation: { degrees: rotation },
   })
 
   const documentState = {
-    pageSize: { w, h },
-    pageOrientation: (w >= h) ? 'landscape' : 'portrait',
+    pageSize: { w: safeW, h: safeH },
+    pageOrientation: (safeW >= safeH) ? 'landscape' : 'portrait',
     requestedPaperOrientation: forcedOrient,
     rotation,
   }

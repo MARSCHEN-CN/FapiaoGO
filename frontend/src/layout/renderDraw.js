@@ -33,9 +33,21 @@ export function drawRenderCommand(ctx, cmd, source, contentW, contentH, ratio = 
 
   const offsetX = cmd.placement.offsetX * ratio
   const offsetY = cmd.placement.offsetY * ratio
-  const drawW = cmd.rotatedBounds.width * cmd.placement.scale * ratio
-  const drawH = cmd.rotatedBounds.height * cmd.placement.scale * ratio
   const cr = cmd.contentRotation
+  const scale = cmd.placement.scale * ratio
+
+  // ⚠️ 旋转修复：
+  //   当有旋转时，必须使用源的原始尺寸(contentW×contentH)来绘制源图像，
+  //   然后让 Canvas.rotate 来处理旋转。
+  //   旧代码用 rotatedBounds 尺寸绘制，导致源图像被先拉伸到旋转后尺寸，
+  //   再旋转一次 = 双重变形。
+  //   非旋转时用 rotatedBounds 尺寸是正确的（此时 rotatedBounds = 原始尺寸）。
+  const srcDrawW = cr ? contentW * scale : cmd.rotatedBounds.width * scale
+  const srcDrawH = cr ? contentH * scale : cmd.rotatedBounds.height * scale
+
+  // 旋转后画布的 footprint（用于定位中心点）
+  const footprintW = cmd.rotatedBounds.width * scale
+  const footprintH = cmd.rotatedBounds.height * scale
 
   ctx.save()
   // clip：Merge 的每项裁剪到 slot 矩形；单文件预览 cmd.clip 为整页（或不传 → 不裁）。
@@ -46,13 +58,13 @@ export function drawRenderCommand(ctx, cmd, source, contentW, contentH, ratio = 
   }
 
   if (!cr) {
-    // 0°：直接 top-left 落盘（scale 已烘焙进 drawW/drawH）。
-    ctx.drawImage(source, offsetX, offsetY, drawW, drawH)
+    // 0°：直接 top-left 落盘（scale 已烘焙进 srcDrawW/srcDrawH）。
+    ctx.drawImage(source, offsetX, offsetY, srcDrawW, srcDrawH)
   } else {
-    // 旋转：以落盘包围盒中心为支点旋转（drawW×drawH 已是最终 footprint）。
-    ctx.translate(offsetX + drawW / 2, offsetY + drawH / 2)
+    // 旋转：以旋转后包围盒中心为支点旋转，用源的原始尺寸绘制
+    ctx.translate(offsetX + footprintW / 2, offsetY + footprintH / 2)
     ctx.rotate((cr * Math.PI) / 180)
-    ctx.drawImage(source, -drawW / 2, -drawH / 2, drawW, drawH)
+    ctx.drawImage(source, -srcDrawW / 2, -srcDrawH / 2, srcDrawW, srcDrawH)
   }
   ctx.restore()
 }

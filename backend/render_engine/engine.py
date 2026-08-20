@@ -529,17 +529,12 @@ class RenderEngine:
             raise ValueError(
                 f"[1.2B] contentRotation must be one of {ALLOWED_CONTENT_ROTATIONS}, got {cr} "
                 f"(Renderer 不重算布局；内容旋转必须来自 RenderCommand)")
-        # fitz.prerotate 角度映射（⚠️ 经 Slice 1.2B 实测校准，fitz 1.28）：
-        #   fitz 的 prerotate(+θ) = 视觉顺时针 θ（屏幕 y 向下坐标），与前端 CSS rotate(θ) 一致：
-        #     contentRotation=90  → 视觉顺时针90°（CSS rotate(90deg)）→ prerotate(+90)
-        #     contentRotation=270 → 视觉顺时针270°（CSS rotate(270deg)）→ prerotate(-90)
-        #     contentRotation=180 → prerotate(180)
-        #     contentRotation=0   → 不旋转
-        #   （注：v17-paper-orientation-contract.md 旧 helper 注释写 prerotate(-90)=CW90，
-        #    在本 fitz 版本实测相反——已用红块方位测试校准，见 test_render_spec_page_rotation.py。）
-        # ⚠️ 避坑：prerotate(-270) 在 fitz 实测给出镜像结果，故 270 映射 -90（=+270 等价但安全），
-        #    绝不写 prerotate(-contentRotation)。
-        _pre = {0: 0, 90: 90, 180: 180, 270: -90}[cr]
+        # fitz.prerotate 角度映射（经实测校准）：
+        #   前端 contentRotation 为顺时针(CW)规范，fitz.prerotate 正角度为逆时针(CCW)
+        #   prerotate(90) = CCW 90°，prerotate(270) = CW 90°
+        #   故映射: 0→0, 90→270, 180→180, 270→90
+        #   ⚠️ 使用正数避免 prerotate(-270) 镜像问题
+        _pre = {0: 0, 90: 270, 180: 180, 270: 90}[cr]
         # 读 camelCase paperLandscape（与 rebuild_spec_from_args / 前端 buildRenderSpec 结构一致）。
         # ⚠️ 历史 bug：此前读 snake_case "paper_landscape"，而 rebuild 重建的 spec 用
         #    camelCase，导致该字段永远取默认 False → 横纸变竖纸（见 repro_landscape_bug.py）。
@@ -636,13 +631,17 @@ class RenderEngine:
         page = pdf[page_idx]
 
         # --- zoom / rotation ---
+        # ⚠️ 旋转方向映射：前端 rotation 为顺时针(CW)，fitz.prerotate 正角度为逆时针(CCW)
+        #   prerotate(90) = CCW 90°，prerotate(270) = CW 90°
+        #   映射: 0→0, 90→270, 180→180, 270→90
         zoom = preset.dpi / PDF_DPI
         rotation = vs.get("rotation", 0) % 360
 
         # Build transform matrix with rotation and zoom
         mat = fitz.Matrix(zoom, zoom)
         if rotation:
-            mat.prerotate(rotation)
+            _pre_map = {90: 270, 180: 180, 270: 90}
+            mat.prerotate(_pre_map.get(rotation, 0))
 
         # --- render to pixmap ---
         pix = page.get_pixmap(matrix=mat, alpha=False)
@@ -669,6 +668,9 @@ class RenderEngine:
 
         Uses doc.file_bytes stored by Registry at registration time.
         Delegates to `_open_fitz_image_doc` for EXIF normalization and opening.
+
+        与 _render_pdf_page 对齐：消费 vs["rotation"] 矩阵旋转内容，
+        使 legacy 路径（无 render_spec）也能正确应用 /print_pdf 等场景的旋转。
         """
         if not doc.file_bytes:
             raise ValueError(f"Cannot render image (no file_bytes): {doc.path}")
@@ -676,7 +678,18 @@ class RenderEngine:
         img_doc = _open_fitz_image_doc(doc.file_bytes, doc.path)
 
         try:
-            pix = img_doc[0].get_pixmap(dpi=preset.dpi)
+            # --- zoom / rotation ---
+            # ⚠️ 旋转方向映射（经实测校准）：
+            #   前端 rotation 为顺时针(CW)规范，fitz.prerotate 正角度为逆时针(CCW)
+            #   prerotate(90) = CCW 90°，prerotate(270) = CW 90°
+            #   故映射: 0→0, 90→270, 180→180, 270→90
+            zoom = preset.dpi / 72.0
+            rotation = vs.get("rotation", 0) % 360
+            mat = fitz.Matrix(zoom, zoom)
+            if rotation:
+                _pre_map = {90: 270, 180: 180, 270: 90}
+                mat.prerotate(_pre_map.get(rotation, 0))
+            pix = img_doc[0].get_pixmap(matrix=mat)
         finally:
             img_doc.close()
 

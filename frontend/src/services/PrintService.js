@@ -17,6 +17,7 @@
  */
 
 import { PRINT_SETTINGS_DEFAULTS } from '../config'
+import { BACKEND_URL } from '../config'
 import { createSuccessfulResult, createFailedResult } from '../models/PrintResult'
 import { getExtension } from '../utils'
 import { requestedPaperOrientation } from '../print/paperSpec.js'
@@ -200,6 +201,106 @@ export async function printMergedImages(images, ipc, printOptions) {
       taskId: 'merged',
       error: err?.message || '合并打印异常',
     })
+  }
+}
+
+/**
+ * 图片 → PDF → 打印管线。
+ *
+ * 仅用于 raster 图片（JPG/PNG/BMP/TIFF 等）。
+ * 流程：
+ *   1. 从后端 /print_pdf/{doc_id} 获取带旋转的 A4 PDF
+ *   2. 通过 save-print-pdf IPC 保存到临时目录
+ *   3. 通过 print-source-file 将临时 PDF 直送 SumatraPDF
+ *   4. 打印完成后删除临时文件
+ *
+ * @param {object} file - 文件对象（需含 docId）
+ * @param {object} ipc - Electron ipcRenderer
+ * @param {object} userSettings - 用户设置
+ * @param {number} contentRotation - 由 PrintAutoRotationPolicy 决定的内容旋转角度 (0/90/180/270)
+ * @returns {Promise<object>} PrintResult
+ */
+export async function printImageAsPdf(file, ipc, userSettings, contentRotation) {
+  if (!file) return createFailedResult({ taskId: file?.key, error: '文件对象为空' })
+  if (!ipc) return createFailedResult({ taskId: file.key, error: 'Electron IPC 不可用' })
+
+  const docId = file?.docId || file?.documentId
+  if (!docId) return createFailedResult({ taskId: file.key, error: '缺少 docId，无法生成打印 PDF' })
+
+  // 确定打印机
+  const printerName = resolvePrinterName(userSettings, userSettings)
+  if (!printerName) return createFailedResult({ taskId: file.key, error: '请选择打印机' })
+
+  const rotation = Number(contentRotation) || 0
+  const paperOrient = requestedPaperOrientation(userSettings)
+
+  // ── Step 1: 从后端获取带旋转的 A4 PDF ──
+  let tempPdfPath = null
+  try {
+    const url = `${BACKEND_URL}/print_pdf/${encodeURIComponent(docId)}?content_rotation=${rotation}&paper_orientation=${paperOrient}`
+
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: { 'Accept': 'application/pdf' },
+    })
+
+    if (!response.ok) {
+      const errText = await response.text().catch(() => '')
+      let errMsg = `后端 PDF 生成失败 (HTTP ${response.status})`
+      try {
+        const errJson = JSON.parse(errText)
+        if (errJson?.error) errMsg = errJson.error
+      } catch {}
+      return createFailedResult({ taskId: file.key, error: errMsg })
+    }
+
+    const pdfBuffer = await response.arrayBuffer()
+    if (!pdfBuffer || pdfBuffer.byteLength === 0) {
+      return createFailedResult({ taskId: file.key, error: '后端返回的 PDF 为空' })
+    }
+
+    // ── Step 2: 保存临时 PDF ──
+    const safeName = `${file?.key || 'image'}_print_${Date.now()}.pdf`
+    const saveResult = await ipc.invoke('save-print-pdf', {
+      buffer: Array.from(new Uint8Array(pdfBuffer)),
+      filename: safeName,
+    })
+
+    if (!saveResult?.success) {
+      return createFailedResult({ taskId: file.key, error: saveResult?.error || '保存临时 PDF 失败' })
+    }
+
+    tempPdfPath = saveResult.path
+
+    // ── Step 3: 构建打印设置 + 调用 SumatraPDF ──
+    const ps = buildPrintSettings(file, userSettings)
+
+    const result = await ipc.invoke('print-source-file', {
+      target: { printer: printerName, filePath: tempPdfPath, fileFormat: 'pdf', docId: docId },
+      settings: ps,
+      pipeline: { backend: 'sumatra' },
+    })
+
+    if (result?.success) {
+      return createSuccessfulResult({ taskId: file.key, printer: printerName })
+    }
+
+    return createFailedResult({
+      taskId: file.key,
+      printer: printerName,
+      error: result?.message || result?.error || '打印失败',
+    })
+  } catch (err) {
+    return createFailedResult({ taskId: file.key, printer: printerName, error: err?.message || '打印异常' })
+  } finally {
+    // ── Step 4: 清理临时文件 ──
+    if (tempPdfPath) {
+      try {
+        await ipc.invoke('delete-print-pdf', { filePath: tempPdfPath })
+      } catch {
+        // 清理失败不影响打印结果
+      }
+    }
   }
 }
 

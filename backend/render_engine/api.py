@@ -223,6 +223,185 @@ def print_page(doc_id: str):
     return _render_and_respond(doc_id, "print", page, vs, override_params=override)
 
 
+# ── GET /print_pdf/{doc_id} ──────────────────────────────────────
+
+@render_bp.route("/print_pdf/<doc_id>", methods=["GET"])
+def print_pdf(doc_id: str):
+    """Render an image document as a print-ready A4 PDF.
+
+    IMAGE PIPELINE ONLY — This endpoint is exclusively for raster images.
+    PDF and OFD documents are explicitly rejected; they use their own
+    print pipelines (SumatraPDF direct for PDF, PrintAutoRotationPolicy
+    + fitz embedding for OFD).
+
+    Flow:
+      1. Verify document is an image (not PDF, not OFD)
+      2. Read image dims via Pillow → determine content orientation
+      3. Compute auto-rotation (mirrors frontend PrintAutoRotationPolicy)
+      4. Combine auto-rotation + user rotation → effective rotation
+      5. Render at 200 dpi (print preset) with effective rotation
+      6. Determine A4 page orientation from RENDERED dimensions
+      7. Fit rendered image to page (contain mode, preserve aspect)
+      8. Return PDF bytes
+
+    Query params:
+      content_rotation    int       0 | 90 | 180 | 270  user rotation (default: 0)
+      paper_orientation   str       "portrait" | "landscape" (default: portrait)
+    """
+    # ── 1. Get document + verify image-only ────────────────────
+    doc = registry.get(doc_id)
+    if doc is None:
+        return jsonify({"success": False, "error": "DOC_NOT_REGISTERED", "doc_id": doc_id}), 404
+
+    # Reject PDF (has fitz handle) and OFD (has adapter)
+    if doc.pdf is not None:
+        return jsonify({"success": False, "error": "PRINT_PDF_ONLY_IMAGES", "reason": "document is a PDF, not an image"}), 400
+    if doc.adapter is not None:
+        return jsonify({"success": False, "error": "PRINT_PDF_ONLY_IMAGES", "reason": "document is OFD, not an image"}), 400
+    if not doc.file_bytes:
+        return jsonify({"success": False, "error": "PRINT_PDF_ONLY_IMAGES", "reason": "document has no raw bytes"}), 400
+
+    # ── 2. Get image dimensions via Pillow + compute auto-rotation ──
+    # 与前端 PrintAutoRotationPolicy 保持一致的自动旋转逻辑：
+    #   内容方向 vs 纸张方向 → 决定是否需要旋转
+    #   横内容塞竖纸 = 270°；竖内容塞横纸 = 90°；方向一致 = 0°
+    try:
+        from PIL import Image, ImageOps
+        with Image.open(io.BytesIO(doc.file_bytes)) as pil_img:
+            oriented = ImageOps.exif_transpose(pil_img)
+            if oriented is not None:
+                pil_img = oriented
+            img_w, img_h = pil_img.size
+    except Exception:
+        logger.warning("print_pdf: cannot read image dims via Pillow, using defaults")
+        img_w, img_h = 595, 842  # A4 portrait default
+
+    # Parse user rotation (from frontend's fileRotations)
+    user_rotation = _int_param("content_rotation", 0)
+    if user_rotation not in (0, 90, 180, 270):
+        user_rotation = 0
+
+    # Parse target paper orientation (default: portrait A4)
+    paper_orient = request.args.get("paper_orientation", "portrait").lower()
+    if paper_orient not in ("portrait", "landscape"):
+        paper_orient = "portrait"
+
+    # ── Auto-rotation (PrintAutoRotationPolicy v1.0 backend mirror) ──
+    # 先确定原始内容方向，再结合用户旋转计算旋转后的方向，
+    # 最后基于旋转后的方向 vs 纸张方向 决定是否需要自动旋转。
+    content_orient = "landscape" if img_w > img_h else "portrait"
+
+    # 用户旋转后的内容方向（90/270 度方向反转，0/180 度方向不变）
+    user_swaps_orient = (user_rotation % 180) != 0
+    user_intended_orient = (
+        ("landscape" if content_orient == "portrait" else "portrait")
+        if user_swaps_orient
+        else content_orient
+    )
+
+    # 基于用户意图方向决定自动旋转
+    auto_rotation = 0
+    if user_intended_orient != paper_orient:
+        auto_rotation = 270 if user_intended_orient == "landscape" else 90
+    effective_rotation = (auto_rotation + user_rotation) % 360
+
+    logger.info("print_pdf: doc=%s img=%dx%d orig=%s user_rot=%d intended=%s paper=%s auto_rot=%d effective=%d",
+                doc_id[:12], img_w, img_h, content_orient, user_rotation,
+                user_intended_orient, paper_orient, auto_rotation, effective_rotation)
+
+    rotation = effective_rotation
+
+    # ── 3. Render at 200 dpi (print preset), output PNG for fitz ──
+    # Use override_params to request PNG format directly, avoiding
+    # the webp→png roundtrip (fitz insert_image doesn't support webp).
+    vs = {"rotation": rotation}
+    try:
+        render_data, render_fmt, _etag = engine.render(
+            doc_id=doc_id,
+            preset_name="print",
+            view_state=vs,
+            page=1,
+            override_params={"fmt": "png"},
+        )
+    except DocumentNotRegistered:
+        return jsonify({"success": False, "error": "DOC_NOT_REGISTERED", "doc_id": doc_id}), 404
+    except Exception as e:
+        logger.exception("print_pdf: render failed for %s", doc_id[:12])
+        return jsonify({"success": False, "error": f"render failed: {e}"}), 500
+
+    # ── 4. Get rendered image dimensions via PIL ───────────────
+    try:
+        from PIL import Image
+        with Image.open(io.BytesIO(render_data)) as rendered_img:
+            rendered_w, rendered_h = rendered_img.size
+    except Exception:
+        logger.warning("print_pdf: cannot read rendered image dims, using A4 defaults")
+        rendered_w, rendered_h = 1654, 2339  # A4 @ 200dpi fallback
+
+    # ── 5. Determine A4 page orientation from RENDERED dimensions ──
+    # ⚠️ 关键修复：不使用 rotation 值判断方向，而是使用实际渲染后的图像尺寸。
+    # 因为 _render_image_page 已经用 _apply_margins 将旋转后的内容放在 A4 画布上，
+    # 渲染输出的宽高比 = 内容旋转后的实际方向。
+    # 旧逻辑 rotation in (90, 270) 仅对纵向图片正确，对横向图片完全错误。
+    is_landscape = rendered_w > rendered_h
+    A4_PT = {
+        "portrait": (595.0, 842.0),
+        "landscape": (842.0, 595.0),
+    }
+    page_w, page_h = A4_PT["landscape"] if is_landscape else A4_PT["portrait"]
+
+    # ── 6. Fit rendered image to page (contain, centered) ──────
+    # Convert rendered pixel dimensions to PDF points (72 dpi)
+    # The render preset is 200 dpi, so: points = pixels * 72/200
+    RENDER_DPI = 200.0
+    SCALE_TO_PT = 72.0 / RENDER_DPI
+    img_w_pt = rendered_w * SCALE_TO_PT
+    img_h_pt = rendered_h * SCALE_TO_PT
+
+    # Contain fit: scale factor to fit within page
+    # 注意：_render_image_page 已经通过 _apply_margins 在 A4 画布上渲染，
+    # 所以渲染输出通常已经接近 A4 尺寸。fit_ratio 应接近 1.0。
+    fit_ratio = min(page_w / img_w_pt, page_h / img_h_pt, 1.0)
+    fitted_w = img_w_pt * fit_ratio
+    fitted_h = img_h_pt * fit_ratio
+
+    x_offset = (page_w - fitted_w) / 2.0
+    y_offset = (page_h - fitted_h) / 2.0
+
+    # ── 7. Create PDF (render_data is already PNG, safe for fitz) ─
+    try:
+        import fitz
+
+        pdf_doc = fitz.open()
+        pdf_page = pdf_doc.new_page(width=page_w, height=page_h)
+        pdf_page.insert_image(
+            fitz.Rect(x_offset, y_offset, x_offset + fitted_w, y_offset + fitted_h),
+            stream=render_data,
+        )
+
+        output = io.BytesIO()
+        pdf_doc.save(output, incremental=False, deflate=True)
+        pdf_doc.close()
+        output.seek(0)
+        pdf_bytes = output.read()
+    except ImportError:
+        return jsonify({"success": False, "error": "fitz (PyMuPDF) is not available"}), 500
+    except Exception as e:
+        logger.exception("print_pdf: pdf creation failed for %s", doc_id[:12])
+        return jsonify({"success": False, "error": f"pdf creation failed: {e}"}), 500
+
+    # ── 8. Return PDF ──────────────────────────────────────────
+    headers = {
+        "Content-Type": "application/pdf",
+        "Content-Length": str(len(pdf_bytes)),
+        "Cache-Control": "no-store, private",
+        "X-Print-PDF-Doc": doc_id[:12],
+        "X-Print-PDF-Rotation": str(rotation),
+        "X-Print-PDF-Orientation": "landscape" if is_landscape else "portrait",
+    }
+    return Response(pdf_bytes, status=200, headers=headers)
+
+
 # ── GET /metadata/{doc_id} ─────────────────────────────────────
 
 @render_bp.route("/metadata/<doc_id>", methods=["GET"])

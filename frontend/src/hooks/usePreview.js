@@ -687,8 +687,22 @@ export function usePreview({ files, settings, electronAPIRef }) {
     const paperOrient = paper.widthMM > paper.heightMM ? 'landscape' : 'portrait'
     // Gate 2 (PreviewGeometryBuilder)：orientation-mismatch 决策统一委托 Policy，
     // 不再手算 contentOrient !== paperOrient（消除第二套算法）。值等价，缓存键不变。
+    // 2026-08-20 Fix: 对 0 尺寸做防御——当 extractContentPx 返回 0/无效尺寸时，
+    // 用 A4 默认尺寸（595x842 pt @ 72dpi）安全降级，避免 PrintAutoRotationPolicy 抛错。
+    const rawContentGeom = extractContentPx(previewFile)
+    const safeGeom = (rawContentGeom.widthPx > 0 && rawContentGeom.heightPx > 0)
+      ? rawContentGeom
+      : { widthPx: 595, heightPx: 842 }  // A4 默认
+    if (rawContentGeom.widthPx <= 0 || rawContentGeom.heightPx <= 0) {
+      console.warn('[PREVIEW FLOW] 尺寸缺失，使用 A4 默认降级:', {
+        key: previewFile.key?.slice(0, 20),
+        raw: rawContentGeom,
+        format: previewFile._fileFormat,
+        source: 'renderEffect',
+      })
+    }
     const previewGeometry = buildPreviewGeometry({
-      rawDocumentGeometry: extractContentPx(previewFile),
+      rawDocumentGeometry: safeGeom,
       requestedPaperGeometry: { orientation: paperOrient },
       userRotation: { degrees: previewRotation },
     })
@@ -1327,13 +1341,15 @@ export function usePreview({ files, settings, electronAPIRef }) {
           const pageForPreview = fObj.pageNum ?? 1
           _previewImageUrl = buildPreviewUrl(effectiveDocId, pageForPreview)
           // ── P1 frontend preview fix ──
-          // OFD 走 Render Engine Preview 直接 return，从未设置 _imageWidth/_imageHeight
+          // OFD / 图片走 Render Engine Preview 直接 return，从未设置 _imageWidth/_imageHeight
           // → fileContentPx()=null → PrintPreviewModel 无法 placement（DIAG-11 no placement）
           // → 资源图被当展示内容（二维码/错位）。此处从后端 /metadata 取「当前预览页」
           // 尺寸注入（pageForPreview 1-based → pages[] 0-based，勿盲取 pages[0] 造成多页
           // 尺寸错位）；metadata 为 px@300dpi，与 fileContentPx 的 px@dpi(PREVIEW_DPI=300)
           // 空间一致。不改 fileContentPx（其 fallback 契约本身正确）。
-          if (fmt === 'ofd') {
+          // 2026-08-20 Fix: 扩展到 image 格式——后端 parse_invoice 现已注册图片到 render_engine，
+          // 图片也需要通过 metadata 获取真实尺寸。
+          if (fmt === 'ofd' || fmt === 'image') {
             try {
               const { fetchDocumentMetadata } = await import('../services/renderDocument.js')
               const meta = await fetchDocumentMetadata(effectiveDocId)
@@ -1390,6 +1406,25 @@ export function usePreview({ files, settings, electronAPIRef }) {
             fObj._imageWidth = dims.w
             fObj._imageHeight = dims.h
           }
+        }
+
+        // 2026-08-20 Fix: 如果 blob URL 提取尺寸失败且有 docId，
+        // 尝试从后端 /metadata/{doc_id} 获取图片真实尺寸（render_engine 注册表已注册图片）。
+        // 这确保即使 fetchImageDims 因浏览器限制失败，尺寸仍可通过后端 metadata 获取。
+        if (!fObj._imageWidth && !fObj.previewWidth && fObj.docId) {
+          try {
+            const metaResp = await fetch(`${BACKEND_URL}/metadata/${encodeURIComponent(fObj.docId)}`, { signal })
+            if (metaResp.ok) {
+              const meta = await metaResp.json()
+              if (meta.success && meta.pages && meta.pages.length > 0) {
+                const p = meta.pages[0]
+                if (p.width > 0 && p.height > 0) {
+                  fObj._imageWidth = p.width
+                  fObj._imageHeight = p.height
+                }
+              }
+            }
+          } catch (_) { /* metadata 获取失败静默降级 */ }
         }
 
         return { ...fObj, _previewImageUrl, _fileFormat: fmt }
@@ -1586,8 +1621,21 @@ export function usePreview({ files, settings, electronAPIRef }) {
     const paperOrient = paper.widthMM > paper.heightMM ? 'landscape' : 'portrait'
     // Gate 2 (PreviewGeometryBuilder)：orientation-mismatch 决策统一委托 Policy，
     // 不再手算 contentOrient !== paperOrient（消除第二套算法）。值等价，缓存键不变。
+    // 2026-08-20 Fix: 对 0 尺寸做防御——当 extractContentPx 返回 0/无效尺寸时，
+    // 用 A4 默认尺寸（595x842 pt @ 72dpi）安全降级，避免 PrintAutoRotationPolicy 抛错。
+    const rawContentGeom = extractContentPx(loadedFile)
+    const safeGeom = (rawContentGeom.widthPx > 0 && rawContentGeom.heightPx > 0)
+      ? rawContentGeom
+      : { widthPx: 595, heightPx: 842 }  // A4 默认
+    if (rawContentGeom.widthPx <= 0 || rawContentGeom.heightPx <= 0) {
+      console.warn('[PREVIEW FLOW] 尺寸缺失，使用 A4 默认降级:', {
+        key: loadedFile.key?.slice(0, 20),
+        raw: rawContentGeom,
+        format: loadedFile._fileFormat,
+      })
+    }
     const previewGeometry = buildPreviewGeometry({
-      rawDocumentGeometry: extractContentPx(loadedFile),
+      rawDocumentGeometry: safeGeom,
       requestedPaperGeometry: { orientation: paperOrient },
       userRotation: { degrees: rotation },
     })

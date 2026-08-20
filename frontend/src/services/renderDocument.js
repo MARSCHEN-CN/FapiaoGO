@@ -127,7 +127,8 @@ export async function fetchDocumentMetadata(docId, options = {}) {
   }
 
   if (!resp.ok) {
-    // 404 = 该 docId 未走 render registry（PDF/Image 通常如此）→ 静默降级，保留既有注册。
+    // 404 = 该 docId 未走 render registry → 静默降级，保留既有注册。
+    // 图片/OFD 在 parse 后都会注册到 render_engine，404 说明是未知格式或后端未就绪。
     return null
   }
 
@@ -162,15 +163,17 @@ export async function fetchDocumentMetadata(docId, options = {}) {
 export async function ensureDocumentMetadata(fileObj, options = {}) {
   const { signal, silent = false } = options
   if (!fileObj || !fileObj.docId) return null
-  // P8-lite capability guard: only formats that actually hold a Render Capability
-  // (currently OFD) may query render metadata. A PDF/Image carries a SOURCE identity
-  // docId (sha256 of bytes, assigned by the parse layer for grouping/dedup) that is NOT
-  // a render-registry docId → querying it yields `404 DOC_NOT_REGISTERED`.
+  // P8-lite capability guard: formats that hold a Render Capability
+  // (OFD + Image) may query render metadata. PDF currently still routes through
+  // the legacy pdf.js Canvas path (metadata not yet registered for single-file parse).
   // Guard lives here (the fileObj-aware gateway) rather than in fetchDocumentMetadata
   // (which only receives docId) so we never let a Source Identity flow into the
   // render-capability lookup. No field migration, no docId write-chain change.
-  // See MEMORY.md P8 / P8-lite (Frozen Architecture Constraint).
-  if (fileObj.fileFormat !== 'ofd') return null
+  // See MEMORY.md P8 / P8-lite.
+  // Image fix (2026-08-20): backend now registers images in render_engine registry
+  // during /parse_invoice, so images can serve /metadata/{doc_id} with real page dimensions.
+  const RENDER_METADATA_FORMATS = ['ofd', 'image']
+  if (!RENDER_METADATA_FORMATS.includes(fileObj.fileFormat)) return null
   const meta = await fetchDocumentMetadata(fileObj.docId, { signal })
   if (!meta) return null
   return ensureDocumentFromMetadata({ ...meta, filename: fileObj.name }, { silent })
