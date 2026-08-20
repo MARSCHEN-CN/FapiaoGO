@@ -994,10 +994,24 @@ ipcMain.handle('print-merged-images', async (_event, { images, settings }) => {
       })()
     )
 
-    // 4. 走 DirectPrintHandler 打印每个 PDF（与非合并模式相同的管线）
-    //    复用其 SumatraPDF 参数构建、spawn、超时、清理逻辑
+    // 4. 复用单票通道（SumatraBackend.print → buildPrintSettings），与 print-source-file
+    //    同源，方向由 buildPrintSettings 解析。merge 内容是前端已烘焙好的合成位图
+    //    （RG-3：contentRotation=0），方向由 mergeModeContract.forcedLandscape 决定
+    //    （透传自 settings.landscape），因此显式声明 commandOrientation / commandRotate=0：
+    //    · 修复 OsLauncherBridge.decidePrintSpec 丢弃 job.orientation、导致 merge4
+    //      强制横向丢失 → 纵向纸打印 → 上下大留白的问题；
+    //    · 同时避免走 Truth resolver — 预烘焙的合成内容不应再被按原始发票方向误加 rotate
+    //      （如 {portrait,portrait,0,landscape} 会查到 rotate=180，把已摆正内容转倒）。
+    //    边距已在 batch-png-to-pdf 阶段烤入 PDF，此处不再二次处理。
+    const backend = createBackend('sumatra')
     for (let i = 0; i < pdfPaths.length; i++) {
-      const result = await DirectPrintHandler.handle(pdfPaths[i], settings)
+      const mergedSettings = {
+        ...settings,
+        commandOrientation: settings.landscape ? 'landscape' : 'portrait',
+        commandRotate: 0,
+      }
+      const target = { filePath: pdfPaths[i], printer: settings.printerName || '', fileFormat: 'pdf' }
+      const result = await backend.print(target, mergedSettings)
       if (!result.success) {
         throw new Error(`PDF ${i + 1} 打印失败: ${result.error}`)
       }
