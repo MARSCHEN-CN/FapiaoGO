@@ -169,7 +169,13 @@ export function buildPrintPreviewModel(plan, { files = [], settings = {}, curren
     if (file.docId) {
       const base = `${backendUrl}/thumbnail/${file.docId}?page=${pageIndex + 1}`
       // Commit 3 fix: 传 content_rotation 给后端，让它生成正确方向的缩略图
-      return contentRotation ? `${base}&content_rotation=${contentRotation}` : base
+      // schema=2: 一次性破浏览器/Electron `Cache-Control: immutable` 缓存——
+      // 旋转方向修复后，旧发票在 fix 前烤进的反转缩略图需经新 URL 重新拉取正确字节。
+      // 后端忽略此参数（仅作 URL 破冰），后端内存缓存由 RENDER_ENGINE_VERSION 负责失效。
+      const schemaBust = "&schema=2"
+      return contentRotation
+        ? `${base}${schemaBust}&content_rotation=${contentRotation}`
+        : `${base}${schemaBust}`
     }
     if (file.previewImage) {
       return file.previewImage
