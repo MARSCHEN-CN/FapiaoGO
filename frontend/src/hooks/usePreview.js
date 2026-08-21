@@ -1347,26 +1347,42 @@ export function usePreview({ files, settings, electronAPIRef }) {
           // 1-based Source → 1-based render locator (?page=) 是 IDENTITY，禁止 +1。
           const pageForPreview = fObj.pageNum ?? 1
           _previewImageUrl = buildPreviewUrl(effectiveDocId, pageForPreview)
-          // ── P1 frontend preview fix ──
-          // OFD / 图片走 Render Engine Preview 直接 return，从未设置 _imageWidth/_imageHeight
-          // → fileContentPx()=null → PrintPreviewModel 无法 placement（DIAG-11 no placement）
-          // → 资源图被当展示内容（二维码/错位）。此处从后端 /metadata 取「当前预览页」
-          // 尺寸注入（pageForPreview 1-based → pages[] 0-based，勿盲取 pages[0] 造成多页
-          // 尺寸错位）；metadata 为 px@300dpi，与 fileContentPx 的 px@dpi(PREVIEW_DPI=300)
-          // 空间一致。不改 fileContentPx（其 fallback 契约本身正确）。
-          // 2026-08-20 Fix: 扩展到 image 格式——后端 parse_invoice 现已注册图片到 render_engine，
-          // 图片也需要通过 metadata 获取真实尺寸。
+          // ── P1 frontend preview fix (rev: webp 实际像素为主源) ──
+          // 旧实现以 /metadata（ofd_page_dimensions PhysicalBox 启发式）为主源、webp 实际
+          // 像素仅作 fallback。但 OFD 渲染器（_OFDRenderer）会对页面施加 sourceRotation，
+          // 而 ofd_page_dimensions 的 PhysicalBox 启发式不应用 sourceRotation → metadata
+          // 报的是「源文件物理朝向」、webp 报的是「用户实际看到的朝向」。sourceRotation≠0
+          // 的 OFD（典型：物理横放、视觉纵向发票）会被错报为横 → contentPx 取错方向 →
+          // 打印预览纸面/fit 框选错 → 视觉上"没有 fit"。
+          //
+          // 与 image 那条逻辑保持一致：image/OFD 都以 webp 实际像素(fetchImageDims)为主源，
+          // /metadata 退为 fallback（仅在 webp 加载失败时使用）。这样 image/OFD 共用同一条
+          // 「以用户实际看到的像素为准」的尺寸契约，与 fileContentPx 的 px@dpi 空间一致。
+          // pageForPreview 1-based → pages[] 0-based，勿盲取 pages[0] 造成多页尺寸错位。
           if (fmt === 'ofd' || fmt === 'image') {
+            // 主源：fetchImageDims(webp 实际像素)
+            let dimsResolved = false
             try {
-              const { fetchDocumentMetadata } = await import('../services/renderDocument.js')
-              const meta = await fetchDocumentMetadata(effectiveDocId)
-              const pageDims = meta?.pages?.[pageForPreview - 1]
-              if (pageDims && pageDims.width > 0 && pageDims.height > 0) {
-                fObj._imageWidth = pageDims.width
-                fObj._imageHeight = pageDims.height
+              const dims = await fetchImageDims(_previewImageUrl, fObj.key)
+              if (dims && dims.w > 0 && dims.h > 0) {
+                fObj._imageWidth = dims.w
+                fObj._imageHeight = dims.h
+                dimsResolved = true
               }
-            } catch (_) {
-              // metadata 失败降级：尺寸保持 0，行为与修复前一致，不抛出
+            } catch (_) { /* webp 加载失败，降级到 metadata */ }
+            // fallback：/metadata（ofd_page_dimensions / 图片 PIL 像素）
+            if (!dimsResolved) {
+              try {
+                const { fetchDocumentMetadata } = await import('../services/renderDocument.js')
+                const meta = await fetchDocumentMetadata(effectiveDocId)
+                const pageDims = meta?.pages?.[pageForPreview - 1]
+                if (pageDims && pageDims.width > 0 && pageDims.height > 0) {
+                  fObj._imageWidth = pageDims.width
+                  fObj._imageHeight = pageDims.height
+                }
+              } catch (_) {
+                // metadata 失败降级：尺寸保持 0，行为与修复前一致，不抛出
+              }
             }
           }
           return { ...fObj, _previewImageUrl, _fileFormat: fmt }
