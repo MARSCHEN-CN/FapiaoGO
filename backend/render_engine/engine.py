@@ -9,7 +9,8 @@ import logging
 from typing import List, Optional, Tuple
 
 from .preset import RenderPreset, PRESETS
-from .cache import RenderCache, generate_etag, make_cache_key
+from .cache import (RenderCache, generate_etag, make_cache_key,
+                     RENDER_ENGINE_VERSION)
 from .render_spec_sig import render_spec_signature
 from .types import BBox, TextSpan
 
@@ -319,7 +320,8 @@ class RenderEngine:
         # 保持旧客户端字节级一致。
         spec_tag = f"|spec:{render_spec_signature(render_spec)}" if render_spec else ""
         cache_key = make_cache_key(doc_id, preset.name, page,
-                                   vs_hash + override_tag + spec_tag, hl_token or "")
+                                   vs_hash + override_tag + spec_tag, hl_token or "",
+                                   engine_version=RENDER_ENGINE_VERSION)
         cached = self._cache.get(cache_key)
         # ── [DIAG] Layer 1.5: 缓存层 — HIT 时不进 _render_spec_page ──
         ox = render_spec.get("placement", {}).get("offsetX", "-") if render_spec else "-"
@@ -347,6 +349,7 @@ class RenderEngine:
             preset_name=preset.name,
             view_state_hash=vs_hash + override_tag + spec_tag,
             hl_token=hl_token or "",
+            engine_version=RENDER_ENGINE_VERSION,
         )
         self._cache.put(cache_key, data, actual_fmt, etag)
         return data, actual_fmt, etag

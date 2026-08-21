@@ -23,7 +23,7 @@ import logging
 from dataclasses import dataclass
 from typing import Dict, List, Optional
 
-from .cache import make_cache_key
+from .cache import make_cache_key, RENDER_ENGINE_VERSION
 from .engine import _hash_view_state
 
 logger = logging.getLogger(__name__)
@@ -103,7 +103,7 @@ class WarmPlanner:
     def _already_ready(self, req: RenderRequest) -> bool:
         """Check whether the requested resource is already cached."""
         key = make_cache_key(req.sourceDocumentId, req.renderProfile, req.page,
-                             _EMPTY_VS_HASH)
+                             _EMPTY_VS_HASH, engine_version=RENDER_ENGINE_VERSION)
         return self._cache.get(key) is not None
 
 
@@ -121,7 +121,7 @@ def _warm_render(engine, cache, req: RenderRequest):
         # filled the cache while this warm task was queued. Use the same
         # vs_hash that engine.render() produces for empty view state.
         key = make_cache_key(req.sourceDocumentId, req.renderProfile, req.page,
-                             _EMPTY_VS_HASH)
+                             _EMPTY_VS_HASH, engine_version=RENDER_ENGINE_VERSION)
         if cache.get(key):
             logger.debug("warm_render skip (cache already filled): %s p%d",
                          req.sourceDocumentId[:12], req.page)

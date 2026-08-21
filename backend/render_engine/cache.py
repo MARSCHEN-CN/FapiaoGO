@@ -11,6 +11,14 @@ from typing import Dict, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
+# Render-engine cache schema version.
+# Bump when the RENDERED OUTPUT BYTES change for an identical request URL
+# (e.g. a rotation-direction fix) so stale in-memory entries are invalidated.
+# Flows into the cache key + ETag. MUST NOT appear in the HTTP URL — the
+# browser/Electron `Cache-Control: immutable` layer is busted separately via a
+# `?schema=` query param emitted by the frontend thumbnail URL builder.
+RENDER_ENGINE_VERSION = "2"
+
 
 @dataclass
 class CacheEntry:
@@ -101,9 +109,10 @@ class RenderCache:
 
 def generate_etag(content_hash: str, preset_name: str,
                   view_state_hash: str = "", preset_version: str = "1",
-                  hl_token: str = "") -> str:
+                  hl_token: str = "", engine_version: str = "1") -> str:
     """Deterministic ETag from all cache-key inputs."""
-    raw = f"{content_hash}|{preset_name}|{view_state_hash}|v{preset_version}|hl:{hl_token}"
+    raw = (f"{content_hash}|{preset_name}|{view_state_hash}|v{preset_version}"
+           f"|ev{engine_version}|hl:{hl_token}")
     return hashlib.md5(raw.encode()).hexdigest()[:16]
 
 
@@ -150,11 +159,14 @@ def make_cache_headers(etag: str, immutable: bool = True,
 # ────────────────────────────────────────────────────────────────────
 
 def make_cache_key(doc_id: str, preset_name: str, page: int,
-                   view_state_hash: str = "", hl_token: str = "") -> str:
+                   view_state_hash: str = "", hl_token: str = "",
+                   engine_version: str = "1") -> str:
     """Composite cache key for lookups. Keeps highlight/view-state identity in key."""
     parts = [doc_id, preset_name, str(page)]
     if view_state_hash:
         parts.append(view_state_hash)
     if hl_token:
         parts.append(f"hl:{hl_token}")
+    if engine_version:
+        parts.append(f"ev:{engine_version}")
     return "|".join(parts)
