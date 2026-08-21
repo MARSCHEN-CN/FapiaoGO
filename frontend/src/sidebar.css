@@ -669,7 +669,7 @@
 .fc-dot.failed { background: var(--red); box-shadow: 0 0 0 3px var(--red-soft); }
 .fc-dot.duplicate { background: var(--orange); box-shadow: 0 0 0 3px var(--orange-soft); }
 .fc-dot.prevyear { background: var(--year); box-shadow: 0 0 0 3px var(--year-soft); }
-.fc-dot.importhistory { background: var(--yellow); box-shadow: 0 0 0 3px var(--yellow-soft); }
+.fc-dot.importhistory { background: var(--import-history); box-shadow: 0 0 0 3px var(--import-history-soft); }
 
 .fc-row-bottom {
   display: flex;
@@ -688,9 +688,9 @@
   min-width: 0;
 }
 
-/* 重复报销：首次导入日期黄字（#ffa631） */
+/* 重复报销：首次导入日期紫色字（#9b5cc2） */
 .fc-invoice-no.fc-invoice-no-ih {
-  color: var(--yellow);
+  color: var(--import-history);
   font-weight: 600;
 }
 
@@ -1199,7 +1199,7 @@
   position: absolute;
   left: 0; top: 10px; bottom: 10px;
   width: 3px;
-  background: var(--yellow);
+  background: var(--import-history);
   border-radius: 0 3px 3px 0;
   z-index: 2;
 }
@@ -1227,7 +1227,7 @@
   white-space: nowrap;
 }
 
-.file-card-tag.tag-import-history { background: var(--yellow); color: #1f2937; }
+.file-card-tag.tag-import-history { background: var(--import-history); color: #fff; }
 .file-card-tag.tag-duplicate { background: #f59e0b; color: #fff; }
 .file-card-tag.tag-prev-year { background: var(--year); color: #fff; }
 
@@ -1581,17 +1581,17 @@
   background: rgba(255, 255, 255, 0.05);
 }
 
-/* ── 重复报销卡牌：年份配色类局部覆盖为黄色（置文件尾，两主题统一生效）── */
+/* ── 重复报销卡牌：年份配色类局部覆盖为紫色（置文件尾，两主题统一生效）── */
 .sb-stat-summary.sb-ih .sb-stat-summary-year {
-  color: var(--yellow);
+  color: var(--import-history);
 }
 .sb-seg-btn.sb-seg-btn-year.sb-ih {
-  background: linear-gradient(135deg, #ffc24d 0%, #ffa631 100%);
-  box-shadow: 0 2px 6px rgba(255, 166, 49, 0.35);
+  background: linear-gradient(135deg, #c39ae6 0%, #9b5cc2 100%);
+  box-shadow: 0 2px 6px rgba(155, 92, 194, 0.35);
 }
 .sb-seg-btn.sb-seg-btn-year.sb-ih:hover {
-  box-shadow: 0 3px 10px rgba(255, 166, 49, 0.45);
+  box-shadow: 0 3px 10px rgba(155, 92, 194, 0.45);
 }
 .sb-seg-control:has(.sb-seg-btn-year.sb-ih) .sb-seg-option input:checked + .sb-seg-toggle-track {
-  background: var(--yellow);
+  background: var(--import-history);
 }
