@@ -46,7 +46,7 @@ import { ZoomToolbar } from './components/ZoomToolbar'
 import { PageNavigator } from './components/PageNavigator'
 import { useDocument } from './hooks/useDocument'
 import { removeDocument, getRegisteredDocIds } from './stores/DocumentStore'
-import { clearActiveSession, getActiveSessionId, getSession, removeFilesFromSession, deleteInvoiceDocument, resolveDocumentInstanceKey } from './stores/ImportSessionStore'
+import { clearActiveSession, getActiveSessionId, getSession, removeFilesFromSession, deleteInvoiceDocument, deleteDocumentsByPageKeys, resolveDocumentInstanceKey } from './stores/ImportSessionStore'
 import { resolvePreviewUrl } from './utils/previewResourceResolver'
 import { prefetchPreviewUrls } from './utils/previewPrefetcher'
 import ActionBar from './components/ActionBar'
@@ -553,22 +553,21 @@ function AppContent() {
     if (livePreview && duplicateKeys.has(livePreview.key)) {
       cleanupPreviewUrl()
     }
-    // Step 4: 优先使用 deleteInvoiceDocument
+
+    // ★ 2026-08-21 Fix: 使用 deleteDocumentsByPageKeys 代替 deleteInvoiceDocument。
+    //   原因：重复发票共享相同 identityKey（同 sourceDocId + invoiceNumber），
+    //   deleteInvoiceDocument 用 findIndex 定位会找到第一个文档（A），而非要删除的副本（copy）。
+    //   deleteDocumentsByPageKeys 按 pageKey 交集精确锁定目标文档，不会误删。
     const dupSid = getActiveSessionId()
     let deletedViaDocument = false
     if (dupSid && duplicateKeys.size > 0) {
-      const session = getSession(dupSid)
-      if (session?.documents?.length) {
-        for (const doc of session.documents) {
-          const pageKeys = doc._pageKeys || []
-          if (pageKeys.some(k => duplicateKeys.has(k))) {
-            const instanceKey = resolveDocumentInstanceKey(doc)
-            const result = deleteInvoiceDocument(dupSid, instanceKey)
-            if (result.success) { result.removedPageKeys.forEach(k => duplicateKeys.add(k)); deletedViaDocument = true }
-          }
-        }
+      const result = deleteDocumentsByPageKeys(dupSid, duplicateKeys)
+      if (result.success) {
+        result.removedPageKeys.forEach(k => duplicateKeys.add(k))
+        deletedViaDocument = true
       }
     }
+
     setFiles(prev => prev.filter(fileObj => !duplicateKeys.has(fileObj.key)))
     if (!deletedViaDocument && dupSid && duplicateKeys.size > 0) {
       removeFilesFromSession(dupSid, [...duplicateKeys])
@@ -576,7 +575,7 @@ function AppContent() {
   }, [cleanupPreviewUrl])
 
   // ── 按 key 集合移除文件（共享核心：往年发票 / 重复报销 / 未来同类提醒共用）──
-  // 流程：①可选物理删源 ②预览清理 ③优先 deleteInvoiceDocument（保留文档级装配）④会话/列表移除
+  // 流程：①可选物理删源 ②预览清理 ③优先 deleteDocumentsByPageKeys（精确文档级删除）④会话/列表移除
   const removeFilesByKeys = useCallback((keys, removeSource = false, logTag = 'remove') => {
     if (!keys || keys.size === 0) return
     const liveFiles = filesRef.current
@@ -598,20 +597,17 @@ function AppContent() {
     }
     const livePreview = previewFileRef.current
     if (livePreview && keys.has(livePreview.key)) cleanupPreviewUrl()
-    // ✅ 优先使用 deleteInvoiceDocument（文档级装配：连带该文档所有页）
+
+    // ★ 2026-08-21 Fix: 使用 deleteDocumentsByPageKeys 精确删除。
+    //   与 removeDuplicateFiles 同样的 identity 冲突问题：当多个文档同 identity 时，
+    //   deleteInvoiceDocument 会误删第一个文档。deleteDocumentsByPageKeys 按 pageKey 精确匹配。
     const sid = getActiveSessionId()
     let deletedViaDocument = false
     if (sid && keys.size > 0) {
-      const session = getSession(sid)
-      if (session?.documents?.length) {
-        for (const doc of session.documents) {
-          const pageKeys = doc._pageKeys || []
-          if (pageKeys.some(k => keys.has(k))) {
-            const instanceKey = resolveDocumentInstanceKey(doc)
-            const result = deleteInvoiceDocument(sid, instanceKey)
-            if (result.success) { result.removedPageKeys.forEach(k => keys.add(k)); deletedViaDocument = true }
-          }
-        }
+      const result = deleteDocumentsByPageKeys(sid, keys)
+      if (result.success) {
+        result.removedPageKeys.forEach(k => keys.add(k))
+        deletedViaDocument = true
       }
     }
     setFiles(prev => prev.filter(fileObj => !keys.has(fileObj.key)))

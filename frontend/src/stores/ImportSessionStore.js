@@ -409,6 +409,10 @@ export function isDocumentSealed(sessionId, instanceKey) {
  *   3. 收集 _pageKeys → 从 session.files 移除关联 pages
  *   4. 从 session.documents 移除
  *
+ * 注意：当多个文档共享相同的 identityKey（如重复发票）时，
+ *       仅按 identityKey 查找会定位到第一个匹配，可能删除错误的文档。
+ *       此时应使用 deleteDocumentsByPageKeys 精确删除。
+ *
  * @param {string} sessionId
  * @param {string} instanceKey - resolveDocumentInstanceKey 锁定的实例键
  * @returns {{success: boolean, removedPageKeys: string[]}}
@@ -442,6 +446,70 @@ export function deleteInvoiceDocument(sessionId, instanceKey) {
   documentVersion++
   notify(sessionId)
   return { success: true, removedPageKeys }
+}
+
+/**
+ * 按 pageKey 集合精确删除文档（用于重复发票删除等 identity 冲突场景）。
+ *
+ * 与 deleteInvoiceDocument 的区别：
+ *   - deleteInvoiceDocument 按 identityKey 查找，当多个文档同 identity 时可能删错
+ *   - deleteDocumentsByPageKeys 按 pageKey 交集查找，精确锁定要删除的文档
+ *
+ * @param {string} sessionId
+ * @param {Set<string>} pageKeys - 要删除的 page key 集合
+ * @returns {{success: boolean, removedPageKeys: string[], deletedCount: number}}
+ */
+export function deleteDocumentsByPageKeys(sessionId, pageKeys) {
+  const session = sessions.get(sessionId)
+  if (!session || !pageKeys || pageKeys.size === 0) {
+    return { success: false, removedPageKeys: [], deletedCount: 0 }
+  }
+  session.documents = session.documents || []
+
+  const allRemovedPageKeys = []
+  let deletedCount = 0
+
+  // 从后往前遍历，splice 不影响后面的索引
+  for (let i = session.documents.length - 1; i >= 0; i--) {
+    const doc = session.documents[i]
+    const docPageKeys = new Set(doc._pageKeys || [])
+    let hasOverlap = false
+    for (const pk of pageKeys) {
+      if (docPageKeys.has(pk)) { hasOverlap = true; break }
+    }
+    if (!hasOverlap) continue
+
+    // Guard 检查
+    try {
+      assertCanDeleteDocument(doc)
+    } catch (e) {
+      console.warn('[deleteDocumentsByPageKeys] guard 拒绝:', e.message)
+      continue
+    }
+
+    // 软删除
+    doc.lifecycle = Lifecycle.DELETED
+    const docRemovedKeys = Array.isArray(doc._pageKeys) ? [...doc._pageKeys] : []
+    allRemovedPageKeys.push(...docRemovedKeys)
+
+    // 从 session.files 移除
+    if (docRemovedKeys.length > 0) {
+      const keySet = new Set(docRemovedKeys)
+      session.files = session.files.filter(f => !keySet.has(f.key))
+    }
+
+    // 从 session.documents 移除
+    session.documents.splice(i, 1)
+    deletedCount++
+  }
+
+  if (allRemovedPageKeys.length > 0) {
+    session.progress.total = session.files.length
+    documentVersion++
+    notify(sessionId)
+  }
+
+  return { success: deletedCount > 0, removedPageKeys: allRemovedPageKeys, deletedCount }
 }
 
 /**
