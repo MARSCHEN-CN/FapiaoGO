@@ -42,7 +42,9 @@ export function resolvePreviewUrl(page, docId, fileCtx = null) {
   // renderPage 优先：物理文件内的真实页码（1-based，后端 page_index）。
   const effectiveDocId = page?.renderDocId || docId
   const pageNum = page?.renderPage || (page?.index + 1)
-  return `${BACKEND_URL}/preview/${effectiveDocId}?page=${pageNum}`
+  // schema=2: 破浏览器/Electron Cache-Control: immutable 缓存（与 PrintPreviewModel.getThumbnailUrl 同构）。
+  // 后端忽略此参数；后端内存缓存由 RENDER_ENGINE_VERSION 失效。
+  return `${BACKEND_URL}/preview/${effectiveDocId}?page=${pageNum}&schema=2`
 }
 
 /**
@@ -75,7 +77,8 @@ export function resolvePrintUrl(page, docId) {
 export function resolveThumbnailUrl(page, docId) {
   const effectiveDocId = page?.renderDocId || docId
   const pageNum = page?.renderPage || (page?.index + 1)
-  return `${BACKEND_URL}/thumbnail/${effectiveDocId}?page=${pageNum}`
+  // schema=2: 破浏览器/Electron Cache-Control: immutable 缓存（与 getThumbnailUrl 同构）。
+  return `${BACKEND_URL}/thumbnail/${effectiveDocId}?page=${pageNum}&schema=2`
 }
 
 /**

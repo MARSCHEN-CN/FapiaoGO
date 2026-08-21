@@ -66,6 +66,10 @@ export const IMPORT_CHUNK_SIZE = 100
 export const buildPreviewUrl = (docId, page = 1, vsHash = '') => {
   let url = `${BACKEND_URL}/preview/${docId}?page=${page}`
   if (vsHash) url += `&vs=${vsHash}`
+  // schema=2: 一次性破浏览器/Electron `Cache-Control: immutable` 缓存。
+  // 旋转方向修复后，旧发票在 fix 前烤进的反转预览需经新 URL 重新拉取正确字节。
+  // 后端忽略此参数（仅作 URL 破冰），后端内存缓存由 RENDER_ENGINE_VERSION 负责失效。
+  url += `&schema=2`
   return url
 }
 
