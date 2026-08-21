@@ -19,7 +19,7 @@ import { fileContentPx } from '../print/PrintPreviewModel'
 import { renderMergeFinalArtifact, loadMergePrintItems, getMergeArtifactInputSignature } from '../print/mergeFinalArtifact'
 import { resolveMergeModeContract } from '../print/mergeModeContract'
 import { createGenerationGuard } from '../print/mergeGenerationGuard'
-import { fetchPrintRaster } from '../utils/printAdapter'
+import { fetchPrintRaster, buildPrintJobItem } from '../utils/printAdapter'
 // A1/A1.5：已证等价的 Plan 事实来源 + 影子比较 helper（Commit 2 source / Commit 3 merge 分支消费）
 import { buildPrintExecutionPlan, createPrintPlanInput } from '../print/buildPrintExecutionPlan'
 // Phase 3.5 Preview Skeleton：Plan → 打印预览描述（纯函数，供 PrintConfirmModal 消费）
@@ -200,9 +200,60 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
           return null
         }
       } else if (isImageLikeFormat(f.fileFormat)) {
-        // IMAGE + OFD 统一加载：获取图片 blob → 创建 blob URL → push items
+        // ── OFD 多页：经 buildPrintJobItem().pages 逐页取栅格（13-B.5.1a 契约，823d99c 误删恢复）──
+        // VirtualImageSource 层能力：OFD 是 1 个 document-level fileObj + N 个 metadata pages，
+        // 必须把 document pages materialize 成 N 个物理页 buffer，而非只取第 1 页。
+        if (f.fileFormat === 'ofd' && f.docId) {
+          const job = buildPrintJobItem(f)
+          const pages = job.pages || []
+          if (pages.length > 0) {
+            const { renderMultipleItemsToCanvas } = await getPrintRenderers()
+            const buffers = []
+            for (const page of pages) {
+              let blob = null
+              try {
+                blob = await fetchPrintRaster(job.docId, page.index + 1)
+              } catch (e) {
+                console.warn('[usePrint] OFD 逐页栅格获取失败 page=%d:', page.index + 1, job.docId, e?.message)
+              }
+              if (!blob && f.previewImage) {
+                blob = previewImageToBlob(f.previewImage)
+                console.warn('[usePrint] OFD 第 %d 页使用 previewImage 兜底（旧 session 无 docId）:', page.index + 1, f.name)
+              }
+              if (!blob) {
+                console.error('[usePrint] OFD 第 %d 页无栅格且无兜底，无法打印:', page.index + 1, f.name)
+                return null
+              }
+              const blobUrl = createAndTrackBlobUrl(blob, localBlobUrls)
+              const pageItem = { ...f, _previewImageUrl: blobUrl }
+              const canvas = await renderMultipleItemsToCanvas(
+                [pageItem],
+                settings.paperSize || 'A4',
+                PREVIEW_DPI,
+                settings.landscape,
+                { [f.key]: rotation },  // D-B: 文件级旋转整文件共用，不引入页面级旋转
+                1,  // slotCount = 1（单页）
+                false,  // ✅ isPrint = false（与预览保持一致）
+                false,  // showSafeMargin
+                { strategy: 'vertical', customPaper: settings.customPaper },
+              )
+              if (!canvas) {
+                console.warn('[usePrint] OFD 第 %d 页渲染失败:', page.index + 1, f.name)
+                return null
+              }
+              const data = await canvasToUint8Array(canvas)
+              if (data) buffers.push(data)
+            }
+            if (buffers.length === 0) return null
+            // data 为页 buffer 数组：runMergedPrintTasks 展开为 N 张物理页
+            return { key: f.key, name: f.name, data: buffers, printPath: f.printPath }
+          }
+          // D-E: docId 存在但 Document 缺失 → pages 为空 → 降级单页，显式记录便于定位
+          console.debug('[usePrint] OFD print page identity unavailable, fallback single page:', f.name, f.docId)
+        }
+        // IMAGE + OFD 单页兜底：获取图片 blob → 创建 blob URL → push items
         // OFD: 通过 backend fetchPrintRaster 栅格化获取
-        // Image: 通过 read-file 直接读取
+        // Image: 通过 read-file 直接读取（保留原图分辨率）
         let blob = null
         if (f.fileFormat === 'ofd') {
           if (f.docId) {
