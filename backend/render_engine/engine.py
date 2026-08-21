@@ -689,17 +689,16 @@ class RenderEngine:
         page = pdf[page_idx]
 
         # --- zoom / rotation ---
-        # ⚠️ 旋转方向映射：前端 rotation 为顺时针(CW)，fitz.prerotate 正角度为逆时针(CCW)
-        #   prerotate(90) = CCW 90°，prerotate(270) = CW 90°
-        #   映射: 0→0, 90→270, 180→180, 270→90
+        # ⚠️ 回归修复（回退 4f83b8d）：fitz.prerotate 正角度实测为顺时针(CW)，
+        #   content_rotation 与矩阵角度 1:1 直通即可保持正确方向（90→右, 270→左）。
+        #   此前 {90:270,270:90} 映射在无镜像补偿的 /thumbnail 端点下造成 90/270 反转。
         zoom = preset.dpi / PDF_DPI
         rotation = vs.get("rotation", 0) % 360
 
         # Build transform matrix with rotation and zoom
         mat = fitz.Matrix(zoom, zoom)
         if rotation:
-            _pre_map = {90: 270, 180: 180, 270: 90}
-            mat.prerotate(_pre_map.get(rotation, 0))
+            mat.prerotate(rotation)
 
         # --- render to pixmap ---
         pix = page.get_pixmap(matrix=mat, alpha=False)
@@ -737,16 +736,14 @@ class RenderEngine:
 
         try:
             # --- zoom / rotation ---
-            # ⚠️ 旋转方向映射（经实测校准）：
-            #   前端 rotation 为顺时针(CW)规范，fitz.prerotate 正角度为逆时针(CCW)
-            #   prerotate(90) = CCW 90°，prerotate(270) = CW 90°
-            #   故映射: 0→0, 90→270, 180→180, 270→90
+            # ⚠️ 回归修复（回退 4f83b8d）：fitz.prerotate 正角度实测为 CW，
+            #   content_rotation 与矩阵角度 1:1 直通即可（90→右, 270→左）。
+            #   此前 {90:270,270:90} 映射在 /thumbnail 端点下造成 90/270 反转。
             zoom = preset.dpi / 72.0
             rotation = vs.get("rotation", 0) % 360
             mat = fitz.Matrix(zoom, zoom)
             if rotation:
-                _pre_map = {90: 270, 180: 180, 270: 90}
-                mat.prerotate(_pre_map.get(rotation, 0))
+                mat.prerotate(rotation)
             pix = img_doc[0].get_pixmap(matrix=mat)
         finally:
             img_doc.close()
