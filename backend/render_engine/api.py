@@ -335,73 +335,82 @@ def print_pdf(doc_id: str):
 
     rotation = effective_rotation
 
-    # ── 3. Render at 200 dpi (print preset), output PNG for fitz ──
+    # ── R3 (OFD R1 配套): 多页文档页数 ──
+    # PDF 已被上面拒绝（走 Sumatra 轨）；adapter 文档（OFD）用 adapter.page_count()
+    # （adapter 是 per-page render 的权威，registry 对 OFD 不伪造 page_count），
+    # image 恒 1 页。前端 printImageAsPdf 保持 API 不变（GET /print_pdf/{docId}）。
+    page_count = doc.adapter.page_count() if doc.adapter is not None else 1
+
+    # ── 3. Render pages at 200 dpi (print preset), output PNG for fitz ──
     # Use override_params to request PNG format directly, avoiding
     # the webp→png roundtrip (fitz insert_image doesn't support webp).
+    # engine.render page 参数为 1-based；adapter 内部 0-based（max(0, page-1) 映射）。
     vs = {"rotation": rotation}
-    try:
-        render_data, render_fmt, _etag = engine.render(
-            doc_id=doc_id,
-            preset_name="print",
-            view_state=vs,
-            page=1,
-            override_params={"fmt": "png"},
-        )
-    except DocumentNotRegistered:
-        return jsonify({"success": False, "error": "DOC_NOT_REGISTERED", "doc_id": doc_id}), 404
-    except Exception as e:
-        logger.exception("print_pdf: render failed for %s", doc_id[:12])
-        return jsonify({"success": False, "error": f"render failed: {e}"}), 500
-
-    # ── 4. Get rendered image dimensions via PIL ───────────────
-    try:
-        from PIL import Image
-        with Image.open(io.BytesIO(render_data)) as rendered_img:
-            rendered_w, rendered_h = rendered_img.size
-    except Exception:
-        logger.warning("print_pdf: cannot read rendered image dims, using A4 defaults")
-        rendered_w, rendered_h = 1654, 2339  # A4 @ 200dpi fallback
-
-    # ── 5. Determine A4 page orientation from RENDERED dimensions ──
-    # ⚠️ 关键修复：不使用 rotation 值判断方向，而是使用实际渲染后的图像尺寸。
-    # 因为 _render_image_page 已经用 _apply_margins 将旋转后的内容放在 A4 画布上，
-    # 渲染输出的宽高比 = 内容旋转后的实际方向。
-    # 旧逻辑 rotation in (90, 270) 仅对纵向图片正确，对横向图片完全错误。
-    is_landscape = rendered_w > rendered_h
     A4_PT = {
         "portrait": (595.0, 842.0),
         "landscape": (842.0, 595.0),
     }
-    page_w, page_h = A4_PT["landscape"] if is_landscape else A4_PT["portrait"]
-
-    # ── 6. Fit rendered image to page (contain, centered) ──────
-    # Convert rendered pixel dimensions to PDF points (72 dpi)
-    # The render preset is 200 dpi, so: points = pixels * 72/200
+    # 渲染 preset 为 200 dpi → PDF 点 = 像素 * 72/200
     RENDER_DPI = 200.0
     SCALE_TO_PT = 72.0 / RENDER_DPI
-    img_w_pt = rendered_w * SCALE_TO_PT
-    img_h_pt = rendered_h * SCALE_TO_PT
 
-    # Contain fit: scale factor to fit within page
-    # 注意：_render_image_page 已经通过 _apply_margins 在 A4 画布上渲染，
-    # 所以渲染输出通常已经接近 A4 尺寸。fit_ratio 应接近 1.0。
-    fit_ratio = min(page_w / img_w_pt, page_h / img_h_pt, 1.0)
-    fitted_w = img_w_pt * fit_ratio
-    fitted_h = img_h_pt * fit_ratio
-
-    x_offset = (page_w - fitted_w) / 2.0
-    y_offset = (page_h - fitted_h) / 2.0
-
-    # ── 7. Create PDF (render_data is already PNG, safe for fitz) ─
     try:
         import fitz
 
         pdf_doc = fitz.open()
-        pdf_page = pdf_doc.new_page(width=page_w, height=page_h)
-        pdf_page.insert_image(
-            fitz.Rect(x_offset, y_offset, x_offset + fitted_w, y_offset + fitted_h),
-            stream=render_data,
-        )
+        for page_no in range(1, page_count + 1):
+            try:
+                render_data, render_fmt, _etag = engine.render(
+                    doc_id=doc_id,
+                    preset_name="print",
+                    view_state=vs,
+                    page=page_no,
+                    override_params={"fmt": "png"},
+                )
+            except DocumentNotRegistered:
+                return jsonify({"success": False, "error": "DOC_NOT_REGISTERED", "doc_id": doc_id}), 404
+            except Exception as e:
+                logger.exception("print_pdf: render failed for %s page=%d", doc_id[:12], page_no)
+                return jsonify({"success": False, "error": f"render failed: {e}"}), 500
+            if not render_data:
+                logger.warning("print_pdf: page %d render empty, skip", page_no)
+                continue
+
+            # ── 4. Get rendered image dimensions via PIL ───────────────
+            try:
+                from PIL import Image
+                with Image.open(io.BytesIO(render_data)) as rendered_img:
+                    rendered_w, rendered_h = rendered_img.size
+            except Exception:
+                logger.warning("print_pdf: cannot read rendered image dims (page %d), using A4 defaults", page_no)
+                rendered_w, rendered_h = 1654, 2339  # A4 @ 200dpi fallback
+
+            # ── 5. Determine A4 page orientation from RENDERED dimensions ──
+            # ⚠️ 关键修复：不使用 rotation 值判断方向，而是使用实际渲染后的图像尺寸。
+            # 因为渲染路径已把旋转后的内容放在 A4 画布上，输出宽高比 = 内容旋转后的实际方向。
+            # 多页场景：每页按自身渲染尺寸定方向（同票多页通常一致，混合方向也逐页正确）。
+            is_landscape = rendered_w > rendered_h
+            page_w, page_h = A4_PT["landscape"] if is_landscape else A4_PT["portrait"]
+
+            # ── 6. Fit rendered image to page (contain, centered) ──────
+            img_w_pt = rendered_w * SCALE_TO_PT
+            img_h_pt = rendered_h * SCALE_TO_PT
+            fit_ratio = min(page_w / img_w_pt, page_h / img_h_pt, 1.0)
+            fitted_w = img_w_pt * fit_ratio
+            fitted_h = img_h_pt * fit_ratio
+            x_offset = (page_w - fitted_w) / 2.0
+            y_offset = (page_h - fitted_h) / 2.0
+
+            # ── 7. Create PDF (render_data is already PNG, safe for fitz) ─
+            pdf_page = pdf_doc.new_page(width=page_w, height=page_h)
+            pdf_page.insert_image(
+                fitz.Rect(x_offset, y_offset, x_offset + fitted_w, y_offset + fitted_h),
+                stream=render_data,
+            )
+
+        if pdf_doc.page_count == 0:
+            pdf_doc.close()
+            return jsonify({"success": False, "error": "PRINT_PDF_EMPTY", "reason": "no page rendered"}), 500
 
         output = io.BytesIO()
         pdf_doc.save(output, incremental=False, deflate=True)
