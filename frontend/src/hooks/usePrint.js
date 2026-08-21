@@ -569,6 +569,13 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
                 console.log('[usePrint dims loaded] %s fileKey=%s size=%dx%d',
                   f.fileFormat?.toUpperCase() || 'IMAGE', f.key?.slice(-20), f._imageWidth, f._imageHeight)
               }
+              // R2 (OFD R1 配套): metadata 驱动把真实页数 materialize 到 fileObj，
+              // 使 PrintPreviewModel 多页展开（pageCount 分支）与 DocumentStore 一致。
+              // 与 _imageWidth 同构：isImageLikeFormat 统一分支，无 OFD 特判；
+              // 单页 → 1（行为不变），多页 OFD → N（修复预览塌缩为第 1 页）。
+              if (Array.isArray(meta?.pages) && meta.pages.length >= 1) {
+                f.pageCount = meta.pages.length
+              }
             } catch (_) {}
           }
         } catch (_) {}
