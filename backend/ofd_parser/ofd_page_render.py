@@ -114,13 +114,27 @@ def _page_physical_box(content_clean):
 
 
 def _page_pixel_dims(page_w, page_h, dpi):
-    """复刻 _OFDRenderer._init_dimensions，保证 metadata 与渲染像素一致。"""
+    """复刻 _OFDRenderer._init_dimensions，保证 metadata 与渲染像素一致。
+
+    Rasterization Output Contract（RASTER-1）：同一 source page 的所有 preset
+    输出必须保持同一 aspect ratio / orientation——只允许 dpi/pixel 不同。
+    修复前独立 clamp（max(400)/max(560) 不同下限）在低 dpi 下破坏宽高比：
+    小物理盒（如 211.5×182.36mm @48dpi → 400×345）被 clamp 成 400×560（方向反转，
+    横变纵），导致 /thumbnail 与 /preview 方向不一致（打印预览不 fit 根因）。
+    修复为等比例 clamp：任一维低于下限时按同一 factor 整体放大，保方向保比例。
+    """
     unit_to_mm = 0.01 if page_w > 500 else 1.0
     scale = dpi / 25.4
     w_mm = page_w * unit_to_mm
     h_mm = page_h * unit_to_mm
-    img_w = max(400, round(w_mm * scale))
-    img_h = max(560, round(h_mm * scale))
+    img_w = round(w_mm * scale)
+    img_h = round(h_mm * scale)
+    # 等比例下限（min 语义：最小可读尺寸；factor 保持 aspect）
+    MIN_W, MIN_H = 400, 560
+    if img_w < MIN_W or img_h < MIN_H:
+        factor = max(MIN_W / img_w, MIN_H / img_h)
+        img_w = round(img_w * factor)
+        img_h = round(img_h * factor)
     return img_w, img_h
 
 

@@ -202,8 +202,24 @@ class _OFDRenderer:
         self.unit_to_mm = 0.01 if page_w > 500 else 1.0
         page_w_mm = page_w * self.unit_to_mm
         page_h_mm = page_h * self.unit_to_mm
-        self.img_w = max(400, round(page_w_mm * self.scale))
-        self.img_h = max(560, round(page_h_mm * self.scale))
+        self.img_w, self.img_h = self._clamp_min_dims(
+            round(page_w_mm * self.scale), round(page_h_mm * self.scale))
+
+    @staticmethod
+    def _clamp_min_dims(img_w, img_h, min_w=400, min_h=560):
+        """等比例下限 clamp（RASTER-1：保持 aspect/orientation）。
+
+        修复前独立 clamp（max(400)/max(560) 不同下限）在低 dpi 下破坏宽高比：
+        小物理盒（211.5×182.36mm @48dpi → 400×345）被 clamp 成 400×560（方向反转），
+        /thumbnail 与 /preview 方向不一致 → 打印预览 contain 后不 fit。
+        修复：任一维低于下限时按同一 factor 整体放大（min 语义：最小可读尺寸）。
+        与 ofd_page_render._page_pixel_dims 保持一致（metadata 与渲染像素对齐）。
+        """
+        if img_w < min_w or img_h < min_h:
+            factor = max(min_w / img_w, min_h / img_h)
+            img_w = round(img_w * factor)
+            img_h = round(img_h * factor)
+        return img_w, img_h
 
     def _init_dimensions_with_content(self, page_w, page_h, content_w, content_h):
         """当 Content.xml 使用独立坐标系（与 Document.xml 页面尺寸不匹配）时，
