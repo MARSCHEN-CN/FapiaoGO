@@ -59,6 +59,18 @@ export function getFileFormat(filename) {
 }
 
 /**
+ * OFD 在后端已栅格化为 WebP（OFDAdapter.render → webp），下游展示/预览/打印
+ * 与扫描图片字节级同构，应始终按「图片一类」处理。此谓词把「OFD 是 image 一类」
+ * 的判定收敛到单点，消除散落在三大管线里的 `=== 'ofd'` 字面量，使后续图片管线
+ * 的改动自动覆盖 OFD（"彻底走图片管线"的契约锚点）。
+ * ⚠️ 仅用于「OFD 与 image 等价」的分组判定；路由闸门（无光栅文件需走 render_engine）、
+ * 多页语义（OFD 可 N 页）、转换器（OFDAdapter）等必要差异不在此谓词范围。
+ */
+export function isImageLikeFormat(fmt) {
+  return fmt === 'image' || fmt === 'ofd'
+}
+
+/**
  * 根据文件扩展名获取 MIME 类型
  * @param {string} ext - 小写扩展名（不含点号）
  * @returns {string} MIME 类型字符串，未知扩展名默认返回 'application/pdf'

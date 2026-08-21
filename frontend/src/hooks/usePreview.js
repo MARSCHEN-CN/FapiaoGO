@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useRef, useMemo, useLayoutEffect } from 'react'
 import { PREVIEW_DPI, GLOBAL_PREVIEW_DPI, ZOOM_STEPS, USE_RENDER_ENGINE_PREVIEW, buildPreviewUrl, BACKEND_URL } from '../config'
 import {
-  getFileFormat, getExtension, isMergeMode, getMergePair,
+  getFileFormat, getExtension, isMergeMode, getMergePair, isImageLikeFormat,
 } from '../utils'
 import { detectDocumentOrientation } from '../utils/detectOrientation'
 import { getForcedLandscape } from '../utils/mergeMode'
@@ -674,8 +674,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
       skipRenderRef.current = false
     }
 
-    const isImageOrOfd =
-      previewFile._fileFormat === 'image' || previewFile._fileFormat === 'ofd'
+    const isImageOrOfd = isImageLikeFormat(previewFile._fileFormat)
 
     const hasRenderEngineUrl = !!reUrl
     if (!isImageOrOfd && !previewFile._pdfData && !mergePair && !hasRenderEngineUrl) {
@@ -1333,7 +1332,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
     let _pdfData = null
 
     try {
-      if (fmt === 'image' || fmt === 'ofd') {
+      if (isImageLikeFormat(fmt)) {
         // ✅ Render Engine Preview：优先走后端渲染 URL
         if (USE_RENDER_ENGINE_PREVIEW && fObj.docId) {
           // 多页 PDF 拆页身份判定：
@@ -1359,7 +1358,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
           // /metadata 退为 fallback（仅在 webp 加载失败时使用）。这样 image/OFD 共用同一条
           // 「以用户实际看到的像素为准」的尺寸契约，与 fileContentPx 的 px@dpi 空间一致。
           // pageForPreview 1-based → pages[] 0-based，勿盲取 pages[0] 造成多页尺寸错位。
-          if (fmt === 'ofd' || fmt === 'image') {
+          if (isImageLikeFormat(fmt)) {
             // 主源：fetchImageDims(webp 实际像素)
             let dimsResolved = false
             try {

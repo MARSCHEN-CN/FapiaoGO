@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import { PREVIEW_DPI, PRINT_PIPELINE, PRINT_SETTINGS_DEFAULTS, BACKEND_URL } from '../config'
 import {
-  isMergeMode, previewImageToBlob, getExtension,
+  isMergeMode, previewImageToBlob, getExtension, isImageLikeFormat,
 } from '../utils'
 import { getForcedLandscape } from '../utils/mergeMode'
 import { renderPrintContent } from '../utils/printRenderer'
@@ -199,7 +199,7 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
           console.error('[usePrint] 读取 PDF 文件失败:', f.printPath)
           return null
         }
-      } else if (f.fileFormat === 'ofd' || f.fileFormat === 'image') {
+      } else if (isImageLikeFormat(f.fileFormat)) {
         // IMAGE + OFD 统一加载：获取图片 blob → 创建 blob URL → push items
         // OFD: 通过 backend fetchPrintRaster 栅格化获取
         // Image: 通过 read-file 直接读取
@@ -475,7 +475,7 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
       && !(f._pdfPageWidth > 0 && f._pdfPageHeight > 0)
     )
     const imgFiles = files.filter(f =>
-      f && f.docId && (f.fileFormat === 'image' || f.fileFormat === 'ofd')
+      f && f.docId && isImageLikeFormat(f.fileFormat)
       && !(f._imageWidth > 0 && f._imageHeight > 0)
     )
     if (pdfFiles.length === 0 && imgFiles.length === 0) return
@@ -887,7 +887,7 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
     // 原因：SumatraPDF 原生直送图片文件时不做方向判断，横向发票可能按竖向打印。
     // 通过后端 /print_pdf 端点，用 PrintAutoRotationPolicy 决定旋转后嵌入 A4 PDF，
     // 再将 PDF 直送 SumatraPDF，获得与 PDF 管线一致的旋转行为。
-    if (f.fileFormat === 'image' || f.fileFormat === 'ofd') {
+    if (isImageLikeFormat(f.fileFormat)) {
       const userSettings = { ...settings, ...(printSettings || {}) }
       const contentRotation = fileRotations[f.key] || 0
       const r = await printImageAsPdf(f, ipc, userSettings, contentRotation)
