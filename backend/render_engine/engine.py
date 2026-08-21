@@ -553,9 +553,6 @@ class RenderEngine:
         ox = int(round(float(spec["placement"]["offsetX"])))
         oy = int(round(float(spec["placement"]["offsetY"])))
         # ── [DIAG] Layer 2: 真正进入渲染（只有 cache MISS 才会走到这里）──
-        print(f"[RENDER] ox={ox} oy={oy} scale={scale}", flush=True)
-        print(f"[SPEC] margin={spec.get('margin',{})} placement={{scale:{scale}, ox:{ox}, oy:{oy}}} "
-              f"paperLandscape={spec.get('paperLandscape')} contentRotation={spec.get('contentRotation')}", flush=True)
         # ── [Slice 1.2B] RenderCommand 纯执行契约 ──
         # Renderer 只消费 spec 中的 placement(scale/offset) 与 contentRotation，**绝不重算**
         # fit / center / landscape，也绝不把内容旋转「推导」自 paperLandscape 或 legacy rotation。
@@ -595,9 +592,6 @@ class RenderEngine:
             if page_idx >= len(pdf):
                 raise ValueError(f"Page {page_idx + 1} out of range ({len(pdf)} pages)")
             page = pdf[page_idx]
-            # ── [DIAG-ROT] TEMP 临时诊断（验证后删除）──
-            print(f"[DIAG-ROT] docId={spec.get('docId')} page={page_idx + 1} "
-                  f"PDF mediabox={page.mediabox.width:.1f}x{page.mediabox.height:.1f} /Rotate={page.rotation}", flush=True)
             # 🆕 Slice 1.2B：内容按 contentRotation 经 prerotate 旋转（RenderCommand 消费），
             # 缩放仅 placement.scale，不重算 fit。placement 已在 rotatedBounds 上算好（见 Factory）。
             mat = fitz.Matrix(scale, scale)
@@ -626,12 +620,6 @@ class RenderEngine:
         if gray:
             pix = _apply_grayscale(pix)
 
-        # ── [DIAG-ROT] TEMP 临时诊断：矩阵与栅格结果（验证后删除）──
-        print(f"[DIAG-ROT] docId={spec.get('docId')} page={page_idx + 1} cr={cr} _pre={_pre} "
-              f"paperLandscape={paper_landscape} scale={scale} "
-              f"mat=({mat.a:.4f},{mat.b:.4f},{mat.c:.4f},{mat.d:.4f},{mat.e:.4f},{mat.f:.4f}) "
-              f"pix={pix.width}x{pix.height}", flush=True)
-
         # 白画布 + 偏移粘贴（无 fit / 无 center；offset 已是最终位置）。
         # 防御：旋转/取整可能让内容 pixmap 比 spec.paper 大 1px（fitz 取整边界），
         # 若粘贴越界，fitz 会静默输出空白。故画布以 spec.paper 为基准，
@@ -646,13 +634,6 @@ class RenderEngine:
         canvas = fitz.Pixmap(fitz.csRGB if pix.n >= 3 else fitz.csGRAY,
                              fitz.IRect(0, 0, canvas_w, canvas_h))
         canvas.clear_with(255)
-        # ── [DIAG-ROT] TEMP 临时诊断：content 中心 vs canvas 中心（验证宽高比相关错位）──
-        ccx = ox + pix.width / 2.0
-        ccy = oy + pix.height / 2.0
-        print(f"[DIAG-ROT] paste docId={spec.get('docId')} page={page_idx + 1} cr={cr} "
-              f"ox={ox} oy={oy} pix={pix.width}x{pix.height} canvas={canvas_w}x{canvas_h} "
-              f"content_center=({ccx:.1f},{ccy:.1f}) canvas_center=({canvas_w/2:.1f},{canvas_h/2:.1f}) "
-              f"delta=({ccx - canvas_w/2:+.1f},{ccy - canvas_h/2:+.1f})", flush=True)
         if pix.n == canvas.n:
             pix_mv = pix.samples_mv
             canvas_mv = canvas.samples_mv
