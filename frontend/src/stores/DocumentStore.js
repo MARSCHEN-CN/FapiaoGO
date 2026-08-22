@@ -148,9 +148,13 @@ export function getDocument(docId) {
  *   用于 hydration 等大批量路径，避免每文件一次通知。
  * @param {string} [instanceId=''] - IS-4.2：文档实例身份。提供时存储键优先用它
  *   （instanceId || docId），使同内容 A/B 落入不同键；缺省回退 docId，行为不变。
+ * @param {string} [renderDocId] - 渲染身份（物理后端 docId）。提供时透传至 page.renderDocId，
+ *   使 /preview/{renderDocId} 命中后端资源；缺省时 page.renderDocId 回退到 docId（逻辑身份），行为不变。
+ *   仅 fallback 路径（useFileOps !hasAssembledDocs）显式传入物理 docId，修复「实例键混用导致预览 404」回归；
+ *   assembly / preview 等其它调用方不传，不受影响。
  * @returns {import('../models/InvoiceDocument').InvoiceDocument|null}
  */
-export function ensureDocumentFromFileObj(fileObj, siblings = null, options = {}, instanceId = '', invoiceDocumentId = '') {
+export function ensureDocumentFromFileObj(fileObj, siblings = null, options = {}, instanceId = '', invoiceDocumentId = '', renderDocId = undefined) {
   const { silent = false } = options
   if (!fileObj?.docId) return null
 
@@ -220,6 +224,7 @@ export function ensureDocumentFromFileObj(fileObj, siblings = null, options = {}
       width: prev?.width || 0,
       height: prev?.height || 0,
       sourceRotation: prev?.sourceRotation || 0,
+      renderDocId,
       renderPage,
     })
   })

@@ -108,3 +108,25 @@ test('确保：metadata 缺维时回退保留既有真实尺寸（防御性）',
   assert.equal(doc.pages[0].width, 1000, '缺维应回退保留既有真实尺寸')
   assert.equal(doc.pages[0].height, 800)
 })
+
+// ── Patch 1 回归：fallback 页面 renderDocId 透传（修复实例键混用导致 /preview 404）──
+test('Patch 1: ensureDocumentFromFileObj 透传 renderDocId 至 page.renderDocId', () => {
+  clearAllDocuments()
+  // 逻辑身份 docId = 实例键（fileObj.key），渲染身份 renderDocId = 物理后端 docId
+  const fileObj = { key: 'A.pdf_1724', docId: 'A.pdf_1724', pageNum: 1 }
+  const physical = 'PHYS_HASH_001'
+  const doc = ensureDocumentFromFileObj(fileObj, null, {}, 'I1', 'INV_A', physical)
+  assert.ok(doc)
+  assert.equal(doc.docId, 'A.pdf_1724', 'doc.docId 保持逻辑实例键（E1.1）')
+  // 页面模型不携带 docId 字段，渲染身份只经 renderDocId 表达
+  assert.equal(doc.pages[0].renderDocId, physical, 'page.renderDocId 应为物理后端 docId')
+  assert.notEqual(doc.pages[0].renderDocId, 'A.pdf_1724', 'renderDocId 不可等于实例键（否则 /preview 404）')
+})
+
+test('Patch 1: 不传 renderDocId 时 page.renderDocId 回退到 docId（行为不变，零回归）', () => {
+  clearAllDocuments()
+  const fileObj = { key: 'B.pdf', docId: 'HASH_B', pageNum: 1 }
+  const doc = ensureDocumentFromFileObj(fileObj, null, {}, '', 'INV_B')
+  assert.ok(doc)
+  assert.equal(doc.pages[0].renderDocId, 'HASH_B', '未传 renderDocId 时回退到 docId')
+})

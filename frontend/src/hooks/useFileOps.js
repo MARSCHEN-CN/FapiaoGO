@@ -1010,7 +1010,9 @@ export function useFileOps({ setFiles, settings, electronAPIRef }) {
                       fileKey: fileObj.key || '',
                     })
                   const prev = getDocument({ invoiceDocumentId: lookupInvoiceDocId, instanceId: fileObj.instanceId, docId: effectiveDocId })
-                  const doc = ensureDocumentFromFileObj(docFileObj, readyFiles, { silent: true }, fileObj.instanceId, lookupInvoiceDocId)
+                  // Patch 1: 第 6 参 renderDocId 显式传物理后端 docId（item.docId||fileObj.docId），
+                  // fallback 页面 page.renderDocId 命中 /preview 资源身份；doc.docId 仍保持 fileObj.key（逻辑实例键，E1.1）。
+                  const doc = ensureDocumentFromFileObj(docFileObj, readyFiles, { silent: true }, fileObj.instanceId, lookupInvoiceDocId, item?.docId || fileObj.docId)
                   if (doc) {
                     // 同步 invoiceDocumentId 到 fileObj，便于后续查找
                     if (!fileObj.invoiceDocumentId && doc.invoiceDocumentId) {
