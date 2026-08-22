@@ -441,25 +441,37 @@ function AppContent() {
   // 不能用 displayFiles（搜索过滤后）。搜索无结果时 displayFiles 为空，
   // 会误把所有已注册文档都 GC 掉——清除搜索后文档得重新注册，造成闪屏和延迟。
   //
-  // 收集两类引用 ID：
-  //   1. 物理 docId：来自 page-level files 的 f.docId（resolveDocId）
-  //   2. 业务 documentId：来自 InvoiceDocument 的 f.documentId
-  //      （格式如 `${sourceDocId}_inv_${invoiceNumber}`，指向多页装配文档）
+  // 引用键空间（冻结）：与 DocumentStore 注册键同空间，统一经 resolveDocumentIdentity 解析，
+  // 禁止手工拼接 docId/invoiceDocumentId/`${instanceId}::${invoiceDocumentId}`（Identity≠Capability）。
+  // 收集三类引用 ID：
+  //   1. canonical 键：resolveDocumentIdentity(entity) —— files 中装配后回写了
+  //      instanceId+invoiceDocumentId 的 fileObj，以及 documentView 中的 InvoiceDocument
+  //      均经此得到与 registerDocument 完全一致的存储键
+  //   2. 业务 documentId：InvoiceDocument 的 documentId（如 `${sourceDocId}_inv_${invoiceNumber}`）
+  //   3. 物理 docId：resolveDocId（兼容旧键 / 未装配单页）
   useEffect(() => {
     const referenced = new Set()
 
-    // 1. 从全量 page-level files 收集物理 docId
+    // 1. 从全量 page-level files 收集 canonical 键 + 物理 docId
     for (const f of files) {
+      // canonical：装配后 fileObj 回写 instanceId+invoiceDocumentId → 复合键（与注册键一致）
+      const canonical = resolveDocumentIdentity(f)
+      if (canonical) referenced.add(canonical)
+      // 物理兜底（未装配 / 旧数据 / 单页文件）
       const physicalDocId = resolveDocId(f)
       if (physicalDocId) referenced.add(physicalDocId)
     }
 
-    // 2. 从 InvoiceDocument 装配结果收集业务 documentId
+    // 2. 从 InvoiceDocument 装配结果收集 canonical 键 + 业务 documentId + 物理 docId
     if (documentView?.documents?.length) {
       for (const doc of documentView.documents) {
+        // canonical：装配文档完整身份 → 复合键（与 registerDocument 注册键一致）
+        const canonical = resolveDocumentIdentity(doc)
+        if (canonical) referenced.add(canonical)
+        // 业务 documentId（旧语义，保留兼容）
         const bizDocId = doc.documentId
         if (bizDocId) referenced.add(bizDocId)
-        // 同时收集 InvoiceDocument 上的物理 docId（如果有）
+        // 物理 docId（保留兼容）
         const physDocId = resolveDocId(doc)
         if (physDocId) referenced.add(physDocId)
       }
