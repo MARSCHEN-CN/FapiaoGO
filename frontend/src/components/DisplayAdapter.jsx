@@ -36,6 +36,7 @@ import React, { useEffect, useRef, useMemo } from 'react'
 import { DocumentViewer } from './DocumentViewer'
 import { useDocument } from '../hooks/useDocument'
 import { createDocument, createPageMeta } from '../models/InvoiceDocument'
+import { resolveDocumentIdentity } from '../stores/DocumentStore'
 
 /**
  * 从 fileObj 解析规范 docId。
@@ -76,9 +77,10 @@ export const DisplayAdapter = React.memo(function DisplayAdapter({
 }) {
   // ── 所有 hooks 必须在顶部无条件调用（React Rules of Hooks） ──
 
-  // documentId 优先：当 file 来自 InvoiceDocument row（_isDocumentGroup）时，
-  // 使用业务 documentId（invDocId）查找 DocumentStore；否则降级为物理 identity。
-  const storeDocId = file?.documentId || resolveDocId(file)
+  // 存储键查找：使用统一的 resolveDocumentIdentity 解析
+  // 同时有 instanceId + invoiceDocumentId → 复合键（完整身份）
+  // 与 DocumentStore 存储键保持一致
+  const storeDocId = resolveDocumentIdentity(file) || resolveDocId(file) || file?.key
   const storeDocument = useDocument(storeDocId)
 
   // 拆分页判定：fileObj 携带 sourceDocId 且不是多页文档组 → 父 PDF 的一个独立分页。

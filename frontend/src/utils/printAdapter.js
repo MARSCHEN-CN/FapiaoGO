@@ -60,7 +60,10 @@ import { resolveInvoiceIdentity } from './invoiceIdentityResolver'
 export function buildPrintJobItem(fileObj) {
   const docId = fileObj.docId || fileObj.documentId || ''
   const invDocId = resolveInvoiceIdentity(fileObj) || fileObj.invoiceDocumentId || ''
-  const doc = docId ? getDocument(docId) : null
+  // 使用 invoiceDocumentId 优先查找，与 DocumentStore 存储键一致
+  const doc = (invDocId && getDocument({ invoiceDocumentId: invDocId, instanceId: fileObj.instanceId, docId })) ||
+    (docId && getDocument({ instanceId: fileObj.instanceId, docId })) ||
+    null
 
   // 有 Document：逐页构建 pages[]（Render Contract 的 /print 端点，200dpi）
   if (doc) {

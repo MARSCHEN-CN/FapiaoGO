@@ -20,22 +20,46 @@
 // 显式 .js 后缀：本模块需可被 node --test 直接加载（前端其余文件靠 bundler 解析
 // extensionless，但 DocumentStore 是 13-A.3.5c 单测的入口，须 ESM 可解析）。webpack 两种写法皆兼容。
 import { createDocument, createPageMeta } from '../models/InvoiceDocument.js'
-import { resolveInvoiceIdentity } from '../utils/invoiceIdentityResolver.js'
+import { resolveInvoiceIdentity, generateInvoiceDocumentId } from '../utils/invoiceIdentityResolver.js'
 
 /** @type {Map<string, import('../models/InvoiceDocument').InvoiceDocument>} */
 const documents = new Map()
 
 /**
- * 统一文档身份出口（委托 invoiceIdentityResolver）。
+ * 统一文档身份出口。
  *
- * Invoice Entity Boundary Contract §四：
- *   identity = invoiceDocumentId || id || instanceId || docId
+ * Document Instance Identity = Import Instance × Invoice Identity
+ *   instanceId + invoiceDocumentId → 复合键 `${instanceId}::${invoiceDocumentId}`
+ *
+ * 优先级：
+ *   1. 同时有 instanceId + invoiceDocumentId → 复合键（完整身份）
+ *   2. 只有 instanceId → instanceId（实例身份）
+ *   3. 只有 invoiceDocumentId → invoiceDocumentId（内容身份）
+ *   4. 只有 docId → docId（物理身份）
+ *   5. 只有 id → id（旧数据兼容）
  *
  * @param {Object|string|null|undefined} docOrId
  * @returns {string|null} 存储键，无法解析时返回 null
  */
 export function resolveDocumentIdentity(docOrId) {
-  return resolveInvoiceIdentity(docOrId)
+  if (!docOrId) return null
+  if (typeof docOrId === 'string') return docOrId || null
+
+  const { instanceId, invoiceDocumentId, id, docId } = docOrId
+
+  // 同时有 instanceId + invoiceDocumentId → 复合键
+  if (instanceId && invoiceDocumentId) {
+    return `${instanceId}::${invoiceDocumentId}`
+  }
+  // 只有 instanceId → instanceId
+  if (instanceId) return instanceId
+  // 只有 invoiceDocumentId → invoiceDocumentId
+  if (invoiceDocumentId) return invoiceDocumentId
+  // 只有 docId → docId
+  if (docId) return docId
+  // 只有 id → id
+  if (id) return id
+  return null
 }
 
 /**
@@ -126,13 +150,27 @@ export function getDocument(docId) {
  *   （instanceId || docId），使同内容 A/B 落入不同键；缺省回退 docId，行为不变。
  * @returns {import('../models/InvoiceDocument').InvoiceDocument|null}
  */
-export function ensureDocumentFromFileObj(fileObj, siblings = null, options = {}, instanceId = '') {
+export function ensureDocumentFromFileObj(fileObj, siblings = null, options = {}, instanceId = '', invoiceDocumentId = '') {
   const { silent = false } = options
   if (!fileObj?.docId) return null
 
   const docId = fileObj.docId
-  // IS-4.2 Step 4.1：存储键 = instanceId || docId（无 instanceId 回退 docId，行为不变）
-  const storeKey = resolveDocumentIdentity({ instanceId, docId })
+  // IS-4.2 Step 4.1：先生成 invoiceDocumentId（作为文档属性，不作为存储键）
+  const resolvedInvoiceDocId = invoiceDocumentId || 
+    fileObj.invoiceDocumentId ||
+    generateInvoiceDocumentId({
+      sourceDocId: docId,
+      invoiceNumber: fileObj.invoiceNumber || '',
+      fileKey: fileObj.key || '',
+    })
+  // 同步 invoiceDocumentId 到 fileObj，便于 DisplayAdapter 等消费者直接查找
+  if (!fileObj.invoiceDocumentId) {
+    fileObj.invoiceDocumentId = resolvedInvoiceDocId
+  }
+  // 存储键 = resolveDocumentIdentity({ invoiceDocumentId, instanceId, docId })
+  // 优先级：invoiceDocumentId → instanceId → docId
+  // 与 assembly 路径（registerDocument）保持一致，确保存储键统一
+  const storeKey = resolveDocumentIdentity({ invoiceDocumentId: resolvedInvoiceDocId, instanceId, docId })
   const pool = Array.isArray(siblings) && siblings.length > 0 ? siblings : [fileObj]
 
   // 过滤同 docId 的分页，提取 pageNum（去重 + 升序）
@@ -198,6 +236,11 @@ export function ensureDocumentFromFileObj(fileObj, siblings = null, options = {}
         p.sourceRotation === pages[i].sourceRotation,
     )
   ) {
+    // 补齐已有文档缺失的 invoiceDocumentId
+    if (instanceId && !existing.instanceId) existing.instanceId = instanceId
+    if (!existing.invoiceDocumentId) {
+      existing.invoiceDocumentId = resolvedInvoiceDocId
+    }
     return existing
   }
 
@@ -208,6 +251,8 @@ export function ensureDocumentFromFileObj(fileObj, siblings = null, options = {}
     pages,
   })
   if (instanceId) doc.instanceId = instanceId
+  // 使用已在函数开头计算好的 resolvedInvoiceDocId
+  doc.invoiceDocumentId = resolvedInvoiceDocId
   documents.set(storeKey, doc)
   if (!silent) notify()
   return doc
@@ -236,13 +281,23 @@ export function ensureDocumentFromFileObj(fileObj, siblings = null, options = {}
  *   （instanceId || docId），使同内容 A/B 落入不同键；缺省回退 docId，行为不变。
  * @returns {import('../models/InvoiceDocument').InvoiceDocument|null}
  */
-export function ensureDocumentFromMetadata(meta, options = {}, instanceId = '') {
+export function ensureDocumentFromMetadata(meta, options = {}, instanceId = '', invoiceDocumentId = '') {
   const { silent = false } = options
   if (!meta || !meta.docId) return null
   const { docId, pages: rawPages = [], filename } = meta
 
-  // IS-4.2 Step 4.1：存储键 = instanceId || docId（无 instanceId 回退 docId，行为不变）
-  const storeKey = resolveDocumentIdentity({ instanceId, docId })
+  // 先生成 invoiceDocumentId（作为文档属性，不作为存储键）
+  const resolvedInvoiceDocId = invoiceDocumentId ||
+    meta.invoiceDocumentId ||
+    generateInvoiceDocumentId({
+      sourceDocId: docId,
+      invoiceNumber: meta.invoiceNumber || '',
+      fileKey: filename || '',
+    })
+  // 存储键 = resolveDocumentIdentity({ invoiceDocumentId, instanceId, docId })
+  // 优先级：invoiceDocumentId → instanceId → docId
+  // 与 assembly 路径（registerDocument）保持一致，确保存储键统一
+  const storeKey = resolveDocumentIdentity({ invoiceDocumentId: resolvedInvoiceDocId, instanceId, docId })
   const existing = documents.get(storeKey)
   const prevByIndex = new Map()
   if (existing) {
@@ -289,6 +344,8 @@ export function ensureDocumentFromMetadata(meta, options = {}, instanceId = '') 
     pages,
   })
   if (instanceId) doc.instanceId = instanceId
+  // 设置 invoiceDocumentId，确保存储键一致
+  doc.invoiceDocumentId = resolvedInvoiceDocId
   documents.set(storeKey, doc)
   if (!silent) notify()
   return doc
@@ -330,19 +387,33 @@ export function updatePageMeta(docId, pages) {
  * 与 updatePageMeta（整组替换）不同，本函数只改指定页的指定字段，
  * 其余页面与字段保持不变。pageCount 不变。
  *
- * @param {string} docId
+ * @param {string|Object} docId - 文档身份（字符串键 或 文档对象）
  * @param {number} pageIndex - 0-based 页索引
  * @param {{width?: number, height?: number, sourceRotation?: number}} patch - 要合并的字段
  */
 export function patchPageMeta(docId, pageIndex, patch) {
+  // 支持字符串键 或 文档对象作为参数
   const key = resolveDocumentIdentity(docId)
-  const doc = key ? documents.get(key) : null
+  let doc = key ? documents.get(key) : null
+
+  // 如果用传入的键找不到，尝试用对象的其他字段查找（向后兼容）
+  if (!doc && typeof docId === 'object' && docId !== null) {
+    // 尝试用 invoiceDocumentId 查找
+    if (docId.invoiceDocumentId) {
+      doc = documents.get(docId.invoiceDocumentId) || null
+    }
+    // 尝试用 docId 查找
+    if (!doc && docId.docId) {
+      doc = documents.get(docId.docId) || null
+    }
+  }
+
   if (!doc) return
 
   const pages = doc.pages.map((p) =>
     p.index === pageIndex
       ? createPageMeta({
-          docId,
+          docId: doc.docId || docId,
           index: p.index,
           width: patch.width ?? p.width,
           height: patch.height ?? p.height,

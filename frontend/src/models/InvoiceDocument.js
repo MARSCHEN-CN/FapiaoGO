@@ -32,6 +32,7 @@
 /**
  * @typedef {Object} InvoiceDocument
  * @property {string} docId - 内容寻址的文档 ID（sha256(file_bytes+filename)[:24]）
+ * @property {string} [instanceId] - 导入实例身份（IS-4.2），同一文件的不同导入实例具有不同值
  * @property {string} fileKey - 前端 UI 列表中的文件标识
  * @property {string} sourceHash - 源文件哈希（用于去重/缓存身份）
  * @property {number} pageCount - 总页数
@@ -73,14 +74,16 @@ export function createPageMeta({ docId, index, width = 0, height = 0, sourceRota
  *
  * @param {Object} opts
  * @param {string} opts.docId - 文档 ID
+ * @param {string} [opts.instanceId=''] - 导入实例身份（IS-4.2）
  * @param {string} [opts.fileKey=''] - 前端文件标识
  * @param {string} [opts.sourceHash=''] - 源文件哈希
  * @param {PageMeta[]} opts.pages - 页面元数据数组
  * @returns {InvoiceDocument}
  */
-export function createDocument({ docId, fileKey = '', sourceHash = '', pages }) {
+export function createDocument({ docId, instanceId = '', fileKey = '', sourceHash = '', pages }) {
   return {
     docId,
+    instanceId,
     fileKey,
     sourceHash,
     pageCount: pages.length,

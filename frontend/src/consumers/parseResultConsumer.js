@@ -20,6 +20,7 @@
 import { mapParseResultToFileUpdate } from '../mappers/parseResultMapper'
 import { updateFileStatus, addResult, addDocument } from '../stores/ImportSessionStore'
 import { ensureDocumentFromFileObj, getDocument } from '../stores/DocumentStore'
+import { generateInvoiceDocumentId } from '../utils/invoiceIdentityResolver'
 
 /**
  * 消费单个解析结果。
@@ -43,11 +44,24 @@ export function consumeParseResult(result, fileObj, sessionId, siblings = null) 
   // 未传时退化为单页构建。OCR/ParseResult 合并仍属 Coordinator 职责。
   console.log('[E1] consumeParseResult: docId from result:', result?.doc_id, 'raw doc_id:', result?.raw?.doc_id, 'update.docId:', update.docId)
   if (update.docId) {
-    ensureDocumentFromFileObj({ ...fileObj, docId: update.docId, identity: update.identity }, siblings)
+    // 提前计算 invoiceDocumentId，使查找键与 ensureDocumentFromFileObj 存储键一致
+    const lookupInvoiceDocId = fileObj.invoiceDocumentId ||
+      generateInvoiceDocumentId({
+        sourceDocId: update.docId,
+        invoiceNumber: fileObj.invoiceNumber || '',
+        fileKey: fileObj.key || '',
+      })
+    // 传入新对象（展开拷贝），避免修改原始 fileObj 的 docId/identity 字段
+    const doc = ensureDocumentFromFileObj({ ...fileObj, docId: update.docId, identity: update.identity }, siblings, {}, fileObj.instanceId, lookupInvoiceDocId)
+    // 关键修复：同步 invoiceDocumentId 回原始 fileObj
+    // ensureDocumentFromFileObj 在新对象上设置 invoiceDocumentId，需要同步回原始对象
+    // 以便 DisplayAdapter 等消费者能通过 resolveInvoiceIdentity 正确查找
+    if (doc && !fileObj.invoiceDocumentId && doc.invoiceDocumentId) {
+      fileObj.invoiceDocumentId = doc.invoiceDocumentId
+    }
     // Phase E-1：双写模式 — 将 DocumentStore 的 InvoiceDocument 同步到
     // ImportSessionStore.documents[]，为前端从 file 模型迁移到 document 模型铺路。
     // 当前 UI 仍从 files[] 消费，documents[] 仅建立并存状态。
-    const doc = getDocument(update.docId)
     if (doc && sessionId) {
       addDocument(sessionId, doc, { source: 'fallback' })
     }

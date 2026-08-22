@@ -23,7 +23,7 @@ import { mapParseResultToFileUpdate } from '../mappers/parseResultMapper'
 import { updateDocumentIdentity } from '../utils/identity'
 import { resolveInstancePageFiles } from '../utils/instancePageOwnership'
 import { generateInvoiceDocumentId } from '../utils/invoiceIdentityResolver'
-import { createImportSession, getActiveSessionId, getSession, reactivateSession, addFilesToSession, replaceFileItems, updateProgress, addDocument, patchDocument, sealDocument, flushSessionNotifications } from '../stores/ImportSessionStore'
+import { createImportSession, getActiveSessionId, getSession, reactivateSession, addFilesToSession, replaceFileItems, updateProgress, addDocument, patchDocument, sealDocument, flushSessionNotifications, resolveDocumentInstanceKey } from '../stores/ImportSessionStore'
 import { ensureDocumentFromFileObj, flushDocumentNotifications, getDocument, registerDocument } from '../stores/DocumentStore'
 import { createDocument, createPageMeta } from '../models/InvoiceDocument'
 import { consumeParseResult } from '../consumers/parseResultConsumer'
@@ -735,8 +735,19 @@ export function useFileOps({ setFiles, settings, electronAPIRef }) {
                   const docFileObj = effectiveDocId !== fileObj.docId
                     ? { ...fileObj, docId: effectiveDocId }
                     : fileObj
-                  const prev = getDocument(effectiveDocId)
-                  const doc = ensureDocumentFromFileObj(docFileObj, readyFiles, { silent: true })
+                  // 提前计算 invoiceDocumentId，使查找键与 ensureDocumentFromFileObj 存储键一致
+                  const lookupInvoiceDocId = fileObj.invoiceDocumentId ||
+                    generateInvoiceDocumentId({
+                      sourceDocId: effectiveDocId,
+                      invoiceNumber: fileObj.invoiceNumber || '',
+                      fileKey: fileObj.key || '',
+                    })
+                  const prev = getDocument({ invoiceDocumentId: lookupInvoiceDocId, instanceId: fileObj.instanceId, docId: effectiveDocId })
+                  const doc = ensureDocumentFromFileObj(docFileObj, readyFiles, { silent: true }, fileObj.instanceId, lookupInvoiceDocId)
+                  // 同步 invoiceDocumentId 到 fileObj，便于后续查找
+                  if (doc && !fileObj.invoiceDocumentId && doc.invoiceDocumentId) {
+                    fileObj.invoiceDocumentId = doc.invoiceDocumentId
+                  }
                   // 13-A.3.5c：metadata 驱动纠正（OFD 多页 / 真实尺寸），silent 跟随批处理统一 flush
                   const metaDoc = await ensureDocumentMetadata(
                     { ...docFileObj, docId: effectiveDocId },
@@ -848,14 +859,29 @@ export function useFileOps({ setFiles, settings, electronAPIRef }) {
                     renderPage: 1,
                   })
                 )
+                // 确保 instanceId 有效（空字符串视为无效，回退到 repFile.instanceId 或生成新的）
+                const effectiveInstanceId = assembled.instanceId || repFile.instanceId || crypto.randomUUID()
                 const doc = createDocument({
                   docId: invDocId,
+                  instanceId: effectiveInstanceId,
                   fileKey: repFile.key || '',
                   sourceHash: repFile.identity?.sourceHash || '',
                   pages,
                 })
+                // Step 3A: 领域主键 — 必须在 registerDocument 之前设置，
+                // 否则存储键会基于 instanceId 而非 invoiceDocumentId，导致后续查找失败
+                doc.invoiceDocumentId = invDocId
                 registerDocument(doc)
-                doc.invoiceDocumentId = invDocId  // Step 3A: 领域主键
+                // 关键修复：同步 invoiceDocumentId 和 instanceId 回所有相关 fileObj
+                // 以便 DisplayAdapter 等消费者能通过 resolveDocumentIdentity 正确查找
+                for (const f of sameInstanceFiles) {
+                  if (!f.invoiceDocumentId) {
+                    f.invoiceDocumentId = invDocId
+                  }
+                  if (!f.instanceId) {
+                    f.instanceId = effectiveInstanceId
+                  }
+                }
                 if (doc !== prev) docsTouched = true
                 // E-2.2: 记录 sourceDocId + 该发票的精确页面 fileKey 列表（按页码排序）
                 doc.sourceDocId = repFile.docId || assembled.sourceDocId || ''
@@ -874,7 +900,7 @@ export function useFileOps({ setFiles, settings, electronAPIRef }) {
                 doc.invoiceDate = assembled.invoiceDate
                 doc._source = 'backend_assembly'
                 if (session?.id) {
-                  const instanceKey = doc.instanceId || doc.docId || doc.id
+                  const instanceKey = resolveDocumentInstanceKey(doc)
                   const added = addDocument(session.id, doc, { silent: true, source: 'backend_assembly' })
                   if (!added) {
                     // 文档已存在（per-file 路径先行注册）→ patch 更新 assembly 产生的字段
@@ -906,8 +932,19 @@ export function useFileOps({ setFiles, settings, electronAPIRef }) {
                   const docFileObj = effectiveDocId !== fileObj.docId
                     ? { ...fileObj, docId: effectiveDocId }
                     : fileObj
-                  const prev = getDocument(effectiveDocId)
-                  const doc = ensureDocumentFromFileObj(docFileObj, readyFiles, { silent: true })
+                  // 提前计算 invoiceDocumentId，使查找键与 ensureDocumentFromFileObj 存储键一致
+                  const lookupInvoiceDocId = fileObj.invoiceDocumentId ||
+                    generateInvoiceDocumentId({
+                      sourceDocId: effectiveDocId,
+                      invoiceNumber: fileObj.invoiceNumber || '',
+                      fileKey: fileObj.key || '',
+                    })
+                  const prev = getDocument({ invoiceDocumentId: lookupInvoiceDocId, instanceId: fileObj.instanceId, docId: effectiveDocId })
+                  const doc = ensureDocumentFromFileObj(docFileObj, readyFiles, { silent: true }, fileObj.instanceId, lookupInvoiceDocId)
+                  // 同步 invoiceDocumentId 到 fileObj，便于后续查找
+                  if (doc && !fileObj.invoiceDocumentId && doc.invoiceDocumentId) {
+                    fileObj.invoiceDocumentId = doc.invoiceDocumentId
+                  }
                   if (doc && doc !== prev) docsTouched = true
                   if (doc && session?.id) {
                     // 为单页文档设置 _pageKeys（强身份匹配），与 assembly 多页文档一致，
@@ -939,10 +976,14 @@ export function useFileOps({ setFiles, settings, electronAPIRef }) {
               for (const invDocId of assembledDocIds) {
                 const sealedDoc = getDocument(invDocId)
                 if (sealedDoc) {
-                  const instanceKey = sealedDoc.invoiceDocumentId || sealedDoc.instanceId || sealedDoc.docId || sealedDoc.id
-                  sealDocument(session.id, instanceKey)
-                  if (process.env.NODE_ENV === 'development') {
-                    console.log('[SEAL DOCUMENT][assembly]', { invoiceDocumentId: sealedDoc.invoiceDocumentId, invDocId })
+                  const instanceKey = resolveDocumentInstanceKey(sealedDoc)
+                  if (instanceKey) {
+                    sealDocument(session.id, instanceKey)
+                    if (process.env.NODE_ENV === 'development') {
+                      console.log('[SEAL DOCUMENT][assembly]', { invoiceDocumentId: sealedDoc.invoiceDocumentId, invDocId, instanceKey })
+                    }
+                  } else {
+                    console.warn('[SEAL DOCUMENT][assembly] 跳过：文档身份不完整', { invDocId, hasInstanceId: !!sealedDoc.instanceId, hasInvoiceDocId: !!sealedDoc.invoiceDocumentId })
                   }
                 }
               }
@@ -961,20 +1002,34 @@ export function useFileOps({ setFiles, settings, electronAPIRef }) {
                   const docFileObj = effectiveDocId !== fileObj.docId
                     ? { ...fileObj, docId: effectiveDocId }
                     : fileObj
-                  const prev = getDocument(effectiveDocId)
-                  const doc = ensureDocumentFromFileObj(docFileObj, readyFiles, { silent: true })
-                  if (doc && doc !== prev) docsTouched = true
-                  if (doc && session?.id) {
-                    // 为单页文档设置 _pageKeys（强身份匹配）
-                    if (!doc._pageKeys) doc._pageKeys = [fileObj.key]
-                    addDocument(session.id, doc, { silent: true, source: 'fallback' })
-                    sessionDocsTouched = true
-                    if (process.env.NODE_ENV === 'development') {
-                      console.log('[ADD DOCUMENT][fallback]', {
-                        id: doc?.id || doc?.docId,
-                        pages: doc?.pages?.length,
-                        effectiveDocId,
-                      })
+                  // 提前计算 invoiceDocumentId，使查找键与 ensureDocumentFromFileObj 存储键一致
+                  const lookupInvoiceDocId = fileObj.invoiceDocumentId ||
+                    generateInvoiceDocumentId({
+                      sourceDocId: effectiveDocId,
+                      invoiceNumber: fileObj.invoiceNumber || '',
+                      fileKey: fileObj.key || '',
+                    })
+                  const prev = getDocument({ invoiceDocumentId: lookupInvoiceDocId, instanceId: fileObj.instanceId, docId: effectiveDocId })
+                  const doc = ensureDocumentFromFileObj(docFileObj, readyFiles, { silent: true }, fileObj.instanceId, lookupInvoiceDocId)
+                  if (doc) {
+                    // 同步 invoiceDocumentId 到 fileObj，便于后续查找
+                    if (!fileObj.invoiceDocumentId && doc.invoiceDocumentId) {
+                      fileObj.invoiceDocumentId = doc.invoiceDocumentId
+                    }
+                    if (doc !== prev) docsTouched = true
+                    if (session?.id) {
+                      // 为单页文档设置 _pageKeys（强身份匹配）
+                      if (!doc._pageKeys) doc._pageKeys = [fileObj.key]
+                      addDocument(session.id, doc, { silent: true, source: 'fallback' })
+                      sessionDocsTouched = true
+                      if (process.env.NODE_ENV === 'development') {
+                        console.log('[ADD DOCUMENT][fallback]', {
+                          id: doc?.id || doc?.docId,
+                          invoiceDocumentId: doc?.invoiceDocumentId,
+                          pages: doc?.pages?.length,
+                          effectiveDocId,
+                        })
+                      }
                     }
                   }
                 }
@@ -993,10 +1048,21 @@ export function useFileOps({ setFiles, settings, electronAPIRef }) {
             if (!hasAssembledDocs) {
               for (const fileObj of chunk) {
                 const effectiveDocId = fileObj.key
-                const sealedDoc = getDocument(effectiveDocId)
+                // 提前计算 invoiceDocumentId，使查找键与 ensureDocumentFromFileObj 存储键一致
+                const lookupInvoiceDocId = fileObj.invoiceDocumentId ||
+                  generateInvoiceDocumentId({
+                    sourceDocId: effectiveDocId,
+                    invoiceNumber: fileObj.invoiceNumber || '',
+                    fileKey: fileObj.key || '',
+                  })
+                const sealedDoc = getDocument({ invoiceDocumentId: lookupInvoiceDocId, instanceId: fileObj.instanceId, docId: effectiveDocId })
                 if (sealedDoc) {
-                  const instanceKey = sealedDoc.instanceId || sealedDoc.docId || sealedDoc.id
-                  sealDocument(session.id, instanceKey)
+                  const instanceKey = resolveDocumentInstanceKey(sealedDoc)
+                  if (instanceKey) {
+                    sealDocument(session.id, instanceKey)
+                  } else {
+                    console.warn('[SEAL DOCUMENT][fallback] 跳过：文档身份不完整', { fileKey: fileObj.key, hasInstanceId: !!sealedDoc.instanceId, hasInvoiceDocId: !!sealedDoc.invoiceDocumentId })
+                  }
                 }
               }
             }

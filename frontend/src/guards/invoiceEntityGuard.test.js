@@ -28,7 +28,11 @@ const {
 } = await import('../stores/ImportSessionStore.js')
 
 function makeDoc(key = 'I1', overrides = {}) {
-  return { instanceId: key, docId: `HASH_${key}`, pages: [{ index: 0 }], amount: '100.00', ...overrides }
+  return { instanceId: key, docId: `HASH_${key}`, invoiceDocumentId: `INV_${key}`, pages: [{ index: 0 }], amount: '100.00', ...overrides }
+}
+
+function getKey(instanceId) {
+  return resolveDocumentInstanceKey({ instanceId, invoiceDocumentId: `INV_${instanceId}` })
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -79,10 +83,10 @@ test('Case 1: 重复注册被拒绝', () => {
 test('Case 2: SEALED 后 patch invoiceNumber 被拒绝', () => {
   const s = createImportSession()
   addDocument(s.id, makeDoc('I1', { invoiceNumber: '123' }))
-  sealDocument(s.id, 'I1')
-  assert.equal(isDocumentSealed(s.id, 'I1'), true)
+  sealDocument(s.id, getKey('I1'))
+  assert.equal(isDocumentSealed(s.id, getKey('I1')), true)
 
-  const r = patchDocument(s.id, 'I1', { invoiceNumber: '999' })
+  const r = patchDocument(s.id, getKey('I1'), { invoiceNumber: '999' })
   assert.equal(r, false, 'SEALED 后 patch invoiceNumber 被拒绝')
   assert.equal(getSession(s.id).documents[0].invoiceNumber, '123', 'invoiceNumber 未被修改')
 })
@@ -90,18 +94,18 @@ test('Case 2: SEALED 后 patch invoiceNumber 被拒绝', () => {
 test('Case 2b: SEALED 后 patch docId 被拒绝', () => {
   const s = createImportSession()
   addDocument(s.id, makeDoc('I1'))
-  sealDocument(s.id, 'I1')
+  sealDocument(s.id, getKey('I1'))
 
-  const r = patchDocument(s.id, 'I1', { docId: 'HACKED' })
+  const r = patchDocument(s.id, getKey('I1'), { docId: 'HACKED' })
   assert.equal(r, false, 'SEALED 后 patch docId 被拒绝')
 })
 
 test('Case 2c: SEALED 后 patch amount 被允许', () => {
   const s = createImportSession()
   addDocument(s.id, makeDoc('I1', { amount: '100.00' }))
-  sealDocument(s.id, 'I1')
+  sealDocument(s.id, getKey('I1'))
 
-  const r = patchDocument(s.id, 'I1', { amount: '200.00' })
+  const r = patchDocument(s.id, getKey('I1'), { amount: '200.00' })
   assert.equal(r, true, 'SEALED 后 patch amount 被允许')
   assert.equal(getSession(s.id).documents[0].amount, '200.00')
 })
@@ -130,7 +134,7 @@ test('Case 3: SEALED 文档不可 merge', () => {
 test('Case 4: SEALED 后不可重新注册', () => {
   const s = createImportSession()
   addDocument(s.id, makeDoc('I1'))
-  sealDocument(s.id, 'I1')
+  sealDocument(s.id, getKey('I1'))
 
   // 尝试重新注册同 instanceKey（模拟二次注册）
   const r = addDocument(s.id, makeDoc('I1', { pages: [{ index: 0 }, { index: 1 }] }))
@@ -151,11 +155,26 @@ test('Case 5: 空 pages 不能 seal', () => {
   )
 })
 
-test('Case 5b: 无身份不能 seal', () => {
+test('Case 5b: 身份不完整不能 seal', () => {
+  // Contract C: instanceId + invoiceDocumentId 必须同时存在
   assert.throws(
     () => assertCanSealDocument({ lifecycle: Lifecycle.REGISTERED, pages: [{ index: 0 }] }),
-    /无有效身份/,
-    '无身份不能 seal'
+    /实例身份不完整/,
+    '无 instanceId + invoiceDocumentId 不能 seal'
+  )
+
+  // 只有 instanceId 也不够
+  assert.throws(
+    () => assertCanSealDocument({ instanceId: 'I1', lifecycle: Lifecycle.REGISTERED, pages: [{ index: 0 }] }),
+    /实例身份不完整/,
+    '只有 instanceId 不能 seal'
+  )
+
+  // 只有 invoiceDocumentId 也不够
+  assert.throws(
+    () => assertCanSealDocument({ invoiceDocumentId: 'INV_1', lifecycle: Lifecycle.REGISTERED, pages: [{ index: 0 }] }),
+    /实例身份不完整/,
+    '只有 invoiceDocumentId 不能 seal'
   )
 })
 
@@ -177,7 +196,7 @@ test('Case 6b: 已带 lifecycle 的文档不被覆盖', () => {
   assert.equal(getSession(s.id).documents[0].lifecycle, Lifecycle.CREATED, '保留已有 lifecycle')
 
   // seal 需要 REGISTERED
-  const r = sealDocument(s.id, 'I1')
+  const r = sealDocument(s.id, getKey('I1'))
   assert.equal(r, false, 'CREATED 不能 seal（需要 REGISTERED）')
 })
 
@@ -216,14 +235,14 @@ test('Case 7c: DELETED 文档不可 seal', () => {
 test('Case 8: pageCount 不能通过 patch 修改', () => {
   const s = createImportSession()
   addDocument(s.id, makeDoc('I1', { pageCount: 2, pages: [{ index: 0 }, { index: 1 }] }))
-  const r = patchDocument(s.id, 'I1', { pageCount: 3 })
+  const r = patchDocument(s.id, getKey('I1'), { pageCount: 3 })
   assert.equal(r, false, '禁止 patch pageCount')
 })
 
 test('Case 8b: _pageKeys 不能通过 patch 修改', () => {
   const s = createImportSession()
   addDocument(s.id, makeDoc('I1'))
-  const r = patchDocument(s.id, 'I1', { _pageKeys: ['fake'] })
+  const r = patchDocument(s.id, getKey('I1'), { _pageKeys: ['fake'] })
   assert.equal(r, false, '禁止 patch _pageKeys')
 })
 
@@ -234,9 +253,9 @@ test('Case 8b: _pageKeys 不能通过 patch 修改', () => {
 test('Case 9: 同一 session 可包含多个 SEALED 文档 + 新文档', () => {
   const s = createImportSession()
   addDocument(s.id, makeDoc('I1'))
-  sealDocument(s.id, 'I1')
+  sealDocument(s.id, getKey('I1'))
   addDocument(s.id, makeDoc('I2'))
-  sealDocument(s.id, 'I2')
+  sealDocument(s.id, getKey('I2'))
   addDocument(s.id, makeDoc('I3'))
 
   const docs = getSession(s.id).documents

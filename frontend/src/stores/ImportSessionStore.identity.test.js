@@ -4,14 +4,14 @@
  * 运行：node --test src/stores/ImportSessionStore.identity.test.js
  * 不依赖 React / 网络：直接调用 ImportSessionStore 纯函数。
  *
- * 核心验收：addDocument 去重键 = invoiceDocumentId || instanceId || docId || id。
- *   - 同内容 A/B（同 docId，不同 instanceId）→ 各自保留（length 2）。
- *   - 同 instanceKey 重复 → 拒绝覆盖（length 1, addDocument 返回 false）。
- *   - docId 优先于 id（发票实体边界合同 §四，2026-08-05 统一）。
+ * Contract C: Document Instance Identity = Import Instance × Invoice Identity
  *
- * ⚠️ 2026-08-05 变更：
- *   - addDocument 从 overwrite 变为 append-only（拒绝覆盖已存在条目）
- *   - 身份回退顺序统一为 instanceId || docId || id（docId 优先于 id）
+ * 核心验收：
+ *   I-1: 相同内容、不同 instanceId → 两个独立 Document
+ *   I-2: 同一 Document 重复 add → 幂等，只一个
+ *   I-3: 不同内容、不同实例 → 两个独立 Document
+ *   I-4: 同一 instanceId、多张不同发票 → 多个 Document
+ *   I-5: 缺失 instanceId → 不得静默退化为 content identity
  */
 
 import test from 'node:test'
@@ -22,80 +22,152 @@ const {
   addDocument,
   getSession,
   resolveDocumentInstanceKey,
+  deleteDocumentByInstanceKey,
 } = await import('../stores/ImportSessionStore.js')
 
 const docsOf = (sessionId) => getSession(sessionId).documents
 
-test('resolveDocumentInstanceKey：invoiceDocumentId 优先，回退 id || instanceId || docId', () => {
-  assert.equal(resolveDocumentInstanceKey({ invoiceDocumentId: 'INV-A', id: 'X', docId: 'H' }), 'INV-A', 'invoiceDocumentId 最高优先级')
-  assert.equal(resolveDocumentInstanceKey({ instanceId: 'I1', id: 'X', docId: 'H' }), 'X', 'id 优先于 instanceId（Step 3A）')
-  assert.equal(resolveDocumentInstanceKey({ id: 'X', docId: 'H' }), 'X', 'id 优先于 docId')
-  assert.equal(resolveDocumentInstanceKey({ instanceId: 'I1', docId: 'H' }), 'I1', 'instanceId 优先于 docId')
-  assert.equal(resolveDocumentInstanceKey({ docId: 'H' }), 'H')
+// ── Identity Resolver Tests ──────────────────────────────
+
+test('resolveDocumentInstanceKey: instanceId + invoiceDocumentId → 组合 key', () => {
+  const key = resolveDocumentInstanceKey({ instanceId: 'I1', invoiceDocumentId: 'INV-A' })
+  assert.equal(key, 'I1::INV-A', '应为 instanceId::invoiceDocumentId 格式')
+})
+
+test('I-5: 缺失 instanceId → 返回 null（不得静默 fallback）', () => {
+  const key = resolveDocumentInstanceKey({ invoiceDocumentId: 'INV-A', docId: 'HASH' })
+  assert.equal(key, null, '缺失 instanceId 时应返回 null，不得退化为 content identity')
+})
+
+test('I-5: 缺失 invoiceDocumentId → 返回 null', () => {
+  const key = resolveDocumentInstanceKey({ instanceId: 'I1', docId: 'HASH' })
+  assert.equal(key, null, '缺失 invoiceDocumentId 时应返回 null')
+})
+
+test('I-5: 两者都缺失 → 返回 null', () => {
+  const key = resolveDocumentInstanceKey({ docId: 'HASH' })
+  assert.equal(key, null)
+})
+
+test('resolveDocumentInstanceKey: null/undefined/empty obj → null', () => {
   assert.equal(resolveDocumentInstanceKey(null), null)
+  assert.equal(resolveDocumentInstanceKey(undefined), null)
   assert.equal(resolveDocumentInstanceKey({}), null)
 })
 
-test('Case A/B：同 docId 不同 instanceId → documents.length === 2', () => {
+// ── I-1: 相同内容，不同 instanceId → 两个独立 Document ──
+
+test('I-1: 相同内容 A/B → 两个独立 Document', () => {
   const s = createImportSession()
-  addDocument(s.id, { instanceId: 'I1', docId: 'HASH', pages: [{}] })
-  addDocument(s.id, { instanceId: 'I2', docId: 'HASH', pages: [{}] })
-  assert.equal(docsOf(s.id).length, 2, '同内容 A/B 应各自保留')
+  const r1 = addDocument(s.id, { instanceId: 'I1', invoiceDocumentId: 'INV-N001', pages: [{}] })
+  const r2 = addDocument(s.id, { instanceId: 'I2', invoiceDocumentId: 'INV-N001', pages: [{}] })
+  assert.equal(r1, true, 'A 添加成功')
+  assert.equal(r2, true, 'B 添加成功')
+  assert.equal(docsOf(s.id).length, 2, '相同内容不同实例应为两个独立 Document')
 })
 
-test('同 instanceKey 重复：addDocument 拒绝覆盖 → length === 1', () => {
+// ── I-2: 同一 Document 重复 add → 幂等 ──
+
+test('I-2: 同实例重复 add → 幂等，只一个', () => {
   const s = createImportSession()
-  const r1 = addDocument(s.id, { instanceId: 'I1', docId: 'HASH', pages: [{}] })
-  const r2 = addDocument(s.id, { instanceId: 'I1', docId: 'HASH', pages: [{}] })
-  assert.equal(r1, true, '首次添加应成功')
-  assert.equal(r2, false, '重复添加应拒绝')
-  assert.equal(docsOf(s.id).length, 1, '覆盖被拒绝后仍为 1')
+  const r1 = addDocument(s.id, { instanceId: 'I1', invoiceDocumentId: 'INV-N001', pages: [{}] })
+  const r2 = addDocument(s.id, { instanceId: 'I1', invoiceDocumentId: 'INV-N001', pages: [{}] })
+  assert.equal(r1, true, '首次添加成功')
+  assert.equal(r2, false, '重复添加应被拒绝（幂等）')
+  assert.equal(docsOf(s.id).length, 1, '幂等：仍为 1')
 })
 
-test('append-only：同 instanceKey 文档不会替换旧版本', () => {
+// ── I-3: 不同内容、不同实例 → 两个独立 Document ──
+
+test('I-3: 不同内容、不同实例 → 两个独立 Document', () => {
   const s = createImportSession()
-  addDocument(s.id, { instanceId: 'I1', docId: 'HASH', pages: [{ index: 0 }], amount: '100.00' })
-  // 尝试覆盖（应被拒绝）
-  const r = addDocument(s.id, { instanceId: 'I1', docId: 'HASH', pages: [{ index: 0 }, { index: 1 }], amount: '999.00' })
+  const r1 = addDocument(s.id, { instanceId: 'I1', invoiceDocumentId: 'INV-N001', pages: [{}] })
+  const r2 = addDocument(s.id, { instanceId: 'I2', invoiceDocumentId: 'INV-N002', pages: [{}] })
+  assert.equal(r1, true)
+  assert.equal(r2, true)
+  assert.equal(docsOf(s.id).length, 2)
+})
+
+// ── I-4: 同一 instanceId，多张不同发票 → 多个 Document ──
+
+test('I-4: 同 instanceId，多票隔离', () => {
+  const s = createImportSession()
+  const r1 = addDocument(s.id, { instanceId: 'I1', invoiceDocumentId: 'INV-N001', pages: [{}] })
+  const r2 = addDocument(s.id, { instanceId: 'I1', invoiceDocumentId: 'INV-N002', pages: [{}] })
+  assert.equal(r1, true, '第一张发票成功')
+  assert.equal(r2, true, '第二张发票成功（同实例不同发票）')
+  assert.equal(docsOf(s.id).length, 2, '同实例不同发票应为两个独立 Document')
+})
+
+// ── INV-I2: 不同实例 + 同发票 → different key ──
+
+test('INV-I2: 不同实例 + 同发票 → different key', () => {
+  const keyA = resolveDocumentInstanceKey({ instanceId: 'I1', invoiceDocumentId: 'INV-X' })
+  const keyB = resolveDocumentInstanceKey({ instanceId: 'I2', invoiceDocumentId: 'INV-X' })
+  assert.notEqual(keyA, keyB, '不同实例的相同内容应有不同的 instanceKey')
+})
+
+// ── INV-I3: 同实例 + 不同发票 → different key ──
+
+test('INV-I3: 同实例 + 不同发票 → different key', () => {
+  const keyA = resolveDocumentInstanceKey({ instanceId: 'I1', invoiceDocumentId: 'INV-N001' })
+  const keyB = resolveDocumentInstanceKey({ instanceId: 'I1', invoiceDocumentId: 'INV-N002' })
+  assert.notEqual(keyA, keyB, '同实例不同发票应有不同的 instanceKey')
+})
+
+// ── INV-I1: 同实例 + 同发票 → same key ──
+
+test('INV-I1: 同实例 + 同发票 → same key（幂等）', () => {
+  const key1 = resolveDocumentInstanceKey({ instanceId: 'I1', invoiceDocumentId: 'INV-X' })
+  const key2 = resolveDocumentInstanceKey({ instanceId: 'I1', invoiceDocumentId: 'INV-X' })
+  assert.equal(key1, key2, '相同实例相同发票应有相同的 instanceKey')
+})
+
+// ── Contract D: 删除闭包不得扩大 ──
+
+test('R-1: deleteDocumentByInstanceKey 精确删除', () => {
+  const s = createImportSession()
+  addDocument(s.id, { instanceId: 'I1', invoiceDocumentId: 'INV-A', pages: [{ key: 'p1' }] })
+  addDocument(s.id, { instanceId: 'I2', invoiceDocumentId: 'INV-A', pages: [{ key: 'p2' }] })
+  assert.equal(docsOf(s.id).length, 2, '应先有 2 个文档')
+
+  // 精确删除 I2 实例
+  const keyB = resolveDocumentInstanceKey({ instanceId: 'I2', invoiceDocumentId: 'INV-A' })
+  const result = deleteDocumentByInstanceKey(s.id, keyB)
+  assert.equal(result.success, true, '删除应成功')
+  assert.equal(result.deletedCount, 1, '只应删除 1 个实例')
+
+  // I1 应保留
+  assert.equal(docsOf(s.id).length, 1, 'I1 应保留')
+  assert.equal(docsOf(s.id)[0].instanceId, 'I1', '保留的是 I1')
+})
+
+test('R-2: 删除不存在的 instanceKey → 不影响其他文档', () => {
+  const s = createImportSession()
+  addDocument(s.id, { instanceId: 'I1', invoiceDocumentId: 'INV-A', pages: [{}] })
+  const result = deleteDocumentByInstanceKey(s.id, 'non_existent_key')
+  assert.equal(result.success, false, '删除不存在的 key 应返回 false')
+  assert.equal(result.deletedCount, 0)
+  assert.equal(docsOf(s.id).length, 1, '原文档不受影响')
+})
+
+// ── append-only 行为验证 ──
+
+test('append-only: 同 instanceKey 文档不会替换旧版本', () => {
+  const s = createImportSession()
+  addDocument(s.id, { instanceId: 'I1', invoiceDocumentId: 'INV-A', pages: [{ index: 0 }], amount: '100.00' })
+  const r = addDocument(s.id, { instanceId: 'I1', invoiceDocumentId: 'INV-A', pages: [{ index: 0 }, { index: 1 }], amount: '999.00' })
   assert.equal(r, false, '覆盖被拒绝')
   assert.equal(docsOf(s.id).length, 1)
   assert.equal(docsOf(s.id)[0].amount, '100.00', '旧版本数据未被覆盖')
   assert.equal(docsOf(s.id)[0].pages.length, 1, '页数未被替换')
 })
 
-test('legacy：无 instanceId 按 docId 去重（旧行为不变）', () => {
-  const s = createImportSession()
-  addDocument(s.id, { docId: 'HASH', pages: [{}] })
-  addDocument(s.id, { docId: 'HASH', pages: [{}] })
-  assert.equal(docsOf(s.id).length, 1, '同 docId 应去重为 1')
-  addDocument(s.id, { docId: 'OTHER', pages: [{}] })
-  assert.equal(docsOf(s.id).length, 2)
-})
-
-test('legacy：id 优先于 docId（Step 3A 统一后）', () => {
-  const s = createImportSession()
-  addDocument(s.id, { id: 'X', docId: 'H1', pages: [{}] })
-  addDocument(s.id, { id: 'X', docId: 'H2', pages: [{}] }) // 同 id → 去重
-  assert.equal(docsOf(s.id).length, 1, 'id 优先 → 同 id = 同键，去重')
-})
+// ── 来源检查 ──
 
 test('来源检查：拒绝 file_update 来源', () => {
   const s = createImportSession()
-  const r = addDocument(s.id, { instanceId: 'I1', docId: 'HASH', pages: [{}] }, { source: 'file_update' })
+  const r = addDocument(s.id, { instanceId: 'I1', invoiceDocumentId: 'INV-A', pages: [{}] }, { source: 'file_update' })
   assert.equal(r, false, 'file_update 来源应被拒绝')
   assert.equal(docsOf(s.id).length, 0)
-})
-
-test('Step 3A: invoiceDocumentId 作为领域主键', () => {
-  const s = createImportSession()
-  addDocument(s.id, { invoiceDocumentId: 'INV-A', instanceId: 'I1', id: 'X', pages: [{}] })
-  addDocument(s.id, { invoiceDocumentId: 'INV-A', instanceId: 'I2', id: 'Y', pages: [{}] })
-  assert.equal(docsOf(s.id).length, 1, '同 invoiceDocumentId → 去重，不管 instanceId/id 差异')
-})
-
-test('Step 3A: 不同 invoiceDocumentId 各自保留', () => {
-  const s = createImportSession()
-  addDocument(s.id, { invoiceDocumentId: 'INV-A', instanceId: 'I1', pages: [{}] })
-  addDocument(s.id, { invoiceDocumentId: 'INV-B', instanceId: 'I1', pages: [{}] })
-  assert.equal(docsOf(s.id).length, 2, '不同 invoiceDocumentId 各自保留')
 })

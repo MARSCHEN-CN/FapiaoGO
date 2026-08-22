@@ -63,7 +63,10 @@ const FORBIDDEN_PATCH_FIELDS = new Set([
 export function assertCanRegisterDocument(doc, existing = null) {
   if (existing) {
     if (existing.lifecycle === Lifecycle.SEALED) {
-      throw new Error(`[invoiceEntityGuard] 拒绝注册：文档已 SEALED (instanceKey=${existing.instanceId || existing.docId || existing.id})`)
+      const key = existing.instanceId && existing.invoiceDocumentId
+        ? `${existing.instanceId}::${existing.invoiceDocumentId}`
+        : (existing.instanceId || existing.docId || existing.id || '?')
+      throw new Error(`[invoiceEntityGuard] 拒绝注册：文档已 SEALED (instanceKey=${key})`)
     }
     if (existing.lifecycle === Lifecycle.DELETED) {
       throw new Error(`[invoiceEntityGuard] 拒绝注册：文档已 DELETED`)
@@ -110,12 +113,12 @@ export function assertCanPatchDocument(doc, patch) {
  * 允许条件：
  *   - lifecycle 为 REGISTERED（只有已注册文档才能 seal）
  *   - pages.length >= 1
- *   - 有有效身份（instanceId || docId || id）
+ *   - 有有效实例身份（instanceId + invoiceDocumentId 必须同时存在）
  *
  * 禁止：
  *   - 已是 SEALED / DELETED
  *   - 空 pages
- *   - 无身份
+ *   - 无有效实例身份
  *
  * @param {Object} doc
  * @throws {Error} 检查不通过
@@ -134,9 +137,12 @@ export function assertCanSealDocument(doc) {
   if (!doc.pages || doc.pages.length === 0) {
     throw new Error('[invoiceEntityGuard] 拒绝 seal：pages 为空')
   }
-  const identity = doc.instanceId || doc.docId || doc.id
-  if (!identity) {
-    throw new Error('[invoiceEntityGuard] 拒绝 seal：无有效身份（instanceId/docId/id 均为空）')
+  // Contract C 修复：instanceId + invoiceDocumentId 必须同时存在
+  if (!doc.instanceId || !doc.invoiceDocumentId) {
+    throw new Error(
+      `[invoiceEntityGuard] 拒绝 seal：实例身份不完整 ` +
+      `(instanceId=${doc.instanceId || '?'}, invoiceDocumentId=${doc.invoiceDocumentId || '?'})`
+    )
   }
 }
 

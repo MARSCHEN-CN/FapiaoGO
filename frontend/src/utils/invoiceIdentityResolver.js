@@ -78,3 +78,65 @@ export function isSameInvoiceDocument(a, b) {
   if (!idA || !idB) return false
   return idA === idB
 }
+
+/**
+ * 解析 Session Document Instance Identity（Contract C）。
+ *
+ * Document Instance Identity = Import Instance × Invoice Identity
+ *
+ * This is the ONLY resolver for session-level document operations:
+ *   addDocument / patchDocument / deleteDocumentByInstanceKey / duplicate removal
+ *
+ * Invariants:
+ *   INV-I1: 同实例 + 同发票 → same key（幂等 retry/double-submit）
+ *   INV-I2: 不同实例 + 同发票 → different key（A/B 相同内容独立存在）
+ *   INV-I3: 同实例 + 不同发票 → different key（多票 PDF 隔离）
+ *
+ * @param {Object|null|undefined} doc
+ * @returns {string|null} session instance key，字段缺失时返回 null（Contract Violation）
+ */
+export function resolveSessionInstanceKey(doc) {
+  if (!doc) {
+    if (process.env.NODE_ENV === 'development') {
+      console.trace('[IDENTITY-TRACE] resolveSessionInstanceKey: doc is null/undefined')
+    }
+    return null
+  }
+  if (typeof doc === 'string') {
+    if (process.env.NODE_ENV === 'development') {
+      console.trace('[IDENTITY-TRACE] resolveSessionInstanceKey: doc is string (should be object)')
+    }
+    return null
+  }
+
+  const instanceId = doc.instanceId
+  const invoiceIdentity = doc.invoiceDocumentId
+
+  if (!instanceId || !invoiceIdentity) {
+    if (process.env.NODE_ENV === 'development') {
+      console.warn('[IDENTITY-TRACE] resolveSessionInstanceKey: 身份不完整 → 返回 null', {
+        hasInstanceId: !!instanceId,
+        hasInvoiceDocumentId: !!invoiceIdentity,
+        docSnapshot: {
+          docId: doc.docId,
+          instanceId: doc.instanceId,
+          invoiceDocumentId: doc.invoiceDocumentId,
+          invoiceNumber: doc.invoiceNumber,
+          fileKey: doc.fileKey,
+          sourceHash: doc.sourceHash,
+        },
+      })
+    }
+    return null
+  }
+
+  const key = `${instanceId}::${invoiceIdentity}`
+  if (process.env.NODE_ENV === 'development') {
+    console.log('[IDENTITY-TRACE] resolveSessionInstanceKey: 成功', {
+      instanceId,
+      invoiceDocumentId: invoiceIdentity,
+      key,
+    })
+  }
+  return key
+}

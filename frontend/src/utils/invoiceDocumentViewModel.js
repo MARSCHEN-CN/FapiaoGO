@@ -88,6 +88,10 @@ export function invoiceDocumentToRow(invoiceDoc, allFiles, fileIndex) {
       _pages: sorted,
       _pageCount: sorted.length,
       _isDocumentGroup: true,
+      // Instance Identity：保留 InvoiceDocument 级别的 instanceId 和 invoiceDocumentId
+      // 这是 resolveSessionInstanceKey 正确工作的前提（Contract C）
+      instanceId: invoiceDoc.instanceId,
+      invoiceDocumentId: invoiceDoc.invoiceDocumentId,
       // Commit 2：Document 字段优先于 Page 字段（领域优先级）。
       // rep 是首页 pageObj，其 amount/invoiceDate 只是首页解析值；
       // 多页发票应以 assemble 合并结果（末页金额 / 首页开票日期）为准。
@@ -113,6 +117,11 @@ export function invoiceDocumentToRow(invoiceDoc, allFiles, fileIndex) {
     ...singlePage,
     name: displayName,           // 显示用：还原后的文件名（如 "invoice.pdf"）
     originalName: originalName,  // 查询用：原始文件名（如 "invoice_p1.pdf"）
+    // Instance Identity：保留 InvoiceDocument 级别的 instanceId 和 invoiceDocumentId
+    // 这是 resolveSessionInstanceKey 正确工作的前提（Contract C）
+    instanceId: invoiceDoc.instanceId,
+    invoiceDocumentId: invoiceDoc.invoiceDocumentId,
+    documentId: invoiceDoc.docId,
   }
 }
 

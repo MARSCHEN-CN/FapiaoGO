@@ -45,8 +45,8 @@ import { DisplayAdapter, resolveDocId } from './components/DisplayAdapter'
 import { ZoomToolbar } from './components/ZoomToolbar'
 import { PageNavigator } from './components/PageNavigator'
 import { useDocument } from './hooks/useDocument'
-import { removeDocument, getRegisteredDocIds } from './stores/DocumentStore'
-import { clearActiveSession, getActiveSessionId, getSession, removeFilesFromSession, deleteInvoiceDocument, deleteDocumentsByPageKeys, resolveDocumentInstanceKey } from './stores/ImportSessionStore'
+import { removeDocument, getRegisteredDocIds, resolveDocumentIdentity } from './stores/DocumentStore'
+import { clearActiveSession, getActiveSessionId, getSession, removeFilesFromSession, deleteInvoiceDocument, deleteDocumentsByPageKeys, deleteDocumentByInstanceKey, resolveDocumentInstanceKey } from './stores/ImportSessionStore'
 import { resolvePreviewUrl } from './utils/previewResourceResolver'
 import { prefetchPreviewUrls } from './utils/previewPrefetcher'
 import ActionBar from './components/ActionBar'
@@ -155,7 +155,8 @@ function AppContent() {
 
   // Display Area Refactor Step 10：当前预览文件是否已注册 InvoiceDocument。
   // 用于门控 legacy 加载遮罩（新路径 DocumentViewer 自行管理加载态）。
-  const activeDocument = useDocument(resolveDocId(previewFile))
+  // 使用 resolveDocumentIdentity 统一解析存储键，与 DocumentStore 存储键保持一致
+  const activeDocument = useDocument(resolveDocumentIdentity(previewFile))
 
   // ── 6B-3 Preview Prefetch v1：相邻文件预览预热 ──
   // 用户查看意图（当前 previewFile）→ 预热 ±PREFETCH_RANGE 相邻文件 page1 的 preview URL。
@@ -527,20 +528,73 @@ function AppContent() {
   }, [cleanupPreviewUrl])
 
   const removeDuplicateFiles = useCallback((removeSource = false) => {
+    console.log('[IDENTITY-TRACE] removeDuplicateFiles: CALLED', { removeSource, fileCount: filesRef.current?.length, sessionId: getActiveSessionId() })
     const liveFiles = filesRef.current
     const { duplicateGroups } = buildDocumentViewModel(liveFiles)
-    const duplicateKeys = new Set()
+    // duplicateGroups 是 Map<string, Object[]>，需转为数组
+    const dupGroupsArr = Array.from(duplicateGroups.values())
+    console.log('[IDENTITY-TRACE] removeDuplicateFiles: duplicateGroups', {
+      count: dupGroupsArr.length,
+      groups: dupGroupsArr.map((g, i) => ({
+        groupIndex: i,
+        size: g.length,
+        docs: g.map(d => ({
+          name: d.name,
+          instanceId: d.instanceId,
+          invoiceDocumentId: d.invoiceDocumentId,
+          resolveKey: resolveDocumentInstanceKey(d),
+        })),
+      })),
+    })
     const pathsToDelete = []
-    duplicateGroups.forEach((dupDocs) => {
+    const dupSid = getActiveSessionId()
+    if (!dupSid) {
+      console.warn('[IDENTITY-TRACE] removeDuplicateFiles: 无活跃 session，提前返回')
+      return
+    }
+
+    if (process.env.NODE_ENV === 'development') {
+      console.log('[IDENTITY-TRACE] removeDuplicateFiles: 开始', {
+        sessionId: dupSid,
+        duplicateGroupCount: dupGroupsArr.length,
+      })
+    }
+
+    // Contract D: 按 Document Instance Identity 精确删除，不得扩大删除范围
+    dupGroupsArr.forEach((dupDocs) => {
       dupDocs.forEach((doc, idx) => {
-        if (idx > 0) {
-          for (const page of documentPages(doc)) {
-            duplicateKeys.add(page.key)
-            if (removeSource && page.path) pathsToDelete.push(page.path)
+        if (idx === 0) return  // 保留 keeper
+
+        // 收集要删除的 pageKeys（用于 UI 同步和可选物理删除）
+        for (const page of documentPages(doc)) {
+          if (removeSource && page.path) pathsToDelete.push(page.path)
+        }
+
+        // 精确删除指定实例（INV-R2: 删除闭包不得扩大）
+        const instanceKey = resolveDocumentInstanceKey(doc)
+        if (instanceKey) {
+          if (process.env.NODE_ENV === 'development') {
+            console.log('[IDENTITY-TRACE] removeDuplicateFiles: 删除实例', {
+              instanceKey,
+              keeperKey: resolveDocumentInstanceKey(dupDocs[0]),
+            })
           }
+          deleteDocumentByInstanceKey(dupSid, instanceKey)
+        } else {
+          console.warn('[IDENTITY-TRACE] removeDuplicateFiles: 无法解析 instanceKey，跳过删除', {
+            docName: doc.name,
+            hasInstanceId: !!doc.instanceId,
+            hasInvoiceDocumentId: !!doc.invoiceDocumentId,
+          })
         }
       })
     })
+
+    if (process.env.NODE_ENV === 'development') {
+      console.log('[IDENTITY-TRACE] removeDuplicateFiles: 完成')
+    }
+
+    // 物理删除源文件（可选）
     if (pathsToDelete.length > 0) {
       const ipc = electronAPIRef.current?.ipcRenderer
       if (ipc) {
@@ -549,29 +603,25 @@ function AppContent() {
         }).catch(err => console.error('[removeDup] 删除源文件出错:', err))
       }
     }
+
+    // 清理预览
     const livePreview = previewFileRef.current
-    if (livePreview && duplicateKeys.has(livePreview.key)) {
+    const allRemovedPageKeys = new Set()
+    dupGroupsArr.forEach((dupDocs) => {
+      dupDocs.forEach((doc, idx) => {
+        if (idx > 0) {
+          for (const page of documentPages(doc)) {
+            allRemovedPageKeys.add(page.key)
+          }
+        }
+      })
+    })
+    if (livePreview && allRemovedPageKeys.has(livePreview.key)) {
       cleanupPreviewUrl()
     }
 
-    // ★ 2026-08-21 Fix: 使用 deleteDocumentsByPageKeys 代替 deleteInvoiceDocument。
-    //   原因：重复发票共享相同 identityKey（同 sourceDocId + invoiceNumber），
-    //   deleteInvoiceDocument 用 findIndex 定位会找到第一个文档（A），而非要删除的副本（copy）。
-    //   deleteDocumentsByPageKeys 按 pageKey 交集精确锁定目标文档，不会误删。
-    const dupSid = getActiveSessionId()
-    let deletedViaDocument = false
-    if (dupSid && duplicateKeys.size > 0) {
-      const result = deleteDocumentsByPageKeys(dupSid, duplicateKeys)
-      if (result.success) {
-        result.removedPageKeys.forEach(k => duplicateKeys.add(k))
-        deletedViaDocument = true
-      }
-    }
-
-    setFiles(prev => prev.filter(fileObj => !duplicateKeys.has(fileObj.key)))
-    if (!deletedViaDocument && dupSid && duplicateKeys.size > 0) {
-      removeFilesFromSession(dupSid, [...duplicateKeys])
-    }
+    // 更新文件列表
+    setFiles(prev => prev.filter(fileObj => !allRemovedPageKeys.has(fileObj.key)))
   }, [cleanupPreviewUrl])
 
   // ── 按 key 集合移除文件（共享核心：往年发票 / 重复报销 / 未来同类提醒共用）──

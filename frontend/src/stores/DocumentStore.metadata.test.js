@@ -51,7 +51,8 @@ test('Case 1: OFD → metadata 驱动注册 2 页（rotation 映射 sourceRotati
   assert.equal(doc.pages[0].sourceRotation, 0, 'API rotation=0 → sourceRotation=0')
   assert.equal(doc.pages[1].sourceRotation, 90, 'API rotation=90 → sourceRotation=90')
   assert.equal(doc.pages[0].width, 2480)
-  assert.equal(getDocument('ofd1').pageCount, 2)
+  // 使用 invoiceDocumentId 查找（因为无 instanceId，存储键 = invoiceDocumentId）
+  assert.equal(getDocument(doc.invoiceDocumentId).pageCount, 2)
 })
 
 test('Case 2: PNG → 单页（直接调用 ensureDocumentFromMetadata，PNG 不走 ensureDocumentMetadata 守卫）', async () => {
@@ -89,12 +90,13 @@ test('Case 3: PDF siblings 注册不被 metadata 破坏（仍 3 页 + 真实尺�
 test('Case 3b: PDF 未注册 render registry → /metadata 404 静默降级，siblings 注册保留', async () => {
   clearAllDocuments()
   const siblings = makeSiblings('pdf2', 2)
-  ensureDocumentFromFileObj(siblings[0], siblings)
+  const fromSiblings = ensureDocumentFromFileObj(siblings[0], siblings)
   // 临时覆盖为 404（模拟 PDF/Image 未走 /api/documents/open）
   globalThis.fetch = async () => ({ ok: false, status: 404, json: async () => ({}) })
   const doc = await ensureDocumentMetadata({ docId: 'pdf2', name: 'doc2.pdf' })
   assert.equal(doc, null, '404 应降级返回 null（增强项绝不抛）')
-  assert.equal(getDocument('pdf2').pageCount, 2, 'siblings 2 页注册应保留')
+  // 使用 invoiceDocumentId 查找（因为无 instanceId，存储键 = invoiceDocumentId）
+  assert.equal(getDocument(fromSiblings.invoiceDocumentId).pageCount, 2, 'siblings 2 页注册应保留')
 })
 
 test('确保：metadata 缺维时回退保留既有真实尺寸（防御性）', async () => {

@@ -24,7 +24,7 @@
 
 import { createSession, createSessionFile } from '../models/ImportSession.js'
 import { assertCanRegisterDocument, assertCanPatchDocument, assertCanSealDocument, assertCanDeleteDocument, Lifecycle } from '../guards/invoiceEntityGuard.js'
-import { resolveInvoiceIdentity } from '../utils/invoiceIdentityResolver.js'
+import { resolveSessionInstanceKey } from '../utils/invoiceIdentityResolver.js'
 
 // ── 会话存储 ────────────────────────────────────────────
 
@@ -256,16 +256,16 @@ export function updateFileStatus(sessionId, fileKey, updates) {
 }
 
 /**
- * 统一文档实例身份（委托 invoiceIdentityResolver）。
+ * 解析 Session Document Instance Identity（Contract C）。
  *
- * Invoice Entity Boundary Contract §四：
- *   identity = invoiceDocumentId || id || instanceId || docId
+ * Document Instance Identity = Import Instance × Invoice Identity
+ * 仅用于 Session 内文档去重与定位。
  *
  * @param {Object|null|undefined} doc
- * @returns {string|null} 去重键，无法解析时返回 null
+ * @returns {string|null} session instance key，字段缺失时返回 null
  */
 export function resolveDocumentInstanceKey(doc) {
-  return resolveInvoiceIdentity(doc)
+  return resolveSessionInstanceKey(doc)
 }
 
 /**
@@ -291,7 +291,16 @@ export function addDocument(sessionId, doc, options = {}) {
   const session = sessions.get(sessionId)
   if (!session) return false
   const instanceKey = resolveDocumentInstanceKey(doc)
-  if (!instanceKey) return false
+  if (!instanceKey) {
+    if (process.env.NODE_ENV === 'development') {
+      console.warn('[IDENTITY-TRACE] addDocument: instanceKey 解析失败，拒绝添加', {
+        docId: doc?.docId,
+        instanceId: doc?.instanceId,
+        invoiceDocumentId: doc?.invoiceDocumentId,
+      })
+    }
+    return false
+  }
   session.documents = session.documents || []
   const existingIdx = session.documents.findIndex(d => resolveDocumentInstanceKey(d) === instanceKey)
   const existing = existingIdx !== -1 ? session.documents[existingIdx] : null
@@ -313,6 +322,17 @@ export function addDocument(sessionId, doc, options = {}) {
   if (!doc.lifecycle) doc.lifecycle = Lifecycle.REGISTERED
   session.documents.push(doc)
   documentVersion++
+  if (process.env.NODE_ENV === 'development') {
+    console.log('[IDENTITY-TRACE] addDocument: 成功', {
+      sessionId,
+      instanceKey,
+      docId: doc.docId,
+      instanceId: doc.instanceId,
+      invoiceDocumentId: doc.invoiceDocumentId,
+      invoiceNumber: doc.invoiceNumber,
+      totalDocs: session.documents.length,
+    })
+  }
   if (options.silent) {
     pendingNotifySessionIds.add(sessionId)
   } else {
@@ -510,6 +530,94 @@ export function deleteDocumentsByPageKeys(sessionId, pageKeys) {
   }
 
   return { success: deletedCount > 0, removedPageKeys: allRemovedPageKeys, deletedCount }
+}
+
+/**
+ * 按 Document Instance Identity 精确删除单个文档（Contract D）。
+ *
+ * 与 deleteDocumentsByPageKeys 的区别：
+ *   - deleteDocumentsByPageKeys: 按 pageKey overlap 删除整个 Document（可能级联）
+ *   - deleteDocumentByInstanceKey: 按实例身份精确删除，仅移除目标实例
+ *
+ * INV-R2: 删除闭包不得扩大 — 只删除指定 instanceKey 对应的文档
+ *
+ * @param {string} sessionId
+ * @param {string} instanceKey - documentInstanceKey（resolveSessionInstanceKey 产出）
+ * @returns {{success: boolean, removedPageKeys: string[], deletedCount: number}}
+ */
+export function deleteDocumentByInstanceKey(sessionId, instanceKey) {
+  const session = sessions.get(sessionId)
+  if (!session || !instanceKey) {
+    if (process.env.NODE_ENV === 'development') {
+      console.warn('[IDENTITY-TRACE] deleteDocumentByInstanceKey: 参数无效', {
+        hasSession: !!session,
+        instanceKey,
+      })
+    }
+    return { success: false, removedPageKeys: [], deletedCount: 0 }
+  }
+  session.documents = session.documents || []
+
+  const removedPageKeys = []
+  let deletedCount = 0
+  const deletedDocs = []
+
+  for (let i = session.documents.length - 1; i >= 0; i--) {
+    const doc = session.documents[i]
+    const docKey = resolveDocumentInstanceKey(doc)
+    if (docKey !== instanceKey) continue
+
+    // Guard 检查
+    try {
+      assertCanDeleteDocument(doc)
+    } catch (e) {
+      console.warn('[deleteDocumentByInstanceKey] guard 拒绝:', e.message)
+      continue
+    }
+
+    // 软删除
+    doc.lifecycle = Lifecycle.DELETED
+    const docRemovedKeys = Array.isArray(doc._pageKeys) ? [...doc._pageKeys] : []
+    removedPageKeys.push(...docRemovedKeys)
+    deletedDocs.push({
+      docId: doc.docId,
+      instanceId: doc.instanceId,
+      invoiceDocumentId: doc.invoiceDocumentId,
+      invoiceNumber: doc.invoiceNumber,
+    })
+
+    // 从 session.files 移除
+    if (docRemovedKeys.length > 0) {
+      const keySet = new Set(docRemovedKeys)
+      session.files = session.files.filter(f => !keySet.has(f.key))
+    }
+
+    // 从 session.documents 移除
+    session.documents.splice(i, 1)
+    deletedCount++
+    break  // 只删除一个实例
+  }
+
+  if (process.env.NODE_ENV === 'development') {
+    console.log('[IDENTITY-TRACE] deleteDocumentByInstanceKey: 完成', {
+      sessionId,
+      requestedInstanceKey: instanceKey,
+      deletedDocs,
+      remainingDocs: session.documents.map(d => ({
+        instanceId: d.instanceId,
+        invoiceDocumentId: d.invoiceDocumentId,
+      })),
+      success: deletedCount > 0,
+    })
+  }
+
+  if (removedPageKeys.length > 0) {
+    session.progress.total = session.files.length
+    documentVersion++
+    notify(sessionId)
+  }
+
+  return { success: deletedCount > 0, removedPageKeys, deletedCount }
 }
 
 /**
