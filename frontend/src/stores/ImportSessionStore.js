@@ -183,6 +183,13 @@ export function getSession(id) {
  * @param {string} id
  */
 export function removeSession(id) {
+  if (process.env.NODE_ENV === 'development') {
+    console.log('[S2-CLEANUP] removeSession-before', {
+      ts: Date.now(),
+      sessionId: id,
+      status: sessions.get(id)?.status,
+    })
+  }
   clearSessionCleanupTimer(id)
   sessions.delete(id)
   // 必须清理 activeSessionId 指针：
@@ -190,6 +197,14 @@ export function removeSession(id) {
   // 2) 如果 activeSessionId 指向了不存在的会话（悬空指针） → 清理
   if (activeSessionId === id || (activeSessionId && !sessions.has(activeSessionId))) {
     activeSessionId = null
+  }
+  if (process.env.NODE_ENV === 'development') {
+    console.log('[S2-CLEANUP] removeSession-after', {
+      ts: Date.now(),
+      sessionId: id,
+      activeSessionIdAfter: activeSessionId,
+      remainingSessions: [...sessions.keys()],
+    })
   }
   notify(id)
 }

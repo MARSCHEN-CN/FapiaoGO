@@ -17,6 +17,24 @@ import { computeInitialDocFacts } from '../layout/docFacts.js'
 import { nextZoomStep } from './zoomStep.mjs'
 import { applyWheelZoom } from './continuousZoom.mjs'
 
+// [O2-R-PROBE] Object Flow Trace（一次性诊断，dev-only）
+// 目标：证明 loadFilePreview input → output → setPreviewFile → DisplayAdapter
+// 是否同一个对象引用（__traceId 透传 = 浅拷贝；丢失 = 中途 clone/sanitize/替换）。
+let __flowTraceSeq = 0
+function __flowTrace(phase, obj) {
+  if (process.env.NODE_ENV !== 'development') return
+  __flowTraceSeq += 1
+  const t = obj && obj.__traceId ? obj.__traceId : `OFR-${__flowTraceSeq}`
+  if (obj && !obj.__traceId) obj.__traceId = t
+  console.log(
+    `[O2-R-PROBE][${phase}] seq=${__flowTraceSeq} trace=${t} ` +
+    `key=${String(obj?.key).slice(0, 28)} fmt=${obj?.fileFormat || obj?._fileFormat || '-'} ` +
+    `docId=${obj?.docId || '-'} inst=${obj?.instanceId || '-'} inv=${obj?.invoiceDocumentId || '-'} ` +
+    `url=${obj?._previewImageUrl ? 'Y' : '-'} pvImg=${obj?.previewImage ? 'Y' : '-'} ` +
+    `imgW=${obj?._imageWidth || '-'} imgH=${obj?._imageHeight || '-'}`
+  )
+}
+
 // ── 滚轮缩放常量（Ctrl/⌘ + wheel，跟随光标锚点）── V16.1 平滑增强 ──
 // 连续缩放：deltaY 走指数映射（乘性），rAF 合并高频事件为每帧一次更新；
 // 不再用离散档位 + 冷却/阈值（那套会「跳格 + 迟滞」）。sensitivity 偏小，避免普通鼠标一格冲太猛。
@@ -1310,6 +1328,8 @@ export function usePreview({ files, settings, electronAPIRef }) {
    * @returns {Promise<Object>} 包含 _previewImageUrl 或 _pdfData 的文件对象
    */
   const loadFilePreview = useCallback(async (fObj, currentKey = null, currentUrl = null, signal = null) => {
+    // [O2-R-PROBE][A-input] loadFilePreview 入参对象现场
+    __flowTrace('A-input', fObj)
     // ✅ 优先使用后端返回的格式
     let fmt = fObj.fileFormat
     
@@ -1361,12 +1381,14 @@ export function usePreview({ files, settings, electronAPIRef }) {
           if (isImageLikeFormat(fmt)) {
             // 主源：fetchImageDims(webp 实际像素)
             let dimsResolved = false
+            let dimsSource = 'none'
             try {
               const dims = await fetchImageDims(_previewImageUrl, fObj.key)
               if (dims && dims.w > 0 && dims.h > 0) {
                 fObj._imageWidth = dims.w
                 fObj._imageHeight = dims.h
                 dimsResolved = true
+                dimsSource = 'fetchImageDims(webp)'
               }
             } catch (_) { /* webp 加载失败，降级到 metadata */ }
             // fallback：/metadata（ofd_page_dimensions / 图片 PIL 像素）
@@ -1378,13 +1400,27 @@ export function usePreview({ files, settings, electronAPIRef }) {
                 if (pageDims && pageDims.width > 0 && pageDims.height > 0) {
                   fObj._imageWidth = pageDims.width
                   fObj._imageHeight = pageDims.height
+                  dimsSource = 'metadata-fallback'
                 }
               } catch (_) {
                 // metadata 失败降级：尺寸保持 0，行为与修复前一致，不抛出
               }
             }
+            // [O1-PROBE] 一次性只读取证：image/OFD 共享分支写入后的 geometry 输入快照
+            // 单行紧凑输出（DevTools 对象折叠会吞字段，字符串保证复制即用）
+            if (process.env.NODE_ENV === 'development') {
+              console.log(
+                `[O1-PROBE] fmt=${fmt} key=${String(fObj.key).slice(0, 40)} docId=${fObj.docId} effDoc=${effectiveDocId} page=${pageForPreview} ` +
+                `dimsSource=${dimsSource} nat=${fObj._imageWidth}x${fObj._imageHeight} ` +
+                `userRot=${fileRotations?.[fObj.key] || 0} srcRot=${fObj.sourceRotation || 0} ` +
+                `render=${_previewImageUrl ? (_previewImageUrl.startsWith('blob:') ? 'blob-url' : 'http') : 'null'}`
+              )
+            }
           }
-          return { ...fObj, _previewImageUrl, _fileFormat: fmt }
+          // [O2-R-PROBE][B-output] RE 分支 return 前
+          const __out = { ...fObj, _previewImageUrl, _fileFormat: fmt }
+          __flowTrace('B-output', __out)
+          return __out
         }
 
         // 复用已加载的 blob URL
@@ -1449,7 +1485,10 @@ export function usePreview({ files, settings, electronAPIRef }) {
           } catch (_) { /* metadata 获取失败静默降级 */ }
         }
 
-        return { ...fObj, _previewImageUrl, _fileFormat: fmt }
+        // [O2-R-PROBE][B-output2] OFD base64 兜底分支 return 前
+        const __out2 = { ...fObj, _previewImageUrl, _fileFormat: fmt }
+        __flowTrace('B-output2', __out2)
+        return __out2
       }
 
       if (fmt === 'pdf') {
@@ -1767,6 +1806,8 @@ export function usePreview({ files, settings, electronAPIRef }) {
       skipRenderRef.current = true
       previewFileRef.current = loadedFile
       setMergePair(null)
+      // [O2-R-PROBE][C-setPreview] 缓存命中分支 setPreviewFile 前
+      __flowTrace('C-setPreview(cache)', loadedFile)
       setPreviewFile(loadedFile)
       // ✅ 跳过 render effect（skipRenderRef=true）时，L323 不会执行，
       //    lastRenderKeyRef 残留旧值，后续切换到新文件时可能被 L322 误拦。
@@ -1834,6 +1875,8 @@ export function usePreview({ files, settings, electronAPIRef }) {
     if (version === previewVersionRef.current) {
       previewFileRef.current = loadedFile
       setMergePair(null)
+      // [O2-R-PROBE][C-setPreview] 正常分支 setPreviewFile 前
+      __flowTrace('C-setPreview(normal)', loadedFile)
       setPreviewFile(loadedFile)
       setPreviewPage(1)
       setNumPages(loadedFile._fileFormat === 'pdf' ? 0 : 1)

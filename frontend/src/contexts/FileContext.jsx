@@ -95,6 +95,21 @@ export function FileProvider({ children }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId, storeSnap])
 
+  // [S2-PROBE] 只读：invoiceDocs 状态变化（present/null 退化时刻，TTL 回收关联验证）
+  const prevInvoiceDocsState = useRef(null)
+  useEffect(() => {
+    const state = invoiceDocs ? `present(${invoiceDocs.length})` : 'null'
+    if (prevInvoiceDocsState.current !== state) {
+      console.log('[S2-PROBE][invoiceDocs]', {
+        ts: Date.now(),
+        state,
+        sessionId,
+        storeSnap,
+      })
+      prevInvoiceDocsState.current = state
+    }
+  }, [invoiceDocs, sessionId, storeSnap])
+
   // ── P1-C: documentView 内容签名缓存 ──
   // 排序仅改变 files 数组顺序时，buildDocumentViewModel 的输出内容完全相同
   // （duplicateGroups 以 invoiceNumber 为键，统计值与顺序无关）。

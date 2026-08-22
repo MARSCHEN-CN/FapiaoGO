@@ -83,6 +83,17 @@ export const DisplayAdapter = React.memo(function DisplayAdapter({
   const storeDocId = resolveDocumentIdentity(file) || resolveDocId(file) || file?.key
   const storeDocument = useDocument(storeDocId)
 
+  // [O2-D-PROBE] 只读：Display Identity → Store Lookup → Loading 全链快照
+  // 目标：判定 OFD 卡 Loading 是 Case D1（store miss，注册/生命周期问题）、
+  // D2（file 缺复合身份，assembly 未覆盖）、还是 D3（store hit 但 viewer readiness 问题）。
+  if (process.env.NODE_ENV === 'development' && file) {
+    console.log(`[O2-D-PROBE] trace=${file.__traceId || 'UNDEFINED'} fmt=${file._fileFormat || file.fileFormat} key=${String(file.key).slice(0, 24)} ` +
+      `instanceId=${file.instanceId || '-'} invDocId=${file.invoiceDocumentId || '-'} ` +
+      `storeDocId=${storeDocId} hit=${!!storeDocument} pageCount=${storeDocument?.pageCount ?? '-'} ` +
+      `splitPage=${!!file?.sourceDocId && !file?._isDocumentGroup} ` +
+      `assetReady=${!!file._previewImageUrl || !!file.previewImage || !!file.docId}`)
+  }
+
   // 拆分页判定：fileObj 携带 sourceDocId 且不是多页文档组 → 父 PDF 的一个独立分页。
   // _isDocumentGroup=true 的多页发票不作为拆分页，应走 DocumentStore 多页文档路径。
   const isSplitPage = !!file?.sourceDocId && !file?._isDocumentGroup

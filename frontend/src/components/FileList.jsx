@@ -172,7 +172,7 @@ const FileCardRow = memo(({ index, style, files, previewFileKey, previewFileDocI
               }
               return reasons.join('；')
             }
-            if (ihFirstTime) return `首次导入时间:${ihFirstTime}`  // 重复报销：显示首次导入时间（YY/MM/DD HH:mm）
+            if (ihFirstTime) return `首次导入:${ihFirstTime}`  // 重复报销：显示首次导入（YY/MM/DD HH:mm）
             return fileObj.invoiceDate && fileObj.invoiceDate !== '未知日期' ? fileObj.invoiceDate : '未知日期'
           })()}
         </span>
