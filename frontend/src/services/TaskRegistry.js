@@ -137,7 +137,20 @@ export function removeTask(id) {
   if (task.stream) {
     task.stream.close()
   }
-  if (task.abortController) {
+  // Fix S-B1：abort 只用于取消仍在执行中的 capability；终态 task 的 remove 只是资源回收，
+  // 不得重新产生 cancellation side effect（否则 TTL 清理 completed task 会误触发已绑定的
+  // runChunkedImport onAbort → 反向把已完成 session 改写为 cancelled）。
+  // 终态语义与 cleanCompletedTasks 一致：completed / cancelled。
+  if (task.abortController && task.status !== 'completed' && task.status !== 'cancelled') {
+    if (process.env.NODE_ENV === 'development') {
+      console.log('[S3-PROBE][task-abort]', {
+        ts: Date.now(),
+        taskId: id,
+        via: 'removeTask',
+        taskStatus: task.status,
+        caller: new Error().stack?.split('\n').slice(1, 5).join(' | '),
+      })
+    }
     task.abortController.abort()
   }
 
@@ -211,6 +224,15 @@ export function cancelTask(id) {
   if (task.status !== 'running' && task.status !== 'pending') return false
 
   if (task.abortController) {
+    if (process.env.NODE_ENV === 'development') {
+      console.log('[S3-PROBE][task-abort]', {
+        ts: Date.now(),
+        taskId: id,
+        via: 'cancelTask',
+        taskStatus: task.status,
+        caller: new Error().stack?.split('\n').slice(1, 5).join(' | '),
+      })
+    }
     task.abortController.abort()
   }
   if (task.stream) {

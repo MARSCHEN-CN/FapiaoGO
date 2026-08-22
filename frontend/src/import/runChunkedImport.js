@@ -27,6 +27,7 @@ import {
   updateFileError,
   updateProgress,
   updateSessionStatus,
+  getSession,
 } from '../stores/ImportSessionStore.js'
 
 /**
@@ -100,6 +101,17 @@ export async function runChunkedImport({ sessionId, taskId, files, chunkSize, au
   let wasAborted = false
   let currentResolve = null
   const onAbort = () => {
+    // [S3-PROBE] abort 消费点：signal 从何而来、是否已携带 reason
+    if (process.env.NODE_ENV === 'development') {
+      console.log('[S3-PROBE][abort-consumed]', {
+        ts: Date.now(),
+        sessionId,
+        taskId,
+        aborted: signal?.aborted,
+        reason: signal?.reason ? String(signal.reason) : null,
+        caller: new Error().stack?.split('\n').slice(1, 5).join(' | '),
+      })
+    }
     wasAborted = true
     for (const es of eventSources) {
       if (es && typeof es.close === 'function') es.close()
@@ -110,7 +122,13 @@ export async function runChunkedImport({ sessionId, taskId, files, chunkSize, au
       if (!terminalFileKeys.has(fileObj.key)) onFileUpdate(fileObj.key, 'cancelled')
     }
     if (onTaskStatus) onTaskStatus(taskId, 'cancelled')
-    updateSessionStatus(sessionId, 'cancelled')
+    // Fix S-B2：Abort 只能使 non-terminal session → cancelled；不得改写 terminal session
+    // （TaskRegistry TTL 清理会对已完成 task 误触发 abort → 此处防御，防止 completed→cancelled 回退）。
+    const curSession = getSession(sessionId)
+    const sessionTerminal = curSession && (curSession.status === 'completed' || curSession.status === 'cancelled')
+    if (!sessionTerminal) {
+      updateSessionStatus(sessionId, 'cancelled')
+    }
     if (currentResolve) {
       const r = currentResolve
       currentResolve = null
