@@ -227,6 +227,30 @@ class TestExportXlsxColumns(unittest.TestCase):
         self.assertEqual(total_row[2], 350.0)
         self.assertEqual(ws.cell(row=5, column=1).value, '合计')
 
+    def test_totals_tax_and_total_amount_with_frontend_labels(self):
+        # 回归：前端 EXCEL_COLUMNS 中 taxAmount/totalAmount 的 label 是
+        # 「总税额」/「总金额」（见 frontend/src/export/excelColumns.js），
+        # 与后端默认列文案「税额合计」/「价税合计」不一致。
+        # 合计行必须按列 key 匹配填入合计值，而非按中文 label 匹配（否则这两列合计留空）。
+        cols = ex.sanitize_columns([
+            {'key': 'invoiceNumber', 'label': '发票号码'},
+            {'key': 'taxAmount', 'label': '总税额'},
+            {'key': 'totalAmount', 'label': '总金额'},
+            {'key': 'lineTax', 'label': '税额'},
+        ])
+        ex.export_xlsx(self.path, _sample_invoices(),
+                       {'includeRemark': False, 'columns': cols})
+        wb = load_workbook(self.path)
+        ws = wb['发票汇总']
+        # 3 数据行 + 1 合计行
+        total_row = [c.value for c in ws[5]]
+        # 发票级去重：taxAmount = 30(A) + 5(B) = 35；totalAmount = 330 + 55 = 385
+        self.assertEqual(total_row[1], 35.0)
+        self.assertEqual(total_row[2], 385.0)
+        # 行级全加：lineTax = 10 + 20 + 5 = 35
+        self.assertEqual(total_row[3], 35.0)
+        self.assertEqual(ws.cell(row=5, column=1).value, '合计')
+
     def test_backward_compat_no_columns(self):
         ex.export_xlsx(self.path, _sample_invoices(), {'includeRemark': True})
         wb = load_workbook(self.path)

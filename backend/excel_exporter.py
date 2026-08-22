@@ -357,19 +357,23 @@ class _XlsxWriteOnlyWriter:
                     if v is not None:
                         sums[k] += Decimal(str(v))
 
-        total_label_map = {
-            '税前金额': sums['amountWithoutTax'],
-            '税额合计': sums['taxAmount'],
-            '价税合计': sums['totalAmount'],
-            '金额': sums['lineAmount'],
-            '税额': sums['lineTax'],
+        # 合计值按「列 key」匹配（与前端 computeTotals 语义一致）。
+        # 不依赖中文列标签：前端自定义列的 label 可能是「总税额/总金额」
+        # （见 frontend/src/export/excelColumns.js），而默认列用「税额合计/价税合计」，
+        # 按 label 匹配会导致合计行对应单元格留空（回归：总税额/总金额未合计）。
+        total_value_map = {
+            'amountWithoutTax': sums['amountWithoutTax'],
+            'taxAmount': sums['taxAmount'],
+            'totalAmount': sums['totalAmount'],
+            'lineAmount': sums['lineAmount'],
+            'lineTax': sums['lineTax'],
         }
         total_row = []
-        for c, (label, _, _, _) in enumerate(cols, 1):
+        for c, (_, key, _, _) in enumerate(cols, 1):
             if c == 1:
                 cell = self._make_cell(ws, '合计', font=self.total_font, fill=self.total_fill, border=self.total_border)
-            elif label in total_label_map:
-                v = total_label_map[label]
+            elif key in total_value_map:
+                v = total_value_map[key]
                 if isinstance(v, Decimal):
                     v = float(round(v, 2))
                     cell = self._make_cell(ws, v, font=self.total_font, fill=self.total_fill,
