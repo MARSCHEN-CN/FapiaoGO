@@ -1663,7 +1663,9 @@ export function usePreview({ files, settings, electronAPIRef }) {
         execId: previewExecutionRef.current?.id ?? '-',
         key: fileObj?.key,
         id: fileObj?.id?.slice(0, 20) || '-',
-        instanceId: fileObj?.instanceId?.slice(0, 20) || '-',
+        // ⚠️ 截断必须 ≥48：同前缀双实例（f11e512b vs 887d7bdb，前 20 字符相同）
+        // slice(0,20) 无法区分「usePreview 侧实例」与「注册侧实例」（实例分裂判定）
+        instanceId: fileObj?.instanceId?.slice(0, 48) || '-',
         invoiceDocumentId: fileObj?.invoiceDocumentId?.slice(0, 28) || '-',
         documentId: fileObj?.documentId?.slice(0, 20) || '-',
         docId: fileObj?.docId?.slice(0, 20) || '-',
@@ -1795,7 +1797,8 @@ export function usePreview({ files, settings, electronAPIRef }) {
           iter,
           key: snap?.key,
           id: snap?.id?.slice(0, 20) || '-',
-          instanceId: snap?.instanceId?.slice(0, 20) || '-',
+          // ⚠️ 截断必须 ≥48：同前缀双实例判定（同 [S9][doLoadPreview]）
+          instanceId: snap?.instanceId?.slice(0, 48) || '-',
           invoiceDocumentId: snap?.invoiceDocumentId?.slice(0, 28) || '-',
           documentId: snap?.documentId?.slice(0, 20) || '-',
           docId: snap?.docId?.slice(0, 20) || '-',
