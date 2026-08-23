@@ -1784,6 +1784,25 @@ export function usePreview({ files, settings, electronAPIRef }) {
       // [V2-TRACE][A-loadSTART] 本轮即将 load 的 consumingSnapshot 现场
       console.log(`[V2-TRACE][A-loadSTART] iter=${iter} txn=${__snapId(previewTransactionRef.current?.snapshot)} exec=${__execId(execution)}`)
 
+      // [S9] 实际进入 loadFilePreview 的 consumingSnapshot 完整身份（Scheduler 决策后）
+      // 与 [S9][doLoadPreview]（入口 fileObj）对照：若入口富、此处裸 → merge 分支
+      // consumingSnapshot=旧 transaction.snapshot，新 fileObj 未被消费（陈旧 snapshot 铁证）。
+      if (process.env.NODE_ENV === 'development') {
+        const snap = execution.consumingSnapshot
+        console.log('[S9][consumingSnapshot]', {
+          ts: Date.now(),
+          execId: execution.id,
+          iter,
+          key: snap?.key,
+          id: snap?.id?.slice(0, 20) || '-',
+          instanceId: snap?.instanceId?.slice(0, 20) || '-',
+          invoiceDocumentId: snap?.invoiceDocumentId?.slice(0, 28) || '-',
+          documentId: snap?.documentId?.slice(0, 20) || '-',
+          docId: snap?.docId?.slice(0, 20) || '-',
+          _source: snap?._source || '-',
+        })
+      }
+
       loadedFile = await loadFilePreview(execution.consumingSnapshot)
       // [V2-TRACE][B-loadRET] /preview 返回后的 loadedFile 现场
       console.log(`[V2-TRACE][B-loadRET] iter=${iter} loaded=${__snapId(loadedFile)}`)
