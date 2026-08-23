@@ -1279,11 +1279,7 @@ export function useFileOps({ setFiles, settings, electronAPIRef }) {
   const cancelImport = useCallback(() => {
     // [S3-PROBE] abort 发起入口：唯一已知的 cancelImport 调用
     if (process.env.NODE_ENV === 'development') {
-      console.log('[S3-PROBE][cancelImport]', {
-        ts: Date.now(),
-        hasAbortController: currentAbortRef.current != null,
-        caller: new Error().stack?.split('\n').slice(1, 5).join(' | '),
-      })
+
     }
     // 中止进行中的请求
     if (currentAbortRef.current) {

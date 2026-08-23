@@ -976,7 +976,6 @@ function AppContent() {
     // 场景 1: 首次导入（文件数增加）且无预览 → 首次自动预览
     const lenIncreased = displayFiles.length > prevFilesLengthRef.current
     if (lenIncreased && !previewFile) {
-      console.log('[AUTO_PREVIEW] scene1: len increased, no preview → handlePreview(first)')
       handlePreview(displayFiles[0])
     }
 
@@ -984,7 +983,6 @@ function AppContent() {
     // 解析完成后 InvoiceDocument 就绪，displayFiles 条目切换为带业务 documentId 的版本，
     // 旧 previewFile 的 docId 在 DocumentStore 已失效，必须切换到新条目
     if (firstHasDocId && !prevDocIdPresenceRef.current) {
-      console.log('[AUTO_PREVIEW] scene2: first docId appeared → handlePreview(first)')
       const pvHasDocumentId = !!previewFile?.documentId
       if (!previewFile || !pvHasDocumentId) {
         handlePreview(displayFiles[0])
@@ -993,14 +991,12 @@ function AppContent() {
 
     // 场景 3: 首个条目的 documentId 发生变化（如 assembly 重新绑定）→ 强制重新预览
     if (firstDocId && firstDocId !== prevFirstDocId) {
-      console.log('[AUTO_PREVIEW] scene3: first docId changed → handlePreview(first)')
       handlePreview(displayFiles[0])
     }
 
     // 场景 4: 当前 previewFile 已不在 displayFiles 中（如被替换为带 documentId 的版本）
     // 这是多页 PDF 拆分后 placeholder → 实际页面 的典型场景
     if (previewFile && !displayFiles.some(f => f.key === previewFile.key)) {
-      console.log('[AUTO_PREVIEW] scene4: previewFile missing from displayFiles → handlePreview(first)')
       handlePreview(displayFiles[0])
     }
 

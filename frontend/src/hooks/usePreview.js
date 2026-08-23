@@ -18,42 +18,6 @@ import { nextZoomStep } from './zoomStep.mjs'
 import { applyWheelZoom } from './continuousZoom.mjs'
 import { resolvePreviewTransition, resolveRefreshExecution, resolveBoundary, advanceLoadingStep, resolveCommittedClear } from '../utils/previewScheduler'
 
-// [O2-R-PROBE] Object Flow Trace（一次性诊断，dev-only）
-// 目标：证明 loadFilePreview input → output → setPreviewFile → DisplayAdapter
-// 是否同一个对象引用（__traceId 透传 = 浅拷贝；丢失 = 中途 clone/sanitize/替换）。
-let __flowTraceSeq = 0
-function __flowTrace(phase, obj) {
-  if (process.env.NODE_ENV !== 'development') return
-  __flowTraceSeq += 1
-  const t = obj && obj.__traceId ? obj.__traceId : `OFR-${__flowTraceSeq}`
-  if (obj && !obj.__traceId) obj.__traceId = t
-  console.log(
-    `[O2-R-PROBE][${phase}] seq=${__flowTraceSeq} trace=${t} ` +
-    `key=${String(obj?.key).slice(0, 28)} fmt=${obj?.fileFormat || obj?._fileFormat || '-'} ` +
-    `docId=${obj?.docId || '-'} inst=${obj?.instanceId || '-'} inv=${obj?.invoiceDocumentId || '-'} ` +
-    `url=${obj?._previewImageUrl ? 'Y' : '-'} pvImg=${obj?.previewImage ? 'Y' : '-'} ` +
-    `imgW=${obj?._imageWidth || '-'} imgH=${obj?._imageHeight || '-'}`
-  )
-}
-
-// [V2-TRACE] 单请求闭环取证（一次性诊断，dev-only）
-// A→E：loadFilePreview START → /preview 返回 → advanceLoadingStep → commit → Display。
-// 重点区分「占位空壳」vs「富态」：docId 有无 + url 有无 + 复合身份有无 + 尺寸。
-function __snapId(s) {
-  if (s == null) return 'NULL'
-  const key = String(s.key || '').slice(0, 16)
-  const doc = s.docId ? `doc:${String(s.docId).slice(0, 8)}` : 'doc:-'
-  const inst = s.instanceId ? 'inst:Y' : 'inst:-'
-  const inv = s.invoiceDocumentId ? 'inv:Y' : 'inv:-'
-  const url = s._previewImageUrl ? 'url:Y' : 'url:-'
-  const dim = s._imageWidth ? `${s._imageWidth}x${s._imageHeight}` : '?x?'
-  return `${key}|${doc}|${inst}|${inv}|${url}|${dim}`
-}
-function __execId(e) {
-  if (e == null) return 'EXEC_NULL'
-  return `id:${e.id}|key:${String(e.key || '').slice(0, 16)}|v:${e.version}|${e.phase}|consume:[${__snapId(e.consumingSnapshot)}]`
-}
-
 // ── 滚轮缩放常量（Ctrl/⌘ + wheel，跟随光标锚点）── V16.1 平滑增强 ──
 // 连续缩放：deltaY 走指数映射（乘性），rAF 合并高频事件为每帧一次更新；
 // 不再用离散档位 + 冷却/阈值（那套会「跳格 + 迟滞」）。sensitivity 偏小，避免普通鼠标一格冲太猛。
@@ -263,7 +227,6 @@ export function usePreview({ files, settings, electronAPIRef }) {
       setPreviewUrl(null)
       setPreviewImgDims(null)
       setPreviewCanvas(null)
-      console.log(`[PREVIEW FLOW ${flowTokenRef.current ?? 'init'}] LOADING_OFF | source=clearCommitted(preserve-txn v${txn.version})`)
       return
     }
     previewVersionRef.current++        // 在途 doLoadPreview 的 version 守卫失效，阻止复活 previewFile
@@ -278,7 +241,6 @@ export function usePreview({ files, settings, electronAPIRef }) {
     setPreviewImgDims(null)
     setPreviewCanvas(null)
     setPreviewLoading(false)
-    console.log(`[PREVIEW FLOW ${flowTokenRef.current ?? 'init'}] LOADING_OFF | source=clearCommitted`)
   }, [])
   // 同步 committed.layout（contentLayout 是派生显示态，commit 后随其更新）
   useEffect(() => { committedPreviewRef.current.layout = contentLayout }, [contentLayout])
@@ -708,7 +670,6 @@ export function usePreview({ files, settings, electronAPIRef }) {
     const renderToken = `RND-${Date.now()}-${++renderLogIdRef.current}`
     // ✅ 统一生命周期 token：优先用 doLoadPreview 写入的 PRV-xxx，使一次导入全链路共用同一 ID
     const flowToken = flowTokenRef.current ?? renderToken
-    console.log(`[PREVIEW FLOW ${renderToken}] START | file=${previewFile.key?.slice(0,20)} | page=${previewPage}`)
 
     // NOTE: Render dispatch must always execute before any cache bypass.
     //       Cache may provide render results, but must not choose the renderer.
@@ -737,7 +698,6 @@ export function usePreview({ files, settings, electronAPIRef }) {
     if (skipRenderRef.current && previewRotation === 0) {
       skipRenderRef.current = false
       if (reUrl) { setPreviewUrl(reUrl) }  // RE 可用 → 优先使用（不受缓存影响）
-      console.log(`[PREVIEW FLOW ${renderToken}] FINALLY | skipped (L2 cache hit)`)
       return  // 不执行 Canvas 渲染（缓存内容已就绪或 RE 已设）
     }
     // 旋转 ≠ 0 时也清掉 skipRenderRef
@@ -771,12 +731,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
       ? rawContentGeom
       : { widthPx: 595, heightPx: 842 }  // A4 默认
     if (rawContentGeom.widthPx <= 0 || rawContentGeom.heightPx <= 0) {
-      console.warn('[PREVIEW FLOW] 尺寸缺失，使用 A4 默认降级:', {
-        key: previewFile.key?.slice(0, 20),
-        raw: rawContentGeom,
-        format: previewFile._fileFormat,
-        source: 'renderEffect',
-      })
+
     }
     const previewGeometry = buildPreviewGeometry({
       rawDocumentGeometry: safeGeom,
@@ -823,7 +778,6 @@ export function usePreview({ files, settings, electronAPIRef }) {
     }
     const startREProbe = (probeUrl, fileObj, renderToken) => {
       setPreviewLoading(true)
-      console.log(`[PREVIEW FLOW ${renderToken}] LOADING_ON | source=RE probe`)
       const token = ++imgLoadTokenRef.current
       const probe = new Image()
       probe.decoding = 'async'
@@ -833,8 +787,6 @@ export function usePreview({ files, settings, electronAPIRef }) {
         setPreviewUrl(probeUrl)
         setPreviewImgDims({ w: probe.naturalWidth, h: probe.naturalHeight })
         setPreviewLoading(false)
-        console.log(`[PREVIEW FLOW ${renderToken}] LOADING_OFF | source=RE commit`)
-        console.log(`[PREVIEW FLOW ${renderToken}] RE_PROBE_COMMIT | url=${probeUrl?.slice(0,50)} | dims=${probe.naturalWidth}x${probe.naturalHeight}`)
         committedPreviewRef.current = {
           url: probeUrl,
           dims: { w: probe.naturalWidth, h: probe.naturalHeight },
@@ -846,33 +798,27 @@ export function usePreview({ files, settings, electronAPIRef }) {
       }
       probe.onload = () => {
         if (token !== imgLoadTokenRef.current) {
-          console.log(`[PREVIEW FLOW ${renderToken}] RE_PROBE_SKIP | token expired`)
           return
         }
         if (typeof probe.decode === 'function') {
           probe.decode().then(() => {
-            console.log(`[PREVIEW FLOW ${renderToken}] DECODE_OK | url=${probeUrl?.slice(0,50)}`)
             commit()
           }).catch(commit)
         } else {
-          console.log(`[PREVIEW FLOW ${renderToken}] DECODE_OK | url=${probeUrl?.slice(0,50)} | sync`)
           commit()
         }
       }
       probe.onerror = () => {
         if (token !== imgLoadTokenRef.current) {
-          console.log(`[PREVIEW FLOW ${renderToken}] RE_PROBE_SKIP | token expired`)
           return
         }
         setPreviewLoading(false)
-        console.log(`[PREVIEW FLOW ${renderToken}] RE_PROBE_ERROR | url=${probeUrl?.slice(0,50)}`)
         recoverREPreview(fileObj, probeUrl, token, renderToken)
       }
       probe.src = probeUrl
     }
     const recoverREPreview = async (fileObj, probeUrl, token, renderToken) => {
       if (token !== imgLoadTokenRef.current) {
-        console.log(`[PREVIEW FLOW ${renderToken}] RECOVER_SKIP | token expired`)
         return
       }
       // 解析后拆分页：RE 预览使用 sourceDocId（后端注册的原始 PDF ID）
@@ -883,11 +829,8 @@ export function usePreview({ files, settings, electronAPIRef }) {
       // 其 docId 与原 PDF 的 sourceDocId 不一致，注册后重试仍会失败。
       // 因此跳过 autoRegister，直接落入 canvas 容灾。
       const isGroupedEntry = !!fileObj._isDocumentGroup
-      console.log(`[PREVIEW FLOW ${renderToken}] RECOVER_START | docId=${effectiveDocId?.slice(0,20)} | grouped=${isGroupedEntry}`)
       if (isGroupedEntry) {
-        console.log(`[PREVIEW FLOW ${renderToken}] RECOVER_SKIP_AUTOREGISTER | grouped entry detected, skipping autoRegister to avoid docId mismatch`)
         setReBlockedDocId(fileObj.docId)
-        console.log(`[PREVIEW FLOW ${renderToken}] RECOVER_FALLBACK | marked RE blocked, falling back to canvas`)
         return
       }
       // 1. 探测失败原因：DOC_NOT_REGISTERED（可恢复）还是已注册但渲染错误（不可恢复）
@@ -901,19 +844,16 @@ export function usePreview({ files, settings, electronAPIRef }) {
           reason = 'RENDER_ERROR'
         }
       } catch (e) { reason = 'unknown' }
-      console.log(`[PREVIEW FLOW ${renderToken}] RECOVER_REASON | reason=${reason}`)
       // 2. doc 未注册 → 自动重注册（用户无感），成功后重试 RE
       if (reason === 'DOC_NOT_REGISTERED') {
         const registered = await autoRegister(fileObj)
         if (registered) {
-          console.log(`[PREVIEW FLOW ${renderToken}] RECOVER_RETRY | re-registered successfully`)
           startREProbe(probeUrl, fileObj, flowToken)  // 重试（新 token）
           return
         }
       }
       // 3. 容灾：标记 RE 不可用 → 落入下方 canvas 渲染，保证预览不中断
       setReBlockedDocId(fileObj.docId)
-      console.log(`[PREVIEW FLOW ${renderToken}] RECOVER_FALLBACK | marked RE blocked, falling back to canvas`)
     }
     // Commit 3 fix: RE 后端目前不消费 content_rotation（Slice 1.2B 才支持）。
     // 当用户旋转了内容（previewRotation ≠ 0），强制走 Canvas 本地渲染路径，
@@ -925,14 +865,12 @@ export function usePreview({ files, settings, electronAPIRef }) {
       // ✅ Stage 0.8 Commit Buffer（修正版）：以 committedPreviewRef.current.url 判断是否需重新探测，
       //    保留上一帧直到 decode 完成才原子 commit（消灭 A→null→B 白板）。
       if (committedPreviewRef.current.url !== url) {
-        console.log(`[PREVIEW FLOW ${renderToken}] RE_PROBE_START | url=${url?.slice(0,50)}`)
         startREProbe(url, previewFile, flowToken)
       } else {
         // 已提交帧即本 url（旋转/缩放重渲染）：确保显示态与之对齐，不重新探测。
         setPreviewUrl(url)
         setPreviewImgDims(committedPreviewRef.current.dims)
         setPreviewLoading(false)
-        console.log(`[PREVIEW FLOW ${renderToken}] FINALLY | RE url already committed`)
       }
       return
     }
@@ -945,11 +883,9 @@ export function usePreview({ files, settings, electronAPIRef }) {
     // ✅ Stage 0.8：canvas 帧已在 committed，加载期间保持显示 + 打 loading overlay
     committedPreviewRef.current = { ...committedPreviewRef.current, url: null, dims: null }
     setPreviewLoading(true)
-    console.log(`[PREVIEW FLOW ${renderToken}] LOADING_ON | source=canvas path`)
 
     const renderToCanvas = async (signal) => {
       try {
-        console.log(`[PREVIEW FLOW ${renderToken}] CANVAS_START | isMerge=${isMergeMode(settings.mergeMode)}`)
         let canvas
         const isMerge = isMergeMode(settings.mergeMode) && mergePair?.some(Boolean)
 
@@ -1082,20 +1018,16 @@ export function usePreview({ files, settings, electronAPIRef }) {
             timestamp: Date.now(),
           }
           setPreviewLoading(false)
-          console.log(`[PREVIEW FLOW ${renderToken}] CANVAS_COMMIT | canvas=${canvas.width}x${canvas.height}`)
           // ✅ 递增渲染版本，通知 PreviewCanvas 内容已更新（全局 Canvas 对象引用不变时需要此标记）
           setPreviewRenderVersion(v => v + 1)
         }
       } catch (e) {
-        console.error(`[PREVIEW FLOW ${renderToken}] CANVAS_ERROR | error=${e.message}`)
         if (!renderCancelledRef.current && currentRenderId === previewVersionRef.current) {
           setPreviewCanvas(null)
           // ✅ 当前最新渲染失败 → 关闭 loading（旧 committed 帧仍在，无白板）
           setPreviewLoading(false)
-          console.log(`[PREVIEW FLOW ${renderToken}] LOADING_OFF | source=canvas error`)
         }
       } finally {
-        console.log(`[PREVIEW FLOW ${renderToken}] CANVAS_FINALLY | cancelled=${renderCancelledRef.current}`)
       }
     }
     const abortController = new AbortController()
@@ -1103,7 +1035,6 @@ export function usePreview({ files, settings, electronAPIRef }) {
     return () => {
       renderCancelledRef.current = true
       abortController.abort()
-      console.log(`[PREVIEW FLOW ${renderToken}] CLEANUP | effect unmounted | reset renderKey`)
       // ✅ Commit A：effect cleanup 时重置 renderKey，防止跨 effect 状态污染
       // （RND-1 设了 key=A；RND-3 因 unmount→remount 触发且 renderKey=A，因 last===current 被阻塞）
       lastRenderKeyRef.current = null
@@ -1381,8 +1312,6 @@ export function usePreview({ files, settings, electronAPIRef }) {
    * @returns {Promise<Object>} 包含 _previewImageUrl 或 _pdfData 的文件对象
    */
   const loadFilePreview = useCallback(async (fObj, currentKey = null, currentUrl = null, signal = null) => {
-    // [O2-R-PROBE][A-input] loadFilePreview 入参对象现场
-    __flowTrace('A-input', fObj)
     // ✅ 优先使用后端返回的格式
     let fmt = fObj.fileFormat
     
@@ -1459,20 +1388,8 @@ export function usePreview({ files, settings, electronAPIRef }) {
                 // metadata 失败降级：尺寸保持 0，行为与修复前一致，不抛出
               }
             }
-            // [O1-PROBE] 一次性只读取证：image/OFD 共享分支写入后的 geometry 输入快照
-            // 单行紧凑输出（DevTools 对象折叠会吞字段，字符串保证复制即用）
-            if (process.env.NODE_ENV === 'development') {
-              console.log(
-                `[O1-PROBE] fmt=${fmt} key=${String(fObj.key).slice(0, 40)} docId=${fObj.docId} effDoc=${effectiveDocId} page=${pageForPreview} ` +
-                `dimsSource=${dimsSource} nat=${fObj._imageWidth}x${fObj._imageHeight} ` +
-                `userRot=${fileRotations?.[fObj.key] || 0} srcRot=${fObj.sourceRotation || 0} ` +
-                `render=${_previewImageUrl ? (_previewImageUrl.startsWith('blob:') ? 'blob-url' : 'http') : 'null'}`
-              )
-            }
           }
-          // [O2-R-PROBE][B-output] RE 分支 return 前
           const __out = { ...fObj, _previewImageUrl, _fileFormat: fmt }
-          __flowTrace('B-output', __out)
           return __out
         }
 
@@ -1538,9 +1455,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
           } catch (_) { /* metadata 获取失败静默降级 */ }
         }
 
-        // [O2-R-PROBE][B-output2] OFD base64 兜底分支 return 前
         const __out2 = { ...fObj, _previewImageUrl, _fileFormat: fmt }
-        __flowTrace('B-output2', __out2)
         return __out2
       }
 
@@ -1675,29 +1590,6 @@ export function usePreview({ files, settings, electronAPIRef }) {
 
     const key = fileObj?.key
 
-    // [S9] usePreview 实际消费的 fObj 身份快照（只读，Step S9 取证）
-    // 与 [V3-P4][displayFiles] 同轮对照：
-    //   S9-A：P4 富、本探针裸 → Preview pipeline 持陈旧 snapshot（selection/dependency 未失效）
-    //   S9-B：本探针富、但 Display previewFile 裸 → doLoadPreview 之后 spread/cache 丢字段
-    // 同 key 不同 id：旧对象被复用（点击后重选 → 富对象 → 成功 的铁证对照）
-    if (process.env.NODE_ENV === 'development') {
-      console.log('[S9][doLoadPreview]', {
-        ts: Date.now(),
-        intent, source,
-        selectedFileKey,
-        execId: previewExecutionRef.current?.id ?? '-',
-        key: fileObj?.key,
-        id: fileObj?.id?.slice(0, 20) || '-',
-        // ⚠️ 截断必须 ≥48：同前缀双实例（f11e512b vs 887d7bdb，前 20 字符相同）
-        // slice(0,20) 无法区分「usePreview 侧实例」与「注册侧实例」（实例分裂判定）
-        instanceId: fileObj?.instanceId?.slice(0, 48) || '-',
-        invoiceDocumentId: fileObj?.invoiceDocumentId?.slice(0, 28) || '-',
-        documentId: fileObj?.documentId?.slice(0, 20) || '-',
-        docId: fileObj?.docId?.slice(0, 20) || '-',
-        _source: fileObj?._source || '-',
-      })
-    }
-
     // ── Preview Scheduler 决策（Contract v2 §5）──
     const decision = resolvePreviewTransition(
       previewTransactionRef.current,
@@ -1707,7 +1599,6 @@ export function usePreview({ files, settings, electronAPIRef }) {
 
     if (decision.action === 'ignore') {
       // stale refresh：不得 resurrect 旧 selection（INV-PS2）
-      console.log(`[PREVIEW FLOW] IGNORE | intent=${intent} key=${key?.slice(0,20)} | stale refresh`)
       return null
     }
 
@@ -1730,7 +1621,6 @@ export function usePreview({ files, settings, electronAPIRef }) {
         // update-snapshot / restart-required / ignore：
         // 在途 execution 会在它的 boundary（advanceLoadingStep / resolveBoundary）
         // 检测 consumingSnapshot 变化并自行 restart（INV-PS10）。
-        console.log(`[PREVIEW FLOW] MERGE execAction=${execAction} | key=${key?.slice(0,20)} | 在途 execution 自行 restart`)
         return null
       }
       // idle refresh：启动唯一新 execution（INV-PS9），不 ++version，复用 load 流程
@@ -1739,7 +1629,6 @@ export function usePreview({ files, settings, electronAPIRef }) {
         id: ++executionIdRef.current, key, version,
         phase: 'loading', consumingSnapshot: decision.transaction.snapshot,
       }
-      console.log(`[PREVIEW FLOW] MERGE start-execution | key=${key?.slice(0,20)} version=${version}`)
     } else {
       // select：新 selection，++version（已由 resolvePreviewTransition 完成）
       version = decision.version
@@ -1754,7 +1643,6 @@ export function usePreview({ files, settings, electronAPIRef }) {
     // ✅ 预览生命周期 token：用于追踪竞争条件
     const previewToken = `PRV-${Date.now()}-${version}`
     flowTokenRef.current = previewToken
-    console.log(`[PREVIEW FLOW ${previewToken}] START | source=${source} intent=${intent} | file=${fileObj.key?.slice(0,20)} | version=${version}`)
     userViewportLockRef.current = false   // 🆕 新文档加载 = 释放 viewport 接管，恢复框架自动居中
 
     // ✅ 保存旧的 blob URL，在新预览加载完成后再清理
@@ -1763,7 +1651,6 @@ export function usePreview({ files, settings, electronAPIRef }) {
 
     // ── 合并模式预览 ──
     if (isMergeMode(settings.mergeMode)) {
-      console.log(`[PREVIEW FLOW ${previewToken}] REQUEST | merge mode | groupSize=${settings.mergeMode}`)
       const groupSize = parseInt(settings.mergeMode?.replace('merge', '')) || 2
       const pair = getMergePair(filesRef.current, fileObj.key, groupSize, fileIndexMapRef.current)
       if (pair && pair.length >= 1) {
@@ -1772,7 +1659,6 @@ export function usePreview({ files, settings, electronAPIRef }) {
             loadPairItemForPreview(item, idx === 0 ? fileObj.key : null, idx === 0 ? null : null)
           )
         )
-        console.log(`[PREVIEW FLOW ${previewToken}] RESPONSE | merge load complete | loaded=${loaded.length}`)
         const validLoaded = loaded.filter(Boolean)
         // ✅ 检查版本号，确保只处理最新请求
         if (validLoaded.length > 0 && version === previewVersionRef.current) {
@@ -1782,9 +1668,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
           setPreviewPage(1)
           setNumPages(1)
         } else if (version !== previewVersionRef.current) {
-          console.log(`[PREVIEW FLOW ${previewToken}] FINALLY | aborted (version mismatch) | current=${previewVersionRef.current}`)
         }
-        console.log(`[PREVIEW FLOW ${previewToken}] FINALLY | merge mode complete`)
         // merge mode 分支一次性 load+commit，不走 loading loop；完成后清 execution 避免残留
         previewExecutionRef.current = null
         return
@@ -1795,7 +1679,6 @@ export function usePreview({ files, settings, electronAPIRef }) {
     // 先加载文件数据（含方向检测所需的页面尺寸），再用"当前"布局参数生成缓存 key。
     // key 必须包含所有影响 Canvas 的布局参数，且读写两侧用同一份 settings（settingsRef.current），
     // 否则命中陈旧缓存 + skipRenderRef 跳过纠正渲染 → 显示错误预览（正确性 Bug）。
-    console.log(`[PREVIEW FLOW ${previewToken}] REQUEST | loadFilePreview | file=${fileObj.key?.slice(0,20)}`)
 
     // ── Loading loop（Contract v2 §1.5，Direction Y）──
     // consumingSnapshot 是唯一 freshness 基准。每轮 load execution.consumingSnapshot，
@@ -1805,55 +1688,25 @@ export function usePreview({ files, settings, electronAPIRef }) {
     let execution = previewExecutionRef.current
     for (let iter = 0; iter < MAX_LOAD_ITERATIONS; iter++) {
       if (!execution) {
-        console.log(`[PREVIEW FLOW ${previewToken}] FINALLY | terminated before load (iter=${iter})`)
         return
-      }
-      // [V2-TRACE][A-loadSTART] 本轮即将 load 的 consumingSnapshot 现场
-      console.log(`[V2-TRACE][A-loadSTART] iter=${iter} txn=${__snapId(previewTransactionRef.current?.snapshot)} exec=${__execId(execution)}`)
-
-      // [S9] 实际进入 loadFilePreview 的 consumingSnapshot 完整身份（Scheduler 决策后）
-      // 与 [S9][doLoadPreview]（入口 fileObj）对照：若入口富、此处裸 → merge 分支
-      // consumingSnapshot=旧 transaction.snapshot，新 fileObj 未被消费（陈旧 snapshot 铁证）。
-      if (process.env.NODE_ENV === 'development') {
-        const snap = execution.consumingSnapshot
-        console.log('[S9][consumingSnapshot]', {
-          ts: Date.now(),
-          execId: execution.id,
-          iter,
-          key: snap?.key,
-          id: snap?.id?.slice(0, 20) || '-',
-          // ⚠️ 截断必须 ≥48：同前缀双实例判定（同 [S9][doLoadPreview]）
-          instanceId: snap?.instanceId?.slice(0, 48) || '-',
-          invoiceDocumentId: snap?.invoiceDocumentId?.slice(0, 28) || '-',
-          documentId: snap?.documentId?.slice(0, 20) || '-',
-          docId: snap?.docId?.slice(0, 20) || '-',
-          _source: snap?._source || '-',
-        })
       }
 
       loadedFile = await loadFilePreview(execution.consumingSnapshot)
-      // [V2-TRACE][B-loadRET] /preview 返回后的 loadedFile 现场
-      console.log(`[V2-TRACE][B-loadRET] iter=${iter} loaded=${__snapId(loadedFile)}`)
 
       const step = advanceLoadingStep(previewTransactionRef.current, execution)
       execution = step.execution
       previewExecutionRef.current = execution
-      // [V2-TRACE][C-advStep] advanceLoadingStep 判定结果 + execution 推进后现场
-      console.log(`[V2-TRACE][C-advStep] iter=${iter} action=${step.action} exec=${__execId(execution)}`)
       if (step.action === 'terminate') {
-        console.log(`[PREVIEW FLOW ${previewToken}] FINALLY | superseded/terminated (iter=${iter})`)
         return
       }
       if (step.action === 'post-load') {
         break
       }
       // next-iteration：snapshot 晋升，consumingSnapshot 已更新，继续下一轮
-      console.log(`[PREVIEW FLOW ${previewToken}] PROMOTION | snapshot changed, reload (iter=${iter})`)
     }
 
     // 保险丝：持续晋升仍不稳定 / 被终止 → 禁止 commit（INV-PS6）
     if (!execution || execution.phase !== 'post-load') {
-      console.log(`[PREVIEW FLOW ${previewToken}] FINALLY | snapshot unstable after ${MAX_LOAD_ITERATIONS} iterations, no commit`)
       return
     }
 
@@ -1873,11 +1726,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
       ? rawContentGeom
       : { widthPx: 595, heightPx: 842 }  // A4 默认
     if (rawContentGeom.widthPx <= 0 || rawContentGeom.heightPx <= 0) {
-      console.warn('[PREVIEW FLOW] 尺寸缺失，使用 A4 默认降级:', {
-        key: loadedFile.key?.slice(0, 20),
-        raw: rawContentGeom,
-        format: loadedFile._fileFormat,
-      })
+
     }
     const previewGeometry = buildPreviewGeometry({
       rawDocumentGeometry: safeGeom,
@@ -1916,11 +1765,9 @@ export function usePreview({ files, settings, electronAPIRef }) {
     {
       const b = resolveBoundary(previewTransactionRef.current, execution)
       if (b === 'abort') {
-        console.log(`[PREVIEW FLOW ${previewToken}] FINALLY | superseded after loadDocFacts`)
         return
       }
       if (b === 'restart') {
-        console.log(`[PREVIEW FLOW ${previewToken}] RESTART | snapshot changed after loadDocFacts`)
         previewExecutionRef.current = null
         return doLoadPreview(previewTransactionRef.current.snapshot, 'refresh', 'restart-after-loadDocFacts')
       }
@@ -1941,11 +1788,9 @@ export function usePreview({ files, settings, electronAPIRef }) {
       {
         const b = resolveBoundary(previewTransactionRef.current, execution)
         if (b === 'abort') {
-          console.log(`[PREVIEW FLOW ${previewToken}] FINALLY | superseded before saveDocFacts`)
           return
         }
         if (b === 'restart') {
-          console.log(`[PREVIEW FLOW ${previewToken}] RESTART | snapshot changed before saveDocFacts`)
           previewExecutionRef.current = null
           return doLoadPreview(previewTransactionRef.current.snapshot, 'refresh', 'restart-before-saveDocFacts')
         }
@@ -1961,11 +1806,9 @@ export function usePreview({ files, settings, electronAPIRef }) {
       {
         const b = resolveBoundary(previewTransactionRef.current, execution)
         if (b === 'abort') {
-          console.log(`[PREVIEW FLOW ${previewToken}] FINALLY | superseded after saveDocFacts`)
           return
         }
         if (b === 'restart') {
-          console.log(`[PREVIEW FLOW ${previewToken}] RESTART | snapshot changed after saveDocFacts`)
           previewExecutionRef.current = null
           return doLoadPreview(previewTransactionRef.current.snapshot, 'refresh', 'restart-after-saveDocFacts')
         }
@@ -2026,14 +1869,10 @@ export function usePreview({ files, settings, electronAPIRef }) {
     // INV-PS11：commit 前 freshness 闸门（consumingSnapshot === transaction.snapshot）
     {
       const b = resolveBoundary(previewTransactionRef.current, execution)
-      // [V2-TRACE][D-preCommit] commit 前 boundary 判定
-      console.log(`[V2-TRACE][D-preCommit] boundary=${b} loaded=${__snapId(loadedFile)} txn=${__snapId(previewTransactionRef.current?.snapshot)} exec=${__execId(execution)}`)
       if (b === 'abort') {
-        console.log(`[PREVIEW FLOW ${previewToken}] FINALLY | superseded before commit`)
         return
       }
       if (b === 'restart') {
-        console.log(`[PREVIEW FLOW ${previewToken}] RESTART | snapshot changed before commit`)
         previewExecutionRef.current = null
         return doLoadPreview(previewTransactionRef.current.snapshot, 'refresh', 'restart-before-commit')
       }
@@ -2045,10 +1884,6 @@ export function usePreview({ files, settings, electronAPIRef }) {
       skipRenderRef.current = true
       previewFileRef.current = loadedFile
       setMergePair(null)
-      // [O2-R-PROBE][C-setPreview] 缓存命中分支 setPreviewFile 前
-      __flowTrace('C-setPreview(cache)', loadedFile)
-      // [V2-TRACE][D-commit-cache] 缓存命中 commit 现场
-      console.log(`[V2-TRACE][D-commit-cache] loaded=${__snapId(loadedFile)} txn=${__snapId(previewTransactionRef.current?.snapshot)} exec=${__execId(previewExecutionRef.current)}`)
       // P4：记录 commit 对应的 execution.version（clearCommitted 清理权判定依据）
       committedPreviewVersionRef.current = previewExecutionRef.current?.version ?? version
       setPreviewFile(loadedFile)
@@ -2061,7 +1896,6 @@ export function usePreview({ files, settings, electronAPIRef }) {
           setPreviewCanvas(cachedCanvas)
           // ✅ Stage 0.8：缓存命中 = 立即提交，同步 committed + 关闭 loading
           setPreviewLoading(false)
-          console.log(`[PREVIEW FLOW ${previewToken}] LOADING_OFF | source=L2 cache hit`)
           committedPreviewRef.current = {
             url: committedPreviewRef.current.url,
             dims: committedPreviewRef.current.dims,
@@ -2118,10 +1952,6 @@ export function usePreview({ files, settings, electronAPIRef }) {
     if (version === previewVersionRef.current) {
       previewFileRef.current = loadedFile
       setMergePair(null)
-      // [O2-R-PROBE][C-setPreview] 正常分支 setPreviewFile 前
-      __flowTrace('C-setPreview(normal)', loadedFile)
-      // [V2-TRACE][D-commit-normal] 正常 commit 现场
-      console.log(`[V2-TRACE][D-commit-normal] loaded=${__snapId(loadedFile)} txn=${__snapId(previewTransactionRef.current?.snapshot)} exec=${__execId(previewExecutionRef.current)}`)
       // P4：记录 commit 对应的 execution.version（clearCommitted 清理权判定依据）
       committedPreviewVersionRef.current = previewExecutionRef.current?.version ?? version
       setPreviewFile(loadedFile)
@@ -2149,7 +1979,6 @@ export function usePreview({ files, settings, electronAPIRef }) {
         } catch (e) { /* ignore already revoked */ }
       }
     }
-    console.log(`[PREVIEW FLOW ${previewToken}] FINALLY | doLoadPreview complete | version=${version}`)
   }, [settings.mergeMode, loadPairItemForPreview, loadFilePreview, fullCacheRef, skipRenderRef, previewFileRef, previewVersionRef, previewUrlRef, pendingBlobUrlsRef, paperLayout])
 
   // ============================
@@ -2283,10 +2112,8 @@ export function usePreview({ files, settings, electronAPIRef }) {
     const live = filesRef.current.find(f => f.key === pf.key)
     if (!live) return
     // 触发条件：docId 从 null/undefined/'' 跃迁到非空，或两个不同的非空 docId 之间切换
-    const wasEmpty = !pf.docId
     const changed = live.docId !== pf.docId
     if (changed) {
-      console.log(`[PREVIEW_FLOW] docId transition | ${pf.docId || '<empty>'} → ${live.docId || '<empty>'} | wasEmpty=${wasEmpty}`)
       // Contract §1：docId 晋升 = refresh（同 key snapshot 更新，不 supersede）
       handlePreviewRef.current?.(live, 'refresh')
     }
@@ -2327,14 +2154,12 @@ export function usePreview({ files, settings, electronAPIRef }) {
 
     // 1. 当前预览文件已不存在 → 切到第一个文件
     if (pfKey && !live) {
-      console.log('[PREVIEW_FLOW] fileList effect: pf missing → handlePreview(files[0])')
       handlePreviewRef.current?.(files[0])
       return
     }
 
     // 2. 当前无预览 → 预览第一个文件
     if (!pf) {
-      console.log('[PREVIEW_FLOW] fileList effect: no pf → handlePreview(files[0])')
       handlePreviewRef.current?.(files[0])
       return
     }
@@ -2343,7 +2168,6 @@ export function usePreview({ files, settings, electronAPIRef }) {
     //    典型场景：占位符 → 解析完成，groupFilesByDocument → invoiceDocumentsToRows
     //    Contract §1：引用替换 = refresh（同 key snapshot 更新，不 supersede）
     if (pfChanged) {
-      console.log('[PREVIEW_FLOW] fileList effect: pf replaced → handlePreview(live)')
       handlePreviewRef.current?.(live, 'refresh')
       return
     }

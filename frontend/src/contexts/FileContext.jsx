@@ -5,7 +5,6 @@ import { amountToChinese } from '../utils/amountConverter'
 import { getActiveSessionId, getSession, subscribe, getDocumentVersion } from '../stores/ImportSessionStore'
 import { getRegisteredDocIds, getDocument } from '../stores/DocumentStore'
 import { getDocumentCacheIdentity } from '../utils/documentViewCacheIdentity'
-import { getDocumentViewSignature } from '../utils/documentViewSignature'
 import { resolveMaterializedInvoiceDocuments } from '../utils/resolveMaterializedInvoiceDocuments'
 import { db } from '../db'
 
@@ -94,9 +93,6 @@ export function FileProvider({ children }) {
   const fileKeysSig = files.length
     ? files.map(f => f.key).sort().join('‖')
     : ''
-  // [S7] 只读 correlation：materializedDocs 的实际来源标记（useMemo 内写、useMemo 外读，
-  //     不参与渲染，仅供 s7Correlation 与探针日志使用——不修这个，source 永远失真）。
-  const invoiceDocsUsedSourceRef = useRef('none')
   const invoiceDocs = useMemo(() => {
     // Candidate 1-R：Persistent Document View Source（INV-S1，2026-08-23 冻结）
     //   ImportSession.documents 不再是 Display 唯一 InvoiceDocument 来源。
@@ -111,7 +107,6 @@ export function FileProvider({ children }) {
     // 既有代码逐字节等价：registeredDocs 空 → null，否则按 files membership 恢复）
     const restoreFromRegistered = () => {
       if (registeredDocs.length === 0) return null
-      invoiceDocsUsedSourceRef.current = 'registered-restore'
       return resolveMaterializedInvoiceDocuments(files, null, registeredDocs)
     }
     let result
@@ -127,65 +122,15 @@ export function FileProvider({ children }) {
         const docs = session.documents?.length > 0 ? session.documents : null
         if (docs) {
           result = docs
-          invoiceDocsUsedSourceRef.current = 'session-docs'
         } else {
           // session 存在但无 documents：尝试从持久源恢复（防御）
           result = restoreFromRegistered()
         }
       }
     }
-    // [S7] 同一时刻 identity 快照（dev-only）：1-R 实际产出的 materializedDocs
-    //   viewSig = 本份 materializedDocs 的内容签名（与 s7Correlation 同源同值），
-    //   DisplayAdapter 打印同一 viewSig 的两条日志才允许配对成一次证据。
-    if (process.env.NODE_ENV === 'development') {
-      console.log('[S7][materializedDocs]', {
-        viewSig: getDocumentViewSignature(result),
-        sessionId,
-        source: result === null ? 'none' : invoiceDocsUsedSourceRef.current,
-        count: result ? result.length : 0,
-        docs: result
-          ? result.map(d => ({
-              key: d.key?.slice(0, 20),
-              fileKey: d.fileKey?.slice(0, 20),
-              instanceId: d.instanceId?.slice(0, 20),
-              invoiceDocumentId: d.invoiceDocumentId?.slice(0, 28),
-              docId: d.docId?.slice(0, 16),
-              sourceDocId: d.sourceDocId?.slice(0, 16),
-              pageKeysCount: d._pageKeys?.length || 0,
-            }))
-          : [],
-      })
-    }
     return result
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId, storeSnap, fileKeysSig])
-
-  // [S7] 同一渲染轮次的 documentView 标识（只读 correlation，供 DisplayAdapter 严格配对）
-  //   viewSig = materializedDocs 的 canonical identity 内容签名（同内容同签名、跨组件稳定）
-  //   source  = 'session-docs' | 'registered-restore' | 'none'
-  //   React 数据流语义：DisplayAdapter 消费的 context 值 = FileProvider 最近一次 commit 的值，
-  //   因此 viewSig 相同的两条 [S7] 日志必然描述同一份 documentView（同一渲染轮次）。
-  const s7Correlation = useMemo(() => ({
-    viewSig: getDocumentViewSignature(invoiceDocs),
-    source: !Array.isArray(invoiceDocs) || invoiceDocs.length === 0
-      ? 'none'
-      : (invoiceDocsUsedSourceRef.current || 'unknown'),
-  }), [invoiceDocs])
-
-  // [S2-PROBE] 只读：invoiceDocs 状态变化（present/null 退化时刻，TTL 回收关联验证）
-  const prevInvoiceDocsState = useRef(null)
-  useEffect(() => {
-    const state = invoiceDocs ? `present(${invoiceDocs.length})` : 'null'
-    if (prevInvoiceDocsState.current !== state) {
-      console.log('[S2-PROBE][invoiceDocs]', {
-        ts: Date.now(),
-        state,
-        sessionId,
-        storeSnap,
-      })
-      prevInvoiceDocsState.current = state
-    }
-  }, [invoiceDocs, sessionId, storeSnap])
 
   // ── P1-C: documentView 内容签名缓存 ──
   // 排序仅改变 files 数组顺序时，buildDocumentViewModel 的输出内容完全相同
@@ -393,8 +338,6 @@ export function FileProvider({ children }) {
     setMergeMode,
     // Document 视图模型（D1 统一出口：统计/重复/列表聚合的唯一数据源）
     documentView,
-    // [S7] 只读 correlation：DisplayAdapter 严格配对同一渲染轮次的 materializedDocs
-    s7Correlation,
     // P0-2: 集中计算的派生数据（排序/展示共用，避免重复 O(n)）
     previousYearInfo,
     duplicatePageInfo,
@@ -412,7 +355,6 @@ export function FileProvider({ children }) {
     files, setFiles, searchQuery, filteredFiles, isSearching,
     mergeMode,
     documentView,
-    s7Correlation,
     previousYearInfo, duplicatePageInfo, duplicateDocumentInfo,
     importHistoryInfo,
     totalAmount, printableCount, hasFailedFiles, failedFilesCount,

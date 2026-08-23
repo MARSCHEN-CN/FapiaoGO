@@ -102,16 +102,6 @@ export async function runChunkedImport({ sessionId, taskId, files, chunkSize, au
   let currentResolve = null
   const onAbort = () => {
     // [S3-PROBE] abort 消费点：signal 从何而来、是否已携带 reason
-    if (process.env.NODE_ENV === 'development') {
-      console.log('[S3-PROBE][abort-consumed]', {
-        ts: Date.now(),
-        sessionId,
-        taskId,
-        aborted: signal?.aborted,
-        reason: signal?.reason ? String(signal.reason) : null,
-        caller: new Error().stack?.split('\n').slice(1, 5).join(' | '),
-      })
-    }
     wasAborted = true
     for (const es of eventSources) {
       if (es && typeof es.close === 'function') es.close()
