@@ -16,6 +16,7 @@ import { extractContentPx } from '../geometry/extractContentPx.js'
 import { computeInitialDocFacts } from '../layout/docFacts.js'
 import { nextZoomStep } from './zoomStep.mjs'
 import { applyWheelZoom } from './continuousZoom.mjs'
+import { resolvePreviewTransition, resolveRefreshExecution, resolveBoundary, advanceLoadingStep } from '../utils/previewScheduler'
 
 // [O2-R-PROBE] Object Flow Trace（一次性诊断，dev-only）
 // 目标：证明 loadFilePreview input → output → setPreviewFile → DisplayAdapter
@@ -33,6 +34,24 @@ function __flowTrace(phase, obj) {
     `url=${obj?._previewImageUrl ? 'Y' : '-'} pvImg=${obj?.previewImage ? 'Y' : '-'} ` +
     `imgW=${obj?._imageWidth || '-'} imgH=${obj?._imageHeight || '-'}`
   )
+}
+
+// [V2-TRACE] 单请求闭环取证（一次性诊断，dev-only）
+// A→E：loadFilePreview START → /preview 返回 → advanceLoadingStep → commit → Display。
+// 重点区分「占位空壳」vs「富态」：docId 有无 + url 有无 + 复合身份有无 + 尺寸。
+function __snapId(s) {
+  if (s == null) return 'NULL'
+  const key = String(s.key || '').slice(0, 16)
+  const doc = s.docId ? `doc:${String(s.docId).slice(0, 8)}` : 'doc:-'
+  const inst = s.instanceId ? 'inst:Y' : 'inst:-'
+  const inv = s.invoiceDocumentId ? 'inv:Y' : 'inv:-'
+  const url = s._previewImageUrl ? 'url:Y' : 'url:-'
+  const dim = s._imageWidth ? `${s._imageWidth}x${s._imageHeight}` : '?x?'
+  return `${key}|${doc}|${inst}|${inv}|${url}|${dim}`
+}
+function __execId(e) {
+  if (e == null) return 'EXEC_NULL'
+  return `id:${e.id}|key:${String(e.key || '').slice(0, 16)}|v:${e.version}|${e.phase}|consume:[${__snapId(e.consumingSnapshot)}]`
 }
 
 // ── 滚轮缩放常量（Ctrl/⌘ + wheel，跟随光标锚点）── V16.1 平滑增强 ──
@@ -119,6 +138,12 @@ export function usePreview({ files, settings, electronAPIRef }) {
   const previewUrlRef = useRef(null)           // blob URL (revoke on cleanup)
   const renderEngineUrlRef = useRef(null)      // Render Engine HTTP URL (no revoke needed)
   const previewVersionRef = useRef(0)
+  // Preview Scheduler transaction（Contract v2 §1.1）：单一 selection 的 { key, version, snapshot }
+  const previewTransactionRef = useRef(null)
+  // Preview Scheduler execution（Contract v2 §1.2）：snapshot consumer ownership
+  // { id, key, version, phase, consumingSnapshot } — 与 transaction 分离（INV-PS8）
+  const previewExecutionRef = useRef(null)
+  const executionIdRef = useRef(0)   // execution identity 计数器（INV-PS9/PS10）
   const renderVersionRef = useRef(0)  // 专供 render effect 使用，与 handlePreview 隔离
   const renderLogIdRef = useRef(0)    // 仅用于日志 token，与 renderVersionRef 解耦（避免一处自增干扰另一处）
   const previewContainerRef = useRef(null)
@@ -217,6 +242,9 @@ export function usePreview({ files, settings, electronAPIRef }) {
   //    就会在空状态页下残留旧帧。先递增三个 token，使所有在途任务的提交守卫失效。
   const clearCommitted = useCallback(() => {
     previewVersionRef.current++        // 在途 doLoadPreview 的 version 守卫失效，阻止复活 previewFile
+    // V-3 修复（Contract v2）：invalidate 显式清 transaction + execution，消除幽灵状态（INV-PS8）
+    previewTransactionRef.current = null
+    previewExecutionRef.current = null
     imgLoadTokenRef.current++          // 在途 RE probe 的 commit 守卫失效，阻止回写 previewUrl
     renderVersionRef.current++         // 在途 canvas 渲染的提交守卫失效
     renderCancelledRef.current = true  // 双保险：标记当前渲染已取消
@@ -1613,20 +1641,93 @@ export function usePreview({ files, settings, electronAPIRef }) {
   // ============================
   // 实际预览加载逻辑（防抖分离）
   // ============================
-  const doLoadPreview = useCallback(async (fileObj, source = 'unknown') => {
+  const doLoadPreview = useCallback(async (fileObj, intent = 'select', source = 'unknown') => {
     lastSwitchTimeRef.current = Date.now()
     if (switchTimeoutRef.current) {
       clearTimeout(switchTimeoutRef.current)
       switchTimeoutRef.current = null
     }
 
-    // ✅ 在加载前先递增版本号，确保旧请求被丢弃
-    const version = ++previewVersionRef.current
-    
+    const key = fileObj?.key
+
+    // [S9] usePreview 实际消费的 fObj 身份快照（只读，Step S9 取证）
+    // 与 [V3-P4][displayFiles] 同轮对照：
+    //   S9-A：P4 富、本探针裸 → Preview pipeline 持陈旧 snapshot（selection/dependency 未失效）
+    //   S9-B：本探针富、但 Display previewFile 裸 → doLoadPreview 之后 spread/cache 丢字段
+    // 同 key 不同 id：旧对象被复用（点击后重选 → 富对象 → 成功 的铁证对照）
+    if (process.env.NODE_ENV === 'development') {
+      console.log('[S9][doLoadPreview]', {
+        ts: Date.now(),
+        intent, source,
+        selectedFileKey,
+        execId: previewExecutionRef.current?.id ?? '-',
+        key: fileObj?.key,
+        id: fileObj?.id?.slice(0, 20) || '-',
+        instanceId: fileObj?.instanceId?.slice(0, 20) || '-',
+        invoiceDocumentId: fileObj?.invoiceDocumentId?.slice(0, 28) || '-',
+        documentId: fileObj?.documentId?.slice(0, 20) || '-',
+        docId: fileObj?.docId?.slice(0, 20) || '-',
+        _source: fileObj?._source || '-',
+      })
+    }
+
+    // ── Preview Scheduler 决策（Contract v2 §5）──
+    const decision = resolvePreviewTransition(
+      previewTransactionRef.current,
+      previewVersionRef.current,
+      { intent, key, snapshot: fileObj },
+    )
+
+    if (decision.action === 'ignore') {
+      // stale refresh：不得 resurrect 旧 selection（INV-PS2）
+      console.log(`[PREVIEW FLOW] IGNORE | intent=${intent} key=${key?.slice(0,20)} | stale refresh`)
+      return null
+    }
+
+    if (decision.action === 'invalidate') {
+      // 防御：正常由 clearCommitted 处理（V-3）
+      previewTransactionRef.current = null
+      previewExecutionRef.current = null
+      return null
+    }
+
+    // 统一确定 version 与 execution（select 与 idle-refresh 共用后续 load 流程）
+    let version
+    if (decision.action === 'merge') {
+      // refresh 匹配：更新 transaction.snapshot，再决定 execution 如何消费
+      previewTransactionRef.current = decision.transaction
+      const execAction = resolveRefreshExecution(
+        decision.transaction, previewExecutionRef.current, { key, snapshot: fileObj },
+      )
+      if (execAction !== 'start-execution') {
+        // update-snapshot / restart-required / ignore：
+        // 在途 execution 会在它的 boundary（advanceLoadingStep / resolveBoundary）
+        // 检测 consumingSnapshot 变化并自行 restart（INV-PS10）。
+        console.log(`[PREVIEW FLOW] MERGE execAction=${execAction} | key=${key?.slice(0,20)} | 在途 execution 自行 restart`)
+        return null
+      }
+      // idle refresh：启动唯一新 execution（INV-PS9），不 ++version，复用 load 流程
+      version = decision.version
+      previewExecutionRef.current = {
+        id: ++executionIdRef.current, key, version,
+        phase: 'loading', consumingSnapshot: decision.transaction.snapshot,
+      }
+      console.log(`[PREVIEW FLOW] MERGE start-execution | key=${key?.slice(0,20)} version=${version}`)
+    } else {
+      // select：新 selection，++version（已由 resolvePreviewTransition 完成）
+      version = decision.version
+      previewVersionRef.current = version
+      previewTransactionRef.current = decision.transaction
+      previewExecutionRef.current = {
+        id: ++executionIdRef.current, key, version,
+        phase: 'loading', consumingSnapshot: fileObj,
+      }
+    }
+
     // ✅ 预览生命周期 token：用于追踪竞争条件
     const previewToken = `PRV-${Date.now()}-${version}`
     flowTokenRef.current = previewToken
-    console.log(`[PREVIEW FLOW ${previewToken}] START | source=${source} | file=${fileObj.key?.slice(0,20)} | version=${version}`)
+    console.log(`[PREVIEW FLOW ${previewToken}] START | source=${source} intent=${intent} | file=${fileObj.key?.slice(0,20)} | version=${version}`)
     userViewportLockRef.current = false   // 🆕 新文档加载 = 释放 viewport 接管，恢复框架自动居中
 
     // ✅ 保存旧的 blob URL，在新预览加载完成后再清理
@@ -1657,6 +1758,8 @@ export function usePreview({ files, settings, electronAPIRef }) {
           console.log(`[PREVIEW FLOW ${previewToken}] FINALLY | aborted (version mismatch) | current=${previewVersionRef.current}`)
         }
         console.log(`[PREVIEW FLOW ${previewToken}] FINALLY | merge mode complete`)
+        // merge mode 分支一次性 load+commit，不走 loading loop；完成后清 execution 避免残留
+        previewExecutionRef.current = null
         return
       }
     }
@@ -1666,10 +1769,44 @@ export function usePreview({ files, settings, electronAPIRef }) {
     // key 必须包含所有影响 Canvas 的布局参数，且读写两侧用同一份 settings（settingsRef.current），
     // 否则命中陈旧缓存 + skipRenderRef 跳过纠正渲染 → 显示错误预览（正确性 Bug）。
     console.log(`[PREVIEW FLOW ${previewToken}] REQUEST | loadFilePreview | file=${fileObj.key?.slice(0,20)}`)
-    const loadedFile = await loadFilePreview(fileObj)
-    console.log(`[PREVIEW FLOW ${previewToken}] RESPONSE | loadFilePreview complete | loadedFile=${loadedFile?.key?.slice(0,20)}`)
-    if (version !== previewVersionRef.current) {
-      console.log(`[PREVIEW FLOW ${previewToken}] FINALLY | aborted (version mismatch) | current=${previewVersionRef.current}`)
+
+    // ── Loading loop（Contract v2 §1.5，Direction Y）──
+    // consumingSnapshot 是唯一 freshness 基准。每轮 load execution.consumingSnapshot，
+    // 用 advanceLoadingStep 统一 ownership + freshness 判定，消除 shouldReload 双轨。
+    const MAX_LOAD_ITERATIONS = 5
+    let loadedFile = null
+    let execution = previewExecutionRef.current
+    for (let iter = 0; iter < MAX_LOAD_ITERATIONS; iter++) {
+      if (!execution) {
+        console.log(`[PREVIEW FLOW ${previewToken}] FINALLY | terminated before load (iter=${iter})`)
+        return
+      }
+      // [V2-TRACE][A-loadSTART] 本轮即将 load 的 consumingSnapshot 现场
+      console.log(`[V2-TRACE][A-loadSTART] iter=${iter} txn=${__snapId(previewTransactionRef.current?.snapshot)} exec=${__execId(execution)}`)
+
+      loadedFile = await loadFilePreview(execution.consumingSnapshot)
+      // [V2-TRACE][B-loadRET] /preview 返回后的 loadedFile 现场
+      console.log(`[V2-TRACE][B-loadRET] iter=${iter} loaded=${__snapId(loadedFile)}`)
+
+      const step = advanceLoadingStep(previewTransactionRef.current, execution)
+      execution = step.execution
+      previewExecutionRef.current = execution
+      // [V2-TRACE][C-advStep] advanceLoadingStep 判定结果 + execution 推进后现场
+      console.log(`[V2-TRACE][C-advStep] iter=${iter} action=${step.action} exec=${__execId(execution)}`)
+      if (step.action === 'terminate') {
+        console.log(`[PREVIEW FLOW ${previewToken}] FINALLY | superseded/terminated (iter=${iter})`)
+        return
+      }
+      if (step.action === 'post-load') {
+        break
+      }
+      // next-iteration：snapshot 晋升，consumingSnapshot 已更新，继续下一轮
+      console.log(`[PREVIEW FLOW ${previewToken}] PROMOTION | snapshot changed, reload (iter=${iter})`)
+    }
+
+    // 保险丝：持续晋升仍不稳定 / 被终止 → 禁止 commit（INV-PS6）
+    if (!execution || execution.phase !== 'post-load') {
+      console.log(`[PREVIEW FLOW ${previewToken}] FINALLY | snapshot unstable after ${MAX_LOAD_ITERATIONS} iterations, no commit`)
       return
     }
 
@@ -1728,6 +1865,19 @@ export function usePreview({ files, settings, electronAPIRef }) {
         }
       }
     } catch (_) { /* 无持久层（Web 模式）退化为 natural 推导 */ }
+    // Contract v2：loadDocFacts await 后 resolveBoundary（ownership + freshness，W2）
+    {
+      const b = resolveBoundary(previewTransactionRef.current, execution)
+      if (b === 'abort') {
+        console.log(`[PREVIEW FLOW ${previewToken}] FINALLY | superseded after loadDocFacts`)
+        return
+      }
+      if (b === 'restart') {
+        console.log(`[PREVIEW FLOW ${previewToken}] RESTART | snapshot changed after loadDocFacts`)
+        previewExecutionRef.current = null
+        return doLoadPreview(previewTransactionRef.current.snapshot, 'refresh', 'restart-after-loadDocFacts')
+      }
+    }
     const init = computeInitialDocFacts(loadedFacts, naturalOrientation)
     // 🔧 P0 修复：内存优先。fileRotations 是会话内旋转权威（用户本会话操作过即生效），
     //    持久层 DocFacts 仅用于「内存无该 file.key 记录」时的会话内恢复。
@@ -1740,6 +1890,19 @@ export function usePreview({ files, settings, electronAPIRef }) {
     rotation = effectiveRotation // 修正上方 rotation（cacheKey 用）
     applyRequestedPaperOrientation(init.requestedPaperOrientation, init.isAuto)
     if (init.shouldPersist) {
+      // Contract v2：saveDocFacts 副作用前 resolveBoundary（W3）
+      {
+        const b = resolveBoundary(previewTransactionRef.current, execution)
+        if (b === 'abort') {
+          console.log(`[PREVIEW FLOW ${previewToken}] FINALLY | superseded before saveDocFacts`)
+          return
+        }
+        if (b === 'restart') {
+          console.log(`[PREVIEW FLOW ${previewToken}] RESTART | snapshot changed before saveDocFacts`)
+          previewExecutionRef.current = null
+          return doLoadPreview(previewTransactionRef.current.snapshot, 'refresh', 'restart-before-saveDocFacts')
+        }
+      }
       try {
         const api = electronAPIRef.current
         // 写入严格用 docId（不回退 path/key），无 docId 时跳过落盘。
@@ -1747,6 +1910,19 @@ export function usePreview({ files, settings, electronAPIRef }) {
         //    无记录（保存失败），此处把内存状态固化，避免把 90 冲成 init 推导的 0。
         if (docId && api && api.saveDocFacts) await api.saveDocFacts(docId, { requestedPaperOrientation: init.requestedPaperOrientation, contentRotation: effectiveRotation })
       } catch (_) { /* 忽略落盘失败，不影响预览 */ }
+      // Contract v2：saveDocFacts await 后 resolveBoundary（W3）
+      {
+        const b = resolveBoundary(previewTransactionRef.current, execution)
+        if (b === 'abort') {
+          console.log(`[PREVIEW FLOW ${previewToken}] FINALLY | superseded after saveDocFacts`)
+          return
+        }
+        if (b === 'restart') {
+          console.log(`[PREVIEW FLOW ${previewToken}] RESTART | snapshot changed after saveDocFacts`)
+          previewExecutionRef.current = null
+          return doLoadPreview(previewTransactionRef.current.snapshot, 'refresh', 'restart-after-saveDocFacts')
+        }
+      }
     }
 
     const docOrientation = naturalOrientation || contentOrient || 'portrait'
@@ -1800,6 +1976,22 @@ export function usePreview({ files, settings, electronAPIRef }) {
         },
       }
     )
+    // INV-PS11：commit 前 freshness 闸门（consumingSnapshot === transaction.snapshot）
+    {
+      const b = resolveBoundary(previewTransactionRef.current, execution)
+      // [V2-TRACE][D-preCommit] commit 前 boundary 判定
+      console.log(`[V2-TRACE][D-preCommit] boundary=${b} loaded=${__snapId(loadedFile)} txn=${__snapId(previewTransactionRef.current?.snapshot)} exec=${__execId(execution)}`)
+      if (b === 'abort') {
+        console.log(`[PREVIEW FLOW ${previewToken}] FINALLY | superseded before commit`)
+        return
+      }
+      if (b === 'restart') {
+        console.log(`[PREVIEW FLOW ${previewToken}] RESTART | snapshot changed before commit`)
+        previewExecutionRef.current = null
+        return doLoadPreview(previewTransactionRef.current.snapshot, 'refresh', 'restart-before-commit')
+      }
+    }
+
     const cachedCanvas = fullCacheRef.current.get(cacheKey)
     if (cachedCanvas) {
       // 直接设置缓存画布，跳过整个异步渲染管线
@@ -1808,6 +2000,8 @@ export function usePreview({ files, settings, electronAPIRef }) {
       setMergePair(null)
       // [O2-R-PROBE][C-setPreview] 缓存命中分支 setPreviewFile 前
       __flowTrace('C-setPreview(cache)', loadedFile)
+      // [V2-TRACE][D-commit-cache] 缓存命中 commit 现场
+      console.log(`[V2-TRACE][D-commit-cache] loaded=${__snapId(loadedFile)} txn=${__snapId(previewTransactionRef.current?.snapshot)} exec=${__execId(previewExecutionRef.current)}`)
       setPreviewFile(loadedFile)
       // ✅ 跳过 render effect（skipRenderRef=true）时，L323 不会执行，
       //    lastRenderKeyRef 残留旧值，后续切换到新文件时可能被 L322 误拦。
@@ -1877,6 +2071,8 @@ export function usePreview({ files, settings, electronAPIRef }) {
       setMergePair(null)
       // [O2-R-PROBE][C-setPreview] 正常分支 setPreviewFile 前
       __flowTrace('C-setPreview(normal)', loadedFile)
+      // [V2-TRACE][D-commit-normal] 正常 commit 现场
+      console.log(`[V2-TRACE][D-commit-normal] loaded=${__snapId(loadedFile)} txn=${__snapId(previewTransactionRef.current?.snapshot)} exec=${__execId(previewExecutionRef.current)}`)
       setPreviewFile(loadedFile)
       setPreviewPage(1)
       setNumPages(loadedFile._fileFormat === 'pdf' ? 0 : 1)
@@ -1908,7 +2104,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
   // ============================
   // 预览文件（带防抖）
   // ============================
-  const handlePreview = useCallback(async (fileObj) => {
+  const handlePreview = useCallback(async (fileObj, intent = 'select') => {
     // ── 防抖层：让 UI 指示器即时响应，渲染逻辑延迟 150ms ──
     const now = Date.now()
 
@@ -1922,10 +2118,11 @@ export function usePreview({ files, settings, electronAPIRef }) {
         clearTimeout(switchTimeoutRef.current)
       }
       // 重新设定时器，到期后直接调用加载逻辑（不再递归 handlePreview）
+      // timeout 闭包必须捕获 intent（Contract §1：防抖不得丢失 intent 语义）
       return new Promise(resolve => {
           switchTimeoutRef.current = setTimeout(async () => {
           switchTimeoutRef.current = null
-          const result = await doLoadPreview(fileObj, 'handlePreview:timeout')
+          const result = await doLoadPreview(fileObj, intent, 'handlePreview:timeout')
           resolve(result)
         }, 150)
       })
@@ -1933,7 +2130,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
     lastSwitchTimeRef.current = now
 
     // 3. 间隔足够，立即执行
-    return doLoadPreview(fileObj, 'handlePreview:immediate')
+    return doLoadPreview(fileObj, intent, 'handlePreview:immediate')
   }, [doLoadPreview])
 
   // ============================
@@ -1949,10 +2146,10 @@ export function usePreview({ files, settings, electronAPIRef }) {
     handlePreviewRef.current = handlePreview
   }, [handlePreview])
 
-  // ✅ 当 mergeMode 变化时，自动重新预览当前文件
+  // ✅ 当 mergeMode 变化时，自动重新预览当前文件（Contract §1：refresh，保持 selection）
   useEffect(() => {
     if (previewFile && handlePreviewRef.current) {
-      handlePreviewRef.current(previewFile)
+      handlePreviewRef.current(previewFile, 'refresh')
     }
   }, [settings.mergeMode])
 
@@ -2004,10 +2201,10 @@ export function usePreview({ files, settings, electronAPIRef }) {
     }
 
     // ✅ 合并模式下，仅当文件列表实际变化时重新计算 mergePair
-    //    新导入的文件可能属于当前合并组，需要实时更新预览
+    //    新导入的文件可能属于当前合并组，需要实时更新预览（Contract §1：refresh，保持 selection）
     //    注意：不能在 mergeMode 变化时触发（已有单独的 useEffect 处理）
     if (filesChanged && isMergeMode(settings.mergeMode)) {
-      handlePreviewRef.current?.(previewFile)
+      handlePreviewRef.current?.(previewFile, 'refresh')
     }
   }, [filesKeyStr, filesKeySet, previewFile, files, cleanupAllBlobUrls])
 
@@ -2039,7 +2236,8 @@ export function usePreview({ files, settings, electronAPIRef }) {
     const changed = live.docId !== pf.docId
     if (changed) {
       console.log(`[PREVIEW_FLOW] docId transition | ${pf.docId || '<empty>'} → ${live.docId || '<empty>'} | wasEmpty=${wasEmpty}`)
-      handlePreviewRef.current?.(live)
+      // Contract §1：docId 晋升 = refresh（同 key snapshot 更新，不 supersede）
+      handlePreviewRef.current?.(live, 'refresh')
     }
   }, [livePreviewDocId])
 
@@ -2092,9 +2290,10 @@ export function usePreview({ files, settings, electronAPIRef }) {
 
     // 3. 预览文件对象被替换（同一 key，新引用）→ 重新预览
     //    典型场景：占位符 → 解析完成，groupFilesByDocument → invoiceDocumentsToRows
+    //    Contract §1：引用替换 = refresh（同 key snapshot 更新，不 supersede）
     if (pfChanged) {
       console.log('[PREVIEW_FLOW] fileList effect: pf replaced → handlePreview(live)')
-      handlePreviewRef.current?.(live)
+      handlePreviewRef.current?.(live, 'refresh')
       return
     }
   }, [allFileKeys, files])
