@@ -40,6 +40,23 @@ function restoreOriginalName(pageName) {
 export function invoiceDocumentToRow(invoiceDoc, allFiles, fileIndex) {
   if (!invoiceDoc?.docId) return null
 
+  // [V3-P2] 行来源闭环：本文档的匹配现场（_pageKeys / docIdIndex）
+  if (process.env.NODE_ENV === 'development') {
+    console.log('[V3-P2][row-build]', {
+      docId: invoiceDoc.docId?.slice(0, 16),
+      invoiceDocumentId: invoiceDoc.invoiceDocumentId?.slice(0, 24),
+      instanceId: invoiceDoc.instanceId?.slice(0, 16),
+      fileKey: invoiceDoc.fileKey?.slice(0, 16),
+      // ⚠️ 截断必须 ≥48：短 key（"26447000000943604784.ofd"，24 字符）与完整 instanceId
+      // （"...ofd_1787490382121_d0d50688-..."，≥60 字符）前 20 字符相同，slice(0,20)
+      // 无法区分 M1（_pageKeys 身份空间 ≠ files.key）与 M2（key 一致但匹配失败）。
+      pageKeys: (invoiceDoc._pageKeys || []).map(k => k.slice(0, 48)),
+      hasFileIndex: !!fileIndex,
+      allFilesCount: Array.isArray(allFiles) ? allFiles.length : 0,
+      fileKeys: (Array.isArray(allFiles) ? allFiles.slice(0, 20) : []).map(f => f.key?.slice(0, 48)),
+    })
+  }
+
   // _pageKeys 是 assembly 阶段精确记录的页面 fileObj key 列表（强身份），
   // 直接对 allFiles 命中，不依赖可能被 per-page render id 覆盖的 docId。
   // 这避免了「session.files[].docId 被逐页身份改写 → candidates 为空 → 整票被过滤」的断链。
@@ -65,6 +82,16 @@ export function invoiceDocumentToRow(invoiceDoc, allFiles, fileIndex) {
     } else {
       pageFiles = allFiles.filter((f) => f.docId === matchDocId && f.key)
     }
+  }
+
+  // [V3-P2b] 匹配结果：pageFiles 命中数（null 前置判定）
+  if (process.env.NODE_ENV === 'development') {
+    console.log('[V3-P2b][match-result]', {
+      docId: invoiceDoc.docId?.slice(0, 16),
+      pageFilesCount: pageFiles?.length || 0,
+      matchedKeys: (pageFiles || []).map(f => f.key?.slice(0, 48)),
+      willBeNull: !pageFiles || pageFiles.length === 0,
+    })
   }
 
   // 无匹配 fileObj → 异常状态，不产生条目

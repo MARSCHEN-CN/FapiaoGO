@@ -115,8 +115,28 @@ function parseAmount(amountStr) {
 export function buildDocumentViewModel(files, invoiceDocs = null) {
   const hasInvoiceDocs = Array.isArray(invoiceDocs) && invoiceDocs.length > 0
   let documents
+  // [V3-P3] 行来源闭环：进入哪个分支（invoiceDocumentsToRows vs groupFilesByDocument）
+  if (process.env.NODE_ENV === 'development') {
+    console.log('[V3-P3][viewmodel-branch]', {
+      hasInvoiceDocs,
+      invoiceDocsCount: Array.isArray(invoiceDocs) ? invoiceDocs.length : 0,
+      filesCount: Array.isArray(files) ? files.length : 0,
+      decision: hasInvoiceDocs ? 'invoiceDocumentsToRows(覆盖+补全)' : 'groupFilesByDocument(降级)',
+    })
+  }
   if (hasInvoiceDocs) {
     const invoiceRows = invoiceDocumentsToRows(invoiceDocs, files)
+    if (process.env.NODE_ENV === 'development') {
+      console.log('[V3-P3][invoiceRows]', {
+        invoiceRowsCount: invoiceRows.length,
+        rows: invoiceRows.map(r => ({
+          key: r.key?.slice(0, 24),
+          instanceId: r.instanceId?.slice(0, 16),
+          invoiceDocumentId: r.invoiceDocumentId?.slice(0, 24),
+          documentId: r.documentId?.slice(0, 16),
+        })),
+      })
+    }
     const coveredKeys = new Set()
     for (const row of invoiceRows) {
       for (const k of collectCoveredKeys(row)) coveredKeys.add(k)
@@ -133,6 +153,13 @@ export function buildDocumentViewModel(files, invoiceDocs = null) {
       originalName: f.originalName !== undefined ? f.originalName : f.name,
       documentId: f.documentId || f.docId,
     }))
+    if (process.env.NODE_ENV === 'development') {
+      console.log('[V3-P3][remaining-after-rows]', {
+        remainingFilesCount: remainingFiles.length,
+        remainingRowsCount: remainingRows.length,
+        remainingKeys: remainingFiles.map(f => f.key?.slice(0, 48)),
+      })
+    }
     documents = [...invoiceRows, ...remainingRows]
   } else {
     // 降级路径（session.documents 为空时的 fallback）：
@@ -146,6 +173,18 @@ export function buildDocumentViewModel(files, invoiceDocs = null) {
       originalName: f.originalName !== undefined ? f.originalName : f.name,
       documentId: f.documentId || f.docId,
     }))
+    if (process.env.NODE_ENV === 'development') {
+      console.log('[V3-P3][degraded-rows]', {
+        groupedCount: grouped.length,
+        rows: grouped.map(f => ({
+          key: f.key?.slice(0, 24),
+          docId: f.docId?.slice(0, 16),
+          documentId: (f.documentId || f.docId)?.slice(0, 16),
+          hasInstanceId: !!f.instanceId,
+          hasInvoiceDocumentId: !!f.invoiceDocumentId,
+        })),
+      })
+    }
   }
 
   // ── Coverage guard: 校验 document 聚合是否覆盖全部 page-level files ──
