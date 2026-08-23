@@ -16,7 +16,7 @@ import { extractContentPx } from '../geometry/extractContentPx.js'
 import { computeInitialDocFacts } from '../layout/docFacts.js'
 import { nextZoomStep } from './zoomStep.mjs'
 import { applyWheelZoom } from './continuousZoom.mjs'
-import { resolvePreviewTransition, resolveRefreshExecution, resolveBoundary, advanceLoadingStep } from '../utils/previewScheduler'
+import { resolvePreviewTransition, resolveRefreshExecution, resolveBoundary, advanceLoadingStep, resolveCommittedClear } from '../utils/previewScheduler'
 
 // [O2-R-PROBE] Object Flow Trace（一次性诊断，dev-only）
 // 目标：证明 loadFilePreview input → output → setPreviewFile → DisplayAdapter
@@ -138,6 +138,10 @@ export function usePreview({ files, settings, electronAPIRef }) {
   const previewUrlRef = useRef(null)           // blob URL (revoke on cleanup)
   const renderEngineUrlRef = useRef(null)      // Render Engine HTTP URL (no revoke needed)
   const previewVersionRef = useRef(0)
+  // P4 Contract（2026-08-23）：最近一次 commit 的 execution.version。
+  // clearCommitted 用它判定「当前 committed preview」是否拥有 transaction 的清理权
+  // （旧 render cleanup 不得取消新 transaction）。
+  const committedPreviewVersionRef = useRef(null)
   // Preview Scheduler transaction（Contract v2 §1.1）：单一 selection 的 { key, version, snapshot }
   const previewTransactionRef = useRef(null)
   // Preview Scheduler execution（Contract v2 §1.2）：snapshot consumer ownership
@@ -241,6 +245,27 @@ export function usePreview({ files, settings, electronAPIRef }) {
   //    RE probe / canvas 渲染；这些异步提交若在清空之后回写 previewUrl/previewCanvas，
   //    就会在空状态页下残留旧帧。先递增三个 token，使所有在途任务的提交守卫失效。
   const clearCommitted = useCallback(() => {
+    // ── P4 Contract（2026-08-23 冻结）：旧 render cleanup 不得拥有新 transaction 的取消权 ──
+    // 背景：导入后旧裸 previewFile（占位对象）的 render effect 触发 clearCommitted，
+    //   无条件清 transaction/execution + ++version → 把新 handlePreview（富 execution）
+    //   一起取消（[PREVIEW FLOW] 铁证：v9 superseded 但无 v10 START）→ 富对象永不 commit。
+    // 决策：仅当 transaction 属于「当前 committed preview」（version 匹配）时才清；
+    //   否则只清旧展示帧，保留在途 execution（resolveCommittedClear，previewScheduler.js）。
+    const txn = previewTransactionRef.current
+    const commitDecision = resolveCommittedClear({
+      transaction: txn,
+      committedVersion: committedPreviewVersionRef.current,
+    })
+    if (commitDecision.action === 'preserve-transaction') {
+      // 旧 committed preview 无权取消新 transaction：保留 transaction/execution + version 守卫，
+      // 只清旧展示帧（属于已过时的 committed preview），loading 标记留给在途 execution 管理。
+      committedPreviewRef.current = { url: null, dims: null, canvas: null, layout: null, timestamp: 0 }
+      setPreviewUrl(null)
+      setPreviewImgDims(null)
+      setPreviewCanvas(null)
+      console.log(`[PREVIEW FLOW ${flowTokenRef.current ?? 'init'}] LOADING_OFF | source=clearCommitted(preserve-txn v${txn.version})`)
+      return
+    }
     previewVersionRef.current++        // 在途 doLoadPreview 的 version 守卫失效，阻止复活 previewFile
     // V-3 修复（Contract v2）：invalidate 显式清 transaction + execution，消除幽灵状态（INV-PS8）
     previewTransactionRef.current = null
@@ -2024,6 +2049,8 @@ export function usePreview({ files, settings, electronAPIRef }) {
       __flowTrace('C-setPreview(cache)', loadedFile)
       // [V2-TRACE][D-commit-cache] 缓存命中 commit 现场
       console.log(`[V2-TRACE][D-commit-cache] loaded=${__snapId(loadedFile)} txn=${__snapId(previewTransactionRef.current?.snapshot)} exec=${__execId(previewExecutionRef.current)}`)
+      // P4：记录 commit 对应的 execution.version（clearCommitted 清理权判定依据）
+      committedPreviewVersionRef.current = previewExecutionRef.current?.version ?? version
       setPreviewFile(loadedFile)
       // ✅ 跳过 render effect（skipRenderRef=true）时，L323 不会执行，
       //    lastRenderKeyRef 残留旧值，后续切换到新文件时可能被 L322 误拦。
@@ -2095,6 +2122,8 @@ export function usePreview({ files, settings, electronAPIRef }) {
       __flowTrace('C-setPreview(normal)', loadedFile)
       // [V2-TRACE][D-commit-normal] 正常 commit 现场
       console.log(`[V2-TRACE][D-commit-normal] loaded=${__snapId(loadedFile)} txn=${__snapId(previewTransactionRef.current?.snapshot)} exec=${__execId(previewExecutionRef.current)}`)
+      // P4：记录 commit 对应的 execution.version（clearCommitted 清理权判定依据）
+      committedPreviewVersionRef.current = previewExecutionRef.current?.version ?? version
       setPreviewFile(loadedFile)
       setPreviewPage(1)
       setNumPages(loadedFile._fileFormat === 'pdf' ? 0 : 1)
