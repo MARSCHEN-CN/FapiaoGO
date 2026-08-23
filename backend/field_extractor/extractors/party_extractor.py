@@ -620,6 +620,24 @@ class PartyExtractor:
                 field_meta['gmfmc']['warnings'].append(
                     '购买方名称与销售方名称同名但税号不同，判定购买方名称缺失')
 
+        # 幻觉防护（对称）：buyer==seller 税号时用名称判别真伪。
+        # 文本候选（text_l4）会把销售方税号同时填入 gmfsh/xsfsh；缺失购买方税号时，
+        # 销售方所在行的税号会污染 gmfsh（同号）。
+        # 判别：买卖方名称不同 → 同号必为幻觉（无独立购买方税号证据）→ 清空 gmfsh，
+        #   让下游「购买方税号为空」判定可触发；名称相同 → 同公司自开（合法）→ 保留原值。
+        if (result.get('gmfsh') and result.get('xsfsh')
+                and result['gmfsh'] == result['xsfsh']
+                and result.get('gmfmc') and result.get('xsfmc')
+                and result['gmfmc'] != result['xsfmc']):
+            logger.info("[幻觉防护] 买卖方同税号但名称不同(%s≠%s): %s → 判定购买方税号缺失",
+                        result['gmfmc'], result['xsfmc'], result['gmfsh'][:20])
+            result['gmfsh'] = ''
+            if 'gmfsh' in field_meta:
+                field_meta['gmfsh']['value'] = ''
+                field_meta['gmfsh']['status'] = 'failed'
+                field_meta['gmfsh']['warnings'].append(
+                    '购买方税号与销售方税号相同但名称不同，判定购买方税号缺失')
+
         # 将 token 级买卖方区域回写至 doc.regions（替代 Segmenter 的粗粒度区域）
         self._write_back_regions(doc)
 
