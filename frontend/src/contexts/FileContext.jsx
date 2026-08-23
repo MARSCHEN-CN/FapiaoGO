@@ -3,6 +3,10 @@ import { filterFiles, isMergeMode, getPreviousYearInfo } from '../utils'
 import { buildDocumentViewModel, buildPageDuplicateInfo, buildDocumentDuplicateInfo } from '../utils/documentViewModel'
 import { amountToChinese } from '../utils/amountConverter'
 import { getActiveSessionId, getSession, subscribe, getDocumentVersion } from '../stores/ImportSessionStore'
+import { getRegisteredDocIds, getDocument } from '../stores/DocumentStore'
+import { getDocumentCacheIdentity } from '../utils/documentViewCacheIdentity'
+import { getDocumentViewSignature } from '../utils/documentViewSignature'
+import { resolveMaterializedInvoiceDocuments } from '../utils/resolveMaterializedInvoiceDocuments'
 import { db } from '../db'
 
 // ── P1：发票重复导入历史（advisory 旁路）工具 ──────────────────
@@ -85,15 +89,88 @@ export function FileProvider({ children }) {
     () => null,
   )
   const sessionId = storeSnap ? storeSnap.split(':')[0] : null
+  // files 的 key 集合签名：删除/新增文件时驱动持久源恢复重算（S5 membership），
+  // 排序/内容更新不触发（保持轻量，与 documentView fileSig 思路一致但只取 key）
+  const fileKeysSig = files.length
+    ? files.map(f => f.key).sort().join('‖')
+    : ''
+  // [S7] 只读 correlation：materializedDocs 的实际来源标记（useMemo 内写、useMemo 外读，
+  //     不参与渲染，仅供 s7Correlation 与探针日志使用——不修这个，source 永远失真）。
+  const invoiceDocsUsedSourceRef = useRef('none')
   const invoiceDocs = useMemo(() => {
-    if (!sessionId) return null
-    const session = getSession(sessionId)
-    // 修复：如果 session 不存在（被 TTL 回收或其他原因），必须返回 null
-    // 防止引用已删除的 session.documents 导致文档分组丢失
-    if (!session) return null
-    return session.documents?.length > 0 ? session.documents : null
+    // Candidate 1-R：Persistent Document View Source（INV-S1，2026-08-23 冻结）
+    //   ImportSession.documents 不再是 Display 唯一 InvoiceDocument 来源。
+    //   - session 存在（导入过渡态）→ 优先用 session.documents（最新装配结果）
+    //   - session 被 TTL 清理 → 从 DocumentStore（持久注册的 canonical docs）恢复，
+    //     按当前 files membership 过滤——已 materialize 的文档不随 session 消失。
+    //   files 是展示 membership 唯一 truth；DocumentStore 只补 identity，不决定显示哪些文件。
+    const registeredDocs = getRegisteredDocIds()
+      .map((id) => getDocument(id))
+      .filter(Boolean)
+    // 持久源恢复（session 不存在 / 悬空 / 无 documents 三个分支共用，业务语义与
+    // 既有代码逐字节等价：registeredDocs 空 → null，否则按 files membership 恢复）
+    const restoreFromRegistered = () => {
+      if (registeredDocs.length === 0) return null
+      invoiceDocsUsedSourceRef.current = 'registered-restore'
+      return resolveMaterializedInvoiceDocuments(files, null, registeredDocs)
+    }
+    let result
+    if (!sessionId) {
+      // session 不存在（未导入 / 已被 TTL 回收）：从持久 DocumentStore 恢复已 materialize 文档
+      result = restoreFromRegistered()
+    } else {
+      const session = getSession(sessionId)
+      if (!session) {
+        // session 悬空指针（getSession 找不到）：同样从持久源恢复
+        result = restoreFromRegistered()
+      } else {
+        const docs = session.documents?.length > 0 ? session.documents : null
+        if (docs) {
+          result = docs
+          invoiceDocsUsedSourceRef.current = 'session-docs'
+        } else {
+          // session 存在但无 documents：尝试从持久源恢复（防御）
+          result = restoreFromRegistered()
+        }
+      }
+    }
+    // [S7] 同一时刻 identity 快照（dev-only）：1-R 实际产出的 materializedDocs
+    //   viewSig = 本份 materializedDocs 的内容签名（与 s7Correlation 同源同值），
+    //   DisplayAdapter 打印同一 viewSig 的两条日志才允许配对成一次证据。
+    if (process.env.NODE_ENV === 'development') {
+      console.log('[S7][materializedDocs]', {
+        viewSig: getDocumentViewSignature(result),
+        sessionId,
+        source: result === null ? 'none' : invoiceDocsUsedSourceRef.current,
+        count: result ? result.length : 0,
+        docs: result
+          ? result.map(d => ({
+              key: d.key?.slice(0, 20),
+              fileKey: d.fileKey?.slice(0, 20),
+              instanceId: d.instanceId?.slice(0, 20),
+              invoiceDocumentId: d.invoiceDocumentId?.slice(0, 28),
+              docId: d.docId?.slice(0, 16),
+              sourceDocId: d.sourceDocId?.slice(0, 16),
+              pageKeysCount: d._pageKeys?.length || 0,
+            }))
+          : [],
+      })
+    }
+    return result
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId, storeSnap])
+  }, [sessionId, storeSnap, fileKeysSig])
+
+  // [S7] 同一渲染轮次的 documentView 标识（只读 correlation，供 DisplayAdapter 严格配对）
+  //   viewSig = materializedDocs 的 canonical identity 内容签名（同内容同签名、跨组件稳定）
+  //   source  = 'session-docs' | 'registered-restore' | 'none'
+  //   React 数据流语义：DisplayAdapter 消费的 context 值 = FileProvider 最近一次 commit 的值，
+  //   因此 viewSig 相同的两条 [S7] 日志必然描述同一份 documentView（同一渲染轮次）。
+  const s7Correlation = useMemo(() => ({
+    viewSig: getDocumentViewSignature(invoiceDocs),
+    source: !Array.isArray(invoiceDocs) || invoiceDocs.length === 0
+      ? 'none'
+      : (invoiceDocsUsedSourceRef.current || 'unknown'),
+  }), [invoiceDocs])
 
   // [S2-PROBE] 只读：invoiceDocs 状态变化（present/null 退化时刻，TTL 回收关联验证）
   const prevInvoiceDocsState = useRef(null)
@@ -126,7 +203,7 @@ export function FileProvider({ children }) {
         ).sort().join('‖')
       : ''
     const docsSig = Array.isArray(invoiceDocs) && invoiceDocs.length
-      ? invoiceDocs.map(d => d.key).sort().join('‖')
+      ? invoiceDocs.map(getDocumentCacheIdentity).sort().join('‖')
       : ''
     const combinedSig = fileSig + '#' + docsSig
 
@@ -316,6 +393,8 @@ export function FileProvider({ children }) {
     setMergeMode,
     // Document 视图模型（D1 统一出口：统计/重复/列表聚合的唯一数据源）
     documentView,
+    // [S7] 只读 correlation：DisplayAdapter 严格配对同一渲染轮次的 materializedDocs
+    s7Correlation,
     // P0-2: 集中计算的派生数据（排序/展示共用，避免重复 O(n)）
     previousYearInfo,
     duplicatePageInfo,
@@ -333,6 +412,7 @@ export function FileProvider({ children }) {
     files, setFiles, searchQuery, filteredFiles, isSearching,
     mergeMode,
     documentView,
+    s7Correlation,
     previousYearInfo, duplicatePageInfo, duplicateDocumentInfo,
     importHistoryInfo,
     totalAmount, printableCount, hasFailedFiles, failedFilesCount,

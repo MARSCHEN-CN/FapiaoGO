@@ -36,7 +36,9 @@ import React, { useEffect, useRef, useMemo } from 'react'
 import { DocumentViewer } from './DocumentViewer'
 import { useDocument } from '../hooks/useDocument'
 import { createDocument, createPageMeta } from '../models/InvoiceDocument'
-import { resolveDocumentIdentity } from '../stores/DocumentStore'
+import { resolveDocumentIdentity, getRegisteredDocIds, getDocument } from '../stores/DocumentStore'
+import { getActiveSessionId } from '../stores/ImportSessionStore'
+import { useFileContext } from '../contexts/FileContext'
 
 /**
  * 从 fileObj 解析规范 docId。
@@ -77,6 +79,12 @@ export const DisplayAdapter = React.memo(function DisplayAdapter({
 }) {
   // ── 所有 hooks 必须在顶部无条件调用（React Rules of Hooks） ──
 
+  // [S7] 只读 correlation：FileContext 最近一次 commit 的 materializedDocs 标识。
+  //   viewSig 相同的两条 [S7] 日志（materializedDocs / display）才允许配对成一次证据。
+  //   ⚠️ 仅消费 viewSig 用于 console.log，不参与任何渲染分支；context 订阅只带来
+  //   探针期可忽略的额外重渲染，不影响渲染输出（React.memo 不拦截 context，仅此而已）。
+  const { s7Correlation } = useFileContext()
+
   // 存储键查找：使用统一的 resolveDocumentIdentity 解析
   // 同时有 instanceId + invoiceDocumentId → 复合键（完整身份）
   // 与 DocumentStore 存储键保持一致
@@ -92,6 +100,41 @@ export const DisplayAdapter = React.memo(function DisplayAdapter({
       `storeDocId=${storeDocId} hit=${!!storeDocument} pageCount=${storeDocument?.pageCount ?? '-'} ` +
       `splitPage=${!!file?.sourceDocId && !file?._isDocumentGroup} ` +
       `assetReady=${!!file._previewImageUrl || !!file.previewImage || !!file.docId}`)
+    // [V2-TRACE][E-display] Display 实际收到的 previewFile 的 url + dimensions
+    console.log(`[V2-TRACE][E-display] fmt=${file._fileFormat || file.fileFormat} key=${String(file.key).slice(0, 24)} ` +
+      `docId=${file.docId || '-'} ` +
+      `url=${file._previewImageUrl ? (file._previewImageUrl.startsWith('blob:') ? 'blob' : 'http') : '-'} ` +
+      `imgW=${file._imageWidth || '-'} imgH=${file._imageHeight || '-'} ` +
+      `pvW=${file.previewWidth || '-'} pvH=${file.previewHeight || '-'} ` +
+      `pdfW=${file._pdfPageWidth || '-'} pdfH=${file._pdfPageHeight || '-'} ` +
+      `hit=${!!storeDocument} pageCount=${storeDocument?.pageCount ?? '-'}`)
+    // [V2-TRACE][E-store] storeDocId vs 注册键空间对照（Case B1/B2 判定）
+    const allKeys = getRegisteredDocIds()
+    const related = allKeys.filter(
+      (k) => (file?.docId && k.includes(file.docId.slice(0, 12))) || (file?.key && k.includes(String(file.key).slice(0, 20)))
+    )
+    console.log(`[V2-TRACE][E-store] storeDocId=${storeDocId} total=${allKeys.length} ` +
+      `related=${related.length ? related.join(' | ') : 'NONE'} ` +
+      `hitViaGetDoc=${!!getDocument(storeDocId)}`)
+    // [S7] 同一时刻六项快照：previewFile 身份 + resolvedStoreDocId + registeredIds + hit + sessionId
+    //   viewSig/source 来自 FileContext 的 s7Correlation（同源）——只有与
+    //   [S7][materializedDocs] 的 viewSig 相同的这条日志才允许组成一次证据。
+    console.log('[S7][display]', {
+      viewSig: s7Correlation?.viewSig ?? 'NO-FILE-CONTEXT',
+      source: s7Correlation?.source ?? '-',
+      sessionId: getActiveSessionId(),
+      previewFile: {
+        key: file.key?.slice(0, 24),
+        instanceId: file.instanceId || '-',
+        invoiceDocumentId: file.invoiceDocumentId?.slice(0, 28) || '-',
+        documentId: file.documentId?.slice(0, 20) || '-',
+        docId: file.docId?.slice(0, 20) || '-',
+      },
+      resolvedStoreDocId: storeDocId,
+      registeredIds: allKeys,
+      hit: !!getDocument(storeDocId),
+      storeDocumentPageCount: storeDocument?.pageCount ?? '-',
+    })
   }
 
   // 拆分页判定：fileObj 携带 sourceDocId 且不是多页文档组 → 父 PDF 的一个独立分页。
