@@ -241,57 +241,55 @@ def _content_size(pdf_page):
     return w, h, rotate, user_unit
 
 
-def apply_pdf(src_path, out_path, paper_w_pt, paper_h_pt, margin_lrtb,
-              content_rotation=0, allow_upscale=False, refuse_user_unit=True):
+def _process_page(src_page, src_pdf, out, paper_w_pt, paper_h_pt, margin_lrtb,
+                  content_rotation=0, allow_upscale=False, refuse_user_unit=True):
     """
-    执行 margin contract 并产出 PDF。
+    对单个源页执行 margin contract（页级机械放置 + G 断言），追加一页到 out。
+
+    R-2.2-B：从旧 apply_pdf 主体逐行等价抽取（单页行为零变化约束），
+    仅把「第 1 页逻辑」提升为可复用的页处理器；几何函数（_content_size /
+    apply_margin_contract / compute_transform / _form_extent）一律不重实现。
 
     G-1：输出 /Rotate == 0（R-1）
     G-2：输出 MediaBox == Policy A outputPaper（0.1pt）
     G-4：源页 /UserUnit != 1 → 拒绝（refuse_user_unit=True 时 raise）
     G-3：源页 /Annots 存在 → 告警（防御性 P2，不阻断；注释见契约 §6）
-    G-5（内容 bbox ⊆ usableRect）属 Gate 5 运行时 Guard 范围，本层不做光栅化断言。
 
-    返回 info dict（供 Gate 报告）。任何 G 失败 raise（契约 §6：禁止降级为 warning）。
+    返回该页 info dict（供 Gate 报告）。任何 G 失败 raise（契约 §6）。
     """
-    with pikepdf.open(src_path) as src:
-        if len(src.pages) != 1:
-            raise ValueError(f"margin contract 要求单页源，收到 {len(src.pages)} 页")
+    content_w, content_h, page_rotate, user_unit = _content_size(src_page)
+    if refuse_user_unit and user_unit != 1.0:
+        raise ValueError(f"G-4: 源页 /UserUnit = {user_unit} != 1，拒绝处理（契约 §1.5）")
+    if "/Annots" in src_page.obj and len(list(src_page.obj.get("/Annots", []))) > 0:
+        # G-3 防御性 P2：Form XObject 变换不会移动 annotation，可能留在原位或被裁
+        print(json.dumps({"warn": "G-3: 源页含 /Annots，Form XObject 不移动 annotation"
+                                  "（契约 §6 G-3），若命中必须 flatten 或同步变换 Rect"}))
 
-        src_page = pikepdf.Page(src.pages[0])
-        content_w, content_h, page_rotate, user_unit = _content_size(src_page)
-        if refuse_user_unit and user_unit != 1.0:
-            raise ValueError(f"G-4: 源页 /UserUnit = {user_unit} != 1，拒绝处理（契约 §1.5）")
-        if "/Annots" in src_page.obj and len(list(src_page.obj.get("/Annots", []))) > 0:
-            # G-3 防御性 P2：Form XObject 变换不会移动 annotation，可能留在原位或被裁
-            print(json.dumps({"warn": "G-3: 源页含 /Annots，Form XObject 不移动 annotation"
-                                      "（契约 §6 G-3），若命中必须 flatten 或同步变换 Rect"}))
+    geometry = apply_margin_contract(
+        paper_w_pt, paper_h_pt, margin_lrtb,
+        {"widthPt": content_w, "heightPt": content_h},
+        content_rotation=content_rotation, allow_upscale=allow_upscale)
 
-        geometry = apply_margin_contract(
-            paper_w_pt, paper_h_pt, margin_lrtb,
-            {"widthPt": content_w, "heightPt": content_h},
-            content_rotation=content_rotation, allow_upscale=allow_upscale)
+    # ⭐ AP-DR-6: Annotation Preservation - Flatten Stamp AP before Form XObject
+    flatten_count = flatten_stamp_annotations(src_page, src_pdf=src_pdf)
+    if flatten_count > 0:
+        print(f"[AP-DR-6] Flattened {flatten_count} Stamp annotation(s) into page contents", file=sys.stderr)
+    # Form XObject 跨 Pdf 复制（src → out）：copy_foreign 目标必须是 out
+    form = out.copy_foreign(src_page.as_form_xobject())
+    src_rect = _form_extent(form)
 
-        # Form XObject 跨 Pdf 复制（src → out）：copy_foreign 目标必须是 out
-        out = pikepdf.new()
-        # ⭐ AP-DR-6: Annotation Preservation - Flatten Stamp AP before Form XObject
-        flatten_count = flatten_stamp_annotations(src_page, src_pdf=src)
-        if flatten_count > 0:
-            print(f"[AP-DR-6] Flattened {flatten_count} Stamp annotation(s) into page contents", file=sys.stderr)
-        form = out.copy_foreign(src_page.as_form_xobject())
-        src_rect = _form_extent(form)
+    # 自检：form 有效范围必须等于 §1.4 归一尺寸（库行为证明，而非假定）
+    if (abs((src_rect[2] - src_rect[0]) - content_w) > 0.01
+            or abs((src_rect[3] - src_rect[1]) - content_h) > 0.01):
+        raise RuntimeError(
+            f"form extent {(src_rect[2]-src_rect[0]):.4f}x"
+            f"{(src_rect[3]-src_rect[1]):.4f} != §1.4 归一尺寸 "
+            f"{content_w:.4f}x{content_h:.4f}（pageRotate={page_rotate}）")
 
-        # 自检：form 有效范围必须等于 §1.4 归一尺寸（库行为证明，而非假定）
-        if (abs((src_rect[2] - src_rect[0]) - content_w) > 0.01
-                or abs((src_rect[3] - src_rect[1]) - content_h) > 0.01):
-            raise RuntimeError(
-                f"form extent {(src_rect[2]-src_rect[0]):.4f}x"
-                f"{(src_rect[3]-src_rect[1]):.4f} != §1.4 归一尺寸 "
-                f"{content_w:.4f}x{content_h:.4f}（pageRotate={page_rotate}）")
+    matrix, placed = compute_transform(
+        src_rect, geometry["contentBox"],
+        phi=int(content_rotation) % 360, scale=geometry["scale"])
 
-        matrix, placed = compute_transform(
-            src_rect, geometry["contentBox"],
-            phi=int(content_rotation) % 360, scale=geometry["scale"])
     page_obj = out.add_blank_page(page_size=(
         geometry["mediaBox"]["widthPt"], geometry["mediaBox"]["heightPt"]))
     page = pikepdf.Page(page_obj)
@@ -316,9 +314,6 @@ def apply_pdf(src_path, out_path, paper_w_pt, paper_h_pt, margin_lrtb,
             f"G-2 失败：输出 MediaBox {out_w:.4f}x{out_h:.4f} != "
             f"Policy A outputPaper {exp_w:.4f}x{exp_h:.4f}")
 
-    out.save(out_path)
-    out.close()
-
     return {
         "ok": True,
         "contentSize": [content_w, content_h],
@@ -327,6 +322,48 @@ def apply_pdf(src_path, out_path, paper_w_pt, paper_h_pt, margin_lrtb,
         "placedSize": list(placed),
         "pageRotate": page_rotate,
     }
+
+
+def apply_pdf(src_path, out_path, paper_w_pt, paper_h_pt, margin_lrtb,
+              content_rotation=0, allow_upscale=False, refuse_user_unit=True):
+    """
+    执行 margin contract 并产出 PDF（Contract v1.2：支持多页源）。
+
+    G-1：输出每页 /Rotate == 0（R-1）
+    G-2：输出每页 MediaBox == Policy A outputPaper（0.1pt）
+    G-4：每页源 /UserUnit != 1 → 拒绝（refuse_user_unit=True 时 raise）
+    G-3：每页源 /Annots 存在 → 告警（防御性 P2，不阻断；注释见契约 §6）
+    G-5（内容 bbox ⊆ usableRect）属 Gate 5 运行时 Guard 范围，本层不做光栅化断言。
+
+    多页语义（R-2.2 Design Decision Gate 冻结）：
+      - 输入 N 页 → 输出 N 页单文件（input.pdf → output.pdf(N页)）；
+      - 每页同一 paper/margin/content_rotation 几何，逐页 contain-fit
+        （源页尺寸可混合，不要求统一）；
+      - 空 PDF（0 页）拒绝。
+
+    返回 info dict（供 Gate 报告）。任何 G 失败 raise（契约 §6：禁止降级为 warning）。
+    单页输入时返回字典与 v1.1 完全一致（零变化约束）；多页输入返回首页 info
+    并追加 pageCount/pages 增量字段（旧消费方兼容）。
+    """
+    with pikepdf.open(src_path) as src:
+        if len(src.pages) == 0:
+            raise ValueError(f"margin contract 要求至少 1 页源，收到 0 页")
+
+        out = pikepdf.new()
+        infos = []
+        for src_page in src.pages:
+            infos.append(_process_page(
+                src_page, src, out, paper_w_pt, paper_h_pt, margin_lrtb,
+                content_rotation=content_rotation,
+                allow_upscale=allow_upscale,
+                refuse_user_unit=refuse_user_unit))
+
+        out.save(out_path)
+        out.close()
+
+    if len(infos) == 1:
+        return infos[0]
+    return {**infos[0], "pageCount": len(infos), "pages": infos}
 
 
 def main():

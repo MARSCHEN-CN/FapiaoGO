@@ -19,6 +19,7 @@ test_apply_pdf_multipage_contract — R-2.2 多页 margin contract 回归（RED-
 import os
 import re
 import sys
+import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # scripts/ 可 import margin_contract
 
@@ -47,7 +48,15 @@ def make_pdf(path, sizes, rotates=None):
 
 def output_placed_bbox(page):
     """输出页内容（form 经 cm matrix 放置）的包围盒（pt）。"""
-    content = b"".join(page.contents)
+    c = page.obj.get("/Contents")
+    assert c is not None, "输出页应有 /Contents"
+    # pikepdf：/Contents 可能是单个 Stream 或 Array[Stream]
+    try:
+        n = len(c)
+        streams = [c[i] for i in range(n)]
+    except TypeError:
+        streams = [c]
+    content = b"".join(s.read_bytes() for s in streams if s is not None)
     m = re.search(
         rb"q\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+cm",
         content,
@@ -67,27 +76,13 @@ def output_placed_bbox(page):
 
 
 def run_apply(sizes, rotates=None, paper=A4_PT, margins=(M3, M3, M3, M3)):
-    src = make_pdf(f"{sizes[0]}_{len(sizes)}p.pdf", sizes, rotates)
-    out = f"out_{len(sizes)}p.pdf"
-    try:
-        apply_pdf(src, out, paper[0], paper[1], margins, content_rotation=0)
-    finally:
-        for p in (src, out):
-            if os.path.exists(p):
-                os.remove(p)
+    # 使用 tempfile 临时目录：沙箱安全删除垫片会拦截 os.remove 批量清理
+    # （SAFE_DELETE_BULK_CONFIRM_REQUIRED → SystemExit），临时目录由系统回收，测试不主动删除。
+    tmp = tempfile.mkdtemp(prefix="mp_margin_")
+    src = make_pdf(os.path.join(tmp, f"{len(sizes)}p_src.pdf"), sizes, rotates)
+    out = os.path.join(tmp, f"{len(sizes)}p_out.pdf")
+    apply_pdf(src, out, paper[0], paper[1], margins, content_rotation=0)
     return out
-
-
-@pytest.fixture(autouse=True)
-def _cleanup():
-    yield
-    for f in os.listdir("."):
-        if f.startswith(("595.2756_", "out_", "419.5276_")):
-            if f.endswith(".pdf"):
-                try:
-                    os.remove(f)
-                except OSError:
-                    pass
 
 
 def assert_pages(out, expected_n, expected_size, margins=(M3, M3, M3, M3)):
@@ -121,19 +116,21 @@ def test_t2_mixed_page_sizes_same_paper_policy():
 
 def test_t3_empty_pdf_rejected():
     """空 PDF（0 页）→ 拒绝（raise）。"""
-    src = "empty.pdf"
+    tmp = tempfile.mkdtemp(prefix="mp_margin_")
+    src = os.path.join(tmp, "empty.pdf")
     with pikepdf.new() as pdf:
         pdf.save(src)
-    try:
-        with pytest.raises(ValueError):
-            apply_pdf(src, "out_empty.pdf", A4_PT[0], A4_PT[1], (M3, M3, M3, M3))
-    finally:
-        for f in ("empty.pdf", "out_empty.pdf"):
-            if os.path.exists(f):
-                os.remove(f)
+    with pytest.raises(ValueError):
+        apply_pdf(src, os.path.join(tmp, "out_empty.pdf"), A4_PT[0], A4_PT[1], (M3, M3, M3, M3))
 
 
 def test_t4_page_rotate_normalized_to_zero():
     """页 /Rotate=90 → 输出仍 /Rotate=0（G-1 每页保持）。"""
     out = run_apply([A4_PT, A4_PT, A4_PT], rotates=[0, 90, 0])
     assert_pages(out, 3, A4_PT)
+
+
+def test_single_page_regression():
+    """单页输入 → 输出 1 页，行为与 v1.1 完全一致（多页改造零回归保护）。"""
+    out = run_apply([A4_PT])
+    assert_pages(out, 1, A4_PT)
