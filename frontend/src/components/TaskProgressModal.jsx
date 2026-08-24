@@ -1,4 +1,3 @@
-import { useMemo } from 'react'
 import { deriveTaskModalView } from './taskModalView.mjs'
 
 /**
