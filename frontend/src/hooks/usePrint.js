@@ -1064,7 +1064,7 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
       if (printPlanCompareEnabled()) {
         compareLegacyPlan(plan, { files, settings, fileRotations })
         const legacyPlan = buildLegacyPrintPlan(files, { settings, fileRotations })
-        const planKeys = deriveSourcePrintJobs(plan, files).map(j => j._jobKey)
+        const planKeys = deriveSourcePrintJobs(plan, planFiles).map(j => j._jobKey)
         const legacyKeys = deriveSourcePrintJobs(legacyPlan, files).map(j => j._jobKey)
         if (JSON.stringify(planKeys) !== JSON.stringify(legacyKeys)) {
           console.warn('[PRINT PLAN COMPARE] executor job sequence mismatch',
@@ -1073,7 +1073,7 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
       }
 
       // 新消费路径：从 plan 派生真实执行 jobs（替代旧 mergedJobs / allParsed 直传）。
-      const planJobs = deriveSourcePrintJobs(plan, files)
+      const planJobs = deriveSourcePrintJobs(plan, planFiles)
       if (settings.extraSpecial) {
         console.log('[PRINT] 一普二专(plan): %d 个任务（第1轮%d + 第2轮%d）',
           planJobs.length, plan.pages.length, plan.extraPages.length)
