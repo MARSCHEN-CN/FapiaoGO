@@ -1,4 +1,4 @@
-import { memo, useRef, useState, useEffect, useMemo } from 'react'
+import { memo, useRef, useEffect, useMemo } from 'react'
 import { List } from 'react-window'
 import { isMergeMode, getMergeGroupStart, isFailedFile } from '../utils'
 import { documentIdentityKey } from '../utils/documentViewModel'
