@@ -778,6 +778,12 @@ function AppContent() {
     setShowPackConfirm(true)
   }, [files, handlePack])
 
+  // 稳定 ActionBar 的 onExportPdf 引用，避免每次渲染生成新箭头击穿 React.memo
+  const openPdfExportModal = useCallback(
+    () => setShowPdfExport(true),
+    []
+  )
+
   const { clearExportSession } = useExportSession()
 
   const handleSelectAll = useCallback(() => {
@@ -1271,7 +1277,7 @@ function AppContent() {
           printing={printing}
           removeFailedFiles={removeFailedFiles}
           onExportExcel={openExcelFields}
-          onExportPdf={() => setShowPdfExport(true)}
+          onExportPdf={openPdfExportModal}
           exporting={exporting}
         />
         )}
