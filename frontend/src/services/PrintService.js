@@ -21,6 +21,7 @@ import { BACKEND_URL } from '../config'
 import { createSuccessfulResult, createFailedResult } from '../models/PrintResult'
 import { getExtension } from '../utils'
 import { requestedPaperOrientation } from '../print/paperSpec.js'
+import { resolveFileRotation } from '../print/resolveSourceIdentity.js'
 
 /**
  * PrintTask mode constants.
@@ -57,7 +58,9 @@ export function detectPrintFormat(file) {
  * @returns {object} 打印设置
  */
 export function buildPrintSettings(file, userSettings, fileRotations, detectOrientationFn, placement, executionPaper) {
-  const fileRotation = fileRotations?.[file.key] || 0
+  // R-2：聚合源（key='__source_...'）在 fileRotations 中查不到 → fallback 到
+  // _sourceOriginalKey（representative 原始 key），保持与 Plan 层同一 resolver。
+  const fileRotation = resolveFileRotation(file, fileRotations)
   const hasReliableOrient = file._pdfPageWidth > 0 && file._pdfPageHeight > 0
   const contentOrientation = detectOrientationFn?.(file)
 

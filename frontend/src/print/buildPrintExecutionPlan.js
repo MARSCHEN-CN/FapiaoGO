@@ -24,6 +24,7 @@
 import { isMergeMode } from '../utils/mergeMode.js'
 import { resolveInvoiceIdentity } from '../utils/invoiceIdentityResolver.js'
 import { resolvePaperSpec } from './paperSpec.js'
+import { resolveFileRotation, resolveFilePlacement } from './resolveSourceIdentity.js'
 
 /**
  * Source 打印入口过滤（忠实镜像 executePrint L817）。
@@ -167,8 +168,9 @@ export function normalizePrintSources(files) {
         index: group.firstIndex,
         file: {
           ...representative,
-          key: `__source_${key}`,  // 唯一标识
+          key: `__source_${key}`,  // 唯一标识（execution identity）
           _sourceGroupKey: key,
+          _sourceOriginalKey: representative.key,  // R-2：source identity（rotation/placement fallback 查询用）
           _isAggregatedSource: true,
           _aggregatedPages: group.pages,
           _aggregatedPageCount: group.pages.length,
@@ -274,8 +276,10 @@ export function buildPrintExecutionPlan(files, options = {}) {
   const paperSpec = paper || resolvePaperSpec(settings)
   const orientation = paperSpec.orientation
 
-  const perFileRotation = (f) => fileRotations[f.key] || 0
-  const perFilePlacement = (f) => placements[f.key] || null
+  // R-2：聚合源 key 在 fileRotations/placements 中查不到 → 经 resolveSourceIdentity
+  // fallback 到 _sourceOriginalKey（representative 原始 key）。优先级：聚合 key → 原始 key → default。
+  const perFileRotation = (f) => resolveFileRotation(f, fileRotations)
+  const perFilePlacement = (f) => resolveFilePlacement(f, placements)
 
   // Commit 3-A: 统一 slot 构建函数，确保 contentRotation / placement 字段一致
   const buildSlot = (f) => {
