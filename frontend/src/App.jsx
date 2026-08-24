@@ -16,15 +16,14 @@ const TaskProgressModal = lazy(() => import('./components/TaskProgressModal'))
 const CalculatorWindow = lazy(() => import('./components/CalculatorWindow'))
 const DevDocumentViewerDemo = lazy(() => import('./components/DevDocumentViewerDemo').then(m => ({ default: m.DevDocumentViewerDemo })))
 
-import { PREVIEW_DPI, SUPPORTED_EXTENSIONS, ZOOM_STEPS, PUBLIC_BASE } from './config'
+import { ZOOM_STEPS, PUBLIC_BASE } from './config'
 import {
-  getElectronAPI, getFilePath, getFileFormat, isMergeMode, getMergeGroupStart,
+  getElectronAPI, isMergeMode, getMergeGroupStart,
   getPreviousYearInfo,
 } from './utils'
 import { buildDocumentViewModel, documentPages } from './utils/documentViewModel'
 import { selectDocumentRows, selectParsedFiles } from './utils/documentSelector'
 import { buildFileObj } from './utils/fileHelpers'
-import { getForcedLandscape } from './utils/mergeMode'
 
 import { useSettings } from './hooks/useSettings'
 import { useExcelExportSettings } from './hooks/useExcelExportSettings'
