@@ -1,8 +1,13 @@
-# Print Margin Contract v1.1（冻结版）
+# Print Margin Contract v1.2（冻结版）
 
-> 状态：**FROZEN**（2026-08-10）。本文件是打印安全边距几何的唯一权威定义。
+> 状态：**FROZEN**（2026-08-10 定版 v1.1；2026-08-24 经契约变更流程批准扩展 v1.2——多页源支持）。
+> 本文件是打印安全边距几何的唯一权威定义。
 > 任何与本文冲突的代码、注释或历史文档一律以本文为准。
 > 变更本文需走「契约变更流程」（§11），不得随 bugfix 顺带修改。
+>
+> **v1.2 变更记录（R-2.2 Design Decision Gate）**：
+> `apply_pdf` 输入从「单页源」扩展为「单页或 N 页源」。单页路径行为与 v1.1 完全一致（零变化约束）；
+> 多页语义见 §1.6。几何函数（contain-fit / Policy A / 矩阵 / mm_to_pt）零改动，仅页遍历范围扩展。
 >
 > 相关：`.workbuddy/artifacts/safety-margin-print-review.md`（根因审查）、
 > `.workbuddy/artifacts/print-margin-contract-design.md`（Phase 1 设计）、
@@ -128,6 +133,104 @@ contentWidth, contentHeight = w, h
 
 源页存在 `/UserUnit != 1` 时，pt 运算前提失效。**Guard 直接拒绝**（§6 G-4）。
 实测样本（`artifacts/*.pdf`）均无 UserUnit，此为防御性条款。
+
+### 1.6 Multi-page PDF Source Contract（v1.2 新增，冻结）
+
+> 本小节是 v1.2 唯一新增范围：**多页源 PDF 的 margin contract 应用语义**。
+> 单页输入行为完全由 §1.1–§1.5 定义，本小节仅扩展「页数 > 1」的情形，不改变任何单页语义。
+
+#### 1.6.1 多页输入模型
+
+A PDF source document MAY contain multiple pages. The margin contract is applied
+**independently to each source page**. The output remains a **single PDF document**
+with the **same page count**.
+
+```
+input.pdf                       apply_pdf            output.pdf
+  pages: p1  ────────────────►  per-page             pages: p1' / p2' / p3'
+         p2                     独立几何 + 逐页断言
+         p3                     单文件 N 页输出
+```
+
+**禁止**把多页输出描述为「拆分成多个页面文件 / split pages」——输出必须是单一 PDF 文件，
+页数 = 输入页数（§1.6.4 不变量），Source 打印轨以一个文件交付 Sumatra。
+
+#### 1.6.2 Page-local geometry（页级几何，非文档级）
+
+每页独立执行完整几何链（**禁止「document geometry / 首页决定一切」**）：
+
+```
+source page
+   │
+   ▼
+_content_size(page)          ← §1.4：CropBox else MediaBox + /Rotate 归一，页级
+   │
+   ▼
+apply_margin_contract(...)   ← 同一 paper/margin/content_rotation 参数
+   │
+   ▼
+contain-fit                  ← 每页内容独立适配同一 inner area
+   │
+   ▼
+output page（MediaBox = Policy A outputPaper，/Rotate = 0）
+```
+
+任何实现不得引入「以首页 / 文档级尺寸作为所有页的几何权威」的推断。
+
+#### 1.6.3 Mixed page size policy（混合页尺寸）
+
+源 PDF 各页尺寸**允许不同**（如 A4 / A5 / Letter 混排）。规则：
+
+- 每页独立归一化到目标 paper policy（逐页 contain-fit）；
+- **不**拒绝混合输入；**不**继承首页尺寸；**不**强制源页一致性断言。
+
+目标纸几何（paper_w_pt / paper_h_pt / margin_lrtb / content_rotation）由调用方显式传入，
+对所有页**同一**（文件级语义，见 §1.6.6 非目标）。
+
+#### 1.6.4 Page count invariant（页数不变量）
+
+```
+Output page count MUST equal input page count.
+N input pages  →  N output pages
+```
+
+空源（0 页）**拒绝**（raise，复用 §6 拒绝语义）。
+
+#### 1.6.5 Rotation invariant（每页旋转不变量）
+
+每个输出页 `/Rotate == 0`（G-1）。旋转归一化（源页 `/Rotate` 折入 form /Matrix，
+§1.4 库行为）是**页变换的一部分**，逐页执行，输出恒不携带 `/Rotate`。
+
+#### 1.6.6 断言与范围（Assertions）
+
+多页模式仍执行 G-1（`/Rotate==0`）与 G-2（`MediaBox == Policy A outputPaper`），
+但断言范围是 **per output page**，不是 whole document：
+
+- 每一输出页必须独立满足 G-1 / G-2；
+- 任一页 G 失败即 raise（§6：禁止降级为 warning）；
+- G-3（/Annots 告警）、G-4（/UserUnit 拒绝）、AP-DR-6（Stamp flatten）亦逐页执行。
+
+#### 1.6.7 API 兼容性（apply_pdf）
+
+| 版本 | 输入 | 输出 |
+|---|---|---|
+| v1.1 | 单页 PDF | 单页 PDF |
+| v1.2 | 单页 **或** N 页 PDF | 单页 或 N 页单文件 PDF |
+
+保持：同一入口（`apply_pdf`）、同一 margin 参数（pt）、同一输出路径语义
+（`input.pdf → output.pdf` 单文件）。单页输入时返回值与 v1.1 逐字段一致；
+多页输入返回首页 info 并追加 `pageCount` / `pages` 增量字段（旧消费方兼容）。
+
+#### 1.6.8 非目标（Non-goals，防范围蔓延）
+
+本扩展**不引入**：
+
+- page-specific margins（逐页不同边距）；
+- page-specific paper policy（逐页不同纸张）；
+- page-specific rotation policy（逐页不同旋转——content_rotation 恒为文件级统一）；
+- new placement authority（不新增任何布局/放置权威）。
+
+任何实现若需要上述能力，必须另立契约、另走 §11 变更流程，禁止借多页扩展顺带实现。
 
 ---
 
