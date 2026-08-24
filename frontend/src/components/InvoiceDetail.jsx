@@ -35,8 +35,12 @@ const ROW_TO_EDIT_KEY = {
 
 const EMPTY_LINE_ITEM = { xmmc: '', ggxh: '', dw: '', sl: '', dj: '', je: '', slv: '', se: '' }
 
+// C4: 明细行客户端自增 _uid，仅用于 React reconciliation 稳定 key（不随内容变化、不进保存负载）
+let _lineItemUid = 0
+const nextLineItemUid = () => `li_${++_lineItemUid}`
+
 function rowToEditItem(r) {
-  const item = { ...EMPTY_LINE_ITEM }
+  const item = { ...EMPTY_LINE_ITEM, _uid: nextLineItemUid() }
   for (const [rowKey, editKey] of Object.entries(ROW_TO_EDIT_KEY)) {
     const v = r[rowKey]
     if (v !== undefined && v !== null) item[editKey] = String(v)
@@ -45,7 +49,9 @@ function rowToEditItem(r) {
 }
 
 function emptyItem(item) {
-  return Object.values(item || {}).every(v => !v || String(v).trim() === '')
+  // 忽略客户端 _uid，避免空行因 _uid 非空而被误判为非空
+  const { _uid, ...rest } = item || {}
+  return Object.values(rest).every(v => !v || String(v).trim() === '')
 }
 
 export default function InvoiceDetail({ fileObj, onClose }) {
@@ -123,7 +129,7 @@ export default function InvoiceDetail({ fileObj, onClose }) {
   }, [])
 
   const addLineItem = useCallback(() => {
-    setLineItems(prev => [...prev, { ...EMPTY_LINE_ITEM }])
+    setLineItems(prev => [...prev, { ...EMPTY_LINE_ITEM, _uid: nextLineItemUid() }])
     setDirty(true)
   }, [])
 
@@ -172,7 +178,8 @@ export default function InvoiceDetail({ fileObj, onClose }) {
 
     const body = { file_name: fileName }
     if (Object.keys(corrected).length > 0) body.corrected_fields = corrected
-    body.line_items = cleanItems
+    // C4: 剥离客户端 _uid，保持 /api/invoice/correct 负载格式不变
+    body.line_items = cleanItems.map(({ _uid, ...rest }) => rest)
 
     try {
       const resp = await fetch(`${BACKEND_URL}/api/invoice/correct`, {
@@ -328,7 +335,7 @@ export default function InvoiceDetail({ fileObj, onClose }) {
                 {editMode && <div className="id-table-th" style={{ width: '40px' }}>操作</div>}
               </div>
               {lineItems.map((item, idx) => (
-                <div className="id-table-row" key={idx}>
+                <div className="id-table-row" key={item._uid}>
                   {LINE_ITEM_FIELDS.map(col => (
                     <div key={col.key} className="id-table-td" style={{ width: col.width }}>
                       {editMode ? (
