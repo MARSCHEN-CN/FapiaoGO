@@ -60,7 +60,7 @@ export default defineConfig({
   // 依赖预构建优化
   // ✅ 预构建所有常用依赖，确保 CJS 模块正确转换为 ESM
   optimizeDeps: {
-    include: ['react', 'react-dom', 'react-dropzone', 'react-window', 'warning', 'prop-types', 'pdfjs-dist'],
+    include: ['react', 'react-dom', 'react-dropzone', 'react-window', 'prop-types', 'pdfjs-dist'],
   },
 
   server: {
