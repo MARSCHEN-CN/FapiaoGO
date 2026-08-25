@@ -111,8 +111,9 @@ export const DisplayAdapter = React.memo(function DisplayAdapter({
     return storeDocument || null
   }, [file, isSplitPage, file?.key, file?.sourceDocId, file?.pageNum, storeDocument])
 
-  // 拆分页永远是单页；多页组从首页开始；普通文件也是单页 → 统一 initialPage = 0
-  const initialPage = 0
+  // 初始页：默认首页(0)，搜索命中时从 matchedPageIndex 开始
+  // matchedPageIndex 由 selectDocumentRows 在搜索态设置，表示命中页的 0-based 索引
+  const initialPage = file?.matchedPageIndex ?? 0
 
   const rootRef = useRef(null)
 

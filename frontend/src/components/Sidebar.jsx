@@ -100,8 +100,39 @@ export default React.memo(function Sidebar({
   const previousYearCount = documentView.previousYearCount
   const hasPreviousYear = previousYearCount > 0
 
-  // 发票重复导入历史（advisory）：命中文件数 = Map 条目数
-  const importHistoryCount = importHistoryInfo ? importHistoryInfo.size : 0
+  // 发票重复导入历史（advisory）：计数以 document 为单位
+  // 多页发票的所有页共享同一 invoiceNumber，都会命中 importHistoryInfo，
+  // 但业务上应计为「1 个文档有重复报销」，而非「N 个页有重复报销」。
+  const importHistoryCount = useMemo(() => {
+    if (!importHistoryInfo || importHistoryInfo.size === 0) return 0
+
+    const docs = documentView?.documents
+    if (docs && docs.length > 0) {
+      // 优先使用文档级聚合：多页文档任一页命中即计为 1
+      let count = 0
+      for (const doc of docs) {
+        if (doc._isDocumentGroup && Array.isArray(doc._pages)) {
+          if (doc._pages.some(p => importHistoryInfo.has(p.key))) {
+            count++
+          }
+        } else {
+          if (importHistoryInfo.has(doc.key)) {
+            count++
+          }
+        }
+      }
+      return count
+    }
+
+    // 降级：无文档级聚合时，按 docId/sourceDocId 分组 files 计数
+    const grouped = new Map()
+    for (const f of files) {
+      if (!importHistoryInfo.has(f.key)) continue
+      const groupKey = f.docId || f.sourceDocId || f.key
+      grouped.set(groupKey, true)
+    }
+    return grouped.size
+  }, [importHistoryInfo, documentView, files])
 
   // ── Step 10.5+：文件列表 document-level 聚合 ──
   // 优先消费装配结果 documentView.documents（InvoiceDocument 聚合条目），

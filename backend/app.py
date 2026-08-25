@@ -1375,6 +1375,20 @@ def parse_invoice():
                 page_num = int(page_num_str)
                 total_pages = int(total_pages_str)
 
+                # 将前端传来的 1-based page_num 转换为 0-based（与 batch 路径 _parse_page_info 一致）
+                # 前端 page_index 是 1-based（见 parseRunner.js / processPdfFile 注释），
+                # PageResultStore 要求 0-based（首頁=0）。
+                if page_num_str.startswith('0'):
+                    # 已為 0-based，直接使用
+                    pass
+                elif 1 <= page_num <= total_pages:
+                    page_num = page_num - 1
+                else:
+                    logger.warning(
+                        "[PhaseC] page_num 越界: page_num=%s total_pages=%s source=%s",
+                        page_num, total_pages, source_doc_id
+                    )
+
                 store = get_page_result_store()
                 completed = store.put(source_doc_id, page_num, total_pages, result)
 

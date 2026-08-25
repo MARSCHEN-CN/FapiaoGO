@@ -1496,7 +1496,10 @@ export function usePreview({ files, settings, electronAPIRef }) {
               }
             }
           }
-          return { ...fObj, _previewImageUrl, _fileFormat: 'pdf' }
+          // 设置 _pdfPageCount：优先用行对象的 _pageCount（invoiceDocumentToRow 生成），
+          // 回退用 InvoiceDocument 的 pageCount。这确保多页文档预览时页码导航正确。
+          const pageCount = fObj._pageCount || fObj.pageCount || 1
+          return { ...fObj, _previewImageUrl, _fileFormat: 'pdf', _pdfPageCount: pageCount }
         }
 
         let buffer = null

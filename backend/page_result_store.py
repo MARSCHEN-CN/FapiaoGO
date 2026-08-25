@@ -137,14 +137,17 @@ class PageResultStore:
             return [pages[i] for i in sorted(pages.keys())]
 
     def _is_complete(self, entry: Dict[str, Any]) -> bool:
-        """B4（Commit 4.3）：完成 = 所有期望页码（0..total_pages-1）都已收到。
+        """完成 = 所有期望页码（0..total_pages-1）都已收到。
 
-        用集合包含 expected <= received 替代 len(pages) >= total_pages，
+        使用集合包含 expected <= received 替代 len(pages) >= total_pages，
         避免「数量够了但缺中间页」的伪完成（如 page0/page1/page3, total=3 缺 page2）。
 
-        扩展支持非连续页码场景（如第1、3、5页/共5页）：
-        当首尾页均已收到（page_num=0 和 page_num=total-1）时，
-        即使中间页缺失也判定为完成，因为标记已表明覆盖了完整范围。
+        移除了首尾页兜底逻辑（原非连续页码回退）：
+        - store.put 已将结构化 page_num/total_pages 注入每页记录，
+          系统始终能精确定位期望页码集合，不再需要首尾页+数量阈值的模糊判定。
+        - 兜底逻辑在乱序到达时会过早触发组装：20 页 PDF 阈值=10，
+          若首末页先到 + 8 页即可触发，导致组装不完整、剩余页创建新桶永不完成。
+        - 现强制严格等待所有页到达，保证同票多页识别的稳定性。
         """
         total = entry.get('total_pages')
         pages = entry.get('pages') or {}
@@ -152,17 +155,15 @@ class PageResultStore:
             return False
         expected = set(range(total))
         received = set(pages.keys())
-        # 标准路径：所有期望页码都已收到
-        if expected <= received:
-            return True
-        # 非连续页码兜底：首尾页均已收到（标记覆盖完整范围）
-        if 0 in received and (total - 1) in received:
-            logger.info(
-                "[PageResultStore] 非连续页码完成判定: bucket=%s, total=%s, received=%s",
-                entry.get('bucket_key', '?'), total, sorted(received)
+        # 严格模式：所有期望页码都必须收到
+        completed = expected <= received
+        if not completed:
+            missing = expected - received
+            logger.debug(
+                "[PageResultStore] %s 未完成: total=%s, received=%s, missing=%s",
+                entry.get('bucket_key', '?'), total, sorted(received), sorted(missing)
             )
-            return True
-        return False
+        return completed
 
     def get_missing_pages(self, bucket_key: str) -> Optional[set]:
         """返回指定 bucket_key 尚未收到的页码集合（可观测性 / 诊断）。
