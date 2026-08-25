@@ -620,7 +620,7 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
     // 仅真实 generation 消耗序号；myGeneration 为闭包局部常量，贯穿整个 async 生命周期。
     const myGeneration = mergeGenerationGuardRef.current.begin()
     try {
-      const { files: planFiles, options: planOptions } = createPrintPlanInput(files, settings, fileRotations)
+      const { files: planFiles, options: planOptions } = createPrintPlanInput(files, settings, fileRotations, placements)
       const plan = buildPrintExecutionPlan(planFiles, planOptions)
       const mergeJobs = deriveMergePrintJobs(plan, files)
       if (!mergeJobs.length) {
@@ -789,7 +789,7 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
       // 合并模式：消费已证等价的 MERGE Plan（A1.5 投影性质）→ deriveMergePrintJobs
       // Commit 1：与 Preview 共用 createPrintPlanInput（merge 模式 → MERGE_FILE_FILTER），
       // 保证「预览显示什么 = 确认后打印什么」的文件集合一致。
-      const { files: planFiles, options: planOptions } = createPrintPlanInput(files, settings, fileRotations)
+      const { files: planFiles, options: planOptions } = createPrintPlanInput(files, settings, fileRotations, placements)
       const plan = buildPrintExecutionPlan(planFiles, planOptions)
       const mergeJobs = deriveMergePrintJobs(plan, files)
       // [P0] 探针 A：合并 job 派生证据（证伪 H3 job 派生层）
@@ -1054,7 +1054,7 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
       // 旧 source 消费逻辑（allParsed / specialFiles / mergedJobs）已固化为
       // buildLegacyPrintPlan（Legacy Oracle），不在此重复、不删除（待 Commit 3 + A2 Gate 前清理）。
       // Commit 1：与 Preview 共用 createPrintPlanInput（非 merge 模式 → SOURCE_FILE_FILTER）
-      const { files: planFiles, options: planOptions } = createPrintPlanInput(files, settings, fileRotations)
+      const { files: planFiles, options: planOptions } = createPrintPlanInput(files, settings, fileRotations, placements)
       const plan = buildPrintExecutionPlan(planFiles, planOptions)
 
       // 影子比较（仅 DEV + 手动开关；绝不进 production）：
