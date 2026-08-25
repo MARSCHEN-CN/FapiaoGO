@@ -288,6 +288,14 @@ export async function printImageAsPdf(file, ipc, userSettings, contentRotation) 
 
     // ── Step 3: 构建打印设置 + 调用 SumatraPDF ──
     const ps = buildPrintSettings(file, userSettings)
+    // R-4.7 Fix-Y：临时 PDF 已由 /print_pdf 完成旋转烘焙（backend effective_rotation 烤进像素 +
+    // 页方向按渲染后尺寸定）= 「baked」产物 → 显式声明 baked execution semantics：
+    //   commandOrientation 预设为请求纸向 → main.js:697 guard（!commandOrientation）天然跳过
+    //   injectExecutionTruth → commandRotate=0，execution truth 不再二次介入。
+    // 与 PDF placement-bake 语义统一：bake stage 之后 Sumatra 纯执行（no extra rotation）。
+    // ⚠️ 禁止改为「携带 contentOrientation 交给 Truth 推导」——Truth 为未烘焙源设计（Fix-X 已否决）。
+    ps.commandOrientation = paperOrient
+    ps.commandRotate = 0
 
     const result = await ipc.invoke('print-source-file', {
       target: { printer: printerName, filePath: tempPdfPath, fileFormat: 'pdf', docId: docId },
