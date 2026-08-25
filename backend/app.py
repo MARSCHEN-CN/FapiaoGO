@@ -1646,6 +1646,8 @@ def parse_batch():
                     'preview_image': '',  # 13-B.5 C2: import 表面停产 preview_image（Render Contract 取代）
                     'invoice_fields': extra,
                     'from_cache': svc_result.get('from_cache', False),
+                    # 搜索能力：返回原始 OCR 文本（截断至 5000 字符）
+                    'raw_text': (svc_result.get('raw_text', '') or '')[:5000],
                 }
             else:
                 item['error'] = error or '解析失败'

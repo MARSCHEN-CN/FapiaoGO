@@ -711,7 +711,8 @@ export function useFileOps({ setFiles, settings, electronAPIRef }) {
                       taxAmount: (invFields || {}).amountSe ?? '',
                       totalAmount: (invFields || {}).amountHj || item.amount || '',
                       lineItems: (invFields || {}).line_items || [],
-                      rawText: '',
+                      // 搜索能力：从批量响应读取 rawText（OCR 原文），不再硬编码空串
+                      rawText: item.rawText || '',
                     },
                     raw: {},
                   }

@@ -18,7 +18,7 @@ def sanitize_filename_segment(text):
 
 
 # 响应数据大小限制
-MAX_RAW_TEXT_LENGTH = 2000
+MAX_RAW_TEXT_LENGTH = 5000
 MAX_BBOX_ITEMS = 200
 
 
@@ -38,11 +38,12 @@ def build_response(file_format, parse_method, invoice_type, invoice_number,
         mode: 'batch' 或 'detail'，批量模式下会自动禁用预览和完整文本
         from_cache: 是否来自缓存（v10 新增）
     """
-    # 批量模式下自动禁用预览和完整文本（OFD 除外：浏览器无法直接渲染 OFD ZIP）
+    # 批量模式下自动禁用预览（OFD 除外：浏览器无法直接渲染 OFD ZIP），
+    # 但保留 raw_text：前端 buildSearchText 依赖此字段做内容搜索
     if mode == 'batch':
         if file_format != 'ofd':
             include_preview = False
-        include_raw_text = False
+        # include_raw_text 保持不变 —— 批量模式也需要返回 OCR 原文供搜索
 
     clean_type = normalize_invoice_type(invoice_type)
     clean_number = invoice_number if invoice_number and invoice_number not in ('未知号码',) else None

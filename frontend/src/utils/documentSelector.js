@@ -40,38 +40,104 @@ import { groupFilesByDocument, groupFilesByInstance } from './groupDocuments.js'
  * @returns {Object[]} document-level 展示条目（InvoiceDocument[] 或 page-group rows）
  */
 export function selectDocumentRows({ invoiceDocs, files, filteredFiles, isSearching }) {
-  if (!isSearching && Array.isArray(invoiceDocs) && invoiceDocs.length > 0) {
-    // 按 files 顺序重排 invoiceDocs：使 UI 文件列表顺序 = 用户排序后的 files 顺序。
-    // invoiceDocs 来自装配管线（documentView.documents），其顺序不一定反映 files 的当前排序。
-    // 为每个文档找到其在 files 中首个出现页的位置，按该位置排序。
-    const orderMap = new Map()
-    for (let i = 0; i < (files?.length || 0); i++) {
-      const f = files[i]
-      if (!f) continue
-      const id = f.docId || f.sourceDocId
-      if (id && !orderMap.has(id)) {
-        orderMap.set(id, i)
-      }
-      // 同时按 file key 映射（单页文件可能无 docId/sourceDocId）
-      if (f.key && !orderMap.has(f.key)) {
-        orderMap.set(f.key, i)
-      }
+  const hasAssembly = Array.isArray(invoiceDocs) && invoiceDocs.length > 0
+
+  if (hasAssembly) {
+    if (!isSearching) {
+      // ── 非搜索态：直接返回 InvoiceDocument[]（不转 row，保持 document 身份） ──
+      return sortInvoiceDocsByFiles(invoiceDocs, files)
     }
-    const sorted = [...invoiceDocs].sort((a, b) => {
-      const posA = orderMap.get(a.documentId) ?? orderMap.get(a.key) ?? Infinity
-      const posB = orderMap.get(b.documentId) ?? orderMap.get(b.key) ?? Infinity
-      return posA - posB
-    })
-    return sorted
+
+    // ── 搜索态：从 invoiceDocs 中筛选匹配的文档，而非降级到分组文件路径 ──
+    // 原因：分组文件条目是 spread 复制对象，丢失了 invoiceDocumentId/instanceId 复合身份，
+    // 导致 DocumentStore 查找失败 → activeDocument 为 null → 展示区空白。
+    // 从 invoiceDocs 筛选可保留正确的文档身份，同时确保多页文档返回完整页面。
+    const matchedDocIds = collectMatchedDocIds(filteredFiles || files)
+    const matchedDocs = filterInvoiceDocs(invoiceDocs, matchedDocIds)
+
+    if (matchedDocs.length > 0) {
+      return sortInvoiceDocsByFiles(matchedDocs, files)
+    }
+    // 无匹配时回退到分组路径（可能是文件未被装配为 InvoiceDocument）
   }
+
+  // ── 降级路径：使用 groupFilesByInstance / groupFilesByDocument ──
   const source = isSearching ? (filteredFiles || files) : files
-  // 修复：使用更强的分组逻辑（instanceId + sourceDocId）作为首选降级方案
   const groupedByInstance = groupFilesByInstance(source)
-  // 如果增强分组成功（有文档组），使用它；否则回退到原逻辑
   if (groupedByInstance.some(d => d._isDocumentGroup)) {
     return groupedByInstance
   }
   return groupFilesByDocument(source)
+}
+
+/**
+ * 收集 files 中所有可用于匹配 InvoiceDocument 的 ID。
+ * 包括 docId、sourceDocId、fileKey，以及每页的 renderDocId。
+ *
+ * @param {Object[]} files - page-level fileObj[]
+ * @returns {Set<string>} 匹配 ID 集合
+ */
+function collectMatchedDocIds(files) {
+  const ids = new Set()
+  if (!Array.isArray(files)) return ids
+  for (const f of files) {
+    if (!f) continue
+    if (f.docId) ids.add(f.docId)
+    if (f.sourceDocId) ids.add(f.sourceDocId)
+    if (f.key) ids.add(f.key)
+  }
+  return ids
+}
+
+/**
+ * 从 InvoiceDocument[] 中筛选出与搜索结果匹配的文档。
+ * 匹配规则：docId / fileKey / pages[].renderDocId 任一命中即算。
+ *
+ * @param {Object[]} invoiceDocs - InvoiceDocument[]
+ * @param {Set<string>} matchedIds - 搜索结果相关的 ID 集合
+ * @returns {Object[]} 匹配的 InvoiceDocument[]
+ */
+function filterInvoiceDocs(invoiceDocs, matchedIds) {
+  return invoiceDocs.filter(doc => {
+    // 直接匹配文档级 ID
+    if (doc.docId && matchedIds.has(doc.docId)) return true
+    if (doc.fileKey && matchedIds.has(doc.fileKey)) return true
+    // 匹配页面级 renderDocId（用于同票多页场景）
+    if (Array.isArray(doc.pages)) {
+      return doc.pages.some(p => p.renderDocId && matchedIds.has(p.renderDocId))
+    }
+    return false
+  })
+}
+
+/**
+ * 按 files 顺序重排 InvoiceDocument[]：使 UI 文件列表顺序 = 用户排序后的 files 顺序。
+ * invoiceDocs 来自装配管线（documentView.documents），其顺序不一定反映 files 的当前排序。
+ * 为每个文档找到其在 files 中首个出现页的位置，按该位置排序。
+ *
+ * @param {Object[]} docs - InvoiceDocument[]
+ * @param {Object[]} files - page-level fileObj[]
+ * @returns {Object[]} 排序后的 InvoiceDocument[]
+ */
+function sortInvoiceDocsByFiles(docs, files) {
+  const orderMap = new Map()
+  for (let i = 0; i < (files?.length || 0); i++) {
+    const f = files[i]
+    if (!f) continue
+    const id = f.docId || f.sourceDocId
+    if (id && !orderMap.has(id)) {
+      orderMap.set(id, i)
+    }
+    if (f.key && !orderMap.has(f.key)) {
+      orderMap.set(f.key, i)
+    }
+  }
+  const sorted = [...docs].sort((a, b) => {
+    const posA = orderMap.get(a.documentId) ?? orderMap.get(a.key) ?? orderMap.get(a.docId) ?? Infinity
+    const posB = orderMap.get(b.documentId) ?? orderMap.get(b.key) ?? orderMap.get(b.docId) ?? Infinity
+    return posA - posB
+  })
+  return sorted
 }
 
 /**

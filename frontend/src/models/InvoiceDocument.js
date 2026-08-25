@@ -85,6 +85,7 @@ export function createDocument({ docId, instanceId = '', fileKey = '', sourceHas
     docId,
     instanceId,
     fileKey,
+    key: fileKey,  // UI 追踪用 key，与 fileKey 保持一致（usePreview/FileList 依赖 key 属性）
     sourceHash,
     pageCount: pages.length,
     pages,

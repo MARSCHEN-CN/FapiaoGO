@@ -539,19 +539,49 @@ export function applySort(list, field, order, duplicateInfo = null, previousYear
  * @returns {string} - 拼接好的搜索文本
  */
 export function buildSearchText(file) {
-  const fields = [
+  // 兼容两种命名：invoiceFields（驼峰，文件对象存储）和 invoice_fields（下划线，构建时临时对象）
+  const inv = file.invoiceFields || file.invoice_fields || {}
+  const parts = [
     file.name,
     file.invoiceNumber,
     file.invoiceType,
     file.amount,
     file.invoiceDate,
-    file.invoice_fields?.gmfmc,
-    file.invoice_fields?.xsfmc,
-    file.invoice_fields?.note,
-    file.invoice_fields?.xmmc,
+    // 直接字段（文件对象上的便捷属性）
+    file.buyerName,
+    file.sellerName,
+    file.issuer,
+    file.amountWithoutTax,
+    file.taxAmount,
+    file.totalAmount,
+    // 发票字段（含所有可搜索字段）
+    inv.gmfmc,      // 购买方名称
+    inv.gmfsh,      // 购买方税号
+    inv.xsfmc,      // 销售方名称
+    inv.xsfsh,      // 销售方税号
+    inv.note,       // 备注
+    inv.skr,        // 收款人
+    inv.fhr,        // 复核人
+    inv.kpr,        // 开票人
+    inv.amountJe,   // 不含税金额
+    inv.amountSe,   // 税额
+    inv.amountHj,   // 价税合计
+    inv.xmmc,       // 项目名称（首条）
+    // OCR 原文
     file.rawText,
   ]
-  return fields.filter(f => typeof f === 'string' && f).join('|').toLowerCase()
+
+  // 展开明细行：商品名称、规格型号
+  const lineItems = inv.line_items || file.lineItems || []
+  for (const item of lineItems) {
+    if (item?.xmmc) parts.push(item.xmmc)
+    if (item?.ggxh) parts.push(item.ggxh)
+  }
+
+  return parts
+    .filter(f => typeof f === 'string' && f)
+    .join('|')
+    .toLowerCase()
 }
 
 /**

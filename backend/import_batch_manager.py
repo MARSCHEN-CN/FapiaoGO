@@ -480,6 +480,9 @@ class ImportBatchManager:
                     if isinstance(f, dict) and f.get('field')
                 ],
                 'newName': result.get('new_name', ''),
+                # 搜索能力：返回原始 OCR 文本（截断至 5000 字符，兼顾传输体积与搜索覆盖度）
+                # 前端 buildSearchText 将此纳入 searchText，支持按发票内容全文搜索
+                'rawText': (result.get('raw_text', '') or '')[:5000],
             })  # 13-B.5 C2: 删除 previewImage 字段（import 表面停产，Render Contract 取代）
 
         # 5.1b-3a：batch-level 健康（缺页/失败页）从 JobStore 推导，归组到缺失/失败集合，
