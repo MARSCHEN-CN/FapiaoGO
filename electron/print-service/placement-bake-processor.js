@@ -63,30 +63,56 @@ function getPythonCmd() {
 // ============================
 
 /**
- * 判定是否走 placement bake 生产接线。
- *
- * 条件（全部满足才 bake，任一缺失降级原路径）：
- *   1. settings.placement 字段完整（scale/offset/placedRect/layoutRotation/canvasSize）
- *   2. settings.executionPaper 提供物理纸宽高（widthMM/heightMM > 0）
- *   3. 源文件是 PDF（placement_bake 依赖 pikepdf Form XObject；OFD/图片降级）
- *   4. Sumatra 派生纸 == executionPaper 尺寸（canBakeSafely，防纸命令与 MediaBox 错位）
- *
- * @param {object} settings - IPC 收到的 settings（含 placement / executionPaper）
- * @param {string} [filePath] - 源文件路径（.pdf 判定）
+ * 单 placement 字段完整性校验（v1 契约字段集：scale/offset/placedRect/layoutRotation/canvasSize）。
+ * @param {object} p - RotationResolver.resolveContentPlacement 输出（单）
  * @returns {boolean}
  */
-function hasPlacement(settings, filePath) {
-  if (!settings || !settings.placement || !settings.executionPaper) return false
-  if (!filePath || !String(filePath).toLowerCase().endsWith('.pdf')) return false
-
-  const p = settings.placement
-  const ok = p && typeof p.scale === 'number' && Number.isFinite(p.scale)
+function placementFieldsOk(p) {
+  return !!(p && typeof p.scale === 'number' && Number.isFinite(p.scale)
     && p.offset && typeof p.offset.x === 'number' && typeof p.offset.y === 'number'
     && p.placedRect && typeof p.placedRect.x === 'number' && typeof p.placedRect.y === 'number'
     && typeof p.placedRect.w === 'number' && typeof p.placedRect.h === 'number'
     && Number.isFinite(Number(p.layoutRotation))
-    && p.canvasSize && typeof p.canvasSize.width === 'number' && typeof p.canvasSize.height === 'number'
-  if (!ok) return false
+    && p.canvasSize && typeof p.canvasSize.width === 'number' && typeof p.canvasSize.height === 'number')
+}
+
+/**
+ * v2 pagePlacements 结构校验（D5 分层：JS 层只查结构合法性，物理一致性归 Python bake）：
+ *   Array<{pageIndex: number, placement: object}>，pageIndex 非负整数、placement 字段完整。
+ * @param {unknown} pp
+ * @returns {boolean}
+ */
+function pagePlacementsOk(pp) {
+  return Array.isArray(pp) && pp.length > 0
+    && pp.every((item) => item && Number.isInteger(item.pageIndex) && item.pageIndex >= 0
+      && placementFieldsOk(item.placement))
+}
+
+/**
+ * 判定是否走 placement bake 生产接线。
+ *
+ * 条件（全部满足才 bake，任一缺失降级原路径）：
+ *   1. placement 字段完整 —— v2：pagePlacements[]（多页，显式提供时必须结构合法）；
+ *      缺省回落 v1 单 placement（settings.placement）
+ *   2. settings.executionPaper 提供物理纸宽高（widthMM/heightMM > 0）
+ *   3. 源文件是 PDF（placement_bake 依赖 pikepdf Form XObject；OFD/图片降级）
+ *   4. Sumatra 派生纸 == executionPaper 尺寸（canBakeSafely，防纸命令与 MediaBox 错位）
+ *
+ * @param {object} settings - IPC 收到的 settings（含 placement / pagePlacements / executionPaper）
+ * @param {string} [filePath] - 源文件路径（.pdf 判定）
+ * @returns {boolean}
+ */
+function hasPlacement(settings, filePath) {
+  if (!settings || !settings.executionPaper) return false
+  if (!filePath || !String(filePath).toLowerCase().endsWith('.pdf')) return false
+
+  // R-4.6-A（D5）：pagePlacements 显式提供 → 必须结构合法（禁止静默回落单 placement）；
+  // 未提供 → v1 单 placement 校验（零行为变化）。
+  if (settings.pagePlacements != null) {
+    if (!pagePlacementsOk(settings.pagePlacements)) return false
+  } else if (!placementFieldsOk(settings.placement)) {
+    return false
+  }
 
   const paper = settings.executionPaper
   if (!paper || !(Number(paper.widthMM) > 0) || !(Number(paper.heightMM) > 0)) return false
@@ -126,15 +152,23 @@ function canBakeSafely(settings) {
  * 只做字段搬运 + 单位命名转换（executionPaper.widthMM → paper.widthMm），
  * 不重新推导任何几何（Plan 是唯一 geometry authority）。
  *
+ * R-4.6-A（v2 契约，双发射）：
+ *   - spec.placement（单）  = pagePlacements[0].placement 优先，缺省 settings.placement ——
+ *                            兼容 v1（R-4.6-B 前的 Python 仍只读 placement；单页路径逐行等价）
+ *   - spec.pagePlacements[] = settings.pagePlacements 透传（R-4.6-B 起 Python 逐页消费）
+ *
  * @param {string} inputPath - 源 PDF 路径
- * @param {object} settings - settings.placement + settings.executionPaper
+ * @param {object} settings - settings.placement / pagePlacements + settings.executionPaper
  * @param {string} outputPath - bake 产物路径
  * @returns {object} PlacementBakeSpec
  */
 function buildBakeSpec(inputPath, settings, outputPath) {
   const paper = settings.executionPaper
-  const p = settings.placement
-  return {
+  // v2：数组优先（page0 = representative，与 v1 settings.placement 同源）；无数组回落 v1
+  const p = (Array.isArray(settings.pagePlacements) && settings.pagePlacements.length > 0)
+    ? settings.pagePlacements[0].placement
+    : settings.placement
+  const spec = {
     source_pdf: inputPath,
     output_pdf: outputPath,
     paper: {
@@ -151,6 +185,24 @@ function buildBakeSpec(inputPath, settings, outputPath) {
     },
     dpi: BAKE_DPI,
   }
+  // R-4.6-A：v2 逐页 placement（Python R-4.6-B 阶段消费；A 阶段 Python 忽略但 spec 已含）
+  if (Array.isArray(settings.pagePlacements) && settings.pagePlacements.length > 0) {
+    spec.pagePlacements = settings.pagePlacements.map((item) => ({
+      pageIndex: item.pageIndex,
+      placement: {
+        scale: item.placement.scale,
+        offset: { x: item.placement.offset.x, y: item.placement.offset.y },
+        placedRect: {
+          x: item.placement.placedRect.x, y: item.placement.placedRect.y,
+          w: item.placement.placedRect.w, h: item.placement.placedRect.h,
+        },
+        layoutRotation: Number(item.placement.layoutRotation),
+        contentRotation: item.placement.contentRotation != null ? Number(item.placement.contentRotation) : 0,
+        canvasSize: { width: item.placement.canvasSize.width, height: item.placement.canvasSize.height },
+      },
+    }))
+  }
+  return spec
 }
 
 // ============================
@@ -219,6 +271,9 @@ async function process(inputPath, settings, opts = {}) {
       if (err) {
         console.error('[PLACEMENT_BAKE] Error (after %dms): code=%s message=%s', elapsed, err.code || '?', err.message)
         if (stderr) console.error('[PLACEMENT_BAKE] stderr:', String(stderr).slice(0, 500))
+        // R-4.6-A (G3)：placement_bake.py 把错误 JSON（含真实原因）打在 stdout，sys.exit(1) 时
+        // 被本 err 分支吞掉 → 生产只见「code=1」黑盒。补打 stdout 结束黑盒（R-4.5 附带发现）。
+        if (stdout) console.error('[PLACEMENT_BAKE] stdout:', String(stdout).slice(0, 300))
         try { if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath) } catch (e) { /* ignore */ }
         resolve({ path: inputPath })
         return

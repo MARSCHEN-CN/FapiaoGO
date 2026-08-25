@@ -141,16 +141,19 @@ test('G-C2-S4-5: buildPrintSettings 输出 executionPaper 独立字段（源码�
   const srcPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../services/PrintService.js')
   const src = fs.readFileSync(srcPath, 'utf8')
 
-  // 1. printSingleSourceFile 签名含 executionPaper 参数（第 7 参）
-  assert.match(src, /printSingleSourceFile\([^)]*placement, executionPaper\)/,
-    'printSingleSourceFile 签名应含 executionPaper 参数')
-  // 2. buildPrintSettings 签名含 executionPaper
-  assert.match(src, /buildPrintSettings\([^)]*placement, executionPaper\)/,
-    'buildPrintSettings 签名应含 executionPaper 参数')
+  // 1. printSingleSourceFile 签名含 executionPaper 参数（第 7 参）与 pagePlacements（第 8 参，R-4.6-A）
+  assert.match(src, /printSingleSourceFile\([^)]*placement, executionPaper, pagePlacements\)/,
+    'printSingleSourceFile 签名应含 executionPaper + pagePlacements 参数（R-4.6-A v2 契约）')
+  // 2. buildPrintSettings 签名含 executionPaper + pagePlacements
+  assert.match(src, /buildPrintSettings\([^)]*placement, executionPaper, pagePlacements\)/,
+    'buildPrintSettings 签名应含 executionPaper + pagePlacements 参数')
   // 3. 输出 executionPaper 独立字段（不混入用户 paper）
   assert.match(src, /executionPaper:\s*executionPaper\s*\|\|\s*null/,
     'buildPrintSettings 应输出 executionPaper 独立字段')
-  // 4. 生命周期分离：用户 paper 字段保持独立
+  // 4. R-4.6-A：输出 pagePlacements 独立字段（v2 多页 placement 透传，缺省 null）
+  assert.match(src, /pagePlacements:\s*pagePlacements\s*\|\|\s*null/,
+    'buildPrintSettings 应输出 pagePlacements 独立字段（v2 契约）')
+  // 5. 生命周期分离：用户 paper 字段保持独立
   assert.match(src, /paper:\s*userSettings\.paperSize/,
     '用户 paper 字段保持独立（不混入 executionPaper）')
 })

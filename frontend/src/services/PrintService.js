@@ -55,9 +55,13 @@ export function detectPrintFormat(file) {
  * @param {object} [fileRotations] - 每文件旋转角度 { [fileKey]: rotation }（deprecated，迁移后用 placement）
  * @param {object} [detectDocumentOrientation] - 方向检测函数
  * @param {object} [placement] - RotationResolver 布局结果 { scale, offset, renderTransform, ... }（Commit 3-B 新增）
+ * @param {object} [executionPaper] - Plan 物理纸几何（C-2 Step 4-1 新增）
+ * @param {Array<{pageIndex:number, placement:object}>} [pagePlacements] - 多页 placement（R-4.6-A v2 IPC 契约新增）：
+ *   聚合源（多页 PDF）按页携带独立 placement，pageIndex 显式声明（不依赖数组位置）；
+ *   单页 / 非聚合源为 null，走 placement（单）兼容路径。
  * @returns {object} 打印设置
  */
-export function buildPrintSettings(file, userSettings, fileRotations, detectOrientationFn, placement, executionPaper) {
+export function buildPrintSettings(file, userSettings, fileRotations, detectOrientationFn, placement, executionPaper, pagePlacements) {
   // R-2：聚合源（key='__source_...'）在 fileRotations 中查不到 → fallback 到
   // _sourceOriginalKey（representative 原始 key），保持与 Plan 层同一 resolver。
   const fileRotation = resolveFileRotation(file, fileRotations)
@@ -96,6 +100,10 @@ export function buildPrintSettings(file, userSettings, fileRotations, detectOrie
     // 与用户 PrintSettings 生命周期分离——不混入 userSettings；electron 消费属 Step 4-2）。
     //   executionPaper = plan.paper（needSwap 后物理纸几何：size/orientation/widthMM/heightMM）
     executionPaper: executionPaper || null,
+    // R-4.6-A（v2 IPC 契约）：多页 placement —— [{pageIndex, placement}]，页序显式携带；
+    // 单 placement 保留兼容（placement 字段仍为 representative / 单页 placement）。
+    // R-4.6-B 起 placement-bake 消费 pagePlacements 逐页烤入；A 阶段仅透传 + 结构校验。
+    pagePlacements: pagePlacements || null,
   }
 }
 
@@ -127,9 +135,11 @@ export function resolvePrintPath(file) {
  * @param {object} [fileRotations] - 每文件旋转
  * @param {Function} [detectOrientationFn] - 方向检测函数
  * @param {object} [placement] - RotationResolver 布局结果（Commit 3-B 新增）
+ * @param {object} [executionPaper] - Plan 物理纸几何（C-2 Step 4-1 新增）
+ * @param {Array<{pageIndex:number, placement:object}>} [pagePlacements] - 多页 placement（R-4.6-A 新增，v2 契约）
  * @returns {Promise<object>} PrintResult
  */
-export async function printSingleSourceFile(file, ipc, userSettings, fileRotations, detectOrientationFn, placement, executionPaper) {
+export async function printSingleSourceFile(file, ipc, userSettings, fileRotations, detectOrientationFn, placement, executionPaper, pagePlacements) {
   if (!file) return createFailedResult({ taskId: file?.key, error: '文件对象为空' })
   if (!ipc) return createFailedResult({ taskId: file.key, error: 'Electron IPC 不可用' })
 
@@ -144,8 +154,9 @@ export async function printSingleSourceFile(file, ipc, userSettings, fileRotatio
   const printerName = resolvePrinterName(userSettings, userSettings)
   if (!printerName) return createFailedResult({ taskId: file.key, error: '请选择打印机' })
 
-  // 构建打印设置（Commit 3-B: placement 透传；C-2 Step 4-1: executionPaper 独立透传）
-  const ps = buildPrintSettings(file, userSettings, fileRotations, detectOrientationFn, placement, executionPaper)
+  // 构建打印设置（Commit 3-B: placement 透传；C-2 Step 4-1: executionPaper 独立透传；
+  // R-4.6-A: pagePlacements 多页 placement v2 透传）
+  const ps = buildPrintSettings(file, userSettings, fileRotations, detectOrientationFn, placement, executionPaper, pagePlacements)
 
   try {
     const result = await ipc.invoke('print-source-file', {

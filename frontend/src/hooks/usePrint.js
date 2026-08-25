@@ -965,8 +965,20 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
     // placements[f.key]（useMemo 独立计算）仅作非 plan 路径回退——Plan 是唯一 geometry authority。
     const filePlacement = f?.placement ?? placements[f.key] ?? null
     const executionPaper = f?.paper ?? null
+    // R-4.6-A（触点 B，不改 job model）：聚合源（多页 PDF，job 自带 _aggregatedPages）按页组装
+    // pagePlacements —— placement 是执行几何、job 是打印意图，边界不破。
+    // D3：pageIndex 显式携带（pageNum-1，0-based 物理页序），不依赖数组位置。
+    // 页级 placement 缺失（fileContentPx null）→ 过滤；全部缺失 → null（回落单 placement 路径）。
+    const pagePlacements = Array.isArray(f?._aggregatedPages) && f._aggregatedPages.length > 0
+      ? f._aggregatedPages
+          .map((p, i) => ({
+            pageIndex: Number.isFinite(p?.pageNum) ? p.pageNum - 1 : i,
+            placement: placements[p?.key] ?? null,
+          }))
+          .filter((item) => item.placement != null)
+      : null
 
-    const result = await printSingleSource(f, ipc, userSettings, fileRotations, detectDocumentOrientation, filePlacement, executionPaper)
+    const result = await printSingleSource(f, ipc, userSettings, fileRotations, detectDocumentOrientation, filePlacement, executionPaper, pagePlacements)
 
     return {
       success: result.success,
