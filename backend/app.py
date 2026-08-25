@@ -189,6 +189,8 @@ _page_cache: dict = {}  # {"page_id": {"bytes": bytes, "created_at": ts, "last_u
 _page_cache_lock = threading.Lock()
 _page_cache_ttl = 3600  # 缓存有效期（秒），默认 1 小时
 _page_cache_max = 500   # LRU 硬上限：超限时按 last_used 驱逐，杜绝无限增长
+_page_cache_max_bytes = 512 * 1024 * 1024  # 字节预算：512MB 总内存上限
+_page_cache_size = 0    # 当前缓存总字节数
 _page_cache_cleanup_interval = 300  # 后台清理间隔（秒），5分钟
 
 # Document Pipeline 映射：page_id → {doc_id, page}（轻量，替代 _page_cache 直接引用）
@@ -209,41 +211,160 @@ def _page_cache_periodic_cleanup():
 
 def _page_cache_evict(force_expired: bool = False):
     """
-    单页缓存惰性清理 + LRU 硬上限。
+    单页缓存惰性清理 + LRU 硬上限 + 字节预算。
 
     - force_expired=True 时：即使未超容量也清理过期项（供后台线程调用）。
-    - 仅当 len(_page_cache) > _page_cache_max 时触发 LRU 驱逐（保持惰性）。
+    - 当 entry count 或 byte size 超限时触发驱逐。
     - 触发后：先清过期项（created_at 超过 TTL），若仍超限，再按 last_used 升序
-      驱逐最久未用项，直到 len 回到 _page_cache_max（真正的硬上限，杜绝无限增长）。
+      驱逐最久未用项，直到 count 和 bytes 都回到预算内。
     - 任何被驱逐的 key，联动从 _page_registry 删除，避免 registry 悬空 / 无限增长。
     - 两个锁分两段独立获取（不嵌套），与 _register_and_collect / download_page 的
       加锁顺序兼容，不会引发死锁。
+
+    PERF-4: 新增 _page_cache_size 字节追踪，驱逐时同步减计数。
     """
+    global _page_cache_size
     cutoff = time.time() - _page_cache_ttl
     evicted = []
     with _page_cache_lock:
-        need_check = force_expired or len(_page_cache) > _page_cache_max
+        need_check = (
+            force_expired
+            or len(_page_cache) > _page_cache_max
+            or _page_cache_size > _page_cache_max_bytes
+        )
         if need_check:
+            # 清理过期项（同步减字节计数）
             for k in [k for k, v in _page_cache.items()
                       if v.get("created_at", 0) < cutoff]:
-                _page_cache.pop(k, None)
+                entry = _page_cache.pop(k, None)
+                if entry:
+                    _page_cache_size -= len(entry.get("bytes", b""))
                 evicted.append(k)
-        if len(_page_cache) > _page_cache_max:
-            over = len(_page_cache) - _page_cache_max
-            if over > 0:
-                lru = sorted(
+
+            # 按 LRU 驱逐直到 count 和 bytes 都达标
+            while (
+                len(_page_cache) > _page_cache_max
+                or _page_cache_size > _page_cache_max_bytes
+            ):
+                if not _page_cache:
+                    break
+                lru_key = min(
                     _page_cache.keys(),
                     key=lambda k: _page_cache[k].get("last_used",
-                                                     _page_cache[k].get("created_at", 0)),
+                                                    _page_cache[k].get("created_at", 0)),
                 )
-                for k in lru[:over]:
-                    _page_cache.pop(k, None)
-                    evicted.append(k)
+                entry = _page_cache.pop(lru_key, None)
+                if entry:
+                    _page_cache_size -= len(entry.get("bytes", b""))
+                evicted.append(lru_key)
+
     if evicted:
         with _page_registry_lock:
             for k in evicted:
                 _page_registry.pop(k, None)
         logger.debug("[page_cache] 驱逐 %d 个条目（含 registry 联动清理）", len(evicted))
+
+
+def _page_cache_put(page_id: str, page_bytes: bytes, now: float = None):
+    """
+    写入 page cache，自动追踪字节数并在超预算时触发驱逐。
+
+    PERF-4: 新增字节预算管理——每次写入时减去旧条目字节、加上新条目字节，
+    若总字节数超过 _page_cache_max_bytes 则立即触发 eviction。
+
+    Oversized entry 策略：单条目自身超过预算时，跳过缓存（不插入、不驱逐），
+    直接返回。这避免了“插入→立即驱逐”的抖动，也不会影响已有正常条目。
+    语义：oversized page 可以被下载，但不会驻留缓存。
+    """
+    global _page_cache_size
+    if now is None:
+        now = time.time()
+
+    entry_size = len(page_bytes)
+
+    # Pre-check: 单条目超预算，跳过缓存
+    if entry_size > _page_cache_max_bytes:
+        logger.debug(
+            "[page_cache] oversized entry (%d bytes > %d budget), skip cache: %s",
+            entry_size, _page_cache_max_bytes, page_id,
+        )
+        return
+
+    with _page_cache_lock:
+        # 如果 key 已存在，先减去旧字节
+        old_entry = _page_cache.get(page_id)
+        if old_entry is not None:
+            _page_cache_size -= len(old_entry.get("bytes", b""))
+
+        # 写入新条目
+        _page_cache[page_id] = {
+            "bytes": page_bytes,
+            "created_at": now,
+            "last_used": now,
+        }
+        _page_cache_size += entry_size
+
+        # 检查预算（entry count + byte size）
+        needs_evict = (
+            len(_page_cache) > _page_cache_max
+            or _page_cache_size > _page_cache_max_bytes
+        )
+
+        if needs_evict:
+            evicted_keys = _page_cache_evict_internal(
+                target_bytes=_page_cache_max_bytes,
+                target_count=_page_cache_max,
+            )
+
+    # 在锁外清理 registry（与 _page_cache_evict 保持一致的加锁顺序）
+    if needs_evict and evicted_keys:
+        with _page_registry_lock:
+            for k in evicted_keys:
+                _page_registry.pop(k, None)
+        logger.debug(
+            "[page_cache] 字节预算驱逐 %d 个条目（含 registry 联动清理）",
+            len(evicted_keys),
+        )
+
+
+def _page_cache_evict_internal(target_bytes: int, target_count: int):
+    """
+    在已持有 _page_cache_lock 的情况下执行驱逐。
+
+    驱逐策略：
+    1. 先清理过期条目（created_at < cutoff）
+    2. 再按 last_used 升序驱逐，直到 entry count 和 byte size 都达标
+
+    Returns: list of evicted page_ids
+    """
+    global _page_cache_size
+    cutoff = time.time() - _page_cache_ttl
+    evicted = []
+
+    # 第一步：驱逐过期项
+    expired = [k for k, v in _page_cache.items()
+               if v.get("created_at", 0) < cutoff]
+    for k in expired:
+        entry = _page_cache.pop(k, None)
+        if entry:
+            _page_cache_size -= len(entry.get("bytes", b""))
+            evicted.append(k)
+
+    # 第二步：按 LRU 驱逐直到 entry count 和 byte size 都达标
+    while len(_page_cache) > target_count or _page_cache_size > target_bytes:
+        if not _page_cache:
+            break
+        lru_key = min(
+            _page_cache.keys(),
+            key=lambda k: _page_cache[k].get("last_used",
+                                            _page_cache[k].get("created_at", 0)),
+        )
+        entry = _page_cache.pop(lru_key, None)
+        if entry:
+            _page_cache_size -= len(entry.get("bytes", b""))
+            evicted.append(lru_key)
+
+    return evicted
 
 
 def get_decision_router():
@@ -989,12 +1110,7 @@ def split_pdf():
                 for (i, page_num, page_id, page_bytes) in chunk:
                     with _page_registry_lock:
                         _page_registry[page_id] = {"doc_id": doc.doc_id, "page": page_num}
-                    with _page_cache_lock:
-                        _page_cache[page_id] = {
-                            "bytes": page_bytes,
-                            "created_at": now,
-                            "last_used": now,
-                        }
+                    _page_cache_put(page_id, page_bytes, now)
                     # [M1-c D1 · frozen] page_index is 1-based SOURCE transport (legacy evidence).
                     # Do NOT convert to 0-based here; canonical 0-based lives in
                     # SourcePageIdentity.sourcePageIndex (not yet built). Matches M1-a
@@ -1058,12 +1174,7 @@ def download_page(page_id):
             )
             # 写入 _page_cache（后续请求直接命中旧缓存路径）
             now = time.time()
-            with _page_cache_lock:
-                _page_cache[page_id] = {
-                    "bytes": page_bytes,
-                    "created_at": now,
-                    "last_used": now,
-                }
+            _page_cache_put(page_id, page_bytes, now)
             return _respond_pdf(page_bytes, page_id)
         except Exception as e:
             logger.debug("download_page pipeline fallback for %s: %s", page_id, e)
@@ -1076,6 +1187,9 @@ def download_page(page_id):
             return jsonify({"success": False, "error": "页面不存在或已过期，请重新拆分"}), 404
         if time.time() - cache_entry["created_at"] > _page_cache_ttl:
             # 过期：同步清理 cache 与 registry，避免悬空条目
+            # PERF-4: 同步减字节计数
+            global _page_cache_size
+            _page_cache_size -= len(cache_entry.get("bytes", b""))
             _page_cache.pop(page_id, None)
             with _page_registry_lock:
                 _page_registry.pop(page_id, None)

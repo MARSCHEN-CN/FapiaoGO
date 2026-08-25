@@ -90,19 +90,23 @@ class InvoiceParseCoordinator:
             logger.debug(f"[Coordinator] 无多页组，回退原流程: {filename}")
             return [parse_fn(pdf_bytes, filename, **parse_kwargs)]
 
-        # Step 3: 逐组处理
+        # Step 3: 逐组处理（PERF-3: 复用同一个 fitz.Document，避免重复 open）
         results = []
-        for group in groups:
-            if group.is_multi_page:
-                result = self._parse_multi_page_group(
-                    pdf_bytes, group, filename, parse_fn, **parse_kwargs
-                )
-            else:
-                # 单页组：提取该页，独立解析
-                page_bytes = self._extract_page(pdf_bytes, group.page_indices[0])
-                page_filename = f"{filename}_p{group.page_indices[0] + 1}"
-                result = parse_fn(page_bytes, page_filename, **parse_kwargs)
-            results.append(result)
+        with fitz.open(stream=pdf_bytes, filetype='pdf') as shared_doc:
+            for group in groups:
+                if group.is_multi_page:
+                    result = self._parse_multi_page_group(
+                        pdf_bytes, group, filename, parse_fn,
+                        fitz_doc=shared_doc, **parse_kwargs
+                    )
+                else:
+                    # 单页组：提取该页，独立解析
+                    page_bytes = self._extract_page(
+                        pdf_bytes, group.page_indices[0], fitz_doc=shared_doc
+                    )
+                    page_filename = f"{filename}_p{group.page_indices[0] + 1}"
+                    result = parse_fn(page_bytes, page_filename, **parse_kwargs)
+                results.append(result)
 
         logger.info(
             f"[Coordinator] {filename}: {len(pages_info)} 页 → "
@@ -118,13 +122,20 @@ class InvoiceParseCoordinator:
         group: InvoiceGroup,
         filename: str,
         parse_fn,
+        fitz_doc: Optional[fitz.Document] = None,
         **parse_kwargs,
     ) -> Dict[str, Any]:
-        """解析多页组：逐页 parse → merge"""
+        """解析多页组：逐页 parse → merge
+
+        PERF-3: fitz_doc 不为 None 时复用外部已打开的 PDF 文档，
+        避免每页重复 fitz.open。
+        """
         page_results = []
 
         for page_idx in group.page_indices:
-            page_bytes = self._extract_page(pdf_bytes, page_idx)
+            page_bytes = self._extract_page(
+                pdf_bytes, page_idx, fitz_doc=fitz_doc
+            )
             page_filename = f"{filename}_p{page_idx + 1}"
 
             # 强制跳过 DB 写入（多页中间结果不入库，merge 后才入）
@@ -139,20 +150,27 @@ class InvoiceParseCoordinator:
         return merged
 
     @staticmethod
-    def _extract_page(pdf_bytes: bytes, page_index: int) -> bytes:
+    def _extract_page(pdf_bytes: bytes, page_index: int, fitz_doc: Optional[fitz.Document] = None) -> bytes:
         """从 PDF 中提取单页为独立 PDF bytes
 
         [M1-c · frozen] page_index = 0-based RENDER/PHYSICAL locator (fitz
         insert_pdf from_page/to_page); NOT Source Identity; no ±1 conversion.
         The +1 seen elsewhere is only a human-facing file label, not a locator
         transform.
+
+        PERF-3: 支持传入预打开的 fitz.Document 以避免重复 open/close。
+        当 fitz_doc 不为 None 时直接使用该文档；否则回退为独立打开（向后兼容）。
         """
-        doc = fitz.open(stream=pdf_bytes, filetype='pdf')
+        own_doc = False
+        if fitz_doc is None:
+            fitz_doc = fitz.open(stream=pdf_bytes, filetype='pdf')
+            own_doc = True
         try:
             new_doc = fitz.open()
-            new_doc.insert_pdf(doc, from_page=page_index, to_page=page_index)
+            new_doc.insert_pdf(fitz_doc, from_page=page_index, to_page=page_index)
             page_bytes = new_doc.tobytes()
             new_doc.close()
             return page_bytes
         finally:
-            doc.close()
+            if own_doc:
+                fitz_doc.close()
