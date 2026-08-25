@@ -47,12 +47,6 @@ export function deriveSourcePrintJobs(plan, files) {
       paper: page.paper || null,
       placement: page.slots?.[0]?.placement ?? null,
     }
-    // [R4.2-DIAG] TEMPORARY probe — remove after validation. Closes the loop:
-    // shows whether the aggregated job actually carries a placement into the
-    // print-source-file IPC boundary.
-    console.log('[R4.2] toJob key=', jobKey, 'isAggregated=', !!f._isAggregatedSource,
-      'placement=', job.placement ? 'PRESENT' : 'NULL',
-      'paper=', job.paper ? 'PRESENT' : 'NULL')
     return job
   }
 

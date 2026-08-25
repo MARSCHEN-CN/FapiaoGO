@@ -42,17 +42,5 @@ export function resolveFileRotation(file, fileRotations = {}) {
 export function resolveFilePlacement(file, placements = {}) {
   const key = file?.key
   const originalKey = file?._sourceOriginalKey
-  // [R4.2-DIAG] TEMPORARY probe — remove after validation. For aggregated
-  // sources, shows exactly which keys are checked and whether either hits the
-  // placements map (explains why aggregated job placement resolves to NULL).
-  if (key && key.startsWith('__source_')) {
-    console.log('[R4.2] resolveFilePlacement aggregated',
-      'key=', key,
-      'originalKey=', originalKey,
-      'hitKey=', !!placements?.[key],
-      'hitOriginal=', !!placements?.[originalKey],
-      'placementKeyCount=', Object.keys(placements || {}).length,
-      'placementKeySample=', JSON.stringify(Object.keys(placements || {}).slice(0, 2)))
-  }
   return placements?.[key] ?? placements?.[originalKey] ?? null
 }

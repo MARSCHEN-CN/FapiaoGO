@@ -472,13 +472,6 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
       // 用 fileContentPx（PDF points × dpi/72 归一，与 Preview pageToModel 同源），
       // 不能直接传 getContentDimensions 的 PDF points（单位错 → scale 差 dpi/72 倍）。
       const dims = fileContentPx(f)
-      // [R4.2-DIAG] TEMPORARY probe — remove after validation. Confirms whether a
-      // multi-page document object lacks top-level dims (fileContentPx → null →
-      // placement never computed → aggregated job falls into margin-bake).
-      console.log('[R4.2] placements loop key=', f.key,
-        'isMultiPageDoc=', Array.isArray(f.pages) && f.pages.length > 1,
-        'hasPdfW=', !!f._pdfPageWidth,
-        'dims=', dims ? dims.width + 'x' + dims.height : 'NULL')
       if (!dims) continue
       const contentRotation = fileRotations[f.key] || 0
       try {
@@ -1073,15 +1066,8 @@ export function usePrint({ files, settings, fileRotations, setFiles, electronAPI
       // 旧 source 消费逻辑（allParsed / specialFiles / mergedJobs）已固化为
       // buildLegacyPrintPlan（Legacy Oracle），不在此重复、不删除（待 Commit 3 + A2 Gate 前清理）。
       // Commit 1：与 Preview 共用 createPrintPlanInput（非 merge 模式 → SOURCE_FILE_FILTER）
-      // [R4.3-DIAG] TEMPORARY probe — remove after validation. Discriminate H-A (placements
-      // non-empty but NOT passed to createPrintPlanInput) vs H-B (placements itself empty).
-      console.log('[R4.3] PLACE-ORIGIN INPUT placementsKeys=', JSON.stringify(Object.keys(placements)),
-        'targetFileKeys=', JSON.stringify(files.map(f => f.key)))
       const { files: planFiles, options: planOptions } = createPrintPlanInput(files, settings, fileRotations, placements)
       const plan = buildPrintExecutionPlan(planFiles, planOptions)
-      // [R4.3-DIAG] PLAN side: what did createPrintPlanInput actually carry as options.placements?
-      console.log('[R4.3] PLACE-ORIGIN PLAN placementKeys=', JSON.stringify(Object.keys(planOptions.placements)),
-        'planSlotPlacement=', JSON.stringify(plan.pages.slice(0, 2).map(p => ({ key: p.key, hasSlotPlacement: !!(p.slots?.[0]?.placement) }))))
 
       // 影子比较（仅 DEV + 手动开关；绝不进 production）：
       //  1) 模型等价：新 plan vs Legacy Oracle（buildLegacyPrintPlan）
