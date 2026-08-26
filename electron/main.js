@@ -120,6 +120,12 @@ let pendingFilesFromSecondInstance = []
 
 // 开发模式判断
 const isDev = !app.isPackaged
+
+// Windows 任务栏图标关联 ID — 避免通知栏图标显示为默认 Electron 图标
+if (!isDev) {
+  app.setAppUserModelId('com.fapiaogo.desktop')
+}
+
 // 将资源根路径经 process.env 传给 preload（app 模块在 preload/sandbox 上下文不可见，
 // 只能由主进程计算后注入；渲染进程会继承主进程环境，preload 内 process.env 可读）。
 // 生产: process.resourcesPath（指向 …/resources，cmaps/ 等已通过 extraResources 放此）；
@@ -771,18 +777,29 @@ function _getPythonPaths() {
     return {
       exe: path.join(__dirname, '../backend/venv/Scripts/python.exe'),
       script: path.join(__dirname, '../pyscripts/pdf_tool.py'),
+      isStandalone: false,
     }
   }
-  return {
-    exe: path.join(process.resourcesPath, 'backend/venv/Scripts/python.exe'),
-    script: path.join(process.resourcesPath, 'pyscripts/pdf_tool.py'),
+  // 生产模式：独立 pdf_tool.exe（方案 A：不污染 server.exe）
+  // 位置: resources/tools/pdf_tool/pdf_tool.exe
+  const standaloneExe = path.join(process.resourcesPath, 'tools/pdf_tool/pdf_tool.exe')
+  if (fs.existsSync(standaloneExe)) {
+    return { exe: standaloneExe, args: [], isStandalone: true }
   }
+  // 降级：如果 pdf_tool.exe 不存在，标记为不可用
+  console.warn('[callPython] pdf_tool.exe 未找到，PNG→PDF 转换将失败')
+  return null
 }
 
 async function callPython(args, timeoutMs = 30000) {
-  const { exe, script } = _getPythonPaths()
+  const paths = _getPythonPaths()
+  if (!paths) {
+    return { success: false, error: 'pdf_tool.exe 未找到，PNG→PDF 转换不可用' }
+  }
+  const { exe, script, isStandalone } = paths
+  const spawnArgs = isStandalone ? [...args] : [script, ...args]
   return new Promise((resolve, reject) => {
-    const child = spawn(exe, [script, ...args], {
+    const child = spawn(exe, spawnArgs, {
       windowsHide: true,
       timeout: timeoutMs,
       env: {
@@ -814,13 +831,19 @@ let backendProcess = null
 function _getBackendPaths() {
   if (isDev) {
     return {
+      // 开发模式：手动启动 python backend/app.py
       exe: path.join(__dirname, '../backend/venv/Scripts/python.exe'),
-      script: path.join(__dirname, '../backend/app.py'),
+      args: [path.join(__dirname, '../backend/app.py')],
+      cwd: path.join(__dirname, '../backend'),
+      modelDir: path.join(__dirname, '../resources/models'),
     }
   }
+  // 生产模式：PyInstaller 打包的 server.exe（独立运行，无需 venv）
   return {
-    exe: path.join(process.resourcesPath, 'backend/venv/Scripts/python.exe'),
-    script: path.join(process.resourcesPath, 'backend/app.py'),
+    exe: path.join(process.resourcesPath, 'backend/server/server.exe'),
+    args: [],  // server.exe 内置 Flask，无需额外参数
+    cwd: path.join(process.resourcesPath, 'backend/server'),
+    modelDir: path.join(process.resourcesPath, 'models'),
   }
 }
 
@@ -866,19 +889,20 @@ async function startBackendServer() {
     console.log('[BACKEND] 开发模式：跳过自动启动，假定手动运行 Flask')
     return
   }
-  const { exe, script } = _getBackendPaths()
-  // 模型目录：生产模式下位于 resourcesPath/models（与 backend 同级）
-  const modelDir = path.join(process.resourcesPath, 'models')
-  console.log(`[BACKEND] 启动 Flask: ${exe} ${script}`)
+  const { exe, args, cwd, modelDir } = _getBackendPaths()
+  console.log(`[BACKEND] 启动后端: ${exe} ${args.length ? args.join(' ') : '(无参数)'}`)
+  console.log(`[BACKEND] 工作目录: ${cwd}`)
   console.log(`[BACKEND] OCR 模型目录: ${modelDir}`)
-  backendProcess = spawn(exe, [script], {
+  backendProcess = spawn(exe, args, {
     windowsHide: true,
-    cwd: path.dirname(script),
+    cwd: cwd,
     env: {
       ...process.env,
       PYTHONIOENCODING: 'utf-8',
       FLASK_PORT: '5000',
       OCR_MODEL_DIR: modelDir,
+      // 数据库路径：Electron 自身也用 userData，保持一致
+      FAPIAOGO_DB_PATH: path.join(app.getPath('userData'), '.fapiaogo'),
     },
   })
   backendProcess.stdout?.on('data', d => {
@@ -908,7 +932,7 @@ async function startBackendServer() {
 
 function stopBackendServer() {
   if (backendProcess && !backendProcess.killed) {
-    console.log('[BACKEND] 停止 Flask 进程')
+    console.log('[BACKEND] 停止后端进程 (server.exe)')
     backendProcess.kill()
     backendProcess = null
   }

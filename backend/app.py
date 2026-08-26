@@ -5,6 +5,7 @@ import logging
 import os
 import queue
 import re
+import sys
 import threading
 import time
 import traceback
@@ -2083,9 +2084,12 @@ if __name__ == '__main__':
     root_logger.addHandler(_console)
 
     # 文件 handler（RotatingFileHandler，单文件最大 10MB，保留 5 个备份）
-    # 路径基于 __file__ 解析，不依赖 cwd；打包安装目录(如 C:\Program Files\...) 只读时
-    # 降级为仅控制台输出，绝不因日志失败而阻断后端启动。
-    _log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'logs')
+    # 路径解析：PyInstaller frozen 模式用 sys.executable 所在目录；否则用 __file__
+    # 安装目录(如 C:\Program Files\...) 只读时降级为仅控制台输出
+    if getattr(sys, 'frozen', False):
+        _log_dir = os.path.join(os.path.dirname(sys.executable), 'logs')
+    else:
+        _log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'logs')
     try:
         os.makedirs(_log_dir, exist_ok=True)
         _file_handler = RotatingFileHandler(

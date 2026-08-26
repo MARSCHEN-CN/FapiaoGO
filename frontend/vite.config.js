@@ -55,6 +55,8 @@ export default defineConfig({
     cssMinify: true,
     // 开启 JS 代码压缩（Oxc 为 Vite 8 默认压缩器）
     minify: true,
+    // 生产环境关闭 sourcemap，减少体积 + 保护源码
+    sourcemap: false,
   },
 
   // 依赖预构建优化

@@ -14,17 +14,24 @@
 const { execFile } = require('child_process')
 const path = require('path')
 const fs = require('fs')
+const { app } = require('electron')
 const { TEMP_DIR } = require('../temp-manager')
 
 // ============================
 // 路径与常量
 // ============================
 
-const PYTHON_SCRIPT = path.join(__dirname, '..', '..', 'scripts', 'add-pdf-margins.py')
+const isProd = app.isPackaged
+
+// dev: __dirname = electron/print-service/ → ../../scripts/add-pdf-margins.py
+// prod: 打包后脚本在 resources/scripts/add-pdf-margins.py
+const PYTHON_SCRIPT = isProd
+  ? path.join(process.resourcesPath, 'scripts', 'add-pdf-margins.py')
+  : path.join(__dirname, '..', '..', 'scripts', 'add-pdf-margins.py')
 
 // 启动时校验脚本路径
 if (!fs.existsSync(PYTHON_SCRIPT)) {
-  console.error('[PDF_MARGIN] CRITICAL: Python margin script not found at', PYTHON_SCRIPT)
+  console.warn('[PDF_MARGIN] Python margin script not found at', PYTHON_SCRIPT, '— margin processing will be disabled')
 }
 
 const DEFAULT_TIMEOUT = 60_000  // 子进程超时（毫秒）
@@ -134,18 +141,20 @@ async function checkPythonEnv() {
 }
 
 async function _doCheckPythonEnv() {
-  const isDev = !process.resourcesPath || process.resourcesPath.includes('app.asar') === false
+  if (isProd) {
+    // 生产环境: pdf_tool.exe 包含 img2pdf + pikepdf，但不能执行独立 .py 脚本
+    // margin 处理需要集成到 pdf_tool.exe 后才能使用（待 R2-3 实现）
+    // 当前优雅降级 —— 返回 ok:false 让 process() 直接跳过
+    console.log('[PDF_MARGIN] Production mode: margin processing requires pdf_tool.exe integration (not ready yet)')
+    const result = { ok: false, cmd: null }
+    _envCheckResult = result
+    _envCheckTime = Date.now()
+    return result
+  }
   
   let pythonCmd = null
-  
-  if (isDev) {
-    // dev 模式：backend 在项目根目录（../../backend/，相对于 electron/print-service/）
-    pythonCmd = path.join(__dirname, '../../backend/venv/Scripts/python.exe')
-    console.log('[PDF_MARGIN] Development mode: using venv Python:', pythonCmd)
-  } else {
-    pythonCmd = path.join(process.resourcesPath, 'backend/venv/Scripts/python.exe')
-    console.log('[PDF_MARGIN] Production mode: using venv Python:', pythonCmd)
-  }
+  pythonCmd = path.join(__dirname, '../../backend/venv/Scripts/python.exe')
+  console.log('[PDF_MARGIN] Development mode: using venv Python:', pythonCmd)
 
   if (!fs.existsSync(pythonCmd)) {
     console.warn('[PDF_MARGIN] Python executable not found at:', pythonCmd)

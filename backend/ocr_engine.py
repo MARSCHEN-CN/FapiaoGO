@@ -2,6 +2,7 @@ import re
 import math
 import threading
 import os
+import sys
 from dataclasses import dataclass
 from typing import Optional
 import numpy as np
@@ -76,11 +77,31 @@ def _resolve_model_dir():
     """解析 OCR 模型目录。
 
     解析策略（按优先级）：
+    0. PyInstaller frozen 模式 — server.exe 运行时，models/ 与 _internal/ 同级
     1. 环境变量 OCR_MODEL_DIR — 由 Electron 主进程注入（生产/开发模式）
     2. 打包同级路径 — 生产时 backend/ 与 models/ 同级（都在 resourcesPath 下）
     3. 开发 resources/models — 开发时模型存放在项目根的 resources/models/
     4. 旧路径 backend/models — 向后兼容，确保迁移无痛
     """
+    # 0. PyInstaller frozen 模式：sys._MEIPASS = dist/server/_internal/
+    # 优先级：_internal/models/（PyInstaller datas 打包位置）
+    #         → 同级 models/（post-build 复制或外部放置）
+    if getattr(sys, 'frozen', False):
+        _meipass = getattr(sys, '_MEIPASS', '')
+        if _meipass:
+            # 0a. PyInstaller datas 打包位置：_internal/models/
+            _candidate_meipass = os.path.join(_meipass, 'models')
+            if os.path.isdir(_candidate_meipass):
+                logger.info("OCR 模型目录 (PyInstaller _internal): %s", _candidate_meipass)
+                return _candidate_meipass
+
+            # 0b. 与 server.exe 同级的 models/ 目录
+            _pkg_root = os.path.dirname(_meipass)
+            _candidate_sibling = os.path.join(_pkg_root, 'models')
+            if os.path.isdir(_candidate_sibling):
+                logger.info("OCR 模型目录 (PyInstaller 同级): %s", _candidate_sibling)
+                return _candidate_sibling
+
     # 1. 环境变量优先
     env_dir = os.environ.get('OCR_MODEL_DIR')
     if env_dir and os.path.isdir(env_dir):

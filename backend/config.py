@@ -1,8 +1,13 @@
 import os
+import sys
 import tempfile
 
 # OCR 结果缓存目录 - 位于项目根目录的 database 文件夹下
-BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
+# PyInstaller frozen 模式下用 sys.executable 所在目录
+if getattr(sys, 'frozen', False):
+    BACKEND_DIR = os.path.dirname(sys.executable)
+else:
+    BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(BACKEND_DIR)
 DATABASE_DIR = os.path.join(PROJECT_ROOT, 'database')
 OCR_CACHE_DIR = os.path.join(DATABASE_DIR, '.ocr_cache')
