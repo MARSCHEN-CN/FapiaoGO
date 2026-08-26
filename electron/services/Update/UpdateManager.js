@@ -107,7 +107,6 @@ async function initUpdateManager(config, options = {}) {
       if (ghResult.available) {
         console.log(`[UpdateManager] GitHub 检查发现新版本: ${ghResult.version} (via ${ghResult.source})`)
         // 仅记录——真正的下载/安装需要 UI 层配合或通过 electron-updater 完成。
-        // 这里可以通过 IPC 通知渲染进程提示用户。
         if (global._updateCallbacks?.onGithubUpdate) {
           global._updateCallbacks.onGithubUpdate(ghResult)
         }

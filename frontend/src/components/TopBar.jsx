@@ -33,6 +33,9 @@ export default memo(function TopBar({
   const [showThemeSubmenu, setShowThemeSubmenu] = useState(false)
   const [showShortcutCard, setShowShortcutCard] = useState(false)
   const [aboutModalOpen, setAboutModalOpen] = useState(false)
+  const [updateModalOpen, setUpdateModalOpen] = useState(false)
+  const [updateLoading, setUpdateLoading] = useState(false)
+  const [updateInfo, setUpdateInfo] = useState(null) // { available, version, releaseNotes, ... }
   const dropdownRef = useRef(null)
   const electronAPI = getElectronAPI()
 
@@ -147,6 +150,58 @@ export default memo(function TopBar({
     setShowDropdown(showDropdown === type ? null : type)
   }
 
+  const handleCheckUpdate = async ({ silent = false } = {}) => {
+    if (!silent) {
+      setShowDropdown(null)
+      setUpdateModalOpen(true)
+      setUpdateLoading(true)
+      setUpdateInfo(null)
+    }
+
+    try {
+      const result = await electronAPI?.ipcRenderer?.invoke?.('check-app-update')
+      setUpdateInfo(result || { available: false, reason: 'no_update' })
+
+      if (silent) {
+        // 静默模式：仅在有新版本时弹窗提示
+        if (result?.available) {
+          setUpdateModalOpen(true)
+        }
+      }
+    } catch (err) {
+      console.error('[TopBar] 检查更新失败:', err)
+      if (!silent) {
+        setUpdateInfo({ available: false, reason: 'check_failed' })
+      }
+    } finally {
+      if (!silent) {
+        setUpdateLoading(false)
+      }
+    }
+  }
+
+  // 启动时自动检查更新：等页面挂载后主动拉取，避免时序竞争
+  useEffect(() => {
+    let cancelled = false
+
+    const timer = setTimeout(async () => {
+      if (cancelled) return
+      try {
+        const result = await electronAPI?.ipcRenderer?.invoke?.('check-app-update')
+        if (cancelled || !result?.available) return
+        setUpdateInfo(result)
+        setUpdateModalOpen(true)
+      } catch {
+        // 静默忽略
+      }
+    }, 3000)
+
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, []) // 仅首次挂载执行
+
   return (
     <div className="topbar">
       <div className="tb-left" style={{ WebkitAppRegion: 'drag', display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -196,6 +251,11 @@ export default memo(function TopBar({
               setAboutModalOpen={setAboutModalOpen}
               clearThemeCloseTimer={clearThemeCloseTimer}
               scheduleThemeClose={scheduleThemeClose}
+              updateModalOpen={updateModalOpen}
+              updateLoading={updateLoading}
+              updateInfo={updateInfo}
+              setUpdateModalOpen={setUpdateModalOpen}
+              onCheckUpdate={handleCheckUpdate}
             />
           </Suspense>
         </div>

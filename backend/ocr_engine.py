@@ -70,8 +70,44 @@ QUICK_SCAN_LONG_SIDE = 384            # 快速扫描时图像长边缩放尺寸�
 ENABLE_PREPROCESS = False             # 预处理总开关
 ENABLE_ROW_MERGE = False             # OCR 后行合并开关    
 
-# 模型文件目录（相对于当前文件）
-_MODEL_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'models')
+# 模型文件目录解析：支持多路径回退
+# 优先级：环境变量 OCR_MODEL_DIR > 打包同级 > 开发 resources/models > 旧路径 backend/models
+def _resolve_model_dir():
+    """解析 OCR 模型目录。
+
+    解析策略（按优先级）：
+    1. 环境变量 OCR_MODEL_DIR — 由 Electron 主进程注入（生产/开发模式）
+    2. 打包同级路径 — 生产时 backend/ 与 models/ 同级（都在 resourcesPath 下）
+    3. 开发 resources/models — 开发时模型存放在项目根的 resources/models/
+    4. 旧路径 backend/models — 向后兼容，确保迁移无痛
+    """
+    # 1. 环境变量优先
+    env_dir = os.environ.get('OCR_MODEL_DIR')
+    if env_dir and os.path.isdir(env_dir):
+        logger.info("OCR 模型目录 (环境变量): %s", env_dir)
+        return env_dir
+
+    _backend_dir = os.path.dirname(os.path.abspath(__file__))
+    _project_root = os.path.dirname(_backend_dir)
+
+    # 2. 打包同级：backend/ 和 models/ 都在 resourcesPath 下
+    _candidate_sibling = os.path.join(_project_root, 'models')
+    if os.path.isdir(_candidate_sibling):
+        logger.info("OCR 模型目录 (打包同级): %s", _candidate_sibling)
+        return _candidate_sibling
+
+    # 3. 开发 resources/models：项目根/resources/models/
+    _candidate_resources = os.path.join(_project_root, 'resources', 'models')
+    if os.path.isdir(_candidate_resources):
+        logger.info("OCR 模型目录 (开发 resources): %s", _candidate_resources)
+        return _candidate_resources
+
+    # 4. 旧路径（向后兼容）
+    _dev_dir = os.path.join(_backend_dir, 'models')
+    logger.info("OCR 模型目录 (旧路径): %s", _dev_dir)
+    return _dev_dir
+
+_MODEL_DIR = _resolve_model_dir()
 
 # ONNX Runtime 执行提供者配置
 # 优先使用 GPU（CUDA），如果不可用则回退到 CPU
@@ -137,7 +173,7 @@ def get_ocr():
                 if missing_models:
                     raise OCRModelNotFoundError(
                         f"OCR 模型文件缺失: {', '.join(missing_models)}\n"
-                        f"请确保模型文件存在于 models/det/, models/rec/, models/cls/ 目录"
+                        f"请确保模型文件存在于 {_MODEL_DIR} 目录（det/, rec/, cls/ 子目录）"
                     )
 
                 # 构建 RapidOCR 参数（点分隔格式）

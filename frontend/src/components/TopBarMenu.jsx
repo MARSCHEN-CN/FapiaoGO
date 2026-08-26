@@ -19,6 +19,11 @@ export default function TopBarMenu({
   setAboutModalOpen,
   clearThemeCloseTimer,
   scheduleThemeClose,
+  updateModalOpen,
+  updateLoading,
+  updateInfo,
+  setUpdateModalOpen,
+  onCheckUpdate,
 }) {
   return (
     <>
@@ -56,6 +61,20 @@ export default function TopBarMenu({
               <path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M6 12h.01M10 12h.01M14 12h.01M18 12h.01M6 16h.01"/>
             </svg>
             <span>快捷键</span>
+          </button>
+
+          {/* 检查更新 */}
+          <button
+            className="tb-menu-item"
+            onClick={() => onCheckUpdate()}
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 2v6h-6"/>
+              <path d="M3 12a9 9 0 0 1 15-6.7L21 8"/>
+              <path d="M3 22v-6h6"/>
+              <path d="M21 12a9 9 0 0 1-15 6.7L3 16"/>
+            </svg>
+            <span>检查更新</span>
           </button>
 
           {/* 关于 */}
@@ -166,6 +185,73 @@ export default function TopBarMenu({
             </div>
             <p className="tb-about-desc">基于 Electron + React 构建</p>
             <p className="tb-about-copyright">Copyright © MarsChen 2026</p>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* 检查更新弹窗 — 用 Portal 挂到 document.body */}
+      {updateModalOpen && createPortal(
+        <div className="tb-about-overlay" onClick={() => setUpdateModalOpen(false)}>
+          <div className="tb-update-modal" onClick={e => e.stopPropagation()}>
+            <button className="tb-about-close" onClick={() => setUpdateModalOpen(false)}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+
+            {updateLoading ? (
+              <div className="tb-update-loading">
+                <div className="tb-update-spinner" />
+                <p className="tb-update-loading-text">正在检查更新...</p>
+              </div>
+            ) : updateInfo?.available ? (
+              <>
+                <div className="tb-update-icon">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"/>
+                    <path d="m12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"/>
+                    <path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0"/>
+                    <path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5"/>
+                  </svg>
+                </div>
+                <h3 className="tb-update-title">有新的版本发布</h3>
+                <p className="tb-update-version">请更新到新版本 {updateInfo.version}</p>
+                {updateInfo.releaseNotes && (
+                  <div className="tb-update-notes">
+                    <div className="tb-update-notes-title">更新说明</div>
+                    <div className="tb-update-notes-content">{updateInfo.releaseNotes}</div>
+                  </div>
+                )}
+                <div className="tb-update-actions">
+                  <button className="tb-update-btn tb-update-btn-primary" onClick={() => {
+                    if (updateInfo.releaseUrl) {
+                      window.open(updateInfo.releaseUrl, '_blank')
+                    }
+                    setUpdateModalOpen(false)
+                  }}>
+                    下载并重启更新
+                  </button>
+                  <button className="tb-update-btn tb-update-btn-secondary" onClick={() => setUpdateModalOpen(false)}>
+                    稍后再说
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="tb-update-icon tb-update-icon-success">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+                    <polyline points="22 4 12 14.01 9 11.01"/>
+                  </svg>
+                </div>
+                <h3 className="tb-update-title">已经是最新版本</h3>
+                <p className="tb-update-version">当前版本 V{APP_VERSION}</p>
+                <div className="tb-update-actions">
+                  <button className="tb-update-btn tb-update-btn-primary" onClick={() => setUpdateModalOpen(false)}>
+                    好的
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>,
         document.body

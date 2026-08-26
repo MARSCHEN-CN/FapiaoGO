@@ -29,9 +29,10 @@ const ALLOWED_INVOKE_PREFIXES = [
   'read-',     // read-file
   'submit-',   // submit-print-job
   'delete-',   // delete-files
+  'check-',    // check-app-update
 ]
 
-const ALLOWED_ON = ['print-progress', 'settings-window-closed', 'context-menu-files', 'rename-progress', 'pack-progress', 'settings-changed', 'theme-changed', 'print-job-completed', 'print-job-failed']
+const ALLOWED_ON = ['print-progress', 'settings-window-closed', 'context-menu-files', 'rename-progress', 'pack-progress', 'settings-changed', 'theme-changed', 'print-job-completed', 'print-job-failed', 'update-available']
 
 /** 检查通道是否允许（精确匹配或前缀匹配） */
 // ✅ 按首字母分组前缀：每次 invoke 无需遍历全部 15 个前缀，仅比对同首字母组

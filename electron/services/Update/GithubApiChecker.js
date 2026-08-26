@@ -17,7 +17,7 @@ const GITHUB_API = 'https://api.github.com'
 const GH_PROXY = 'https://gh-proxy.com'
 
 const DEFAULT_TIMEOUT_MS = 10000
-const COMPARE_BASE = /^v?(\d+\.\d+\.\d+)/
+const COMPARE_BASE = /^[vV]?(\d+\.\d+\.\d+)/
 
 /**
  * @param {object}   params

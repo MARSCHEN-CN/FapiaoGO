@@ -17,10 +17,12 @@ files:
   - "electron/node_modules/lodash.isequal/**/*"
   - "electron/node_modules/js-yaml/**/*"
   - "dist/**/*"
-# 打包时额外资源（SumatraPDF + Python 后端 + 脚本）
+# 打包时额外资源（SumatraPDF + Python 后端 + 脚本 + OCR 模型）
 extraResources:
   - from: resources/sumatra
     to: sumatra
+  - from: resources/models
+    to: models
   - from: backend
     to: backend
     filter:
@@ -31,6 +33,7 @@ extraResources:
       - "!**/.git/**"
       - "!**/tests/**"
       - "!**/test_*.py"
+      - "!**/models/**"
   - from: pyscripts
     to: pyscripts
   - from: frontend/public/cmaps

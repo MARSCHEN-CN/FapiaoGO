@@ -867,7 +867,10 @@ async function startBackendServer() {
     return
   }
   const { exe, script } = _getBackendPaths()
+  // 模型目录：生产模式下位于 resourcesPath/models（与 backend 同级）
+  const modelDir = path.join(process.resourcesPath, 'models')
   console.log(`[BACKEND] 启动 Flask: ${exe} ${script}`)
+  console.log(`[BACKEND] OCR 模型目录: ${modelDir}`)
   backendProcess = spawn(exe, [script], {
     windowsHide: true,
     cwd: path.dirname(script),
@@ -875,6 +878,7 @@ async function startBackendServer() {
       ...process.env,
       PYTHONIOENCODING: 'utf-8',
       FLASK_PORT: '5000',
+      OCR_MODEL_DIR: modelDir,
     },
   })
   backendProcess.stdout?.on('data', d => {
@@ -1063,6 +1067,27 @@ ipcMain.handle('window-is-maximized', (event) => {
     return win.isMaximized()
   }
   return false
+})
+
+// --- 检查应用更新 ---
+ipcMain.handle('check-app-update', async () => {
+  console.log('[check-app-update] 收到检查更新请求')
+  try {
+    const { checkForUpdates } = require('./services/Update/GithubApiChecker')
+    const config = loadConfig()
+    const currentVersion = app.getVersion()
+    console.log(`[check-app-update] 当前版本: ${currentVersion}, GitHub: ${config.githubOwner}/${config.githubRepo}`)
+    const result = await checkForUpdates({
+      owner: config.githubOwner,
+      repo: config.githubRepo,
+      currentVersion,
+    })
+    console.log(`[check-app-update] 检查结果: available=${result.available}, version=${result.version || 'N/A'}`)
+    return result
+  } catch (err) {
+    console.error('[check-app-update] 检查更新失败:', err.message)
+    return { available: false, reason: 'check_failed', error: err.message }
+  }
 })
 
 // --- 窗口拖动 ---
@@ -1442,7 +1467,9 @@ if (!gotTheLock) {
     // 加载配置 + 初始化自动更新（可能触发网络检查，延后）
     const config = loadConfig()
     setTimeout(() => {
-      try { initUpdateManager(config) } catch (err) {
+      try {
+        initUpdateManager(config)
+      } catch (err) {
         console.error('[BOOT] initUpdateManager failed:', err.message)
       }
     }, 500)
