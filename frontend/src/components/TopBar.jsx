@@ -35,6 +35,8 @@ export default memo(function TopBar({
   const [aboutModalOpen, setAboutModalOpen] = useState(false)
   const [updateModalOpen, setUpdateModalOpen] = useState(false)
   const [updateLoading, setUpdateLoading] = useState(false)
+  const [updateDownloading, setUpdateDownloading] = useState(false)
+  const [updateDownloadProgress, setUpdateDownloadProgress] = useState(0)
   const [updateInfo, setUpdateInfo] = useState(null) // { available, version, releaseNotes, ... }
   const dropdownRef = useRef(null)
   const electronAPI = getElectronAPI()
@@ -202,6 +204,60 @@ export default memo(function TopBar({
     }
   }, []) // 仅首次挂载执行
 
+  // 监听下载进度
+  useEffect(() => {
+    const ipc = electronAPI?.ipcRenderer
+    if (!ipc) return
+
+    const progressHandler = (event, data) => {
+      setUpdateDownloadProgress(data.percent || 0)
+    }
+    const downloadedHandler = () => {
+      setUpdateDownloading(false)
+      setUpdateDownloadProgress(100)
+    }
+    ipc.on('update-download-progress', progressHandler)
+    ipc.on('update-downloaded', downloadedHandler)
+    return () => {
+      ipc.removeListener('update-download-progress', progressHandler)
+      ipc.removeListener('update-downloaded', downloadedHandler)
+    }
+  }, [electronAPI])
+
+  // 下载更新
+  const handleDownloadUpdate = async () => {
+    setUpdateDownloading(true)
+    setUpdateDownloadProgress(0)
+    try {
+      const result = await electronAPI?.ipcRenderer?.invoke?.('download-update')
+      if (result?.success) {
+        if (result.mode === 'dev') {
+          // 开发模式：已在浏览器打开下载页
+          setUpdateDownloading(false)
+          setUpdateModalOpen(false)
+        } else {
+          // 生产模式：下载完成，等待用户点击安装
+          // downloaded 事件会自动设置状态
+        }
+      } else {
+        setUpdateDownloading(false)
+        alert('下载更新失败：' + (result?.error || '未知错误'))
+      }
+    } catch (err) {
+      setUpdateDownloading(false)
+      alert('下载更新失败：' + err.message)
+    }
+  }
+
+  // 安装更新
+  const handleInstallUpdate = async () => {
+    try {
+      await electronAPI?.ipcRenderer?.invoke?.('install-update')
+    } catch (err) {
+      alert('安装更新失败：' + err.message)
+    }
+  }
+
   return (
     <div className="topbar">
       <div className="tb-left" style={{ WebkitAppRegion: 'drag', display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -253,9 +309,13 @@ export default memo(function TopBar({
               scheduleThemeClose={scheduleThemeClose}
               updateModalOpen={updateModalOpen}
               updateLoading={updateLoading}
+              updateDownloading={updateDownloading}
+              updateDownloadProgress={updateDownloadProgress}
               updateInfo={updateInfo}
               setUpdateModalOpen={setUpdateModalOpen}
               onCheckUpdate={handleCheckUpdate}
+              onDownloadUpdate={handleDownloadUpdate}
+              onInstallUpdate={handleInstallUpdate}
             />
           </Suspense>
         </div>

@@ -30,6 +30,8 @@ const ALLOWED_INVOKE_PREFIXES = [
   'submit-',   // submit-print-job
   'delete-',   // delete-files
   'check-',    // check-app-update
+  'download-', // download-update
+  'install-',  // install-update
 ]
 
 const ALLOWED_ON = ['print-progress', 'settings-window-closed', 'context-menu-files', 'rename-progress', 'pack-progress', 'settings-changed', 'theme-changed', 'print-job-completed', 'print-job-failed', 'update-available']

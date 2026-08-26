@@ -21,9 +21,13 @@ export default function TopBarMenu({
   scheduleThemeClose,
   updateModalOpen,
   updateLoading,
+  updateDownloading,
+  updateDownloadProgress,
   updateInfo,
   setUpdateModalOpen,
   onCheckUpdate,
+  onDownloadUpdate,
+  onInstallUpdate,
 }) {
   return (
     <>
@@ -221,17 +225,27 @@ export default function TopBarMenu({
                     <div className="tb-update-notes-content">{updateInfo.releaseNotes}</div>
                   </div>
                 )}
+                {updateDownloading && (
+                  <div className="tb-update-progress">
+                    <div className="tb-update-progress-bar">
+                      <div className="tb-update-progress-fill" style={{ width: `${updateDownloadProgress}%` }} />
+                    </div>
+                    <span className="tb-update-progress-text">正在下载... {updateDownloadProgress}%</span>
+                  </div>
+                )}
                 <div className="tb-update-actions">
-                  <button className="tb-update-btn tb-update-btn-primary" onClick={() => {
-                    if (updateInfo.releaseUrl) {
-                      window.open(updateInfo.releaseUrl, '_blank')
-                    }
-                    setUpdateModalOpen(false)
-                  }}>
-                    下载并重启更新
-                  </button>
-                  <button className="tb-update-btn tb-update-btn-secondary" onClick={() => setUpdateModalOpen(false)}>
-                    稍后再说
+                  {!updateDownloading && updateDownloadProgress < 100 && (
+                    <button className="tb-update-btn tb-update-btn-primary" onClick={onDownloadUpdate}>
+                      下载并重启更新
+                    </button>
+                  )}
+                  {!updateDownloading && updateDownloadProgress >= 100 && (
+                    <button className="tb-update-btn tb-update-btn-primary" onClick={onInstallUpdate}>
+                      立即重启安装
+                    </button>
+                  )}
+                  <button className="tb-update-btn tb-update-btn-secondary" onClick={() => setUpdateModalOpen(false)} disabled={updateDownloading}>
+                    {updateDownloading ? '下载中...' : '稍后再说'}
                   </button>
                 </div>
               </>

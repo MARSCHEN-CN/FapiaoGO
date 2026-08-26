@@ -5,6 +5,9 @@
   "main": "electron/main.js",
   "scripts": {
     "start": "chcp 65001 > nul && electron .",
+    "dist": "npm run build:frontend && npx electron-builder --win --publish always",
+    "dist:dir": "npm run build:frontend && npx electron-builder --win --dir",
+    "build:frontend": "cd frontend && npm run build",
     "test:print": "node --test frontend/tests/print/e2e/printPipeline.test.mjs",
     "ci:print-contract": "node frontend/tests/print/PRINT_ARCHITECTURE_LOCK.js && node --test frontend/tests/print/e2e/printPipeline.test.mjs"
   },

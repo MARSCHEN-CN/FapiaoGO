@@ -1090,7 +1090,81 @@ ipcMain.handle('check-app-update', async () => {
   }
 })
 
-// --- 窗口拖动 ---
+// --- 下载应用更新 ---
+ipcMain.handle('download-update', async () => {
+  console.log('[download-update] 收到下载更新请求')
+  try {
+    // 开发模式：打开 GitHub Release 页面
+    if (!app.isPackaged) {
+      const config = loadConfig()
+      const releaseUrl = `https://github.com/${config.githubOwner}/${config.githubRepo}/releases/latest`
+      const { shell } = require('electron')
+      shell.openExternal(releaseUrl)
+      return { success: true, mode: 'dev', redirectUrl: releaseUrl }
+    }
+
+    // 生产模式：使用 electron-updater 下载
+    const { autoUpdater } = require('electron-updater')
+    const config = loadConfig()
+
+    // 设置 GitHub 更新源
+    autoUpdater.setFeedURL({
+      provider: 'github',
+      owner: config.githubOwner,
+      repo: config.githubRepo,
+    })
+
+    // 监听下载进度并推送给前端
+    autoUpdater.on('download-progress', (progress) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('update-download-progress', {
+          percent: Math.round(progress.percent),
+          bytesPerSecond: progress.bytesPerSecond,
+        })
+      }
+    })
+
+    autoUpdater.on('update-downloaded', () => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('update-downloaded')
+      }
+    })
+
+    autoUpdater.on('error', (err) => {
+      console.error('[download-update] electron-updater 错误:', err.message)
+    })
+
+    await autoUpdater.downloadUpdate()
+    console.log('[download-update] 下载完成')
+    return { success: true, mode: 'production' }
+  } catch (err) {
+    console.error('[download-update] 下载更新失败:', err.message)
+    return { success: false, error: err.message }
+  }
+})
+
+// --- 安装应用更新 ---
+ipcMain.handle('install-update', async () => {
+  console.log('[install-update] 收到安装更新请求')
+  try {
+    if (!app.isPackaged) {
+      // 开发模式：打开 GitHub Release 页面
+      const config = loadConfig()
+      const releaseUrl = `https://github.com/${config.githubOwner}/${config.githubRepo}/releases/latest`
+      const { shell } = require('electron')
+      shell.openExternal(releaseUrl)
+      return { success: true, mode: 'dev', redirectUrl: releaseUrl }
+    }
+
+    // 生产模式：退出并安装
+    const { autoUpdater } = require('electron-updater')
+    autoUpdater.quitAndInstall(false, true)
+    return { success: true }
+  } catch (err) {
+    console.error('[install-update] 安装更新失败:', err.message)
+    return { success: false, error: err.message }
+  }
+})
 let dragStartScreenPos = { x: 0, y: 0 }
 let dragStartWinPos = { x: 0, y: 0 }
 
