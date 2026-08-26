@@ -543,6 +543,9 @@ release3
 # R2-1-D/R2-2 构建输出（绕过被锁的 release/ 时使用的目录）
 release_new
 release_nsis
+# R2-3 构建输出（onedir pdf_tool 终态验证目录）
+release_r23
+release_r23f
 preview-revert-scan-2026-07-17.md
 progress-demo/canvas-orient-control-demo.html
 backend/2f8f0fd469d2482a8dc9c67e24e9db53_export_260717.pdf

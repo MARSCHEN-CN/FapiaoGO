@@ -29,8 +29,8 @@ const PYTHON_SCRIPT = isProd
   ? path.join(process.resourcesPath, 'scripts', 'add-pdf-margins.py')
   : path.join(__dirname, '..', '..', 'scripts', 'add-pdf-margins.py')
 
-// 启动时校验脚本路径
-if (!fs.existsSync(PYTHON_SCRIPT)) {
+// 启动时校验脚本路径（仅 dev：prod 走独立 pdf_tool.exe，无需 resources/scripts/*.py）
+if (!isProd && !fs.existsSync(PYTHON_SCRIPT)) {
   console.warn('[PDF_MARGIN] Python margin script not found at', PYTHON_SCRIPT, '— margin processing will be disabled')
 }
 
@@ -100,7 +100,7 @@ function execPromise(cmd, args, options) {
 // ============================
 
 /**
- * @typedef {{ ok: boolean, cmd: string|null }} EnvCheckResult
+ * @typedef {{ ok: boolean, cmd: string|null, standalone?: boolean }} EnvCheckResult
  */
 
 let _envCheckPromise = null
@@ -142,11 +142,19 @@ async function checkPythonEnv() {
 
 async function _doCheckPythonEnv() {
   if (isProd) {
-    // 生产环境: pdf_tool.exe 包含 img2pdf + pikepdf，但不能执行独立 .py 脚本
-    // margin 处理需要集成到 pdf_tool.exe 后才能使用（待 R2-3 实现）
-    // 当前优雅降级 —— 返回 ok:false 让 process() 直接跳过
-    console.log('[PDF_MARGIN] Production mode: margin processing requires pdf_tool.exe integration (not ready yet)')
-    const result = { ok: false, cmd: null }
+    // 生产环境：独立 pdf_tool.exe（R2-3 双 CLI：PNG→PDF 子命令 + 边距长旗标）。
+    // 存在则 standalone 使用（process() 以 exe 为 argv[0]，--input/--output/... 旗标直通，
+    // 不再插入 PYTHON_SCRIPT）；不存在则优雅降级 ok:false 让 process() 跳过边距。
+    const standaloneExe = path.join(process.resourcesPath, 'tools/pdf_tool/pdf_tool.exe')
+    if (fs.existsSync(standaloneExe)) {
+      console.log('[PDF_MARGIN] Production mode: using standalone pdf_tool.exe:', standaloneExe)
+      const result = { ok: true, cmd: standaloneExe, standalone: true }
+      _envCheckResult = result
+      _envCheckTime = Date.now()
+      return result
+    }
+    console.warn('[PDF_MARGIN] Production mode: pdf_tool.exe 未找到，边距处理将跳过（原文件直通）')
+    const result = { ok: false, cmd: null, standalone: false }
     _envCheckResult = result
     _envCheckTime = Date.now()
     return result
@@ -284,10 +292,18 @@ async function process(inputPath, margins, isImage, orientation, opts, timeout =
     return { path: inputPath, orientation: null }
   }
 
-  if (!fs.existsSync(PYTHON_SCRIPT)) {
+  // ── 检查 Python 环境（同时返回命令；prod standalone = pdf_tool.exe） ──
+  // 提前到 PYTHON_SCRIPT 校验之前：prod standalone 不需要 resources/scripts/*.py。
+  const env = await checkPythonEnv()
+  if (!env.ok || !env.cmd) {
+    console.warn('[PDF_MARGIN] Python/pdf_tool not available, using original file')
+    return { path: inputPath, orientation: null }
+  }
+  if (!env.standalone && !fs.existsSync(PYTHON_SCRIPT)) {
     console.error('[PDF_MARGIN] Python script missing at', PYTHON_SCRIPT, '— cannot process margins')
     return { path: inputPath, orientation: null }
   }
+  const pythonCmd = env.cmd
 
   const m = {
     left: Number(margins?.left) || 0,
@@ -313,14 +329,6 @@ async function process(inputPath, margins, isImage, orientation, opts, timeout =
     timeout = optsObj.timeout
   }
 
-  // ── 检查 Python 环境（同时返回 python 命令名） ──
-  const env = await checkPythonEnv()
-  if (!env.ok || !env.cmd) {
-    console.warn('[PDF_MARGIN] Python/pikepdf not available, using original file')
-    return { path: inputPath, orientation: null }
-  }
-  const pythonCmd = env.cmd
-
   // ── 创建临时输出路径（始终使用 .pdf 扩展名） ──
   const tmpDir = TEMP_DIR
   const timestamp = Date.now()
@@ -329,7 +337,8 @@ async function process(inputPath, margins, isImage, orientation, opts, timeout =
 
   return new Promise((resolve) => {
     const args = [
-      PYTHON_SCRIPT,
+      // prod standalone：argv[0] 即 pdf_tool.exe，不再插入 PYTHON_SCRIPT（旗标契约不变）
+      ...(env.standalone ? [] : [PYTHON_SCRIPT]),
       '--input', inputPath,
       '--output', outputPath,
       '--left', String(m.left),

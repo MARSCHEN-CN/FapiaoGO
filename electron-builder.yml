@@ -165,6 +165,11 @@ extraResources:
   # OFD 渲染字体（生产环境经 FAPAIAO_RESOURCE_PATH/fonts 读取，见 ofd_constants.py）
   - from: frontend/public/fonts
     to: fonts
+  # R2-3: 独立 pdf_tool（ONEDIR：pdf_tool.exe + _internal/，与 server.exe 同构）。
+  # R2-3-E 实证：onefile 的 _MEI 运行时解包/清理被锁 → 父进程不退出 → callPython 挂起；
+  # onedir 无运行时解包，node-spawn close=0 正常。生产路径 resources/tools/pdf_tool/pdf_tool.exe 不变。
+  - from: backend/dist/pdf_tool
+    to: tools/pdf_tool
 
 # Windows 打包配置
 win:

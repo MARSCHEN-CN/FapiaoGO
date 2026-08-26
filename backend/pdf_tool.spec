@@ -1,5 +1,9 @@
 # -*- mode: python ; coding: utf-8 -*-
-# R2-3-B: 独立 pdf_tool.exe（onefile）— 双 CLI 分发器入口
+# R2-3-B: 独立 pdf_tool.exe（ONEDIR，与 server.exe 同构）
+#
+# R2-3-E 实证（2026-08-26）：onefile 的 _MEI 运行时解包/清理在受监控环境下被锁，
+# 父进程永不退出 → main.js callPython() 等不到 close → 生产挂起。故采用 onedir：
+# 无需运行时解包/清理，node-spawn 实测 close≈1.7s code=0。
 #
 # 闭包（datas，原样携带，零修改执行）：
 #   pyscripts/pdf_tool.py          → PNG→PDF（img2pdf + pikepdf，旧 mediabox+Rotate 边距语义，冻结不变）
@@ -9,7 +13,7 @@
 #
 # hiddenimports：img2pdf（单模块）+ pikepdf + PIL 全子模块收集（含 C 扩展/libs）。
 #
-# 产物：backend/dist/pdf_tool.exe（onefile；console=True，由 main.js windowsHide 隐藏窗口）
+# 产物：backend/dist/pdf_tool/{pdf_tool.exe, _internal/}（console=True，由 main.js windowsHide 隐藏窗口）
 
 from pathlib import Path
 from PyInstaller.utils.hooks import collect_submodules
@@ -49,20 +53,28 @@ pyz = PYZ(a.pure)
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.datas,
     [],
+    exclude_binaries=True,
     name='pdf_tool',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
     upx_exclude=[],
-    runtime_tmpdir=None,
     console=True,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+)
+
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.datas,
+    strip=False,
+    upx=True,
+    upx_exclude=[],
+    name='pdf_tool',
 )
