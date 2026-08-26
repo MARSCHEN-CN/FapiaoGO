@@ -1,14 +1,27 @@
 # Electron Builder 配置
+# 项目根目录: e:\print706
+# 打包产物: release/
 appId: com.FapiaoGO.app
 productName: FapiaoGO
 directories:
   output: release
   buildResources: resources
+
+# 启用 asar — 保护源代码，减小文件数量
+asar: true
+
+# 打包进 app.asar 的文件
 files:
   - "electron/**/*"
-  - "!electron/node_modules/**/*"
-  # electron-updater 及其传递依赖（electron-builder 自动从 node_modules 复制 require() 的包，
-  # 这里显式声明是为了确保动态 require() 的包也被包含）
+  # 主进程生产依赖（archiver / exceljs / electron-updater + 完整传递依赖）必须随包，
+  # 否则 clean build 后压缩包导出等功能会丢失（R2-1-D P0-1）。
+  # 包含 electron/node_modules（已 npm install --production），仅排除 dev-only 包。
+  - "!electron/node_modules/electron/**/*"
+  - "!electron/node_modules/electron-builder/**/*"
+  - "!electron/node_modules/@electron/rebuild/**/*"
+  - "!electron/node_modules/electron-rebuild/**/*"
+  - "!electron/node_modules/typescript/**/*"
+  # electron-updater 及其传递依赖（动态 require 的包）
   - "node_modules/electron-updater/**/*"
   - "node_modules/builder-util-runtime/**/*"
   - "node_modules/lazy-val/**/*"
@@ -18,47 +31,160 @@ files:
   - "node_modules/lodash.escaperegexp/**/*"
   - "node_modules/lodash.isequal/**/*"
   - "node_modules/js-yaml/**/*"
+  # P0-1: archiver 完整传递依赖（压缩包导出功能依赖，否则 clean build 后 zip 导出运行时崩溃）。
+  # electron-builder 自动依赖分析未包含 archiver 的传递依赖，必须显式声明（root + electron 双位置）。
+  # 注意：exceljs 经取证确认在主进程/前端均无 import（.xlsx 由 Python 后端 openpyxl 生成），属死依赖，不纳入。
+  - "node_modules/abort-controller/**/*"
+  - "electron/node_modules/abort-controller/**/*"
+  - "node_modules/archiver/**/*"
+  - "electron/node_modules/archiver/**/*"
+  - "electron/node_modules/archiver-utils/**/*"
+  - "node_modules/async/**/*"
+  - "electron/node_modules/async/**/*"
+  - "node_modules/b4a/**/*"
+  - "electron/node_modules/b4a/**/*"
+  - "node_modules/balanced-match/**/*"
+  - "electron/node_modules/balanced-match/**/*"
+  - "node_modules/bare-events/**/*"
+  - "electron/node_modules/bare-events/**/*"
+  - "node_modules/bare-fs/**/*"
+  - "electron/node_modules/bare-fs/**/*"
+  - "node_modules/bare-os/**/*"
+  - "electron/node_modules/bare-os/**/*"
+  - "node_modules/bare-path/**/*"
+  - "electron/node_modules/bare-path/**/*"
+  - "node_modules/bare-stream/**/*"
+  - "electron/node_modules/bare-stream/**/*"
+  - "node_modules/bare-url/**/*"
+  - "electron/node_modules/bare-url/**/*"
+  - "node_modules/base64-js/**/*"
+  - "electron/node_modules/base64-js/**/*"
+  - "node_modules/brace-expansion/**/*"
+  - "electron/node_modules/brace-expansion/**/*"
+  - "node_modules/buffer/**/*"
+  - "electron/node_modules/buffer/**/*"
+  - "node_modules/buffer-crc32/**/*"
+  - "electron/node_modules/buffer-crc32/**/*"
+  - "node_modules/compress-commons/**/*"
+  - "electron/node_modules/compress-commons/**/*"
+  - "node_modules/crc-32/**/*"
+  - "electron/node_modules/crc-32/**/*"
+  - "node_modules/crc32-stream/**/*"
+  - "electron/node_modules/crc32-stream/**/*"
+  - "node_modules/event-target-shim/**/*"
+  - "electron/node_modules/event-target-shim/**/*"
+  - "node_modules/events/**/*"
+  - "electron/node_modules/events/**/*"
+  - "node_modules/events-universal/**/*"
+  - "electron/node_modules/events-universal/**/*"
+  - "node_modules/fast-fifo/**/*"
+  - "electron/node_modules/fast-fifo/**/*"
+  - "node_modules/fs.realpath/**/*"
+  - "electron/node_modules/fs.realpath/**/*"
+  - "node_modules/glob/**/*"
+  - "electron/node_modules/glob/**/*"
+  - "node_modules/graceful-fs/**/*"
+  - "electron/node_modules/graceful-fs/**/*"
+  - "node_modules/ieee754/**/*"
+  - "electron/node_modules/ieee754/**/*"
+  - "node_modules/inflight/**/*"
+  - "electron/node_modules/inflight/**/*"
+  - "node_modules/inherits/**/*"
+  - "electron/node_modules/inherits/**/*"
+  - "node_modules/is-stream/**/*"
+  - "electron/node_modules/is-stream/**/*"
+  - "node_modules/lazystream/**/*"
+  - "electron/node_modules/lazystream/**/*"
+  - "node_modules/lodash/**/*"
+  - "electron/node_modules/lodash/**/*"
+  - "electron/node_modules/lodash.defaults/**/*"
+  - "electron/node_modules/lodash.difference/**/*"
+  - "electron/node_modules/lodash.flatten/**/*"
+  - "electron/node_modules/lodash.isplainobject/**/*"
+  - "electron/node_modules/lodash.union/**/*"
+  - "node_modules/minimatch/**/*"
+  - "electron/node_modules/minimatch/**/*"
+  - "node_modules/normalize-path/**/*"
+  - "electron/node_modules/normalize-path/**/*"
+  - "node_modules/once/**/*"
+  - "electron/node_modules/once/**/*"
+  - "node_modules/path-is-absolute/**/*"
+  - "electron/node_modules/path-is-absolute/**/*"
+  - "node_modules/process/**/*"
+  - "electron/node_modules/process/**/*"
+  - "node_modules/readable-stream/**/*"
+  - "electron/node_modules/readable-stream/**/*"
+  - "node_modules/readdir-glob/**/*"
+  - "electron/node_modules/readdir-glob/**/*"
+  - "node_modules/safe-buffer/**/*"
+  - "electron/node_modules/safe-buffer/**/*"
+  - "node_modules/streamx/**/*"
+  - "electron/node_modules/streamx/**/*"
+  - "node_modules/string_decoder/**/*"
+  - "electron/node_modules/string_decoder/**/*"
+  - "node_modules/tar-stream/**/*"
+  - "electron/node_modules/tar-stream/**/*"
+  - "node_modules/teex/**/*"
+  - "electron/node_modules/teex/**/*"
+  - "node_modules/text-decoder/**/*"
+  - "electron/node_modules/text-decoder/**/*"
+  - "node_modules/wrappy/**/*"
+  - "electron/node_modules/wrappy/**/*"
+  - "node_modules/zip-stream/**/*"
+  - "electron/node_modules/zip-stream/**/*"
+  # 前端构建产物（进入 asar）
   - "dist/**/*"
-# 打包时额外资源（SumatraPDF + Python 后端 + 脚本 + OCR 模型）
+  # 排除已通过 extraResources 打包的大体积二进制资源（避免重复）
+  - "!dist/cmaps/**/*"
+  - "!dist/standard_fonts/**/*"
+  - "!dist/wasm/**/*"
+
+# 额外资源（放入 resources/，不进入 asar，可被 file:// 协议访问）
 extraResources:
-  - from: resources/sumatra
-    to: sumatra
-  - from: resources/models
-    to: models
-  - from: backend
-    to: backend
+  # 后端 server.exe (PyInstaller onefile 产物，含 Flask + OCR + PDF/OFD)
+  - from: backend/dist/server
+    to: backend/server
     filter:
       - "**/*"
-      - "!**/__pycache__/**"
-      - "!**/*.pyc"
-      - "!**/*.pyo"
-      - "!**/.git/**"
-      - "!**/tests/**"
-      - "!**/test_*.py"
-      - "!**/models/**"
-  - from: pyscripts
-    to: pyscripts
+  # SumatraPDF 打印引擎
+  - from: resources/sumatra
+    to: sumatra
+  # OCR 模型（顶层目录，Electron 通过 OCR_MODEL_DIR env 注入给 server.exe）
+  - from: resources/models
+    to: models
+  # 应用图标（生产模式下 process.resourcesPath/icon.ico）
+  - from: resources/icon.ico
+    to: icon.ico
+  # PDF.js 静态资源（必须在 asar 外，通过 file:// 协议加载）
   - from: frontend/public/cmaps
     to: cmaps
   - from: frontend/public/standard_fonts
     to: standard_fonts
   - from: frontend/public/wasm
     to: wasm
+  # OFD 渲染字体（生产环境经 FAPAIAO_RESOURCE_PATH/fonts 读取，见 ofd_constants.py）
+  - from: frontend/public/fonts
+    to: fonts
+
 # Windows 打包配置
 win:
   target:
     - nsis
-    - portable
+    - dir
   icon: resources/icon.ico
+
+# NSIS 安装程序配置
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: "FapiaoGO"
+  perMachine: false
+  differentialPackage: true
 
-# 自动更新配置 — 发布到 GitHub Releases
-#   打包时生成 NSIS 安装包 + latest.yml 元数据。
-#   electron-updater 在运行时通过 GitHub API 检查和下载更新。
-#   不同渠道通过不同 owner/repo 或不同 tag 区分。
-publish:
-  provider: github
-  owner: MARSCHEN-CN
-  repo: FapiaoGO
+# 自动更新配置 — 生产发布时启用
+# publish:
+#   provider: github
+#   owner: MARSCHEN-CN
+#   repo: FapiaoGO

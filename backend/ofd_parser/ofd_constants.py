@@ -14,10 +14,24 @@ logger = logging.getLogger(__name__)
 # ══════════════════════════════════════════════════════════════
 #  项目字体目录
 # ══════════════════════════════════════════════════════════════
-PROJECT_FONT_DIR = str(
-    pathlib.Path(__file__).resolve().parent.parent.parent
-    / 'frontend' / 'public' / 'fonts'
-) + '/'
+def _resolve_project_font_dir():
+    """字体目录解析。
+
+    - 生产环境：从 ``FAPAIAO_RESOURCE_PATH``（Electron 主进程注入的
+      ``process.resourcesPath``）下的 ``fonts`` 读取，打包后位于
+      ``resources/fonts``。
+    - 开发环境：该环境变量为空，回退到 ``frontend/public/fonts``。
+    """
+    resource_path = os.environ.get('FAPAIAO_RESOURCE_PATH', '')
+    if resource_path:
+        return os.path.join(resource_path, 'fonts') + '/'
+    return str(
+        pathlib.Path(__file__).resolve().parent.parent.parent
+        / 'frontend' / 'public' / 'fonts'
+    ) + '/'
+
+
+PROJECT_FONT_DIR = _resolve_project_font_dir()
 
 
 # ══════════════════════════════════════════════════════════════
