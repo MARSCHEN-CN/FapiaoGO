@@ -18,6 +18,7 @@ const http = require('http')
 // 不可写 → 明确报错退出，绝不静默 fallback 到 %APPDATA%。
 // ============================
 const { ensureDataRoots, getDataRoot } = require('./shared/data-root')
+const { captureLegacyUserDataRoot } = require('./shared/legacy-data-root')
 const dataRootCheck = ensureDataRoots()
 if (!dataRootCheck.ok) {
   dialog.showErrorBox(
@@ -27,6 +28,8 @@ if (!dataRootCheck.ok) {
   )
   process.exit(1)
 }
+// DP-2E：setPath 之前捕获旧 userData（%APPDATA%\FapiaoGO），供迁移器定位旧数据
+captureLegacyUserDataRoot(app)
 app.setPath('userData', dataRootCheck.userDataRoot)
 
 const { extractMediaBoxAsync } = require('./shared/pdf-orientation')
@@ -1564,6 +1567,23 @@ if (!gotTheLock) {
     // %APPDATA%\FapiaoGO\logs\（现场抓打印链）。正式 Release 默认不启用。
     if (process.env.FAPAIAO_CONSOLE_REDIRECT === '1') {
       logger.redirectConsole()
+    }
+
+    // DP-2E：旧数据迁移（必须在 loadConfig / startBackendServer / unlink docFacts 之前，
+    // 否则 ConfigService 读到空的新位置、backend 建空库、迁移来的 DocFacts 被清）。
+    // copy 不 move、目标已存在 skip、幂等；失败不阻塞启动（仅日志）。
+    try {
+      const { migrateLegacyBusinessData } = require('./shared/migrate-legacy-data')
+      const { getLegacyUserDataRoot } = require('./shared/legacy-data-root')
+      const migrateResult = migrateLegacyBusinessData(getLegacyUserDataRoot(), getDataRoot())
+      if (migrateResult.migrated.length) {
+        console.log(`[BOOT] 旧数据迁移完成: ${migrateResult.migrated.length} 项 → DATA_ROOT（详见 .migration.log）`)
+      }
+      if (migrateResult.failed.length) {
+        console.error('[BOOT] 迁移部分失败（不阻塞）:', JSON.stringify(migrateResult.failed))
+      }
+    } catch (e) {
+      console.error('[BOOT] 迁移异常（不阻塞启动）:', e.message)
     }
 
     // 🔧 产品决策（2026-08-09）：旋转 / 纸张方向选择不跨重启保留。
