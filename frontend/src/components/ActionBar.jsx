@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { useFileContext } from '../contexts/FileContext'
+import { PUBLIC_BASE } from '../config'
 
 /**
  * 现代化操作按钮区域
@@ -91,21 +92,21 @@ export default React.memo(function ActionBar({
                   className="abm-dropdown-item"
                   onClick={() => { onExportPdf?.(); setExportDropdownOpen(false) }}
                 >
-                  <img src="/icon/PDF.svg" alt="PDF" style={{ width: 17, height: 17 }} />
+                  <img src={`${PUBLIC_BASE}icon/PDF.svg`} alt="PDF" style={{ width: 17, height: 17 }} />
                   导出为PDF
                 </button>
                 <button
                   className="abm-dropdown-item"
                   onClick={() => { onExportExcel(); setExportDropdownOpen(false) }}
                 >
-                  <img src="/icon/xlsx.svg" alt="Excel" style={{ width: 17, height: 17 }} />
+                  <img src={`${PUBLIC_BASE}icon/xlsx.svg`} alt="Excel" style={{ width: 17, height: 17 }} />
                   导出为Excel
                 </button>
                 <button
                   className="abm-dropdown-item"
                   onClick={() => { onExportZip?.(); setExportDropdownOpen(false) }}
                 >
-                  <img src="/icon/zip.svg" alt="ZIP" style={{ width: 17, height: 17 }} />
+                  <img src={`${PUBLIC_BASE}icon/zip.svg`} alt="ZIP" style={{ width: 17, height: 17 }} />
                   导出为压缩包
                 </button>
               </div>
