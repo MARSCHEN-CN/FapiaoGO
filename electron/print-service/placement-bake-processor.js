@@ -34,9 +34,11 @@ const { app } = require('electron')
 // placement_bake.py（4-2a 冻结脚本，复用 margin_contract 的 PDF 机械组装）
 // dev：项目树 scripts/placement_bake.py；packaged：脚本已并入 pdf_tool.exe（standalone）。
 const BAKE_SCRIPT = path.join(__dirname, '..', '..', 'scripts', 'placement_bake.py')
-const PDF_TOOL_EXE = process.resourcesPath
-  ? path.join(process.resourcesPath, 'tools/pdf_tool/pdf_tool.exe')
-  : null
+// R4-P0-8-G：统一资源根解析（真机铁证 resourcesPath=undefined → resolver
+// fallback dirname(execPath)/resources）。dev 时 resolver 返回 null → PDF_TOOL_EXE null。
+const { getResourcesBase } = require('../shared/resources-base')
+const _resBase = getResourcesBase()
+const PDF_TOOL_EXE = _resBase ? path.join(_resBase, 'tools/pdf_tool/pdf_tool.exe') : null
 
 // 打包版：bake 走 pdf_tool.exe standalone（placement-bake 子命令，R4-P0-8-C）；
 // dev：走 venv python + BAKE_SCRIPT。

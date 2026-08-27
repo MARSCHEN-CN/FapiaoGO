@@ -23,12 +23,13 @@ const { TEMP_DIR } = require('../temp-manager')
 
 const isProd = app.isPackaged
 
-// 资源目录基座：优先用 Electron 注入的 process.resourcesPath；
-// 兜底避免 process.resourcesPath 在某些启动上下文未注入时导致模块加载即崩溃。
-// （实测：plain Node 下该属性为只读 getter，打包运行时由 Electron 注入为真实路径字符串。）
-const RESOURCES_BASE = (process.resourcesPath && typeof process.resourcesPath === 'string')
-  ? process.resourcesPath
-  : (typeof __dirname === 'string' ? __dirname : process.cwd())
+// 资源目录基座：统一走 getResourcesBase()（R4-P0-8-G）。
+// 真机铁证：packaged 下 process.resourcesPath=undefined → resolver fallback
+// 到 dirname(execPath)/resources（portable/installer 均成立），不再回退 __dirname。
+// dev：resolver 返回 null → 保持 __dirname 兜底（prod 分支在 dev 不命中）。
+const { getResourcesBase } = require('../shared/resources-base')
+const RESOURCES_BASE = getResourcesBase()
+  || (typeof __dirname === 'string' ? __dirname : process.cwd())
 
 // dev: __dirname = electron/print-service/ → ../../scripts/add-pdf-margins.py
 // prod: 打包后脚本在 resources/scripts/add-pdf-margins.py
