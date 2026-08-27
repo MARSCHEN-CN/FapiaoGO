@@ -3,6 +3,7 @@
 const logger = require('./logger')
 const fs = require('fs')
 const path = require('path')
+const os = require('os')
 
 // ============================
 // 临时文件清理机制
@@ -10,7 +11,14 @@ const path = require('path')
 
 // 临时文件存放目录
 const { app } = require('electron')
-const TEMP_DIR = path.join(app.getPath('temp'), 'FapiaoGO')
+// 防御：app.getPath('temp') 在某些启动上下文可能不可用或抛异常，兜底到 OS 临时目录，
+// 避免模块加载即崩溃（R4-P0 cold-start 同类风险）。
+let tempBase = null
+try {
+  const p = app.getPath('temp')
+  if (typeof p === 'string' && p.length > 0) tempBase = p
+} catch {}
+const TEMP_DIR = path.join(tempBase || process.env.TEMP || process.env.TMP || os.tmpdir(), 'FapiaoGO')
 
 // 配置
 const TEMP_FILES_MAX_SIZE = 5000 * 1024 * 1024  // 5000MB 上限

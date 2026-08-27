@@ -23,10 +23,17 @@ const { TEMP_DIR } = require('../temp-manager')
 
 const isProd = app.isPackaged
 
+// 资源目录基座：优先用 Electron 注入的 process.resourcesPath；
+// 兜底避免 process.resourcesPath 在某些启动上下文未注入时导致模块加载即崩溃。
+// （实测：plain Node 下该属性为只读 getter，打包运行时由 Electron 注入为真实路径字符串。）
+const RESOURCES_BASE = (process.resourcesPath && typeof process.resourcesPath === 'string')
+  ? process.resourcesPath
+  : (typeof __dirname === 'string' ? __dirname : process.cwd())
+
 // dev: __dirname = electron/print-service/ → ../../scripts/add-pdf-margins.py
 // prod: 打包后脚本在 resources/scripts/add-pdf-margins.py
 const PYTHON_SCRIPT = isProd
-  ? path.join(process.resourcesPath, 'scripts', 'add-pdf-margins.py')
+  ? path.join(RESOURCES_BASE, 'scripts', 'add-pdf-margins.py')
   : path.join(__dirname, '..', '..', 'scripts', 'add-pdf-margins.py')
 
 // 启动时校验脚本路径（仅 dev：prod 走独立 pdf_tool.exe，无需 resources/scripts/*.py）
@@ -145,7 +152,7 @@ async function _doCheckPythonEnv() {
     // 生产环境：独立 pdf_tool.exe（R2-3 双 CLI：PNG→PDF 子命令 + 边距长旗标）。
     // 存在则 standalone 使用（process() 以 exe 为 argv[0]，--input/--output/... 旗标直通，
     // 不再插入 PYTHON_SCRIPT）；不存在则优雅降级 ok:false 让 process() 跳过边距。
-    const standaloneExe = path.join(process.resourcesPath, 'tools/pdf_tool/pdf_tool.exe')
+    const standaloneExe = path.join(RESOURCES_BASE, 'tools/pdf_tool/pdf_tool.exe')
     if (fs.existsSync(standaloneExe)) {
       console.log('[PDF_MARGIN] Production mode: using standalone pdf_tool.exe:', standaloneExe)
       const result = { ok: true, cmd: standaloneExe, standalone: true }
