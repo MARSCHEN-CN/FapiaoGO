@@ -57,6 +57,15 @@ def main() -> None:
         runpy.run_path(_find('pdf_tool.py'), run_name='__main__')
         return
 
+    if cmd == 'placement-bake':
+        # R4-P0-8-C：placement_bake.py 并入 pdf_tool.exe（打包版无 venv python 的
+        # standalone 载体）。placement_bake.py 用 argparse → 须剥掉子命令词，
+        # sys.argv = [script, 原参数...]（argparse 视 argv[0] 为程序名）。
+        script = _find('placement_bake.py')
+        sys.argv = [script] + argv[1:]
+        runpy.run_path(script, run_name='__main__')
+        return
+
     if cmd.startswith('--'):
         runpy.run_path(_find('add-pdf-margins.py'), run_name='__main__')
         return

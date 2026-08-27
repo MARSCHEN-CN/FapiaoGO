@@ -29,9 +29,20 @@
 const { execFile } = require('child_process')
 const path = require('path')
 const fs = require('fs')
+const { app } = require('electron')
 
 // placement_bake.py（4-2a 冻结脚本，复用 margin_contract 的 PDF 机械组装）
+// dev：项目树 scripts/placement_bake.py；packaged：脚本已并入 pdf_tool.exe（standalone）。
 const BAKE_SCRIPT = path.join(__dirname, '..', '..', 'scripts', 'placement_bake.py')
+const PDF_TOOL_EXE = process.resourcesPath
+  ? path.join(process.resourcesPath, 'tools/pdf_tool/pdf_tool.exe')
+  : null
+
+// 打包版：bake 走 pdf_tool.exe standalone（placement-bake 子命令，R4-P0-8-C）；
+// dev：走 venv python + BAKE_SCRIPT。
+function isPackagedRuntime() {
+  return !!(app && app.isPackaged && PDF_TOOL_EXE && fs.existsSync(PDF_TOOL_EXE))
+}
 
 // placement 坐标域 DPI——与 frontend config.js PREVIEW_DPI=300 契约对齐。
 // ⚠️ 耦合点：若前端 PREVIEW_DPI 变更，此处必须同步（placement 无自带 dpi 字段）。
@@ -228,13 +239,18 @@ async function process(inputPath, settings, opts = {}) {
     console.warn('[PLACEMENT_BAKE] Input file not found:', inputPath)
     return { path: inputPath }
   }
-  if (!fs.existsSync(BAKE_SCRIPT)) {
-    console.error('[PLACEMENT_BAKE] Python script missing at', BAKE_SCRIPT, '— degrade to original file')
-    return { path: inputPath }
-  }
-  const pythonCmd = getPythonCmd()
-  if (!pythonCmd) {
-    console.warn('[PLACEMENT_BAKE] venv python not found — degrade to original file')
+
+  // 打包版：pdf_tool.exe standalone（placement-bake 子命令）；dev：BAKE_SCRIPT + venv python。
+  const standalone = isPackagedRuntime()
+  const scriptOk = standalone
+    ? fs.existsSync(PDF_TOOL_EXE)
+    : (fs.existsSync(BAKE_SCRIPT) && !!getPythonCmd())
+  if (!scriptOk) {
+    const missing = standalone
+      ? PDF_TOOL_EXE
+      : (fs.existsSync(BAKE_SCRIPT) ? 'venv python' : BAKE_SCRIPT)
+    console.error('[PLACEMENT_BAKE]', standalone ? 'pdf_tool.exe' : 'Python script',
+      'missing at', missing, '— degrade to original file')
     return { path: inputPath }
   }
 
@@ -252,8 +268,8 @@ async function process(inputPath, settings, opts = {}) {
     // ⚠️ CLI 契约：placement_bake.py 的 argparse 将 --source/--output/--paper-*-mm 设为
     // required（即使 --placement-file 已含完整 spec）。调用方须补全显式参数
     // （placement-file 模式语义 = 显式参数覆盖 spec 字段，同值无副作用）。
-    const args = [
-      BAKE_SCRIPT,
+    // 打包版：argv[0]=pdf_tool.exe，前缀 placement-bake 子命令；dev：argv[0]=python + BAKE_SCRIPT。
+    const baseArgs = [
       '--source', inputPath,
       '--output', outputPath,
       '--paper-width-mm', String(spec.paper.widthMm),
@@ -261,9 +277,11 @@ async function process(inputPath, settings, opts = {}) {
       '--placement-file', specFile,
       '--dpi', String(spec.dpi),
     ]
-    console.log('[PLACEMENT_BAKE] Spawning:', pythonCmd, args.join(' '))
+    const cmdExe = standalone ? PDF_TOOL_EXE : getPythonCmd()
+    const args = standalone ? ['placement-bake', ...baseArgs] : [BAKE_SCRIPT, ...baseArgs]
+    console.log('[PLACEMENT_BAKE] Spawning:', cmdExe, args.join(' '))
     const startTime = Date.now()
-    execFile(pythonCmd, args, { timeout, maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
+    execFile(cmdExe, args, { timeout, maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
       const elapsed = Date.now() - startTime
       // spec 文件用完即删
       try { if (fs.existsSync(specFile)) fs.unlinkSync(specFile) } catch (e) { /* ignore */ }

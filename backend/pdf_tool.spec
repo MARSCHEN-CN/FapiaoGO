@@ -36,6 +36,7 @@ a = Analysis(
         (str(PYSCRIPTS / 'pdf_tool.py'), '.'),
         (str(SCRIPTS / 'add-pdf-margins.py'), '.'),
         (str(SCRIPTS / 'margin_contract.py'), '.'),
+        (str(SCRIPTS / 'placement_bake.py'), '.'),
         (str(SCRIPTS / 'shared' / '__init__.py'), 'shared'),
         (str(SCRIPTS / 'shared' / 'flatten_annotations.py'), 'shared'),
     ],
