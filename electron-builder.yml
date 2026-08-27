@@ -178,6 +178,9 @@ win:
     - zip
     - dir
   icon: resources/icon.ico
+  # R4-P0-3: zip 无专属配置块，用 win.artifactName 控制绿色版命名 →
+  # FapiaoGO-1.0.0-win-x64.zip（版本规范）。nsis 有自己的 artifactName（优先，不受影响）。
+  artifactName: ${productName}-${version}-${os}-${arch}.${ext}
 
 # R4-P0-3: 绿色版 Portable（ZIP）。zip 无专属顶层配置块；
 # 默认 artifactName 模板即 ${productName}-${version}-${os}-${arch}.${ext}
