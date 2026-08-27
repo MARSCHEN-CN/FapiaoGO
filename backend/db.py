@@ -123,21 +123,22 @@ def _resolve_invoice_by_key(key: str) -> Optional[Dict]:
 
 
 def _resolve_db_dir() -> str:
-    """按优先级解析数据库目录"""
+    """按优先级解析数据库目录（DATA-PATH Contract v1.1）
+
+    环境变量 FAPIAOGO_DB_PATH（main.js 注入 = DATA_ROOT，EXE 同级/database）
+    是唯一业务数据根：isdir-or-create 固定使用。
+    旧逻辑：isdir 失败 → fallback parent（userData 根）→ 数据漂移，已删除。
+
+    无 env 时（dev 直跑 server）保持 dev 语义：项目根/database。
+    """
     env_path = os.environ.get('FAPIAOGO_DB_PATH', '').strip()
     if env_path:
         try:
-            normalized = os.path.normpath(env_path)
-            abs_path = os.path.abspath(normalized)
-            if os.path.isfile(abs_path):
-                return os.path.dirname(abs_path)
-            if os.path.isdir(abs_path):
-                return abs_path
-            parent = os.path.dirname(abs_path)
-            if parent:
-                return parent
+            abs_path = os.path.abspath(os.path.normpath(env_path))
+            os.makedirs(abs_path, exist_ok=True)  # 固定落点：不存在则创建，绝不漂移
+            return abs_path
         except (OSError, ValueError):
-            logger.warning("环境变量 FAPIAOGO_DB_PATH 路径无效，使用默认路径")
+            logger.warning("环境变量 FAPIAOGO_DB_PATH 无效或不可创建: %r，使用默认路径", env_path)
 
     dev_path = Path(__file__).resolve().parent.parent / 'database'
     if dev_path.exists():

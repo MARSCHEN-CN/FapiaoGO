@@ -2,14 +2,22 @@ import os
 import sys
 import tempfile
 
-# OCR 结果缓存目录 - 位于项目根目录的 database 文件夹下
-# PyInstaller frozen 模式下用 sys.executable 所在目录
-if getattr(sys, 'frozen', False):
-    BACKEND_DIR = os.path.dirname(sys.executable)
+# OCR 结果缓存目录（DATA-PATH Contract v1.1）
+# 优先 env FAPIAOGO_DB_PATH（main.js 注入 = DATA_ROOT，EXE 同级/database）
+# → OCR cache = DATA_ROOT/.ocr_cache（跟程序走，安装版 Program Files 也可写）。
+# 旧逻辑：frozen → sys.executable 推导 resources/backend/database → 安装版
+# Program Files 只读 → makedirs 被 except 吞掉 → OCR cache 静默失效，已废弃。
+env_db = os.environ.get('FAPIAOGO_DB_PATH', '').strip()
+if env_db:
+    DATABASE_DIR = os.path.abspath(os.path.normpath(env_db))
 else:
-    BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.dirname(BACKEND_DIR)
-DATABASE_DIR = os.path.join(PROJECT_ROOT, 'database')
+    # dev 直跑 server（无 env）：项目根/database（原语义）
+    if getattr(sys, 'frozen', False):
+        BACKEND_DIR = os.path.dirname(sys.executable)
+    else:
+        BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
+    PROJECT_ROOT = os.path.dirname(BACKEND_DIR)
+    DATABASE_DIR = os.path.join(PROJECT_ROOT, 'database')
 OCR_CACHE_DIR = os.path.join(DATABASE_DIR, '.ocr_cache')
 try:
     os.makedirs(OCR_CACHE_DIR, exist_ok=True)

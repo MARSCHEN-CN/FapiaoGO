@@ -931,8 +931,9 @@ async function startBackendServer() {
       PYTHONIOENCODING: 'utf-8',
       FLASK_PORT: '5000',
       OCR_MODEL_DIR: modelDir,
-      // 数据库路径：Electron 自身也用 userData，保持一致
-      FAPIAOGO_DB_PATH: path.join(app.getPath('userData'), '.fapiaogo'),
+      // DP-2D：数据库路径 = DATA_ROOT（Contract v1.1，跟程序走）。
+      // 旧逻辑 userData/.fapiaogo 存在目录漂移（isdir 失败落 parent）→ 已废弃。
+      FAPIAOGO_DB_PATH: getDataRoot(),
     },
   })
   backendProcess.stdout?.on('data', d => {

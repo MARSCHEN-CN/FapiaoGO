@@ -112,9 +112,15 @@ class JobStore:
     
     def __init__(self, storage_path: str = None):
         if storage_path is None:
-            backend_dir = os.path.dirname(os.path.abspath(__file__))
-            project_root = os.path.dirname(backend_dir)
-            database_dir = os.path.join(project_root, 'database')
+            # DATA-PATH Contract v1.1：优先 env FAPIAOGO_DB_PATH（= DATA_ROOT）
+            # → parse_jobs.json 跟程序走；无 env（dev 直跑）→ 项目根/database（原语义）
+            env_db = os.environ.get('FAPIAOGO_DB_PATH', '').strip()
+            if env_db:
+                database_dir = os.path.abspath(os.path.normpath(env_db))
+            else:
+                backend_dir = os.path.dirname(os.path.abspath(__file__))
+                project_root = os.path.dirname(backend_dir)
+                database_dir = os.path.join(project_root, 'database')
             storage_path = os.path.join(database_dir, 'parse_jobs.json')
         
         self.storage_path = storage_path
