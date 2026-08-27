@@ -283,7 +283,7 @@ async function process(inputPath, settings, opts = {}) {
     const args = standalone ? ['placement-bake', ...baseArgs] : [BAKE_SCRIPT, ...baseArgs]
     console.log('[PLACEMENT_BAKE] Spawning:', cmdExe, args.join(' '))
     const startTime = Date.now()
-    execFile(cmdExe, args, { timeout, maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
+    execFile(cmdExe, args, { timeout, maxBuffer: 10 * 1024 * 1024, windowsHide: true }, (err, stdout, stderr) => {
       const elapsed = Date.now() - startTime
       // spec 文件用完即删
       try { if (fs.existsSync(specFile)) fs.unlinkSync(specFile) } catch (e) { /* ignore */ }

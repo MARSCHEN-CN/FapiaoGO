@@ -528,7 +528,7 @@ class OsLauncherBridge extends EventEmitter {
         {
           timeout: 120000,
           env: process.env,
-          windowsHide: false,
+          windowsHide: true, // CONSOLE-1: 与 print-backend 发射器一致，隐藏子进程窗口
           cwd: path.dirname(this.sumatraPath),
           stdio: ['ignore', 'pipe', 'pipe'],
         }

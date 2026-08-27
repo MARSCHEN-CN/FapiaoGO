@@ -185,7 +185,7 @@ async function _doCheckPythonEnv() {
     const { stdout, stderr } = await execPromise(
       pythonCmd,
       ['-c', 'import pikepdf; print("OK")'],
-      { timeout: 10_000 }
+      { timeout: 10_000, windowsHide: true } // CONSOLE-1: 隐藏 console 应用窗口
     )
     const ok = stdout.trim() === 'OK'
     const result = { ok, cmd: pythonCmd }
@@ -385,7 +385,7 @@ async function process(inputPath, margins, isImage, orientation, opts, timeout =
     console.log('[PDF_MARGIN] Spawning:', pythonCmd, args.join(' '))
 
     const startTime = Date.now()
-    const child = execFile(pythonCmd, args, { timeout }, (err, stdout, stderr) => {
+    const child = execFile(pythonCmd, args, { timeout, windowsHide: true }, (err, stdout, stderr) => {
       const elapsed = Date.now() - startTime
       if (err) {
         if (err.killed) {

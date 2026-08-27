@@ -221,6 +221,7 @@ async function createArchiveWith7z(files, archivePath, sevenZipPath, { strictNam
         cwd: tempDir,
         timeout: 300000,
         maxBuffer: 1024 * 1024,
+        windowsHide: true, // CONSOLE-1: 7z 是 console 应用，隐藏窗口
       }, (error) => {
         if (error) {
           reject(new Error(`7z 创建失败: ${error.message}`))
@@ -271,7 +272,7 @@ async function initArchivePaths() {
   if (find7zPath() === null) {
     try {
       const result = await new Promise((resolve) => {
-        execFile('where.exe', ['7z'], { encoding: 'utf-8', timeout: 3000 }, (err, stdout) => {
+        execFile('where.exe', ['7z'], { encoding: 'utf-8', timeout: 3000, windowsHide: true }, (err, stdout) => {
           resolve(err ? null : stdout)
         })
       })
@@ -286,7 +287,7 @@ async function initArchivePaths() {
   if (findWinRarPath() === null) {
     try {
       const result = await new Promise((resolve) => {
-        execFile('where.exe', ['rar'], { encoding: 'utf-8', timeout: 3000 }, (err, stdout) => {
+        execFile('where.exe', ['rar'], { encoding: 'utf-8', timeout: 3000, windowsHide: true }, (err, stdout) => {
           resolve(err ? null : stdout)
         })
       })
@@ -325,6 +326,7 @@ async function createRarWithWinRAR(files, archivePath, rarPath, { strictNames = 
         cwd: tempDir,
         timeout: 300000,
         maxBuffer: 1024 * 1024,
+        windowsHide: true, // CONSOLE-1: rar 是 console 应用，隐藏窗口
       }, (error) => {
         if (error) {
           reject(new Error(`WinRAR 创建失败: ${error.message}`))
