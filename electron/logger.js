@@ -262,6 +262,31 @@ class Logger {
       this.writeToFile('DEBUG', message)
     }
   }
+
+  /**
+   * R4-P0-8-B：受控诊断开关 —— 全局 console.log/error/warn 双写到文件日志。
+   *
+   * 仅诊断构建启用（main.js 在 FAPAIAO_CONSOLE_REDIRECT=1 时调用）；
+   * 不改变任何打印/业务逻辑；正式 Release 不启用（logger 默认不污染全局 console）。
+   * 幂等：重复调用不叠加代理。
+   */
+  redirectConsole() {
+    if (this._consoleRedirected) return
+    this._consoleRedirected = true
+    const self = this
+    console.log = (...args) => {
+      originalLog.apply(console, args)
+      self.log(...args)
+    }
+    console.error = (...args) => {
+      originalError.apply(console, args)
+      self.error(...args)
+    }
+    console.warn = (...args) => {
+      originalWarn.apply(console, args)
+      self.warn(...args)
+    }
+  }
 }
 
 const logger = new Logger()

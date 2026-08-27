@@ -1529,6 +1529,12 @@ if (!gotTheLock) {
   app.whenReady().then(async () => {
     logger.init()  // 初始化日志模块
 
+    // R4-P0-8-B：受控诊断开关。FAPAIAO_CONSOLE_REDIRECT=1 时把 console.* 双写到
+    // %APPDATA%\FapiaoGO\logs\（现场抓打印链）。正式 Release 默认不启用。
+    if (process.env.FAPAIAO_CONSOLE_REDIRECT === '1') {
+      logger.redirectConsole()
+    }
+
     // 🔧 产品决策（2026-08-09）：旋转 / 纸张方向选择不跨重启保留。
     // 启动时清空 DocFacts.json（旋转/纸张方向持久层），每次启动从 auto 推导开始
     // （contentRotation=0, requestedPaperOrientation=文档自然方向）。
