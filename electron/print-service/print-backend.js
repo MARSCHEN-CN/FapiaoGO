@@ -22,6 +22,7 @@
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const { app } = require('electron');
 const { resolvePrintTarget } = require('./print-target');
 const { buildPrintSettings } = require('./print-settings');
 const { enhanceWithCapability } = require('./printer-capability');
@@ -46,6 +47,19 @@ function getSumatraPath() {
   // 命中缓存则跳过多次 existsSync 探测
   if (_sumatraPathCache !== undefined) {
     return _sumatraPathCache;
+  }
+
+  // 打包环境（R4-P0-5-A I-2a）：捆绑 SumatraPDF 在 resources/sumatra（asar 外，extraResources）。
+  // 与 OsLauncherBridge.getSumatraPath 同一模式：app.isPackaged → process.resourcesPath。
+  // 此前仅用 __dirname/../../resources 推断，打包后指向 app.asar 内（只读归档）→ 找不到 → 打印全失败。
+  if (app && app.isPackaged && process.resourcesPath) {
+    const packagedPath = path.join(process.resourcesPath, 'sumatra', 'SumatraPDF.exe');
+    try {
+      if (fs.existsSync(packagedPath)) {
+        _sumatraPathCache = packagedPath;
+        return _sumatraPathCache;
+      }
+    } catch (e) { /* ignore：继续回退查找 */ }
   }
 
   // 项目捆绑的 SumatraPDF（与 OsLauncherBridge 一致）
