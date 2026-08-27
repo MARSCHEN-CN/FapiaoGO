@@ -603,6 +603,9 @@ ipcMain.handle('print-source-file', async (_event, { target, settings, pipeline 
     // C-2 Step 4-2b-1：Plan placement 生产接线判定（placement + executionPaper + PDF 源
     // + Sumatra 纸 == executionPaper；任一不满足 → false，走原路径）
     const bakeEnabled = placementBake.hasPlacement(settings, target.filePath)
+    // PRINT-2（R4-P0-8-C）：bake 降级时若用户设置了安全边距 → 回落 margin 路径，
+    // 不再静默退化为「原图打印」导致边距丢失（P1 根因之一）。
+    let bakeDegraded = false
     console.log('[print-source-file] hasMargins=%s fileExt=%s bakeEnabled=%s', hasMargins, fileExt, bakeEnabled)
     if (bakeEnabled) {
       // 4-2b-1 接线 + 4-2b-2（D2）执行策略：
@@ -631,9 +634,15 @@ ipcMain.handle('print-source-file', async (_event, { target, settings, pipeline 
         console.log('[print-source-file] G2-R2 bake executor command: orient=%s rotate=%s',
           printSettings.commandOrientation, printSettings.commandRotate);
       } else {
-        console.log('[print-source-file] Placement bake degraded → print original (fit)')
+        // PRINT-2：bake 降级 → 若 hasMargins 则回落 margin 路径（下方统一处理）
+        bakeDegraded = true
+        console.log('[print-source-file] Placement bake degraded → %s',
+          hasMargins && imgExts.includes(fileExt) ? 'margin fallback (PRINT-2)' : 'print original (fit)')
       }
-    } else if (hasMargins && imgExts.includes(fileExt)) {
+    }
+
+    // margin 路径：直接命中（非 bake）或 PRINT-2 bake 降级回落
+    if ((bakeDegraded || !bakeEnabled) && hasMargins && imgExts.includes(fileExt)) {
       console.log('[print-source-file] Margins WILL be applied')
       const margins = pdfMargin.extractMargins(settings)
       const orient = settings.contentOrientation
