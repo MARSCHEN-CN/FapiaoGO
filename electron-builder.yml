@@ -175,8 +175,15 @@ extraResources:
 win:
   target:
     - nsis
+    - zip
     - dir
   icon: resources/icon.ico
+
+# R4-P0-3: 绿色版 Portable（ZIP）。electron-builder 默认模板即
+# ${productName}-${version}-${os}-${arch}.${ext} → FapiaoGO-1.0.0-win-x64.zip，
+# 此处显式固定命名（与版本规范一致）。绿色版不进 latest.yml 主链（updater 只认 nsis）。
+zip:
+  artifactName: ${productName}-${version}-${os}-${arch}.${ext}
 
 # NSIS 安装程序配置
 nsis:
