@@ -179,11 +179,9 @@ win:
     - dir
   icon: resources/icon.ico
 
-# R4-P0-3: 绿色版 Portable（ZIP）。electron-builder 默认模板即
-# ${productName}-${version}-${os}-${arch}.${ext} → FapiaoGO-1.0.0-win-x64.zip，
-# 此处显式固定命名（与版本规范一致）。绿色版不进 latest.yml 主链（updater 只认 nsis）。
-zip:
-  artifactName: ${productName}-${version}-${os}-${arch}.${ext}
+# R4-P0-3: 绿色版 Portable（ZIP）。zip 无专属顶层配置块；
+# 默认 artifactName 模板即 ${productName}-${version}-${os}-${arch}.${ext}
+# → FapiaoGO-1.0.0-win-x64.zip（与版本规范一致）。绿色版不进 latest.yml 主链（updater 只认 nsis）。
 
 # NSIS 安装程序配置
 nsis:
