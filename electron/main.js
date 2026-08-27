@@ -8,6 +8,27 @@ const path = require('path')
 const fs = require('fs')
 const os = require('os')
 const http = require('http')
+
+// ============================
+// DP-2B Early Bootstrap — 统一数据根（DATA-PATH Contract v1.1）
+// 必须在任何 app.getPath('userData') 之前执行：
+//   · main.js 下方 settingsPath（模块加载期）
+//   · ConfigService.js:14 CONFIG_DIR（main.js 稍后 require，模块加载期）
+// 原则：DATA_ROOT/USERDATA_ROOT 恒 = EXE 同级（dev = 项目根）；
+// 不可写 → 明确报错退出，绝不静默 fallback 到 %APPDATA%。
+// ============================
+const { ensureDataRoots } = require('./shared/data-root')
+const dataRootCheck = ensureDataRoots()
+if (!dataRootCheck.ok) {
+  dialog.showErrorBox(
+    'FapiaoGO 无法启动',
+    '当前安装目录没有写入权限，无法创建数据目录。\n\n' +
+    '请将程序安装/解压到可写目录（如 D:\\FapiaoGO），\n或以管理员权限运行。'
+  )
+  process.exit(1)
+}
+app.setPath('userData', dataRootCheck.userDataRoot)
+
 const { extractMediaBoxAsync } = require('./shared/pdf-orientation')
 
 // ============================

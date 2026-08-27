@@ -47,7 +47,9 @@ function getUserDataRoot() {
 }
 
 /**
- * 可写性探测：mkdir -p + 写/删探测文件。
+ * 可写性探测：mkdir -p + 写探测文件。
+ * 语义：可写 = 能创建文件（mkdir + writeFileSync 成功）；探测文件清理为
+ * best-effort（unlink 失败不代表目录不可写——某些环境/沙箱会拦截删除）。
  * 失败返回 { ok:false, error }（不抛异常，由调用方决定报错退出）。
  *
  * @param {string} dir 目标目录
@@ -55,14 +57,18 @@ function getUserDataRoot() {
  */
 function ensureWritable(dir, fsImpl) {
   const fs = fsImpl || require('fs')
+  let probe = null
   try {
     fs.mkdirSync(dir, { recursive: true })
-    const probe = path.join(dir, `.writetest-${process.pid}-${Date.now()}`)
+    probe = path.join(dir, `.writetest-${process.pid}-${Date.now()}`)
     fs.writeFileSync(probe, 'ok')
-    fs.unlinkSync(probe)
     return { ok: true }
   } catch (e) {
     return { ok: false, error: (e && e.message) ? e.message : String(e) }
+  } finally {
+    if (probe) {
+      try { fs.unlinkSync(probe) } catch (_) { /* best-effort 清理，忽略失败 */ }
+    }
   }
 }
 
