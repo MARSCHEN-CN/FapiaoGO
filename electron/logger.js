@@ -60,14 +60,19 @@ class Logger {
     if (this.logFile) return
 
     try {
-      // 使用项目根目录下的 database/logs 文件夹
-      // __dirname 是 electron 目录的绝对路径
-      // 向上一级到达项目根目录
-      let appRootPath = path.normalize(__dirname)
-      appRootPath = path.join(appRootPath, '..')
-      appRootPath = path.normalize(appRootPath)
-
-      const logDir = path.join(appRootPath, 'database', 'logs')
+      // R4-P0-5-A I-2b：生产版（打包）日志目录改到 userData/logs（可写）。
+      // 旧逻辑用 __dirname/../database/logs，打包后 __dirname=app.asar/electron →
+      // 日志目标落在只读 asar 归档内 → 生产日志全部静默丢失。
+      // dev 保持原语义（项目根 database/logs）。
+      let logDir
+      if (app && app.isPackaged) {
+        logDir = path.join(app.getPath('userData'), 'logs')
+      } else {
+        let appRootPath = path.normalize(__dirname)
+        appRootPath = path.join(appRootPath, '..')
+        appRootPath = path.normalize(appRootPath)
+        logDir = path.join(appRootPath, 'database', 'logs')
+      }
       if (!fs.existsSync(logDir)) {
         fs.mkdirSync(logDir, { recursive: true })
       }
