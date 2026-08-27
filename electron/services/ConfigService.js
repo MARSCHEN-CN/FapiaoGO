@@ -3,15 +3,16 @@
 /**
  * ConfigService — 共享配置读写服务。
  *
- * 所有 services 统一通过此文件读写 userData/config.json。
- * 避免各 Manager 各自存 Config，分散配置来源。
+ * 所有 services 统一通过此文件读写 DATA_ROOT/config.json（Contract v1.1：
+ * 业务数据跟程序走，不落 %APPDATA%）。
  */
 
 const path = require('path')
 const fs = require('fs')
 const { app } = require('electron')
+const { getDataRoot } = require('../shared/data-root')
 
-const CONFIG_DIR = app.getPath('userData')
+const CONFIG_DIR = getDataRoot()
 const CONFIG_PATH = path.join(CONFIG_DIR, 'config.json')
 
 const DEFAULT_CONFIG = {

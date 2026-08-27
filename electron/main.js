@@ -17,7 +17,7 @@ const http = require('http')
 // 原则：DATA_ROOT/USERDATA_ROOT 恒 = EXE 同级（dev = 项目根）；
 // 不可写 → 明确报错退出，绝不静默 fallback 到 %APPDATA%。
 // ============================
-const { ensureDataRoots } = require('./shared/data-root')
+const { ensureDataRoots, getDataRoot } = require('./shared/data-root')
 const dataRootCheck = ensureDataRoots()
 if (!dataRootCheck.ok) {
   dialog.showErrorBox(
@@ -131,8 +131,8 @@ if (process.platform === 'win32') {
 let mainWindow
 let settingsWindow
 let calculatorWindow
-// ✅ 使用 app.getPath('userData') 构建配置路径，避免依赖工作目录
-const settingsPath = path.join(app.getPath('userData'), 'Settings.json')
+// DP-2C：业务数据收敛 DATA_ROOT（Contract v1.1）——Settings.json 跟程序走
+const settingsPath = path.join(getDataRoot(), 'Settings.json')
 
 let pendingFilesFromContextMenu = []
 
@@ -1405,7 +1405,7 @@ ipcMain.handle('load-excel-export-columns', async () => {
 //   app.whenReady() 启动时清空本文件（见上方 BOOT 段），每次启动从 auto 推导开始；
 //   本 IPC 仅服务**会话内**（切换文件恢复 / L2 缓存键一致）。
 // ============================
-const docFactsPath = path.join(app.getPath('userData'), 'DocFacts.json')
+const docFactsPath = path.join(getDataRoot(), 'DocFacts.json')
 
 async function readDocFacts() {
   try {

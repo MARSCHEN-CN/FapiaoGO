@@ -10,7 +10,7 @@
  * ║  All consumers (preview, print, UI) will automatically adapt.    ║
  * ║                                                                  ║
  * ║  System papers:  source-controlled, immutable at runtime         ║
- * ║  User papers:    stored in app.getPath('userData'), mutable      ║
+ * ║  User papers:    stored in DATA_ROOT/paper-registry, mutable     ║
  * ║  Effective:      computed = system + user, never persisted       ║
  * ╚══════════════════════════════════════════════════════════════════╝
  */

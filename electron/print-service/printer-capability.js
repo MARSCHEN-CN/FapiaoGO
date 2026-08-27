@@ -27,6 +27,7 @@ const { spawn, exec } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const { PaperRegistryProvider } = require('../shared/PaperRegistryProvider');
+const { getDataRoot } = require('../shared/data-root');
 
 // ─── SumatraPDF 路径查找（复用 print-backend 逻辑） ──────────────
 
@@ -427,12 +428,9 @@ const MAX_MEMORY_ENTRIES = 10;
 const _memoryCache = new Map();
 
 async function _getCacheDir() {
-  // 优先用 app.getPath('userData')，但这里可能没有 Electron 上下文
-  // fallback 到项目目录下的 printer-cache 文件夹
-  const userDataDir = process.env.APPDATA
-    ? path.join(process.env.APPDATA, 'FapiaoGO')
-    : path.join(__dirname, '../../printer-cache');
-  const cacheDir = path.join(userDataDir, 'printer-cache');
+  // DP-2C：printer-cache 收敛 DATA_ROOT（Contract v1.1，跟程序走）。
+  // 旧逻辑硬拼 %APPDATA%/FapiaoGO → 违反 Contract；现统一 getDataRoot()/printer-cache。
+  const cacheDir = path.join(getDataRoot(), 'printer-cache');
   // 异步创建目录，避免打印/解析链路主线程被 mkdir 阻塞（_loadDiskCache/_saveDiskCache 均为 async）
   try {
     await fs.promises.mkdir(cacheDir, { recursive: true });

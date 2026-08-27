@@ -3,10 +3,10 @@
  * ║  UserPaperStore — User-Defined Paper Persistence                ║
  * ║                                                                  ║
  * ║  Contract: USER_PAPER_CONTRACT.md (Section 2.3, 4)              ║
- * ║  Location: app.getPath('userData')/paper-registry/              ║
+ * ║  Location: DATA_ROOT/paper-registry/  (Contract v1.1, 跟程序走)  ║
  * ║                                                                  ║
  * ║  Rules:                                                          ║
- * ║  - Not source-controlled (in userData)                            ║
+ * ║  - Not source-controlled (in DATA_ROOT)                           ║
  * ║  - Survives app restart and update                               ║
  * ║  - Editable through future Settings UI                           ║
  * ║  - Atomic writes (write temp + rename)                           ║
@@ -18,6 +18,7 @@
 const fs = require('fs')
 const path = require('path')
 const { app } = require('electron')
+const { getDataRoot } = require('./data-root')
 
 // ─── Constants ───────────────────────────────────────────────────
 
@@ -33,7 +34,7 @@ const MAX_LABEL_LENGTH = 100
 // ─── Helpers ─────────────────────────────────────────────────────
 
 function getStorageDir() {
-  return path.join(app.getPath('userData'), 'paper-registry')
+  return path.join(getDataRoot(), 'paper-registry')
 }
 
 function getStoragePath() {
