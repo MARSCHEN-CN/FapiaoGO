@@ -148,6 +148,10 @@ async function checkPythonEnv() {
 }
 
 async function _doCheckPythonEnv() {
+  // R4-P0-8-F PROBE: 运行时资源路径审计（诊断用，验证后删除）
+  const _probeExe = path.join(RESOURCES_BASE, 'tools/pdf_tool/pdf_tool.exe')
+  console.log('[PDF_MARGIN][PATH_AUDIT] __dirname=%s app.isPackaged=%s resourcesPath=%s RESOURCES_BASE=%s standaloneExe=%s exists=%s',
+    __dirname, app && app.isPackaged, process.resourcesPath, RESOURCES_BASE, _probeExe, fs.existsSync(_probeExe))
   if (isProd) {
     // 生产环境：独立 pdf_tool.exe（R2-3 双 CLI：PNG→PDF 子命令 + 边距长旗标）。
     // 存在则 standalone 使用（process() 以 exe 为 argv[0]，--input/--output/... 旗标直通，

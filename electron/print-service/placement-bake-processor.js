@@ -235,6 +235,11 @@ async function process(inputPath, settings, opts = {}) {
   const outputDir = opts.outputDir
   const timeout = opts.timeout || DEFAULT_TIMEOUT
 
+  // R4-P0-8-F PROBE: 运行时资源路径审计（诊断用，验证后删除）
+  console.log('[PLACEMENT_BAKE][PATH_AUDIT] __dirname=%s app.isPackaged=%s resourcesPath=%s PDF_TOOL_EXE=%s exists=%s isPackagedRuntime=%s',
+    __dirname, app && app.isPackaged, process.resourcesPath, PDF_TOOL_EXE,
+    !!(PDF_TOOL_EXE && fs.existsSync(PDF_TOOL_EXE)), isPackagedRuntime())
+
   if (!inputPath || !fs.existsSync(inputPath)) {
     console.warn('[PLACEMENT_BAKE] Input file not found:', inputPath)
     return { path: inputPath }
