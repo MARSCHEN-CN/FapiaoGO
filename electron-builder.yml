@@ -187,9 +187,12 @@ nsis:
   shortcutName: "FapiaoGO"
   perMachine: false
   differentialPackage: true
+  # R4-B1: 固定产物命名（连字符），保证 产物文件名 == latest.yml path == GitHub Release asset 三者一致。
+  # 此前默认 `<productName> Setup <version>.exe`（空格）与 latest.yml 的连字符形式不一致 → 更新下载 404。
+  artifactName: ${productName}-Setup-${version}.${ext}
 
-# 自动更新配置 — 生产发布时启用
-# publish:
-#   provider: github
-#   owner: MARSCHEN-CN
-#   repo: FapiaoGO
+# 自动更新配置（R4-B2: 恢复 provider；构建阶段不带 --publish 即不会上传，latest.yml 照常生成）
+publish:
+  provider: github
+  owner: MARSCHEN-CN
+  repo: FapiaoGO
