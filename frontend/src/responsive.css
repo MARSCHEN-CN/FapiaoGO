@@ -99,10 +99,10 @@
     display: none;
   }
 
-  /* Sidebar brand: logo size（与 sidebar.css 基础 41px 同步） */
+  /* Sidebar brand: logo size（与 sidebar.css 基础 42px 同步） */
   .sb-brand-logo {
-    width: 41px;
-    height: 41px;
+    width: 42px;
+    height: 42px;
     border-radius: 8px;
   }
 
