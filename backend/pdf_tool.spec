@@ -44,7 +44,11 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    # PACKAGE-SIZE-1 SIZE-1B-1（2026-08-28）：排除 Tcl/Tk（-6.36MB / 835 文件）。
+    # 取证：源码链零 tkinter 引用；根因 = collect_submodules('PIL') 无差别收集 PIL.ImageTk
+    # （顶层 import tkinter）→ 触发 PyInstaller tkinter hook 拖入全套 tcl/tk data。
+    # 运行链（png-to-pdf/margin/placement-bake，stdout JSON IPC）不依赖 GUI，excludes 安全。
+    excludes=['tkinter', '_tkinter', 'tcl', 'tk', 'PIL.ImageTk', 'PIL._tkinter_finder', 'PIL._imagingtk'],
     noarchive=False,
     optimize=0,
 )
