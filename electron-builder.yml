@@ -153,9 +153,10 @@ extraResources:
   # SumatraPDF 打印引擎
   - from: resources/sumatra
     to: sumatra
-  # OCR 模型（顶层目录，Electron 通过 OCR_MODEL_DIR env 注入给 server.exe）
-  - from: resources/models
-    to: models
+  # OCR 模型（SIZE-1D-1 删除：不再复制第二份到 resources/models。
+  #  生产唯一模型源 = backend/server/_internal/models（PyInstaller datas，server.spec 打包；
+  #  ocr_engine._resolve_model_dir frozen 0a 分支优先，release_r35 运行日志实证）。
+  #  删除仅消除发布包重复副本；开发资源 resources/models 与 OCR 加载逻辑均未动。）
   # 应用图标（生产模式下 process.resourcesPath/icon.ico）
   - from: resources/icon.ico
     to: icon.ico
