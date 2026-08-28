@@ -10,6 +10,10 @@ directories:
 # 启用 asar — 保护源代码，减小文件数量
 asar: true
 
+# WINDOW-CONSOLE-1 构建修正：项目无原生模块（archiver/electron-updater 均为纯 JS），
+# 跳过 @electron/rebuild 原生依赖重建，避免打包期 proper-lockfile 锁冲突（Lock file is already being held）。
+npmRebuild: false
+
 # 打包进 app.asar 的文件
 files:
   - "electron/**/*"
