@@ -194,6 +194,9 @@ function createWindow() {
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: true,
+      // WINDOW-CONSOLE-1 W2：生产环境禁用 DevTools（devTools 默认 true，会保留默认菜单的
+      // Ctrl+Shift+I / F12 加速器；打包版必须显式关掉）。开发模式保留以便调试。
+      devTools: isDev,
       preload: path.join(__dirname, 'preload.js')
     }
   })
@@ -360,6 +363,7 @@ function createSettingsWindow() {
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: true,
+      devTools: isDev,
       preload: path.join(__dirname, 'preload.js')
     }
   })
@@ -451,6 +455,7 @@ function createCalculatorWindow() {
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: true,
+      devTools: isDev,
       preload: path.join(__dirname, 'preload.js')
     }
   })
@@ -1608,6 +1613,13 @@ if (!gotTheLock) {
     // 生产模式下 spawn Python Flask 后端、扫描临时目录清理孤儿文件、加载用户纸张配置等操作
     // 均在窗口创建后于后台异步执行，消除启动白屏等待。前端首屏不依赖 Flask API（设置/打印机均走 IPC），
     // 后端在用户首次触发导入/预览前（通常1-2秒后）必然就绪。
+
+    // WINDOW-CONSOLE-1 W2：生产环境移除默认应用菜单（含 Ctrl+Shift+I / F12 等 DevTools 加速器）。
+    // 仅打包版生效；开发模式保留默认菜单以便调试。销毁级操作须在窗口创建前完成。
+    if (!isDev) {
+      Menu.setApplicationMenu(null)
+    }
+
     createWindow()
 
     // ── 以下为非关键初始化，全部后台异步执行，不阻塞窗口显示 ──
