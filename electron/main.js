@@ -180,9 +180,14 @@ function getFilesFromCommandLine() {
 // 窗口创建
 // ============================
 function createWindow() {
+  // 主窗口尺寸按分辨率分级（1080p 及以下：1000×660 用户实测校准，内容 1:1；
+  // 2K/4K：1200×800，由 did-finish-load 的 zoomFactor 补偿显示比例）
+  const { width: _screenW } = screen.getPrimaryDisplay().workAreaSize
+  const mainWidth = _screenW >= 2560 ? 1200 : 1000
+  const mainHeight = _screenW >= 2560 ? 800 : 660
   mainWindow = new BrowserWindow({
-    width: 1200,
-    height: 800,
+    width: mainWidth,
+    height: mainHeight,
     minWidth: 900,
     minHeight: 600,
     resizable: true,
@@ -301,9 +306,11 @@ function createWindow() {
       pendingFilesFromSecondInstance = []
     }
 
-    // 根据屏幕分辨率设置缩放因子（以 2K=2560 为基准）
+    // 根据屏幕分辨率设置缩放因子（以 2K=2560 为基准）。
+    // 1080p 及以下：窗口已分级为 1000×660 → 内容 1:1（下限 1.0，不再 0.85 缩小）。
+    // 2K：1.0；4K：1.5（窗口固定 1200×800 时放大内容补偿）。
     const { width } = screen.getPrimaryDisplay().workAreaSize
-    const zoomFactor = Math.max(0.85, Math.round((width / 2560) * 100) / 100)
+    const zoomFactor = Math.max(1.0, Math.round((width / 2560) * 100) / 100)
     mainWindow.webContents.setZoomFactor(zoomFactor)
   })
 
