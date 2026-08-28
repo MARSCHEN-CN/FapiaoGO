@@ -23,11 +23,12 @@ export default memo(function TopBar({
   const [isDarkMode, setIsDarkMode] = useState(() => {
     // 从 localStorage 加载主题设置
     const savedTheme = localStorage.getItem('theme')
-    if (savedTheme) {
-      return savedTheme === 'dark'
+    // 仅当用户显式保存过 'dark' 时才进入深色；其余情况（首次安装、无历史主题、
+    // 旧版本无主题字段）一律默认浅色，避免跟随系统深色导致首启即深色。
+    if (savedTheme === 'dark') {
+      return true
     }
-    // 默认跟随系统
-    return window.matchMedia?.('(prefers-color-scheme: dark)').matches || false
+    return false
   })
   const [showDropdown, setShowDropdown] = useState(null) // 'menu' | null
   const [showThemeSubmenu, setShowThemeSubmenu] = useState(false)

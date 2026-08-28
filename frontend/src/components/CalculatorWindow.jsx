@@ -9,11 +9,10 @@ import CalculatorModal from './CalculatorModal'
 function readTheme() {
   try {
     const saved = localStorage.getItem('theme')
+    // 仅当用户显式保存过 'dark'/'light' 时采用；其余情况（首次安装、无历史主题、
+    // 旧版本无主题字段）一律默认浅色，不跟随系统。
     if (saved === 'dark' || saved === 'light') return saved
   } catch (_) { /* ignore */ }
-  if (typeof window !== 'undefined' && window.matchMedia) {
-    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
-  }
   return 'light'
 }
 
