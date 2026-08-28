@@ -429,13 +429,13 @@ function createCalculatorWindow() {
     width = 420
     height = 680
     minWidth = 400
-    minHeight = 640
+    minHeight = 680
   } else {
-    // 1080p 及以下：更紧凑，按钮通过 CSS 媒体查询自动缩小
+    // 1080p 及以下：高度固定 660（minHeight=660 同值），宽度 320 起可调
     width = 360
-    height = 580
+    height = 660
     minWidth = 320
-    minHeight = 520
+    minHeight = 660
   }
 
   calculatorWindow = new BrowserWindow({
