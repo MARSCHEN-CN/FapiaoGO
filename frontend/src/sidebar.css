@@ -36,7 +36,6 @@
   align-items: center;
   gap: 11px;
   padding-bottom: clamp(14px, 1vw, 22px);
-  border-bottom: 1px solid var(--border-light);
   margin-bottom: clamp(14px, 1vw, 20px);
   /* 品牌区域可点击，不可拖拽 */
   -webkit-app-region: no-drag;
