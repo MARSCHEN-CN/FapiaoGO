@@ -36,7 +36,8 @@
   align-items: center;
   gap: 11px;
   padding-bottom: clamp(14px, 1vw, 22px);
-  margin-bottom: clamp(14px, 1vw, 20px);
+  /* 与 .sb-actions 的间隔：2K 及以上窗口固定 8px；≤1100px（1080p 窗口）覆盖为 6px（responsive.css） */
+  margin-bottom: 8px;
   /* 品牌区域可点击，不可拖拽 */
   -webkit-app-region: no-drag;
 }

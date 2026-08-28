@@ -106,6 +106,11 @@
     border-radius: 8px;
   }
 
+  /* Sidebar brand ↔ actions 间隔：1080p 窗口（≤1100px）固定 6px（2K 及以上基础 8px） */
+  .sb-brand {
+    margin-bottom: 6px;
+  }
+
   /* Action bar: hide text labels, show only icons */
   .abm-btn-text {
     display: none;
