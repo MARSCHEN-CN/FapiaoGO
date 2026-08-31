@@ -979,8 +979,14 @@ function AppContent() {
     const prevFirstDocId = prevFirstDocIdRef.current
 
     // 场景 1: 首次导入（文件数增加）且无预览 → 首次自动预览
+    // V4 FIX: 增加 firstReady 守卫——首次导入时 session.documents 尚未组装，
+    // displayFiles[0] 可能还是 placeholder（status='uploading'，无 documentId/docId），
+    // 此时发起 handlePreview 会拿到无效数据导致空白。等 InvoiceDocument 就绪后
+    // 场景2（documentId 从无到有）会自然触发正确的自动预览。
     const lenIncreased = displayFiles.length > prevFilesLengthRef.current
-    if (lenIncreased && !previewFile) {
+    const firstItem = displayFiles[0]
+    const firstReady = !!(firstItem?.documentId || firstItem?.docId)
+    if (lenIncreased && !previewFile && firstReady) {
       handlePreview(displayFiles[0])
     }
 
