@@ -14,6 +14,13 @@ asar: true
 # 跳过 @electron/rebuild 原生依赖重建，避免打包期 proper-lockfile 锁冲突（Lock file is already being held）。
 npmRebuild: false
 
+# SIZE-2 体积优化：Electron 自带 55 个 locales/*.pak 共 47MB。
+# 应用面向中文用户，只保留简体中文 + 英文（英文作其他系统语言的回退），预计 -44MB。
+# 注意：此配置由 electron-builder 官方支持，仅过滤 locales 目录，不影响主程序与 asar 内容。
+electronLanguages:
+  - zh-CN
+  - en-US
+
 # 打包进 app.asar 的文件
 files:
   - "electron/**/*"
