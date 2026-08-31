@@ -21,6 +21,11 @@ electronLanguages:
   - zh-CN
   - en-US
 
+# SIZE-2 P1 体积优化：打包后删除运行时确定不加载的 Electron 内置文件
+# （LICENSES.chromium.html ~20MB + dxcompiler/dxil ~26.5MB，合计约 -46.5MB）。
+# 依据见 build/afterPack.js 头部注释与 outputs/SIZE-2-readonly-audit.md。
+afterPack: build/afterPack.js
+
 # 打包进 app.asar 的文件
 files:
   - "electron/**/*"
