@@ -61,12 +61,10 @@ FapiaoGO 是面向日常发票管理场景的桌面工具：导入、识别、�
 
 ## 📦 下载（GitHub Release Assets）
 
-| 文件 | 说明 | SHA-256 |
-|---|---|---|
 | 文件 | 说明 | 大小 | SHA-256 |
 |---|---|---|---|
-| `FapiaoGO-Setup-1.0.0.exe` | 安装版（NSIS），支持自动更新 | 234.1 MB | `ac02b48c7943f65c49064ae9b577364197ec3b08b5e7fd28b9a30defdd348e4f` |
-| `FapiaoGO-v1.0.0-Windows-x64-Portable.zip` | 绿色版（免安装，解压即用） | 300.3 MB | `40f0e4ff4fe5959a0ece0ecc7b34460c7cec804884b5c162e6dba7044f119b81` |
+| `FapiaoGO-Setup-1.0.0.exe` | 安装版（NSIS），支持自动更新 | 234.1 MB | `5213a4411162719a6f22fb5acd0aeb2bfde5802f74bb52aa847cd88b32e61626` |
+| `FapiaoGO-v1.0.0-Windows-x64-Portable.zip` | 绿色版（免安装，解压即用） | 300.3 MB | `488c398fdd5a706b73b26e0e6b77b98fdb6b45f65d34baccae28067568eb2520` |
 
 > 产物为**两件套**（安装版 + 绿色版）。`FapiaoGO-v1.0.0-Windows-x64-Installer.zip` 已废止（与 Setup.exe 内容重复）。
 > 另需随 Release 上传 `latest.yml`（electron-updater 自动更新元数据，其 `url` 为相对路径，必须与 Setup.exe 处于同一 Release）。

@@ -1,8 +1,8 @@
 # FapiaoGO v1.0.0 — SHA-256 校验和
-# 构建：RC-v4（release_final_v4，2026-08-31）
-# Source commit: d7ecadf（= dde9f06 + SIZE-2-A pdf_tool 排除 numpy -30MB）
+# 构建：RC-v5（release_final_v5，2026-08-31，正式打包）
+# Source commit: 98c432b（= d7ecadf + usePreview.js 预览优先 + SumatraPDF 换版 -31KB）
 # 产物标准：两件套（Setup.exe 安装版 + Portable.zip 绿色版）；Installer.zip 已废止
 # 解包体积：win-unpacked 650MB（RC-v3 为 680MB）
 
-ac02b48c7943f65c49064ae9b577364197ec3b08b5e7fd28b9a30defdd348e4f *FapiaoGO-Setup-1.0.0.exe
-40f0e4ff4fe5959a0ece0ecc7b34460c7cec804884b5c162e6dba7044f119b81 *FapiaoGO-v1.0.0-Windows-x64-Portable.zip
+5213a4411162719a6f22fb5acd0aeb2bfde5802f74bb52aa847cd88b32e61626 *FapiaoGO-Setup-1.0.0.exe
+488c398fdd5a706b73b26e0e6b77b98fdb6b45f65d34baccae28067568eb2520 *FapiaoGO-v1.0.0-Windows-x64-Portable.zip
