@@ -48,7 +48,18 @@ a = Analysis(
     # 取证：源码链零 tkinter 引用；根因 = collect_submodules('PIL') 无差别收集 PIL.ImageTk
     # （顶层 import tkinter）→ 触发 PyInstaller tkinter hook 拖入全套 tcl/tk data。
     # 运行链（png-to-pdf/margin/placement-bake，stdout JSON IPC）不依赖 GUI，excludes 安全。
-    excludes=['tkinter', '_tkinter', 'tcl', 'tk', 'PIL.ImageTk', 'PIL._tkinter_finder', 'PIL._imagingtk'],
+    #
+    # SIZE-2-A（2026-08-31）：排除 numpy（-28MB = numpy 7MB + numpy.libs 21MB OpenBLAS）。
+    # 同构根因：collect_submodules('PIL') 无差别收集 → 命中 PIL.ImageFilter（hook-PIL.ImageFilter.py
+    # 把 numpy 声明为可选依赖）→ 拖入 numpy + numpy.libs。三层证据：
+    #   ① 源码链（pdf_tool_entry/pdf_tool/margin_contract/placement_bake/flatten_annotations）零 numpy
+    #   ② 第三方闭包（pikepdf / pymupdf / img2pdf）零 numpy（img2pdf 单文件模块，仅依赖 PIL）
+    #   ③ PyInstaller/hooks/hook-PIL.ImageFilter.py 命中 numpy 声明
+    # 注：server.spec 侧的 numpy 是真依赖（cv2 / rapidocr 推理路径），此处排除不影响 OCR。
+    excludes=[
+        'tkinter', '_tkinter', 'tcl', 'tk', 'PIL.ImageTk', 'PIL._tkinter_finder', 'PIL._imagingtk',
+        'numpy',
+    ],
     noarchive=False,
     optimize=0,
 )
