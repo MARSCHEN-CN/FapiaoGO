@@ -70,16 +70,78 @@ class NameCleaner:
                 break
 
         # 处理多后缀粘连
-        # 找到最后一个公司后缀的位置
+        # 规则：括号内部的后缀不算公司名后缀；后缀后紧跟完整括号则保留括号内容
+        def _find_bracket_ranges(s: str) -> list:
+            """扫描字符串，返回所有完整括号区间 [(open_idx, close_idx+1), ...]。
+            支持全角（）和半角()，不处理嵌套（实际场景罕见）。
+            不配对的左括号会被跳过。"""
+            ranges = []
+            i = 0
+            while i < len(s):
+                if s[i] in ('（', '('):
+                    open_ch = s[i]
+                    close_ch = '）' if open_ch == '（' else ')'
+                    depth = 1
+                    j = i + 1
+                    found = False
+                    while j < len(s):
+                        if s[j] == open_ch:
+                            depth += 1
+                        elif s[j] == close_ch:
+                            depth -= 1
+                            if depth == 0:
+                                ranges.append((i, j + 1))
+                                found = True
+                                break
+                        j += 1
+                    if found:
+                        i = j + 1
+                    else:
+                        i += 1  # 不配对的左括号，跳过继续
+                else:
+                    i += 1
+            return ranges
+
+        _bracket_ranges = _find_bracket_ranges(name)
+
+        def _in_any_bracket(pos: int) -> bool:
+            for bs, be in _bracket_ranges:
+                if bs <= pos < be:
+                    return True
+            return False
+
         last_suffix_pos = -1
         last_suffix = ''
         for suffix in COMPANY_SUFFIX_LIST:
             pos = name.rfind(suffix)
-            if pos > last_suffix_pos:
+            if pos > last_suffix_pos and not _in_any_bracket(pos):
+                # 后缀起始位置在括号内部 → 不参与"多后缀粘连"截断判断
                 last_suffix_pos = pos
                 last_suffix = suffix
+
         if last_suffix_pos > 0:
-            name = name[:last_suffix_pos + len(last_suffix)]
+            cut_end = last_suffix_pos + len(last_suffix)
+
+            # 如果后缀结束后紧跟完整括号（跳过空白）→ 保留括号补充说明
+            tail_idx = cut_end
+            while tail_idx < len(name) and name[tail_idx] == ' ':
+                tail_idx += 1
+            if tail_idx < len(name) and name[tail_idx] in ('（', '('):
+                open_ch = name[tail_idx]
+                close_ch = '）' if open_ch == '（' else ')'
+                depth = 1
+                j = tail_idx + 1
+                while j < len(name):
+                    if name[j] == open_ch:
+                        depth += 1
+                    elif name[j] == close_ch:
+                        depth -= 1
+                        if depth == 0:
+                            cut_end = j + 1
+                            break
+                    j += 1
+
+            name = name[:cut_end]
 
         return name.strip()
 
