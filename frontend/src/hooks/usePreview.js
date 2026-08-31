@@ -1665,9 +1665,12 @@ export function usePreview({ files, settings, electronAPIRef }) {
         const validLoaded = loaded.filter(Boolean)
         // ✅ 检查版本号，确保只处理最新请求
         if (validLoaded.length > 0 && version === previewVersionRef.current) {
-          previewFileRef.current = validLoaded[0]
+          // 保留用户点击意图：优先用用户点击的文件作为 primary，
+          // 若该文件加载失败则 fallback 到 pair[0]
+          const primary = validLoaded.find(item => item.key === fileObj.key) || validLoaded[0]
+          previewFileRef.current = primary
           setMergePair(validLoaded)
-          setPreviewFile(validLoaded[0])
+          setPreviewFile(primary)
           setPreviewPage(1)
           setNumPages(1)
         } else if (version !== previewVersionRef.current) {
