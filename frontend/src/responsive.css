@@ -99,16 +99,16 @@
     display: none;
   }
 
-  /* Sidebar brand: logo size（与 sidebar.css 基础 42px 同步） */
+  /* Sidebar brand: logo size（与 sidebar.css 基础 40px 同步） */
   .sb-brand-logo {
-    width: 42px;
-    height: 42px;
+    width: 40px;
+    height: 40px;
     border-radius: 8px;
   }
 
-  /* Sidebar brand ↔ actions 间隔：1080p 窗口（≤1100px）固定 6px（2K 及以上基础 8px） */
+  /* Sidebar brand ↔ actions 间隔：1080p 窗口（≤1100px）固定 0px（2K 及以上基础 2px） */
   .sb-brand {
-    margin-bottom: 6px;
+    margin-bottom: 0px;
   }
 
   /* Action bar: hide text labels, show only icons */
