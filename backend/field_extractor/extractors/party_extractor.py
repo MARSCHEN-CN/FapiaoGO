@@ -1686,10 +1686,7 @@ class PartyExtractor:
                 score += _SCORE_COMPANY_FORMAT
             if self._is_likely_goods(value):
                 score += _SCORE_GOODS_PENALTY
-            # [FIX] _is_bank_branch 现在在 _name_ok 中硬过滤，
-            # 此处保留软惩罚作为兜底
-            if self._is_bank_branch(value):
-                score += _SCORE_GOODS_PENALTY
+            # 银行支行/分行软惩罚 —— 已移除，XX银行XX分行 是合法购销方名称
         else:
             if self._tax_ok(value):
                 score += _SCORE_TAX_FORMAT

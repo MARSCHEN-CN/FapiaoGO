@@ -46,24 +46,35 @@ COMPANY_SUFFIX_LIST: tuple = (
     '诊所', '药房',
     '美容院', '养生馆',
     '驾校', '幼儿园',
-    '馆', '家',
+    '馆', '家', '社', '公司',
     # 注意：有意不包含「合伙」——它只在括号补充说明（如「（普通合伙）」）中出现，
     # 独立注册名用完整「合伙企业」后缀（已在列表中）。
     # 保留「合伙」会导致 COMPANY_PATTERN 正则把括号内的「合伙」当成公司后缀，
     # 从而截断后缀之后的右括号。
+    # 「社」「公司」作为单独后缀加入，是为了让 regex 能匹配到分支后缀场景
+    # （如 XX有限公司第二分公司、XX旅行社），clean_name 层面用"同位置优先更长"
+    # 保证不会与更长后缀（合作社、有限公司）冲突。
 )
 
 # 编译后的正则模式（基于 COMPANY_SUFFIX_LIST）
-_COMPANY_SUFFIX_RE_PART = '(?:' + '|'.join(re.escape(s) for s in COMPANY_SUFFIX_LIST) + ')'
+# 后缀表按长度降序排列，让 Python re alternation 优先匹配更长后缀
+_COMPANY_SUFFIX_SORTED = sorted(COMPANY_SUFFIX_LIST, key=len, reverse=True)
+_COMPANY_SUFFIX_RE_PART = '(?:' + '|'.join(re.escape(s) for s in _COMPANY_SUFFIX_SORTED) + ')'
 # 后缀后可选的括号补充说明组：匹配 0 对或多对完整括号，支持全角/半角
 # 不配对的括号不匹配，括号内允许任意内容（非贪婪，排除左括号避免嵌套）
 _COMPANY_BRACKET_RE_PART = r'(?:[（(][^（(]*?[）)])*'
+# 后缀后可选的分支机构组：匹配 XX分公司、XX分行、XX分店 等模式
+# 结构：0-6字地点前缀 + 分/支 + 公司/行/店/厂/中心/部/所/社/馆/家/院/局/处
+_COMPANY_BRANCH_RE_PART = (
+    r'(?:[\u4e00-\u9fa5]{0,6}(?:分|支)(?:公司|行|店|厂|中心|部|所|社|馆|家|院|局|处))*'
+)
 COMPANY_PATTERN = re.compile(
-    # 主体用非贪婪 {4,80}? 避免贪婪匹配把括号内容吃进去后，
-    # 在括号内部误命中短后缀（如「咖啡馆（某某店）」里的「店」）
-    r'[\u4e00-\u9fa5A-Za-z0-9()（）·\-&/.\s]{4,80}?'
+    # 主体用贪婪 {4,80}，且**不含括号**——让括号只在尾部括号组匹配
+    # 这样贪婪主体不会把括号内容吃进去后在括号内误命中短后缀
+    r'[\u4e00-\u9fa5A-Za-z0-9·\-&/.\s]{4,80}'
     + _COMPANY_SUFFIX_RE_PART
     + _COMPANY_BRACKET_RE_PART
+    + _COMPANY_BRANCH_RE_PART
 )
 COMPANY_PATTERN_NO_SUFFIX = re.compile(
     r'[\u4e00-\u9fa5A-Za-z0-9()（）·\-&/.\s]{4,80}'

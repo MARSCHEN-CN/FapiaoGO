@@ -110,17 +110,26 @@ class NameCleaner:
                     return True
             return False
 
-        last_suffix_pos = -1
-        last_suffix = ''
-        for suffix in COMPANY_SUFFIX_LIST:
-            pos = name.rfind(suffix)
-            if pos > last_suffix_pos and not _in_any_bracket(pos):
-                # 后缀起始位置在括号内部 → 不参与"多后缀粘连"截断判断
-                last_suffix_pos = pos
-                last_suffix = suffix
+        # 收集所有非括号内的后缀候选：(起始位置, 长度, 后缀)
+        # 用 finditer 找所有出现位置（替代 rfind 只找最后一个，避免短后缀在同一位置抢先）
+        import re as _re
+        from field_extractor.extractors.party_constants import (
+            _COMPANY_SUFFIX_SORTED, _COMPANY_BRANCH_RE_PART,
+        )
+        _branch_pat = _re.compile(_COMPANY_BRANCH_RE_PART)
 
-        if last_suffix_pos > 0:
-            cut_end = last_suffix_pos + len(last_suffix)
+        candidates = []
+        for suffix in _COMPANY_SUFFIX_SORTED:
+            for m in _re.finditer(_re.escape(suffix), name):
+                pos = m.start()
+                if pos > 0 and not _in_any_bracket(pos):
+                    candidates.append((pos, len(suffix), suffix))
+
+        if candidates:
+            # 排序规则：按位置降序（最靠右优先），同一位置按长度降序（更长后缀优先）
+            candidates.sort(key=lambda x: (x[0], x[1]), reverse=True)
+            last_pos, last_len, last_suf = candidates[0]
+            cut_end = last_pos + last_len
 
             # 如果后缀结束后紧跟完整括号（跳过空白）→ 保留括号补充说明
             tail_idx = cut_end
@@ -140,6 +149,13 @@ class NameCleaner:
                             cut_end = j + 1
                             break
                     j += 1
+
+            # 如果后缀结束后剩余内容是合法分支机构 → 保留（如 天津分公司、第二分公司）
+            remaining = name[cut_end:].strip()
+            if remaining:
+                bm = _branch_pat.match(remaining)
+                if bm and bm.group(0) == remaining:
+                    cut_end = len(name)
 
             name = name[:cut_end]
 
@@ -220,10 +236,9 @@ class NameCleaner:
             ok_logger.info("[NameOK/DBG] FAIL tail_phone")
             return False
 
-        # 银行支行/分行检查
-        if NameCleaner.is_bank_branch(name):
-            ok_logger.info("[NameOK/DBG] FAIL bank_branch: %s", name)
-            return False
+        # 银行支行/分行检查 —— 已移除，因为 XX银行XX分行 是合法的购销方名称
+        # （银行作为开票方/抬头时即为此格式）。OCR 噪声（收款账户信息）已由
+        # regex 层 + 污染关键词 + 数字比例等规则在更早阶段过滤。
 
         # 公司后缀或特征词检查
         has_company_suffix = any(s in name for s in company_suffix_list)
