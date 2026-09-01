@@ -46,6 +46,7 @@ COMPANY_SUFFIX_LIST: tuple = (
     '诊所', '药房',
     '美容院', '养生馆',
     '驾校', '幼儿园',
+    '馆',
     # 注意：有意不包含「合伙」——它只在括号补充说明（如「（普通合伙）」）中出现，
     # 独立注册名用完整「合伙企业」后缀（已在列表中）。
     # 保留「合伙」会导致 COMPANY_PATTERN 正则把括号内的「合伙」当成公司后缀，
@@ -58,7 +59,9 @@ _COMPANY_SUFFIX_RE_PART = '(?:' + '|'.join(re.escape(s) for s in COMPANY_SUFFIX_
 # 不配对的括号不匹配，括号内允许任意内容（非贪婪，排除左括号避免嵌套）
 _COMPANY_BRACKET_RE_PART = r'(?:[（(][^（(]*?[）)])*'
 COMPANY_PATTERN = re.compile(
-    r'[\u4e00-\u9fa5A-Za-z0-9()（）·\-&/.\s]{4,80}'
+    # 主体用非贪婪 {4,80}? 避免贪婪匹配把括号内容吃进去后，
+    # 在括号内部误命中短后缀（如「咖啡馆（某某店）」里的「店」）
+    r'[\u4e00-\u9fa5A-Za-z0-9()（）·\-&/.\s]{4,80}?'
     + _COMPANY_SUFFIX_RE_PART
     + _COMPANY_BRACKET_RE_PART
 )
