@@ -17,6 +17,8 @@
  * @module utils/invoiceDocumentViewModel
  */
 
+import { perfProbe } from '../perf/importPerfProbe'
+
 /**
  * 从拆分页文件名还原原始文件名。
  * "invoice_p1.pdf" → "invoice.pdf"
@@ -38,6 +40,7 @@ function restoreOriginalName(pageName) {
  * @returns {Object|null} FileCardRow 条目，或 null（无匹配文件时）
  */
 export function invoiceDocumentToRow(invoiceDoc, allFiles, fileIndex) {
+  perfProbe.count('invoiceDocumentToRow')   // PERF-WHITE-1：派生路径调用次数
   if (!invoiceDoc?.docId) return null
 
   // [V3-P2] 行来源闭环：本文档的匹配现场（_pageKeys / docIdIndex）
@@ -110,6 +113,9 @@ export function invoiceDocumentToRow(invoiceDoc, allFiles, fileIndex) {
   const singlePage = pageFiles[0]
   const originalName = singlePage.name
   const displayName = restoreOriginalName(originalName)
+  // ⚠ 注意：此 console.log 位于渲染期派生路径（每份单页文档调用一次）。
+  // Gate 0 阶段「只计数、不删除」——删除属于 Gate 1（A1）范围，需先有基线数据归因。
+  perfProbe.count('renderPathConsoleLog')
   console.log('[invoiceDocumentToRow] 单页文档:', {
     docId: invoiceDoc.docId,
     pageKeys: invoiceDoc._pageKeys,
@@ -172,6 +178,7 @@ export function invoiceDocumentsToRows(invoiceDocs, allFiles) {
   }
 
   // 先转换所有 docs，附带排序键（首个 page 的位置）
+  const _endRows = perfProbe.begin('invoiceDocumentsToRows')
   const withOrder = []
   for (const doc of invoiceDocs) {
     const row = invoiceDocumentToRow(doc, allFiles, fileIndex)
@@ -191,5 +198,6 @@ export function invoiceDocumentsToRows(invoiceDocs, allFiles) {
 
   // 按首个 page 出现位置稳定排序
   withOrder.sort((a, b) => a.orderIdx - b.orderIdx)
+  _endRows()
   return withOrder.map((item) => item.row)
 }

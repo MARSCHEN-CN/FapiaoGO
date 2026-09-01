@@ -17,6 +17,7 @@ import { computeInitialDocFacts } from '../layout/docFacts.js'
 import { nextZoomStep } from './zoomStep.mjs'
 import { applyWheelZoom } from './continuousZoom.mjs'
 import { resolvePreviewTransition, resolveRefreshExecution, resolveBoundary, advanceLoadingStep, resolveCommittedClear } from '../utils/previewScheduler'
+import { perfProbe } from '../perf/importPerfProbe'
 
 // ── 滚轮缩放常量（Ctrl/⌘ + wheel，跟随光标锚点）── V16.1 平滑增强 ──
 // 连续缩放：deltaY 走指数映射（乘性），rAF 合并高频事件为每帧一次更新；
@@ -1009,6 +1010,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
           // ✅ 不清空旧 canvas：与 renderResultCache 共享同一对象，clearRect 会污染缓存
           unrotatedCanvasRef.current = canvas
           setPreviewCanvas(canvas)
+          perfProbe.mark('T7')   // 预览首帧渲染完成（PERF-WHITE-1）
           // ✅ Stage 0.8 commit：渲染完成 → 原子提交新帧 + 关闭 loading
           committedPreviewRef.current = {
             url: committedPreviewRef.current.url,
@@ -1991,6 +1993,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
   // 预览文件（带防抖）
   // ============================
   const handlePreview = useCallback(async (fileObj, intent = 'select') => {
+    perfProbe.count('handlePreview')   // PERF-WHITE-1：含自动预览 effect 的重复触发
     // ── 防抖层：让 UI 指示器即时响应，渲染逻辑延迟 150ms ──
     const now = Date.now()
 

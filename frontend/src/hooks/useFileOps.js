@@ -28,6 +28,7 @@ import { ensureDocumentFromFileObj, flushDocumentNotifications, getDocument, reg
 import { createDocument, createPageMeta } from '../models/InvoiceDocument'
 import { consumeParseResult } from '../consumers/parseResultConsumer'
 import { createParseResult } from '../models/ParseResult'
+import { perfProbe } from '../perf/importPerfProbe'
 
 // ── 状态迁移规则 ─────────────────────────────────────────
 // 仅允许正向状态迁移，阻止回退（Import Pipeline Contract v1.2）
@@ -318,6 +319,7 @@ export function useFileOps({ setFiles, settings, electronAPIRef }) {
     }
 
     // ✅ 立即显示导入弹窗
+    perfProbe.startSession(`import:${files.length}`)   // T0（PERF-WHITE-1 探针，关闭态为 no-op）
     setImporting(true)
     progressMonotonicRef.current = 0
     setImportStage('splitting')
@@ -382,6 +384,7 @@ export function useFileOps({ setFiles, settings, electronAPIRef }) {
     }
 
     // ── 初始化导入进度（基于 gate 过滤后的数量） ──
+    perfProbe.setMeta({ fileCount: acceptedFiles.length, rawCount: files.length })
     setImportStats({
       originalCount: acceptedFiles.length,
       totalFiles: acceptedFiles.length,
@@ -589,6 +592,7 @@ export function useFileOps({ setFiles, settings, electronAPIRef }) {
     setParseProgress({ current: 0, total: placeholders.length })
     await Promise.all(splitWorkers)
     parsePipelineDone = true
+    perfProbe.mark('T1')   // split 完成
 
     // ── 拆分完成，切换到解析阶段 ──
     const parseFileCount = readyFiles.length
@@ -1087,12 +1091,14 @@ export function useFileOps({ setFiles, settings, electronAPIRef }) {
     }
 
     // 解析完成后：进入组装阶段
+    perfProbe.mark('T2')   // 后端解析完成（两条路径：ImportScale batch / fallback parseWorker）
     setImportStage('building')
     progressMonotonicRef.current = Math.max(progressMonotonicRef.current, 85)
     addImportLog('正在组装文档...')
 
     // 强制刷新所有待处理更新（hydration 结果）
     flushUpdates()
+    perfProbe.mark('T3')   // hydration 完成（末次 flushUpdates）
 
     if (process.env.NODE_ENV === 'development') {
       console.log(`[ImportScale] 导入完成: 成功=${importSuccessCount}, 失败=${importErrorCount}`)
@@ -1102,6 +1108,7 @@ export function useFileOps({ setFiles, settings, electronAPIRef }) {
     addImportLog(`导入完成：成功 ${importSuccessCount} 个，失败 ${importErrorCount} 个`)
     setImportStage('completed')
     progressMonotonicRef.current = 100
+    perfProbe.mark('T4')   // 进度 100%（白屏窗口起点；会重置 T6/T6p/T7）
     setImportStats((prev) => ({
       ...prev,
       parseDone: prev.parseTotal,
@@ -1126,6 +1133,9 @@ export function useFileOps({ setFiles, settings, electronAPIRef }) {
     const dismissModal = () => {
       completeDismissTimerRef.current = null
       currentAbortRef.current = null
+      perfProbe.mark('T5')   // 弹窗关闭 = 白屏窗口计时开始
+      // 结算：给 T6/T7 一个足够的观察窗口（预览首帧常在数秒内到达）
+      setTimeout(() => perfProbe.finishSession('T5+6000ms'), 6000)
       setParsing(false)
       setParseProgress({ current: 0, total: 0 })
       setImporting(false)

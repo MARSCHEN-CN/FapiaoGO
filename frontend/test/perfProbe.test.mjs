@@ -1,0 +1,124 @@
+/**
+ * importPerfProbe — PERF-WHITE-1 Gate 0 探针自检（node --test，纯 node 可跑）
+ *
+ * 覆盖（只验证探针自身正确性，不涉及任何业务路径）：
+ *  1. 默认禁用态：isEnabled()===false，所有 API 为 no-op 不抛错、零副作用
+ *  2. 开启态：startSession 自动打 T0，mark/count/begin 聚合正确
+ *  3. mark first-wins：同锚点重复调用不覆盖（T6 语义依赖此特性）
+ *  4. T4 重置 T6/T6p/T7：白屏窗口锚点重定位（占位符 commit 不污染测量）
+ *  5. count 累加 + 增量计数（importHistoryQuery 用 entries.length 一次加 N 的场景）
+ *  6. begin/end 幂等 + duration 聚合（n/total/max/avg 字段齐全）
+ *  7. finishSession 幂等：重复结算不翻倍、id 一致
+ *  8. 报告结构：derived.whiteScreenMs 等 KPI 字段齐全、longTasks 降级安全
+ *
+ * 环境说明：本模块对 node 友好——localStorage/navigator 缺失全部走 ?. 安全路径；
+ *           PerformanceObserver 不支持 longtask 时被 try/catch 降级为 supported=false，
+ *           不影响其余指标。
+ */
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import { perfProbe } from '../src/perf/importPerfProbe.js'
+
+test('禁用态：isEnabled() false，所有 API no-op 不抛错、无副作用', () => {
+  assert.equal(perfProbe.isEnabled(), false)
+  assert.doesNotThrow(() => perfProbe.startSession('x'))
+  assert.doesNotThrow(() => perfProbe.setMeta({ a: 1 }))
+  assert.doesNotThrow(() => perfProbe.mark('T1'))
+  assert.doesNotThrow(() => perfProbe.count('a'))
+  const end = perfProbe.begin('d')
+  assert.equal(typeof end, 'function')
+  assert.doesNotThrow(() => end())
+  assert.doesNotThrow(() => perfProbe.time('t', () => 42))
+  assert.equal(perfProbe.getReport(), null)
+  assert.equal(perfProbe.finishSession('test'), null)
+  assert.equal(perfProbe.dump(), null)
+})
+
+test('开启态：startSession 自动打 T0，mark/count/begin 聚合正确', () => {
+  perfProbe.enable('1')
+  assert.equal(perfProbe.isEnabled(), true)
+  perfProbe.startSession('self-test')
+  perfProbe.count('hit')
+  perfProbe.count('hit', 5)
+  perfProbe.mark('T1')
+  const end = perfProbe.begin('derive')
+  const t = Date.now()
+  while (Date.now() - t < 20) { /* 忙等 ~20ms 模拟耗时（r1 取整留余量） */ }
+  end()
+  const report = perfProbe.finishSession('unit-test')
+  assert.ok(report, '开启态 finishSession 必须返回报告')
+  assert.equal(report.id, 1)
+  assert.equal(report.marksRel.T0, 0, 'T0 是相对基准')
+  assert.ok(report.marksRel.T1 > 0, 'T1 相对 T0 为正')
+  assert.equal(report.counters.hit, 6, 'count 累加 + 增量')
+  assert.ok(report.durations.derive.n === 1)
+  assert.ok(report.durations.derive.total >= 15, `total=${report.durations.derive.total} 应≥15ms`)
+  assert.ok(report.durations.derive.max >= 15)
+  assert.ok(report.durations.derive.avg >= 15)
+  assert.equal(report.derived.whiteScreenMs, null, '无 T5/T6 → KPI 为 null 不炸')
+  assert.equal(typeof report.longTasks.supported, 'boolean')
+  assert.equal(typeof report.t0Wall, 'string')
+})
+
+test('mark first-wins：同锚点重复调用不覆盖', () => {
+  perfProbe.startSession('first-wins')
+  perfProbe.mark('T1')
+  const first = perfProbe.getReport().marksRel.T1
+  perfProbe.mark('T1') // 第二次调用（更晚）不应覆盖
+  const second = perfProbe.getReport().marksRel.T1
+  assert.equal(first, second)
+  perfProbe.finishSession('unit')
+})
+
+test('T4 重置 T6/T6p/T7：白屏窗口锚点重定位', () => {
+  // 场景：导入过程中占位符导致 FileList commit（T6 提前打上），
+  // 100% 时应清除这些锚点，让「100% 之后的首次 commit」成为真正的白屏终点。
+  perfProbe.startSession('t4-reset')
+  perfProbe.mark('T6')   // 占位符 commit（应被 T4 清除）
+  perfProbe.mark('T6p')
+  perfProbe.mark('T7')   // 占位符预览（应被 T4 清除）
+  perfProbe.mark('T4')   // 进度 100% → 清 T6/T6p/T7
+  perfProbe.mark('T5')   // 弹窗关闭
+  perfProbe.mark('T6')   // 100% 后的首次 commit（应保留）
+  const r = perfProbe.finishSession('unit')
+  assert.ok(r.marksRel.T4 !== undefined)
+  assert.ok(r.marksRel.T5 !== undefined)
+  assert.ok(r.marksRel.T6 !== undefined, 'T4 之后的 T6 必须保留')
+  assert.ok(r.derived.whiteScreenMs >= 0, `T5<T6 时序下 whiteScreenMs=${r.derived.whiteScreenMs} 应为非负（同毫秒内可为 0）`)
+})
+
+test('T4 重置（反向顺序）：T4 之后无 T6 时报告不炸', () => {
+  perfProbe.startSession('t4-reset-2')
+  perfProbe.mark('T4')
+  perfProbe.mark('T5')
+  const r = perfProbe.finishSession('unit')
+  assert.equal(r.derived.whiteScreenMs, null)
+  assert.equal(r.derived.whiteToPaintMs, null)
+})
+
+test('begin/end 幂等：重复 end 只记一次', () => {
+  perfProbe.startSession('idem')
+  const end = perfProbe.begin('d2')
+  end()
+  end()
+  end()
+  const r = perfProbe.finishSession('unit')
+  assert.equal(r.durations.d2.n, 1)
+})
+
+test('finishSession 幂等：重复结算 id 一致、计数不重置', () => {
+  perfProbe.startSession('fin')
+  perfProbe.count('x')
+  const r1 = perfProbe.finishSession('a')
+  perfProbe.count('x')
+  const r2 = perfProbe.finishSession('b')
+  assert.equal(r1.id, r2.id)
+  assert.equal(r2.counters.x, r1.counters.x + 1, '结算后 count 追加仍被后续报告读到')
+})
+
+test('time 包装：返回值透传，关闭态零开销', () => {
+  perfProbe.disable()
+  const v = perfProbe.time('wrapped', () => 123)
+  assert.equal(v, 123)
+  assert.equal(perfProbe.isEnabled(), false)
+})

@@ -24,6 +24,7 @@ import {
 import { buildDocumentViewModel, documentPages } from './utils/documentViewModel'
 import { selectDocumentRows, selectParsedFiles } from './utils/documentSelector'
 import { buildFileObj } from './utils/fileHelpers'
+import { perfProbe } from './perf/importPerfProbe'
 
 import { useSettings } from './hooks/useSettings'
 import { useExcelExportSettings } from './hooks/useExcelExportSettings'
@@ -118,12 +119,15 @@ function AppContent() {
   // 让预览/翻页/GC 都在 document 级别工作，而非 page 级别。
   // Commit 3: 收敛到 DocumentSelector，消除各消费者内联的装配优先/回退分支。
   const displayFiles = useMemo(() => {
-    return selectDocumentRows({
+    const _end = perfProbe.begin('selectDocumentRows')
+    const rows = selectDocumentRows({
       invoiceDocs: documentView?.documents,
       files,
       filteredFiles,
       isSearching,
     })
+    _end()
+    return rows
   }, [isSearching, filteredFiles, files, documentView])
 
   // ============================

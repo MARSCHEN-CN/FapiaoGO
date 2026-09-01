@@ -6,6 +6,7 @@ import { getActiveSessionId, getSession, subscribe, getDocumentVersion } from '.
 import { getRegisteredDocIds, getDocument } from '../stores/DocumentStore'
 import { getDocumentCacheIdentity } from '../utils/documentViewCacheIdentity'
 import { resolveMaterializedInvoiceDocuments } from '../utils/resolveMaterializedInvoiceDocuments'
+import { perfProbe } from '../perf/importPerfProbe'
 import { db } from '../db'
 
 // ── P1：发票重复导入历史（advisory 旁路）工具 ──────────────────
@@ -57,6 +58,7 @@ export function FileProvider({ children }) {
 
   // 兼容现有所有 setFiles 调用（直接值 + updater 函数）
   const setFiles = useCallback((arg) => {
+    perfProbe.count('setFiles')   // 导入期间 files 状态更新次数（渲染风暴指标）
     dispatch({ type: 'SET_FILES', payload: arg })
   }, [])
 
@@ -156,7 +158,9 @@ export function FileProvider({ children }) {
       return documentViewCache.current.result
     }
 
+    const _endDerive = perfProbe.begin('buildDocumentViewModel')
     const result = buildDocumentViewModel(files, invoiceDocs)
+    _endDerive()
     documentViewCache.current = { sig: combinedSig, result }
     return result
   }, [files, invoiceDocs])
@@ -249,6 +253,7 @@ export function FileProvider({ children }) {
       const myReq = ++importHistoryReqIdRef.current
       firedSigRef.current = sig
       const entries = Array.from(byNumber.entries())
+      perfProbe.count('importHistoryQuery', entries.length)
       runPool(entries, 6, ([norm, fileKeys]) =>
         db.getImportHistory(norm).then(res => {
           if (myReq !== importHistoryReqIdRef.current) return  // 已被新轮换取代
@@ -257,6 +262,7 @@ export function FileProvider({ children }) {
           // 🔴 首次导入不算重复报销：历史记录由本次导入创建（count 含本次），
           //    仅当 count>=2 才说明本次之前已导入过（=重复报销）；count==1 是首次导入。
           if ((res.importCount ?? 0) < 2) return
+          perfProbe.count('importHistoryWrite')   // 每次命中都触发一次 Map 重建 + 后续重排
           setImportHistoryInfo(prev => {
             const next = new Map()
             for (const [k, v] of prev) if (liveKeys.has(k)) next.set(k, v)  // 剔除已移除

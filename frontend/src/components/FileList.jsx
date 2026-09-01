@@ -1,7 +1,8 @@
-import { memo, useRef, useEffect, useMemo } from 'react'
+import { memo, useRef, useEffect, useMemo, useLayoutEffect } from 'react'
 import { List } from 'react-window'
 import { isMergeMode, getMergeGroupStart, isFailedFile } from '../utils'
 import { documentIdentityKey } from '../utils/documentViewModel'
+import { perfProbe } from '../perf/importPerfProbe'
 
 const ROW_HEIGHT = 64
 const OVERSCAN = 5
@@ -253,6 +254,19 @@ export default memo(function FileList({
     onRotate,
     onHoverFile,
   }), [files, previewFileKey, previewFileDocId, mergeActive, mergeCount, duplicateInfo, previousYearInfo, importHistoryInfo, fileRotations, onPreview, onRemove, onRotate, onHoverFile])
+
+  // ── PERF-WHITE-1 探针：首帧可见性锚点（关闭态为 no-op）──
+  // T6  = 首次 commit（DOM 已变更、尚未 paint）
+  // T6p = commit 之后的首次 paint（rAF + setTimeout(0) 逼近「用户真正看到像素」）
+  // 只有 T4（进度 100%）之后的首个 commit 才算白屏窗口终点 —— probe 在 T4 会重置这两个锚点。
+  useLayoutEffect(() => {
+    if (!files || files.length === 0) return
+    perfProbe.mark('T6')
+    const rafId = requestAnimationFrame(() => {
+      setTimeout(() => perfProbe.mark('T6p'), 0)
+    })
+    return () => cancelAnimationFrame(rafId)
+  }, [files])
 
   // 选中文件自动滚动（react-window v2 API：scrollToRow({ index, align })）
   useEffect(() => {

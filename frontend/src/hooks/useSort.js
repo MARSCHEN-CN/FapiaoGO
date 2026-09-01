@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
 import { applySort } from '../utils'
+import { perfProbe } from '../perf/importPerfProbe'
 
 /**
  * useSort — 文件列表排序 Hook
@@ -92,6 +93,7 @@ export function useSort(setFiles, files, duplicatePageInfo, previousYearInfo, im
     if (!sortSig || combinedSig === lastSortedSigRef.current) return
 
     lastSortedSigRef.current = combinedSig
+    perfProbe.count('applySort')   // 全量排序执行次数（导入期间应远小于 setFiles 次数）
     setFiles(current => {
       if (current.length <= 1) return current
       return applySort(current, sortByRef.current, sortOrderRef.current, duplicateInfoRef.current, previousYearInfoRef.current, importHistoryInfoRef.current)
