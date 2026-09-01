@@ -1,0 +1,17 @@
+{
+  "setup_size": 245427415,
+  "portable_size": 314853530,
+  "setup_sha256": "5213a4411162719a6f22fb5acd0aeb2bfde5802f74bb52aa847cd88b32e61626",
+  "setup_sha512_b64": "/8Y7v4VwvLDaCVrSHp+Uqq16RzT/1+YT5Azr4xX5YoGKAXMcEKk9fkXx7MbZVnWPAixBmMYkp7Rn8wWosGWJeg==",
+  "portable_sha256": "488c398fdd5a706b73b26e0e6b77b98fdb6b45f65d34baccae28067568eb2520",
+  "yml_size": 245427415,
+  "yml_sha512": "/8Y7v4VwvLDaCVrSHp+Uqq16RzT/1+YT5Azr4xX5YoGKAXMcEKk9fkXx7MbZVnWPAixBmMYkp7Rn8wWosGWJeg==",
+  "yml_version": "1.0.0",
+  "zip_entries": 536,
+  "zip_crc_bad": null,
+  "zip_crc_ok": true,
+  "MATCH_setup_sha256_vs_sums": true,
+  "MATCH_portable_sha256_vs_sums": true,
+  "MATCH_yml_size": true,
+  "MATCH_yml_sha512": true
+}

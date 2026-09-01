@@ -42,6 +42,7 @@
 | R6 | Core Regression（Display / Print Preview / 实际打印 / Merge-batch） | ⏳ 真机验收（见清单） |
 | R7 | Portable.zip 单件压缩（两件套标准，Installer.zip 废止），300.3MB | ✅ PASS |
 | R8 | SHA-256 + latest.yml（size 245427415 与 Setup.exe 字节数精确匹配，sha512 实测一致）+ Manifest | ✅ PASS |
+| R10 | 产物完整性复核（2026-09-01）：Setup/Portable SHA-256 与 SHA256SUMS 逐字符匹配；**Portable.zip CRC 全量校验 PASS（536 条目，`testzip()` 返回 None）**；latest.yml 的 size+sha512 与 Setup.exe 实测双匹配 | ✅ PASS |
 | R9 | Release Freeze | ⏳ 待真机 R6 通过后定 |
 
 ## SIZE-2 验证矩阵（RC v5 实测）
@@ -70,6 +71,19 @@
    - **预览优先回归**（98c432b）：合并预览与文件点击的优先级——点击列表文件应立即切换预览，不被合并预览遮挡。
 6. **压缩导出**：7z/rar/where 无黑窗。
 7. **Legacy Migration** + 签名状态确认（Setup/FapiaoGO.exe 未签名，SmartScreen 可能警告，发布时说明）。
+
+## 产物完整性实证（2026-09-01 复核，机器可读：`outputs/_v5_asset_verify.json`）
+
+| 校验项 | 预期 | 实测 |
+|---|---|---|
+| `FapiaoGO-Setup-1.0.0.exe` SHA-256 | `5213a441…e61626` | ✅ 逐字符匹配 |
+| `FapiaoGO-v1.0.0-Windows-x64-Portable.zip` SHA-256 | `488c398f…b2520` | ✅ 逐字符匹配 |
+| Portable.zip CRC 全量解压校验 | `testzip()` 返回 `None` | ✅ **PASS**（536 条目，0 损坏） |
+| `latest.yml` size vs Setup.exe 字节数 | 245427415 | ✅ 匹配（Setup 245,427,415 B） |
+| `latest.yml` sha512(base64) vs Setup.exe 实测 | `/8Y7v4Vw…WJeg==` | ✅ 匹配 |
+| `latest.yml` version | 1.0.0 | ✅ |
+
+结论：RC-v5 两件套 + latest.yml 三件完整可用，可直接上传 Release。
 
 ## 备注
 
