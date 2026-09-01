@@ -1,0 +1,50 @@
+{
+  "file_size": 245427415,
+  "pe_mz": true,
+  "pe_sig": true,
+  "num_sections": 5,
+  "file_alignment": 512,
+  "sections": [
+    [
+      ".text",
+      1024,
+      26624
+    ],
+    [
+      ".rdata",
+      27648,
+      5632
+    ],
+    [
+      ".data",
+      33280,
+      1536
+    ],
+    [
+      ".ndata",
+      0,
+      0
+    ],
+    [
+      ".rsrc",
+      34816,
+      392192
+    ]
+  ],
+  "raw_data_end": 427008,
+  "nsis_header_candidate_aligned": 427008,
+  "signed": false,
+  "signed_note": "NOT SIGNED (R4-C 已知状态)",
+  "machine": "0x14c",
+  "machine_note": "i386 (NSIS stub 固定 32 位，承载 x64 内容 —— 正常)",
+  "tag": "cand@427008",
+  "fh_offset": 427008,
+  "loh": 213426,
+  "lofd": 245000407,
+  "nsinstaller_ascii": "NullsoftInst",
+  "nsinstaller_ok": true,
+  "computed_total": 245427415,
+  "delta": 0,
+  "self_consistent": true,
+  "NSIS_HEADER_OK": true
+}

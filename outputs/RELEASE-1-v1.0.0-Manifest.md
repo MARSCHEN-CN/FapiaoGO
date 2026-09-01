@@ -83,6 +83,19 @@
 | `latest.yml` sha512(base64) vs Setup.exe 实测 | `/8Y7v4Vw…WJeg==` | ✅ 匹配 |
 | `latest.yml` version | 1.0.0 | ✅ |
 
+### Setup.exe（NSIS 安装包）结构完整性（工具：`outputs/_verify_setup_nsis.py`）
+
+| 校验项 | 实测 | 判定 |
+|---|---|---|
+| PE 头 MZ / PE\0\0 | True / True | ✅ |
+| Machine | `0x14c` i386 | ✅ NSIS 安装器 stub 固定 32 位，承载 x64 内容，属正常 |
+| NSIS firstheader 偏移 | 427008（= 所有 section raw data 结束点，对齐后） | ✅ |
+| `nsinstaller[3]` | ASCII **`NullsoftInst`** | ✅ 真 NSIS 头，非随机碰撞（全文件仅 2 处 magic，另 1 处在 .text 内） |
+| `length_of_header` | 213,426 | ✅ |
+| `length_of_all_following_data` | 245,000,407 | ✅ |
+| **大小自洽** | `427008 + 245000407 = 245427415` == 文件实际大小，**delta = 0** | ✅ **未截断 / 未拼接损坏** |
+| 数字签名 | `IMAGE_DIRECTORY_ENTRY_SECURITY` = (0,0) | ⚠️ NOT SIGNED（R4-C 已知状态） |
+
 结论：RC-v5 两件套 + latest.yml 三件完整可用，可直接上传 Release。
 
 ## 备注
