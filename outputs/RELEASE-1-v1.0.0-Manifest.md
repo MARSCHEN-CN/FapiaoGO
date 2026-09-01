@@ -43,7 +43,7 @@
 | R7 | Portable.zip 单件压缩（两件套标准，Installer.zip 废止），300.3MB | ✅ PASS |
 | R8 | SHA-256 + latest.yml（size 245427415 与 Setup.exe 字节数精确匹配，sha512 实测一致）+ Manifest | ✅ PASS |
 | R10 | 产物完整性复核（2026-09-01）：Setup/Portable SHA-256 与 SHA256SUMS 逐字符匹配；**Portable.zip CRC 全量校验 PASS（536 条目，`testzip()` 返回 None）**；latest.yml 的 size+sha512 与 Setup.exe 实测双匹配 | ✅ PASS |
-| R9 | Release Freeze | ⏳ 待真机 R6 通过后定 |
+| R9 | Release Freeze | ⏳ 待真机 R6 通过后定（2026-09-01 决策：**采用 RC-v5 现有产物，不重打** —— Source 后仅有文档提交，重打产物字节级相同） |
 
 ## SIZE-2 验证矩阵（RC v5 实测）
 
