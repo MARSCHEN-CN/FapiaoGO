@@ -72,8 +72,13 @@ CLASS_CODE_PAT = re.compile(r'\*[^*]+\*')
 ITEM_START_RE = re.compile(r'^\*[^*]+\*')
 HAS_NUMBER_RE = re.compile(r'\d+\.?\d*')
 
-# 终止词
-TERMINATOR_KW = ['合计', '价税合计', '小计', '大写', '小写', '收款人', '复核人', '开票人']
+# 终止词（用于截断明细区域，之后的行不参与明细提取）
+# 2026-09-02 新增旅客运输发票出行人表头终止词
+TERMINATOR_KW = [
+    '合计', '价税合计', '小计', '大写', '小写', '收款人', '复核人', '开票人',
+    # 旅客运输发票特有终止词（合计行之后紧跟的出行人信息表头）
+    '出行人', '有效身份证件', '出发地', '到达地', '交通工具类型',
+]
 
 # 列模式顺序模板
 COL_ORDER_TEMPLATE = [0, 1, 2, 3, 4, 5, 6, 7]
@@ -406,21 +411,26 @@ def find_item_end_by_heji_y(
     if heji_y is None:
         for i, line in enumerate(lines):
             text = line.text.strip()
-            if text == '合':
-                for j in range(i + 1, min(i + 5, len(lines))):
-                    if lines[j].text.strip() == '计':
-                        if abs(line.cy - lines[j].cy) <= 3:
-                            heji_y = min(line.y0, lines[j].y0)
-                            break
-                if heji_y:
-                    logger.info("[LineSegmenter] 合/计分离行: 行%d '合'(y=%.1f) + 行%d '计'(y=%.1f)",
-                                i, line.y0, j, lines[j].y0)
-                    break
-            elif '合计' in text:
+            # 路径1: 同一行内合和计（中间可夹任意空白/字符）→ 最常见
+            if re.search(r'合\s*计', text):
                 heji_y = line.y0
-                logger.info("[LineSegmenter] 合计整词行: 行%d '%s'(y=%.1f)",
+                logger.info("[LineSegmenter] 合计行(正则): 行%d '%s'(y=%.1f)",
                             i, text[:30], heji_y)
                 break
+            # 路径2: 合在当前行，计在后续 5 行内（OCR 可能拆成行）
+            if text in ('合', '合 计', '合   计') or (
+                len(text) <= 3 and text.startswith('合') and not text.endswith('计')
+            ):
+                for j in range(i + 1, min(i + 5, len(lines))):
+                    text_j = lines[j].text.strip()
+                    if text_j.startswith('计') or text_j == '计':
+                        if abs(line.cy - lines[j].cy) <= 3:
+                            heji_y = min(line.y0, lines[j].y0)
+                            logger.info("[LineSegmenter] 合/计分离行: 行%d '合'(y=%.1f) + 行%d '计'(y=%.1f)",
+                                        i, line.y0, j, lines[j].y0)
+                            break
+                if heji_y:
+                    break
 
     if heji_y is None:
         logger.warning("[LineSegmenter] 未找到合计行，回退到 find_item_end")
@@ -1879,7 +1889,7 @@ HEADER_NAME_MAPPING: Dict[str, str] = {
 }
 
 # 需要跳过的汇总行关键词（出现在第一列）
-_SKIP_ROW_KW = ['合计', '价税合计', '小计']
+_SKIP_ROW_KW = ['合计', '价税合计', '小计', '出行人', '有效身份证件']
 
 
 def _clean_header_cell(cell: str) -> str:
