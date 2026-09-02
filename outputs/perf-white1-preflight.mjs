@@ -21,7 +21,7 @@ const TARGETS = [
   {
     name: '后端 Flask',
     url: 'http://127.0.0.1:5000/',
-    hint: 'cd /e/print706 && backend/venv/Scripts/python.exe backend/app.py',
+    hint: 'cd E:\\print706; backend\\venv\\Scripts\\python.exe backend/app.py',
     // 后端「已就绪」有两种情况：你自己起的 dev 后端，或残留的生产版 FapiaoGO。
     // 后者会让 dev 前端绕过你可控的后端，必须提示排查。
     staleRisk: true,
@@ -29,7 +29,7 @@ const TARGETS = [
   {
     name: 'Vite dev server',
     url: 'http://localhost:5173/index.html',
-    hint: 'cd /e/print706/frontend && npm run dev',
+    hint: 'cd E:\\print706\\frontend; npm run dev',
   },
 ]
 
@@ -85,7 +85,7 @@ async function main() {
 
   if (allOk) {
     console.log('全部就绪。现在可以启动 Electron：')
-    console.log('  cd /e/print706 && npm start')
+    console.log('  cd E:\\print706; npm start')
     console.log('\n提示：确认没有生产版 FapiaoGO.exe 在后台抢 5000 端口。')
     process.exit(0)
   } else {

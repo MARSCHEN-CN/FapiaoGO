@@ -3,6 +3,12 @@
 > 目标：拿到真实的 `T0–T7` 时间线，算出 **WHITE_SCREEN = T6 − T5**，据此决定 Gate 1 是否值得动 A1。
 > 原则：**一次只改一个变量 · DevTools 全程关闭 · 3 runs 取中位数**。
 
+> 🔴 **命令行怎么敲（重要，已踩坑）**：你的 PowerShell 是 **5.1**，**不支持 `&&`**
+> （会报 `标记"&&"不是此版本中的有效语句分隔符`）。本手册所有命令都是 **单行**，
+> 中间用 **`;`** 连接，路径是 Windows 风格 `E:\print706`。
+> 直接整行复制粘贴即可，不要自行改成 `&&`，也不要用 `/e/print706` 这种 Git Bash 路径。
+> **不要用 Git Bash 跑本手册的命令**（venv 是 Windows 版 Python）。
+
 ---
 
 ## 0. 已经替你准备好的东西（无需你做）
@@ -32,8 +38,8 @@
 
 ### 0.6 开工前先自检数据集（约 30 秒，强烈建议）
 
-```bash
-cd /e/print706 && backend/venv/Scripts/python.exe outputs/perf-white1-verify-dataset.py test_fixtures/perf/S-200
+```powershell
+cd E:\print706; backend\venv\Scripts\python.exe outputs/perf-white1-verify-dataset.py test_fixtures/perf/S-200
 ```
 
 看到 `✅ 数据集可用` 再往下走。自检会拦下两类会让整轮基线白跑的问题：
@@ -54,20 +60,20 @@ cd /e/print706 && backend/venv/Scripts/python.exe outputs/perf-white1-verify-dat
 所以必须开 **3 个终端窗口**，按顺序启动：
 
 **终端 ① —— 后端**（Flask，端口 5000）
-```bash
-cd /e/print706 && backend/venv/Scripts/python.exe backend/app.py
+```powershell
+cd E:\print706; backend\venv\Scripts\python.exe backend/app.py
 ```
 等到出现 `Running on http://127.0.0.1:5000` 再继续。
 
 **终端 ② —— 前端**（Vite dev server，端口 5173）
-```bash
-cd /e/print706/frontend && npm run dev
+```powershell
+cd E:\print706\frontend; npm run dev
 ```
 等到出现 `Local: http://localhost:5173/` 再继续。
 
 **终端 ③ —— 客户端**
-```bash
-cd /e/print706 && npm start
+```powershell
+cd E:\print706; npm start
 ```
 
 三个都起来后，会看到 FapiaoGO 主窗口。
@@ -76,8 +82,8 @@ cd /e/print706 && npm start
 
 在打开终端 ③ 之前，先跑：
 
-```bash
-cd /e/print706 && node outputs/perf-white1-preflight.mjs
+```powershell
+cd E:\print706; node outputs/perf-white1-preflight.mjs
 ```
 
 看到 `全部就绪` 且退出码 0 再 `npm start`。它会检测后端 5000 与 Vite 5173，
@@ -93,7 +99,7 @@ cd /e/print706 && node outputs/perf-white1-preflight.mjs
 | 项 | 结论 |
 |---|---|
 | `backend/venv/Scripts/python.exe backend/app.py` | ✅ 正常启动，端口 **5000**（`app.py:2150`） |
-| `cd frontend && npm run dev` | ✅ Vite 8.2.1，约 3.3s ready，`/index.html` 返回 200 |
+| `cd E:\print706\frontend; npm run dev` | ✅ Vite 8.2.1，约 3.3s ready，`/index.html` 返回 200 |
 | `npm start`（= `electron .`） | ✅ `isDev = !app.isPackaged` 为真 → 加载 `http://localhost:5173`（`main.js:229`），**不需要任何环境变量** |
 | 探针模块 dev 可达性 | ✅ `/perf/importPerfProbe.js` 返回 200，35717 字节，开关关键字 3 处 |
 
@@ -184,8 +190,8 @@ copy(JSON.stringify(__perfProbe.getReport()))
 
 ## 4. 聚合出中位数
 
-```bash
-cd /e/print706 && node outputs/perf-white1-median.mjs outputs/perf-runs-s200.jsonl
+```powershell
+cd E:\print706; node outputs/perf-white1-median.mjs outputs/perf-runs-s200.jsonl
 ```
 
 输出是全字段的 `median / min / max` 表（时间线全段 + 六类计数器 + durations + longTasks 及白屏窗口子集）。
