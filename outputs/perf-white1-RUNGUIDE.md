@@ -50,6 +50,22 @@ cd E:\print706; backend\venv\Scripts\python.exe outputs/perf-white1-verify-datas
 > 换成你自己的真实数据集时，把最后的目录参数换掉即可，同样先自检。
 > 默认取样 5 份（首/中/尾三段）；要全量 200 份加 `--all`（约数分钟）。
 
+### 0.7 开工前再自检一遍分析链路（约 5 秒，强烈建议）
+
+```powershell
+cd E:\print706; node outputs/perf-white1-selftest-median.mjs
+```
+
+看到 `10 PASS / 0 FAIL` 再开始。
+
+这一步是拿合成数据把「**探针输出 → 聚合器**」整条链路预跑一遍，
+确保你真机跑完 3 轮之后，数据**一定能解析出来**。
+
+> 🔴 不跑这一步的风险（2026-09-02 实证，差点让 3 轮基线全废）：
+> 探针剪贴板输出的是 `JSON.stringify(report, null, 2)` —— **多行美化 JSON**；
+> 而聚合器原实现是**逐行** `JSON.parse`，两者对不上 → **一条都解析不出来**。
+> 已改为花括号配平扫描修复，本自检的第 2 项就是专门盯这个回归的。
+
 ---
 
 ## 1. 一次性准备（只在第一次做）
@@ -154,7 +170,7 @@ __perfProbe.isEnabled()
 ### 数据怎么存
 
 新建一个文件 `E:\print706\outputs\perf-runs-s200.jsonl`（用记事本/VSCode 都行），
-**每次 run 的结果占一行**，例如：
+**每次 run 的结果贴进去一份**，三次贴完就是 3 份，例如（紧凑单行写法）：
 
 ```
 {"id":1,"label":"import:200","derived":{"whiteScreenMs":1234,...},...}
@@ -162,15 +178,28 @@ __perfProbe.isEnabled()
 {"id":3,"label":"import:200","derived":{"whiteScreenMs":1301,...},...}
 ```
 
-> 关键点：**一行一条完整 JSON，行与行之间换行，不要加逗号、不要加 `[]`**。
-> 报告本身是多行美化过的 JSON，存之前需要**压成一行**（VSCode 里可以用「合并行」，
-> 或者直接把 `__perfProbe.getReport()` 的结果 `JSON.stringify` 后复制）。
+> ✅ **格式不用纠结，聚合器三种都吃**（2026-09-02 已修 + 10 项自检覆盖）：
+> - **紧凑单行**（上面这种）—— 推荐
+> - **pretty 多行**——**剪贴板直接粘出来的就是这种**（探针用 `JSON.stringify(report, null, 2)`），
+>   直接整段粘贴即可，**不需要手工压成一行**
+> - **`[PERF_REPORT]` 前缀行**
+>
+> 非 JSON 的脏行、缺 `derived` 的 JSON 会**静默跳过**，不会中断整个文件。
+> 唯一硬要求：**别在两份报告之间加逗号，也不要套 `[]`**。
 
-最简单的做法（避免手工压行）：结算后按 Ctrl+Shift+I，Console 执行
+> ⚠️ **为什么这条改了**：聚合器原实现是「逐行 JSON.parse」，而剪贴板输出是多行美化 JSON，
+> 两者对不上会导致 **3 轮基线一条都解析不出来、全部作废**。已改为花括号配平扫描，
+> 连同「字符串里含 `{` `}`」的情况一并处理。跑真机前建议先执行：
+> ```powershell
+> cd E:\print706; node outputs/perf-white1-selftest-median.mjs
+> ```
+> 看到 `10 PASS / 0 FAIL` 再开始。
+
+想要规整单行时（可选）：结算后按 Ctrl+Shift+I，Console 执行
 ```js
 copy(JSON.stringify(__perfProbe.getReport()))
 ```
-剪贴板里就是规整的单行 JSON，直接粘贴到文件里。这一步只在取数时开一下 DevTools，
+剪贴板里就是紧凑单行 JSON。这一步只在取数时开一下 DevTools，
 发生在测量窗口之外（T5+6s 之后），**不影响测量精度**。
 
 ---

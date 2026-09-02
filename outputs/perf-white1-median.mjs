@@ -5,57 +5,84 @@
  * 用途：把多次 run 的探针报告聚合为「取中位数」的对比表，
  *       让 SOP 的「每组 3 runs 取 median」变成一条命令。
  *
- * 输入（二选一）：
- *   1. 文件参数：每行一个完整报告 JSON（JSONL），或粘贴的 [PERF_REPORT] 行
+ * 输入（二选一，格式随意，能认出 JSON 对象就行）：
+ *   1. 文件参数：一个或多个文件，里面每个探针报告一个 JSON 对象
  *      node outputs/perf-white1-median.mjs runs-s200.jsonl runs-ofd.jsonl
- *   2. --stdin：从 stdin 粘贴（自动提取 JSON 对象）
+ *   2. --stdin：从 stdin 粘贴（配合 pbpaste / 直接粘贴）
  *      node outputs/perf-white1-median.mjs --stdin
+ *
+ *   三种格式都吃：紧凑单行 · pretty 多行（剪贴板默认）· [PERF_REPORT] 前缀行；
+ *   非 JSON 的脏行、缺 derived 的 JSON 一律静默跳过。
  *
  * 输出：按 report.label 分组，每个字段输出 median / min / max / n。
  *       ★ 关键 KPI = derived.whiteScreenMs（T5→T6）
+ *
+ * 自检：node outputs/perf-white1-selftest-median.mjs（8 项，跑真机前建议先跑一次）
  */
 import { readFileSync } from 'node:fs'
 
 // ── 解析 ─────────────────────────────────────────────────────
-function extractJson(line) {
-  const t = line.trim()
-  if (!t) return null
-  // 优先整行 JSON
-  try {
-    const obj = JSON.parse(t)
-    if (obj && typeof obj === 'object' && obj.derived) return obj
-  } catch { /* 继续 */ }
-  // [PERF_REPORT] {…} 形式：找第一个 { 到行尾
-  const i = t.indexOf('{')
-  if (i >= 0) {
-    try {
-      const obj = JSON.parse(t.slice(i))
-      if (obj && typeof obj === 'object' && obj.derived) return obj
-    } catch { /* 忽略 */ }
+/**
+ * 从任意文本里抽出所有「顶层 JSON 对象」，逐个校验后保留带 derived 的。
+ *
+ * 为什么不能用「逐行 JSON.parse」：
+ *   探针 clipboard 模式写的是 JSON.stringify(report, null, 2) —— pretty 多行格式。
+ *   逐行解析时每一行都不是完整 JSON，会导致「一条都解析不出来」，3 轮基线直接作废。
+ *   这里改用花括号配平扫描（跳过字符串内的花括号），同时兼容：
+ *     · 紧凑单行 jsonl        {"id":1,...,"derived":{...}}
+ *     · pretty 多行           同一对象跨若干行
+ *     · [PERF_REPORT] 前缀     行首有标记
+ *     · 脏行                  非 JSON 文本 / 无 derived 的 JSON —— 静默跳过
+ */
+function extractJsonObjects(text) {
+  const out = []
+  let depth = 0
+  let start = -1
+  let inStr = false
+  let esc = false
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i]
+    if (inStr) {
+      if (esc) { esc = false; continue }
+      if (c === '\\') { esc = true; continue }
+      if (c === '"') inStr = false
+      continue
+    }
+    if (c === '"') { inStr = true; continue }
+    if (c === '{') {
+      if (depth === 0) start = i
+      depth++
+    } else if (c === '}') {
+      if (depth === 0) continue // 多余的右括号，跳过
+      depth--
+      if (depth === 0) {
+        const slice = text.slice(start, i + 1)
+        try {
+          const obj = JSON.parse(slice)
+          if (obj && typeof obj === 'object' && obj.derived) out.push(obj)
+        } catch { /* 不是合法 JSON → 跳过 */ }
+        start = -1
+      }
+    }
   }
-  return null
+  return out
+}
+
+function parseText(raw) {
+  return extractJsonObjects(raw)
 }
 
 function parseInput(files) {
   const reports = []
   for (const f of files) {
     const raw = readFileSync(f, 'utf8')
-    for (const line of raw.split(/\r?\n/)) {
-      const r = extractJson(line)
-      if (r) reports.push(r)
-    }
+    reports.push(...parseText(raw))
   }
   return reports
 }
 
 function parseStdin() {
-  const raw = readFileSync(0, 'utf8')
-  const reports = []
-  for (const line of raw.split(/\r?\n/)) {
-    const r = extractJson(line)
-    if (r) reports.push(r)
-  }
-  return reports
+  return parseText(readFileSync(0, 'utf8'))
 }
 
 // ── 中位数 ───────────────────────────────────────────────────
@@ -104,7 +131,9 @@ try {
 }
 
 if (reports.length === 0) {
-  console.error('[median] 未解析到任何报告。输入应为 JSONL（每行一个完整报告）或 [PERF_REPORT] 行。')
+  console.error('[median] 未解析到任何报告。')
+  console.error('        输入需含至少一个带 derived 字段的探针报告对象；')
+  console.error('        紧凑单行 / pretty 多行 / [PERF_REPORT] 前缀行都支持，脏行会跳过。')
   process.exit(1)
 }
 
