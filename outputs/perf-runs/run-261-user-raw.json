@@ -1,0 +1,92 @@
+{
+  "id": 1,
+  "label": "import:261",
+  "meta": {
+    "fileCount": 261,
+    "rawCount": 261
+  },
+  "t0Wall": "2026-09-02T09:34:08.896Z",
+  "finishReason": "T5+6000ms",
+  "marksRel": {
+    "T0": 0,
+    "T1": 19669.3,
+    "T2": 65032.4,
+    "T3": 65032.4,
+    "T4": 65032.4,
+    "T6_pre": 23.6,
+    "T6p_pre": 344,
+    "T7_pre": 1363.2,
+    "T6p": 65037.5,
+    "T5": 65308.1
+  },
+  "derived": {
+    "splitMs": 19669.3,
+    "parseMs": 45363.1,
+    "hydrateMs": 0,
+    "sealMs": 0,
+    "dismissDelayMs": 275.7,
+    "whiteScreenMs": null,
+    "paintGapMs": null,
+    "whiteToPaintMs": -270.6,
+    "previewLagMs": null,
+    "totalMs": 65037.5,
+    "firstCommitMs": 23.6,
+    "commitVsDismissMs": -65284.5,
+    "listReadyBeforeDismiss": true
+  },
+  "missingMarks": [
+    "T6"
+  ],
+  "counters": {
+    "setFiles": 116,
+    "applySort": 8,
+    "handlePreview": 122,
+    "invoiceDocumentToRow": 561,
+    "renderPathConsoleLog": 556,
+    "importHistoryQuery": 561
+  },
+  "durations": {
+    "buildDocumentViewModel": {
+      "n": 107,
+      "total": 71.6,
+      "max": 4.8,
+      "avg": 0.7
+    },
+    "selectDocumentRows": {
+      "n": 230,
+      "total": 16.6,
+      "max": 0.4,
+      "avg": 0.1
+    },
+    "invoiceDocumentsToRows": {
+      "n": 3,
+      "total": 7.9,
+      "max": 4.2,
+      "avg": 2.6
+    }
+  },
+  "longTasks": {
+    "supported": true,
+    "count": 112,
+    "totalMs": 16130,
+    "top10": [
+      { "start": 169916.3, "dur": 983 },
+      { "start": 185842.5, "dur": 831 },
+      { "start": 156091.1, "dur": 765 },
+      { "start": 138843.6, "dur": 223 },
+      { "start": 137720.6, "dur": 219 },
+      { "start": 139808.3, "dur": 216 },
+      { "start": 140759.1, "dur": 213 },
+      { "start": 135538.3, "dur": 212 },
+      { "start": 130320.6, "dur": 208 },
+      { "start": 136553.5, "dur": 206 }
+    ],
+    "whiteWindow": {
+      "from": 186673.8,
+      "to": 186678.9,
+      "count": 0,
+      "totalMs": 0,
+      "top5": []
+    }
+  }
+}
