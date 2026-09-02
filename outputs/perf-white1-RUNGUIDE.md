@@ -72,6 +72,35 @@ cd /e/print706 && npm start
 
 三个都起来后，会看到 FapiaoGO 主窗口。
 
+### 1.1.1 启动前自检（一条命令，建议每次都跑）
+
+在打开终端 ③ 之前，先跑：
+
+```bash
+cd /e/print706 && node outputs/perf-white1-preflight.mjs
+```
+
+看到 `全部就绪` 且退出码 0 再 `npm start`。它会检测后端 5000 与 Vite 5173，
+未就绪时直接打印该开哪个终端的命令，避免导入跑到一半才发现后端没起。
+
+> **[!] 5000 端口已被占用** 这条提示要注意：
+> 如果你**没有**手动起过后端，那么占用者极可能是后台残留的**生产版 FapiaoGO / server.exe**。
+> 请到任务管理器结束 `FapiaoGO.exe`、`server.exe`，再按 1.1 手动起 dev 后端，
+> 确保整条链路是你可控的开发版（生产版不带探针代码，跑起来会「开关设了但没数据」）。
+
+**已实测验证的环境事实**（2026-09-02 在本机跑通，可放心照做）：
+
+| 项 | 结论 |
+|---|---|
+| `backend/venv/Scripts/python.exe backend/app.py` | ✅ 正常启动，端口 **5000**（`app.py:2150`） |
+| `cd frontend && npm run dev` | ✅ Vite 8.2.1，约 3.3s ready，`/index.html` 返回 200 |
+| `npm start`（= `electron .`） | ✅ `isDev = !app.isPackaged` 为真 → 加载 `http://localhost:5173`（`main.js:229`），**不需要任何环境变量** |
+| 探针模块 dev 可达性 | ✅ `/perf/importPerfProbe.js` 返回 200，35717 字节，开关关键字 3 处 |
+
+> 注意 Vite 的 `root` 是 `frontend/src`（见 `frontend/vite.config.js`），
+> 所以浏览器里模块的 URL 是 `/perf/importPerfProbe.js`，**不带 `src/` 前缀**。
+> 这不影响你的操作，只在你想手动访问模块时有用。
+
 ### 1.2 打开探针开关（唯一一次需要开 DevTools）
 
 1. 在 FapiaoGO 窗口里按 **Ctrl + Shift + I**，打开 DevTools
@@ -210,6 +239,8 @@ PREVIEW_LAG  = median(derived.previewLagMs)      ← 弹窗关闭 → 预览首�
 | 报告 `longTasks.supported = false` | 浏览器不支持 longtask observer | 不影响 T0–T7 与计数器，只少一个维度 |
 | Vite 端口 5173 被占用 | 上次的 dev server 没关 | 关掉旧终端，或 `npm run dev -- --port 5174`（同时 main.js 的 URL 也得改，不推荐） |
 | 后端 5000 端口占用 | 上次的 python 没关 | 关掉旧终端 |
+| 后端起不来 / preflight 提示 5000 已被占用 | 后台残留生产版 FapiaoGO | 任务管理器结束 `FapiaoGO.exe`、`server.exe` 后重试 |
+| 开关设了但报告里全是 0 / 空 | 用的是生产版（桌面图标） | 必须用 `npm start` 开发模式；生产版 dist 里没有探针代码 |
 
 ---
 
@@ -220,7 +251,7 @@ PREVIEW_LAG  = median(derived.previewLagMs)      ← 弹窗关闭 → 预览首�
 2. 单独实施对应措施（Gate 1 起一次只改一个变量）
 3. 给你下一轮的复测指令
 
-## 7. 关于 S-200-OFD（暂缓，已确认原因）
+## 8. 关于 S-200-OFD（暂缓，已确认原因）
 
 **先不要跑 OFD，而且不是"以后再说"那么简单——它需要单独一轮准备工作。**
 
