@@ -45,11 +45,16 @@ from render_engine.api import render_bp
 #  Excel 导出预编译常量（模块加载时初始化一次，避免每条记录重复创建）
 # ═══════════════════════════════════════════════════════════
 _CLASS_CODE_RE = re.compile(r'^\*[^*]+\*')
+# LineSegmenter grid_to_excel_rows 产出的列名（缩写格式），与完整中文表头并存
 _EXCEL_KEY_MAP = {
     '项目名称': 'xmmc', '规格型号': 'ggxh', '单位': 'unit',
     '数量': 'quantity', '单价': 'unitPrice', '金额': 'lineAmount',
     '税率/征收率': 'taxRate', '税额': 'lineTax',
+    # LineSegmenter 缩写列名（实际产出）
+    '量': 'quantity', '价': 'unitPrice', '额': 'lineAmount',
+    '额_1': 'lineTax', '税': 'lineTax', '规格': 'ggxh',
 }
+_STAR_TOKENS = {'*', '**', '***', '＊', '＊＊', '＊＊＊'}
 _ITEM_MAP = {
     "xmmc": "xmmc", "ggxh": "ggxh", "dw": "unit", "sl": "quantity",
     "dj": "unitPrice", "je": "lineAmount", "slv": "taxRate", "se": "lineTax",
@@ -158,9 +163,17 @@ def _db_record_to_export(rec: dict) -> list:
         for item in excel_rows:
             row = _build_export_header(rec)
             for cn_key, export_key in _EXCEL_KEY_MAP.items():
+                # 缩写 key（如 '额'）优先级低于完整 key（如 '金额'），已赋值则跳过
+                if row.get(export_key):
+                    continue
                 val = item.get(cn_key, '')
-                if val:
-                    row[export_key] = val
+                if val is not None:
+                    val = str(val).strip()
+                    if val and export_key == 'lineTax' and val in _STAR_TOKENS:
+                        # 免税票税额列 *** → 0.00
+                        val = '0.00'
+                    if val:
+                        row[export_key] = val
             _extract_class_code_fast(row)
             results.append(row)
         return results

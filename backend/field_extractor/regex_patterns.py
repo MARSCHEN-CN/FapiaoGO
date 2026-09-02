@@ -6,7 +6,7 @@ import re
 # ============================
 # 金额/税务基础正则
 # ============================
-_SMALL_WRITE_RE = re.compile(r'[（(]\s*小写\s*[）)]\s*[¥￥]?\s*([\d,]+\.\d{2})')
+_SMALL_WRITE_RE = re.compile(r'[（(]\s*小写\s*[）)]\s*.{0,60}?[¥￥]?\s*([\d,]+\.\d{2})')
 _TAX_TOTAL_LINE_RE = re.compile(r'价税合计|小写金额')
 _YUAN_RE = re.compile(r'[¥￥]\s*([\d,]+\.\d{2})')
 _AMOUNT_NUM_RE = re.compile(r'([\d,]+\.\d{2})')

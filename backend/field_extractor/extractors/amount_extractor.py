@@ -72,9 +72,60 @@ class AmountPair:
 class AmountExtractor:
     """三阶段金额提取器：标签绑定 → 空间定位 → 算术校验"""
 
-    def extract(self, doc: OCRDocument):
-        """返回 (amount_hj, amount_je, amount_se)"""
+    def extract(self, doc: OCRDocument, structured_items: list = None):
+        """
+        返回 (amount_hj, amount_je, amount_se)
+
+        structured_items: LineSegmenter 识别的正式结构化明细（doc.line_items_excel_rows）
+                         列名契约：'额'=金额列, '额_1'=税额列, '税率/征收率'=税率
+                         这是最高优先级数据源，避免 regex 搜索压扁全文时产生错误绑定。
+        """
         candidates = {'hj': [], 'je': [], 'se': []}
+
+        # ★ 最高优先级：从 LineSegmenter 结构化明细读取 JE/SE
+        # 列名契约：'额' = 金额列（聚合所有明细行）, '额_1' = 税额列
+        # 归一化：'***' / '＊＊＊' / '*' → 0.00（免税）
+        if structured_items:
+            from decimal import Decimal
+            star_tokens = {'*', '**', '***', '＊', '＊＊', '＊＊＊'}
+            try:
+                je_sum = Decimal('0')
+                se_sum = Decimal('0')
+                je_has = False
+                se_has = False
+                for row in structured_items:
+                    # 取金额列
+                    v = row.get('额')
+                    if v is not None and str(v).strip():
+                        try:
+                            je_sum += Decimal(str(v).strip())
+                            je_has = True
+                        except Exception:
+                            pass
+                    # 取税额列
+                    v2 = row.get('额_1')
+                    if v2 is not None:
+                        v2s = str(v2).strip()
+                        if v2s in star_tokens:
+                            # *** / * → 0.00（免税）
+                            se_sum += Decimal('0')
+                            se_has = True
+                        elif v2s:
+                            try:
+                                se_sum += Decimal(v2s)
+                                se_has = True
+                            except Exception:
+                                pass
+                if je_has:
+                    je_str = f"{je_sum:.2f}"
+                    candidates['je'].append(AmountCandidate(je_str, 100, 'excel_rows'))
+                    logger.info("[Amount] 结构化明细 JE=%s (conf=100)", je_str)
+                if se_has:
+                    se_str = f"{se_sum:.2f}"
+                    candidates['se'].append(AmountCandidate(se_str, 100, 'excel_rows'))
+                    logger.info("[Amount] 结构化明细 SE=%s (conf=100)", se_str)
+            except Exception as e:
+                logger.warning("[Amount] 结构化明细读取失败: %s", e)
 
         # ===== 最高优先级：双¥水平对齐提取 je/se =====
         pair_result = self._extract_dual_yen_pair(doc)
@@ -422,7 +473,7 @@ class AmountExtractor:
                         continue
                     # X约束：数字在¥右侧，且距离不超过x_limit
                     x_dist = num_tok.x0 - yen_tok.x1
-                    if x_dist < 0 or x_dist > x_limit:
+                    if x_dist < -1.0 or x_dist > x_limit:
                         continue
                     if x_dist < best_dist:
                         best_dist = x_dist
@@ -636,6 +687,7 @@ class AmountExtractor:
             if not se_kw and _SE_KW_RE.search(line):
                 kw_line = line
             if kw_line is not None:
+                # 先尝试金额 regex 匹配（优先）
                 m = _AMT_OPT_RE.search(kw_line)
                 if not m and i + 1 < n:
                     m = _AMT_OPT_RE.search(doc.lines[i + 1])
@@ -645,6 +697,16 @@ class AmountExtractor:
                         je_kw = v
                     if not se_kw and _SE_KW_RE.search(kw_line):
                         se_kw = v
+                else:
+                    # E: * 免税场景 early intercept（仅当无真实金额数字时）
+                    # 窗口检测 + 无金额数字双重保险，避免表头商品名中的 * 误伤
+                    if not se_kw:
+                        se_match = _SE_KW_RE.search(kw_line)
+                        if se_match:
+                            window = kw_line[se_match.end():se_match.end() + 30]
+                            if re.search(r'[*＊]', window):
+                                se_kw = '0.00'
+                                logger.debug("[Amount] Star tax normalized to 0.00 at line %d: '%s'", i, kw_line)
 
         return {
             'tax_total': tax_total,
@@ -669,11 +731,13 @@ class AmountExtractor:
         if not candidates['hj']:
             for i, line in scan['tax_total']:
                 logger.debug("[Amount] Found keyword at line %d: '%s'", i, line)
-                m = _YUAN_RE.search(line)
-                if m:
-                    v = self._clean_amount(m.group(1))
-                    candidates['hj'].append(AmountCandidate(v, 90, f'价税合计行#{i}'))
-                    break
+                # 优先取行内最后一个 ¥金额（通常是合计总额）
+                yuan_matches = _YUAN_RE.findall(line)
+                if yuan_matches:
+                    v = self._clean_amount(yuan_matches[-1])
+                    if v:
+                        candidates['hj'].append(AmountCandidate(v, 90, f'价税合计行#{i}'))
+                        break
                 m = _AMOUNT_NUM_RE.search(line)
                 if m:
                     v = self._clean_amount(m.group(1))
@@ -1168,21 +1232,18 @@ class AmountExtractor:
             logger.debug("[Validation] Passed: diff=%.4f, ratio=%.4f", diff, ratio_diff)
             return hj, je, se
 
-        # 校验失败：尝试微调税额
+        # 校验失败：三者 Present 但不变量不成立 → Conflict，保留原值 + warning
+        # 禁止盲目修正其中一个值来制造假自洽（之前制造过 -18.99 这种荒谬税额）
         if je and se:
-            adjusted_se = f"{round(total - net, 2):.2f}"
-            if abs(total - (net + round(total - net, 2))) <= 0.02:
-                logger.debug("[Validation] Adjusted tax: %s -> %s", se, adjusted_se)
-                return hj, je, adjusted_se
-            logger.debug("[Validation] Failed: total=%s, je=%s, se=%s, diff=%.4f", hj, je, se, diff)
-            return hj, '', ''
+            logger.warning("[Validation] Conflict: total=%s, je=%s, se=%s, diff=%.4f (三者 Present 但不变量不成立，保留原值)", hj, je, se, diff)
+            return hj, je, se
 
         # 仅有金额，尝试推导税额
         if je and not se:
             derived_tax = f"{round(total - net, 2):.2f}"
-            if abs(total - net) <= 0.02:
-                se = '0.00'
-            elif float(derived_tax) > 0:
+            # F: 统一验证规则 — 零税额推导 + 符号一致推导 都合法
+            derived_val = float(derived_tax)
+            if abs(derived_val) < 0.009 or derived_val * total > 0:
                 se = derived_tax
                 logger.debug("[Validation] Derived tax=%s from total=%s, amount=%s", se, hj, je)
             return hj, je, se
@@ -1190,7 +1251,9 @@ class AmountExtractor:
         # 仅有税额，尝试推导金额
         if se and not je:
             derived_net = f"{round(total - tax, 2):.2f}"
-            if float(derived_net) > 0:
+            # F: 统一验证规则 — 零金额推导 + 符号一致推导 都合法
+            derived_val = float(derived_net)
+            if abs(derived_val) < 0.009 or derived_val * total > 0:
                 je = derived_net
                 logger.debug("[Validation] Derived amount=%s from total=%s, tax=%s", je, hj, se)
             return hj, je, se

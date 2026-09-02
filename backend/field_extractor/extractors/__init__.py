@@ -225,7 +225,12 @@ class InvoiceExtractor:
         # 因此直接串行调用更高效。
         invoice_type = self.type_extractor.extract(doc)
         fphm = self.number_extractor.extract(doc)
-        amount_hj, amount_je, amount_se = self.amount_extractor.extract(doc)
+        # ★ L227 之前：LineSegmenter 在 segment() Step 2.5 已写入 doc.line_items_excel_rows
+        # 让 AmountExtractor 能消费这条正式结构化数据管线（比 regex 更可靠）
+        structured_items = getattr(doc, 'line_items_excel_rows', None)
+        amount_hj, amount_je, amount_se = self.amount_extractor.extract(
+            doc, structured_items=structured_items
+        )
         kprq = self.date_extractor.extract(doc)
 
         # 6. 购买方/销售方（含字段元数据）
@@ -324,6 +329,33 @@ class InvoiceExtractor:
             fields.line_items_excel_rows = excel_rows
             logger.info("[Extractor] 注入 line_items_excel_rows: %d 条明细",
                         len(excel_rows))
+
+            # ★ D1: 适配层 —— 当传统 line_items 为空时，把 excel_rows 转换为 InvoiceLineItem 回填
+            # 消费者（前端 API、validators、sanitizer）统一读 line_items
+            # 映射：项目名称→xmmc, 额→je, 额_1→se(***→0.00), 价→dj, 量→sl, 税率/征收率→slv
+            if not fields.line_items:
+                _STAR_TOKENS = {'*', '**', '***', '＊', '＊＊', '＊＊＊'}
+                _EXCEL_TO_LINEITEM = {
+                    '项目名称': 'xmmc', '规格型号': 'ggxh', '单位': 'dw',
+                    '量': 'sl', '价': 'dj', '额': 'je',
+                    '税率/征收率': 'slv', '额_1': 'se',
+                }
+                converted = []
+                for row in excel_rows:
+                    item = InvoiceLineItem()
+                    for cn_key, en_key in _EXCEL_TO_LINEITEM.items():
+                        val = row.get(cn_key, '')
+                        if val is not None:
+                            val = str(val).strip()
+                            # 税额列 *** → 0.00（免税归一化）
+                            if cn_key == '额_1' and val in _STAR_TOKENS:
+                                val = '0.00'
+                            setattr(item, en_key, val)
+                    converted.append(item)
+                if converted:
+                    fields.line_items = converted
+                    logger.info("[Extractor] D1 适配: excel_rows → line_items %d 条",
+                                len(converted))
 
         # 12. 去重
         fields = self._dedup(fields)
