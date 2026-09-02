@@ -126,6 +126,19 @@ test('T6 全程未触发：判据字段为 null 而非 0，missingMarks 含 T6',
   assert.ok(!r.missingMarks.includes('T0'), 'startSession 自动打的 T0 不应出现在 missingMarks')
 })
 
+test('T6 落在 T4 与 T5 之间：仍应判为「弹窗关闭前已渲染」', () => {
+  // T4 到 T5 之间还有 2 帧 + 250ms 的窗口，列表完全可能在这段时间内 commit。
+  // 早期实现写成「有 T6 就判 false」，会把这种情况误判为白屏真实存在。
+  perfProbe.startSession('t6-between')
+  perfProbe.mark('T4')
+  perfProbe.mark('T6')   // commit 发生在弹窗关闭之前
+  perfProbe.mark('T5')
+  const r = perfProbe.finishSession('unit')
+  assert.equal(r.derived.listReadyBeforeDismiss, true, 'T6 早于 T5 → 关闭前已渲染，不能判 false')
+  assert.ok(r.derived.commitVsDismissMs <= 0, `commitVsDismissMs=${r.derived.commitVsDismissMs} 应 ≤ 0`)
+  assert.ok(r.derived.whiteScreenMs <= 0, '此时 whiteScreenMs 为非正值，本身不代表白屏时长')
+})
+
 test('missingMarks：全锚点齐备时为空数组', () => {
   perfProbe.startSession('all-marks')
   for (const k of ['T1', 'T2', 'T3', 'T4', 'T5', 'T6']) perfProbe.mark(k)

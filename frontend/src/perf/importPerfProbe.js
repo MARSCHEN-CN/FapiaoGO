@@ -212,11 +212,15 @@ function buildReport(src) {
     //   >  0 → 列表确实在弹窗关闭之后才 commit，白屏窗口真实存在
     //   null → T6 从未触发（列表始终未 commit，或 files 在 T4 后未再变化）
     commitVsDismissMs: gap('T5', 'T6_pre') ?? gap('T5', 'T6'),
-    // 弹窗关闭前列表是否已 commit（布尔，便于直接看）
-    listReadyBeforeDismiss:
-      marks.T6_pre !== undefined && marks.T5 !== undefined ? marks.T6_pre <= marks.T5
-        : (marks.T6 !== undefined && marks.T5 !== undefined ? false : null),
   }
+
+  // 弹窗关闭前列表是否已 commit（布尔，便于直接看）。
+  // 取「最早的那个 commit 锚点」：有 T6_pre 就用它，否则用 T6。
+  // ⚠️ 不能写成「有 T6 就直接判 false」——T4 到 T5 之间还有 2 帧 + 250ms 的窗口，
+  //    列表完全可能在这段时间内 commit（T6 < T5），那种情况同样是「关闭前已渲染」。
+  const commitAnchor = marks.T6_pre !== undefined ? marks.T6_pre : marks.T6
+  derived.listReadyBeforeDismiss =
+    commitAnchor !== undefined && marks.T5 !== undefined ? commitAnchor <= marks.T5 : null
 
   // 缺失锚点清单：让「某个 T 没打上」这件事在报告里显式可见，
   // 而不是只表现为一堆 null 让人猜。
