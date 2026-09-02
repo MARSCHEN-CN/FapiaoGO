@@ -159,6 +159,10 @@ const derivedFields = [
   // ── 归因判据（T4 重置前留档，见 importPerfProbe.mark 注释）──
   ['derived.commitVsDismissMs', '判据 T5→首次commit（≤0=关闭前已渲染）'],
   ['derived.firstCommitMs', 'T0→首次commit（含 T4 前）'],
+  // ── 预览渲染判据（PERF-WHITE-1 1B：A/B/C/D）──
+  ['derived.previewStartAfterDismissMs', '判据 T5→previewRenderStart'],
+  ['derived.previewEndAfterDismissMs', '判据 T5→previewRenderEnd'],
+  ['derived.previewWorkMs', 'previewRenderStart→End work'],
 ]
 
 const out = []

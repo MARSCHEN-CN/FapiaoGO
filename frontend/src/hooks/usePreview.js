@@ -887,6 +887,10 @@ export function usePreview({ files, settings, electronAPIRef }) {
 
     const renderToCanvas = async (signal) => {
       try {
+        // PERF-WHITE-1 1B：渲染尝试起点。随 T4 重置（first-wins）→ 捕获「100% 之后的首次尝试」；
+        // 缺失 = 该窗口内无 canvas 渲染尝试（A 判据）。count 记录尝试/完成比（B/C 方向）。
+        perfProbe.mark('previewRenderStart')
+        perfProbe.count('previewRenderAttempts')
         let canvas
         const isMerge = isMergeMode(settings.mergeMode) && mergePair?.some(Boolean)
 
@@ -1011,6 +1015,8 @@ export function usePreview({ files, settings, electronAPIRef }) {
           unrotatedCanvasRef.current = canvas
           setPreviewCanvas(canvas)
           perfProbe.mark('T7')   // 预览首帧渲染完成（PERF-WHITE-1）
+          perfProbe.mark('previewRenderEnd')   // 1B：渲染完成点（与 T7 同 tick）
+          perfProbe.count('previewRenderCompleted')
           // ✅ Stage 0.8 commit：渲染完成 → 原子提交新帧 + 关闭 loading
           committedPreviewRef.current = {
             url: committedPreviewRef.current.url,

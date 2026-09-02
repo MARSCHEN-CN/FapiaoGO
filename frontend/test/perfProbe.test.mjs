@@ -141,7 +141,8 @@ test('T6 落在 T4 与 T5 之间：仍应判为「弹窗关闭前已渲染」', 
 
 test('missingMarks：全锚点齐备时为空数组', () => {
   perfProbe.startSession('all-marks')
-  for (const k of ['T1', 'T2', 'T3', 'T4', 'T5', 'T6']) perfProbe.mark(k)
+  // missingMarks 扫描清单 = T0..T7 + previewRenderStart/End（1B 起），须全部打上
+  for (const k of ['T1', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'previewRenderStart', 'previewRenderEnd']) perfProbe.mark(k)
   const r = perfProbe.finishSession('unit')
   assert.deepEqual(r.missingMarks, [], '全锚点齐备 → 空数组')
 })
@@ -171,4 +172,52 @@ test('time 包装：返回值透传，关闭态零开销', () => {
   const v = perfProbe.time('wrapped', () => 123)
   assert.equal(v, 123)
   assert.equal(perfProbe.isEnabled(), false)
+})
+
+// ── PERF-WHITE-1 1B：previewRenderStart/End 锚点（T4 留档 + A/B/C/D 判据）──
+
+test('1B：T4 重置保留 previewRender*_pre（导入期渲染被留档）', () => {
+  perfProbe.enable('1')
+  perfProbe.startSession('1b-pre-archival')
+  perfProbe.mark('previewRenderStart')   // 导入中（T4 前）的一次渲染尝试
+  perfProbe.mark('previewRenderEnd')
+  perfProbe.mark('T4')                    // 100% → 清锚点但留档 *_pre
+  perfProbe.mark('T5')                    // 弹窗关闭
+  const r = perfProbe.finishSession('unit')
+  assert.ok(r.marksRel.previewRenderStart_pre !== undefined, 'T4 前的 start 必须留档 *_pre')
+  assert.ok(r.marksRel.previewRenderEnd_pre !== undefined, 'T4 前的 end 必须留档 *_pre')
+  assert.equal(r.marksRel.previewRenderStart, undefined, 'T4 后无新尝试 → 当前锚点应为 undefined')
+  assert.equal(r.derived.previewStartAfterDismissMs, null)
+  assert.equal(r.derived.previewStartedBeforeDismiss, true, '有 *_pre → 渲染发生在 100% 之前')
+  assert.ok(r.missingMarks.includes('previewRenderStart'), 'T4 后未重打 → 应进缺失清单')
+})
+
+test('1B：100% 后渲染完成（D 方向）：start/end 判据齐全且为数值', () => {
+  perfProbe.startSession('1b-done')
+  perfProbe.mark('T4')
+  perfProbe.mark('T5')
+  perfProbe.mark('previewRenderStart')    // 100% 后开始渲染
+  perfProbe.mark('previewRenderEnd')      // 并完成
+  const r = perfProbe.finishSession('unit')
+  assert.ok(r.marksRel.previewRenderStart_pre === undefined, '无 T4 前尝试 → 无 *_pre 留档')
+  assert.ok(r.derived.previewStartAfterDismissMs >= 0, `start 滞后=${r.derived.previewStartAfterDismissMs} 应 ≥ 0`)
+  assert.ok(r.derived.previewEndAfterDismissMs >= r.derived.previewStartAfterDismissMs, 'end 不早于 start')
+  assert.ok(r.derived.previewWorkMs >= 0, `work=${r.derived.previewWorkMs} 应 ≥ 0`)
+  assert.equal(r.derived.previewStartedBeforeDismiss, false, '渲染在 100% 之后 → false')
+  assert.ok(!r.missingMarks.includes('previewRenderStart'), '已打锚点不应进缺失清单')
+  assert.ok(!r.missingMarks.includes('previewRenderEnd'))
+})
+
+test('1B：100% 后渲染开始但未完成（C 方向）：end 缺失 → 判据区分', () => {
+  perfProbe.startSession('1b-started-no-end')
+  perfProbe.mark('T4')
+  perfProbe.mark('T5')
+  perfProbe.mark('previewRenderStart')    // 渲染开始了……
+  // ……观察窗结束时仍未完成（end 缺失）
+  const r = perfProbe.finishSession('unit')
+  assert.ok(r.derived.previewStartAfterDismissMs >= 0, 'start 有值 → 有渲染尝试')
+  assert.equal(r.derived.previewEndAfterDismissMs, null, 'end 缺失 → null 而非 0')
+  assert.equal(r.derived.previewWorkMs, null)
+  assert.ok(r.missingMarks.includes('previewRenderEnd'), '缺失的 end 应进 missingMarks')
+  assert.ok(!r.missingMarks.includes('previewRenderStart'), '已打的 start 不应进 missingMarks')
 })

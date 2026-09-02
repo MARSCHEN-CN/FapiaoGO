@@ -1134,8 +1134,10 @@ export function useFileOps({ setFiles, settings, electronAPIRef }) {
       completeDismissTimerRef.current = null
       currentAbortRef.current = null
       perfProbe.mark('T5')   // 弹窗关闭 = 白屏窗口计时开始
-      // 结算：给 T6/T7 一个足够的观察窗口（预览首帧常在数秒内到达）
-      setTimeout(() => perfProbe.finishSession('T5+6000ms'), 6000)
+      // 结算：给 T6/T7/previewRenderEnd 一个足够的观察窗口。
+      // 1B 起 6s → 15s：run-261 实证预览首帧可能 >6s 才到（原 6s 窗内 T7 未达，
+      // 「没画完」与「没触发」无法区分）；15s 内仍无 end → C 方向可实锤。
+      setTimeout(() => perfProbe.finishSession('T5+15000ms'), 15000)
       setParsing(false)
       setParseProgress({ current: 0, total: 0 })
       setImporting(false)

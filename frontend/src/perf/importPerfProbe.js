@@ -24,11 +24,22 @@
  *   T6p FileList 首次 paint（commit 后 rAF + setTimeout(0)）
  *   T7  预览首帧渲染完成（setPreviewCanvas(canvas)）
  *
+ *   ── 预览渲染尝试（PERF-WHITE-1 1B 新增，canvas 路径 renderToCanvas）──
+ *   previewRenderStart  一次渲染尝试的起点（renderToCanvas 进入即打点）
+ *   previewRenderEnd    渲染完成点（与 T7 同点：setPreviewCanvas 之后）
+ *   二者与 T6/T6p/T7 一样随 T4 重置并留档 *_pre，捕获「100% 之后的首次
+ *   渲染尝试/完成」。配合 T5+15s 观察窗区分四种情形：
+ *     A 未触发        → start 缺失
+ *     B 触发但很晚    → start 很晚（T5+ 大）
+ *     C 开始但未完成  → start 有、end 缺失/很晚（观察窗内）
+ *     D 已完成        → start/end 齐备且 end 早于白屏感知
+ *
  *   核心 KPI：WHITE_SCREEN = T6 - T5（弹窗关闭 → 列表首次 commit）
  *   辅助 KPI：PAINT_GAP   = T6p - T6（commit → 真正上屏）
  *            PREVIEW_LAG = T7 - T5
- *   注：T4 到达时会重置 T6/T6p/T7 —— 导入过程中占位符也会让 FileList commit，
- *       只有「100% 之后的首次 commit」才是白屏窗口的终点。
+ *   注：T4 到达时会重置 T6/T6p/T7/previewRenderStart/previewRenderEnd ——
+ *       导入过程中占位符也会让 FileList commit / 触发渲染尝试，
+ *       只有「100% 之后的首个锚点」才是白屏窗口的终点。
  *
  * @module perf/importPerfProbe
  */
@@ -97,7 +108,7 @@ export function setMeta(patch) {
 /**
  * 记录时间线锚点。语义：**首次写入优先**（first-wins），
  * 同一锚点重复调用不覆盖 —— 保证 T6 是「100% 之后的首次 commit」。
- * @param {string} name T0|T1|T2|T3|T4|T5|T6|T6p|T7
+ * @param {string} name T0|T1|T2|T3|T4|T5|T6|T6p|T7|previewRenderStart|previewRenderEnd
  */
 export function mark(name) {
   if (!mode || !session) return
@@ -110,7 +121,9 @@ export function mark(name) {
     // 若 T6_pre 存在且早于 T5，说明白屏**不是**列表渲染问题（列表早就画好了，
     // 用户看到的是别的东西：被弹窗遮罩挡住 / 预览区空白 / 布局塌陷等），
     // 归因方向完全不同。没有 T6_pre 就无法区分「白屏」和「从未白屏」。
-    for (const k of ['T6', 'T6p', 'T7']) {
+    // 1B 起 previewRenderStart/End 一并留档：导入期若有渲染尝试，同样会在
+    // 100% 时被清掉 —— 只有「100% 之后的首次尝试/完成」才能回答 A/B/C/D。
+    for (const k of ['T6', 'T6p', 'T7', 'previewRenderStart', 'previewRenderEnd']) {
       if (session.marks[k] !== undefined) session.marks[k + '_pre'] = session.marks[k]
       delete session.marks[k]
     }
@@ -212,7 +225,25 @@ function buildReport(src) {
     //   >  0 → 列表确实在弹窗关闭之后才 commit，白屏窗口真实存在
     //   null → T6 从未触发（列表始终未 commit，或 files 在 T4 后未再变化）
     commitVsDismissMs: gap('T5', 'T6_pre') ?? gap('T5', 'T6'),
+
+    // ── 预览渲染归因判据（PERF-WHITE-1 1B：previewRenderStart/End 随 T4 重置留档）──
+    //   start 缺失            → 100% 后无渲染尝试（A 方向：未触发，非渲染慢）
+    //   start 有、end 缺失    → 渲染已开始但观察窗内未完成（B/C 方向：慢/卡/被取消）
+    //   start/end 齐备        → 渲染完成（D 方向：白屏若仍存在，查渲染之外环节）
+    previewStartAfterDismissMs: gap('T5', 'previewRenderStart'),
+    previewEndAfterDismissMs: gap('T5', 'previewRenderEnd'),
+    previewWorkMs: gap('previewRenderStart', 'previewRenderEnd'),
   }
+
+  // T4 之前是否已有渲染尝试（*_pre 留档存在性）：
+  //   区分「全程从未渲染」（null）vs「仅导入期渲染过、100% 后无新尝试」（true）
+  //   vs「渲染发生在 100% 之后」（false）。
+  derived.previewStartedBeforeDismiss =
+    marks.previewRenderStart_pre !== undefined
+      ? true
+      : marks.previewRenderStart !== undefined || marks.previewRenderEnd !== undefined
+        ? false
+        : null
 
   // 弹窗关闭前列表是否已 commit（布尔，便于直接看）。
   // 取「最早的那个 commit 锚点」：有 T6_pre 就用它，否则用 T6。
@@ -224,7 +255,9 @@ function buildReport(src) {
 
   // 缺失锚点清单：让「某个 T 没打上」这件事在报告里显式可见，
   // 而不是只表现为一堆 null 让人猜。
-  const missingMarks = ['T0', 'T1', 'T2', 'T3', 'T4', 'T5', 'T6']
+  // 1B 起纳入 T7 与 previewRenderStart/End —— run-261 曾出现 T7 缺失但 missingMarks
+  // 只有 T6 的情况（证据盲区）；预览锚点缺失正是 A（未触发）的直接信号。
+  const missingMarks = ['T0', 'T1', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'previewRenderStart', 'previewRenderEnd']
     .filter((k) => marks[k] === undefined)
 
   const durations = {}
@@ -332,6 +365,17 @@ export function summaryText() {
 
   if (r.missingMarks && r.missingMarks.length) {
     lines.push(`⚠️ 缺失锚点: ${r.missingMarks.join(', ')}（对应指标将为 null）`)
+  }
+
+  // ── 预览渲染判据（1B）：A/B/C/D 一眼可判 ──
+  const ps = d.previewStartAfterDismissMs
+  const pe = d.previewEndAfterDismissMs
+  if (ps == null) {
+    lines.push(`★ 预览判据: 100% 后无渲染尝试（start 缺失；曾尝试=${d.previewStartedBeforeDismiss}）→ A「未触发」，查自动预览触发条件/RE 路径是否占用`)
+  } else if (pe == null) {
+    lines.push(`★ 预览判据: 渲染已开始于 T5+${ps}ms 但观察窗内未完成 → B/C「开始但未完成」，主线程阻塞或渲染中`)
+  } else {
+    lines.push(`★ 预览判据: 渲染完成于 T5+${pe}ms（start=T5+${ps}ms, work=${d.previewWorkMs}ms）→ D「渲染完成」；白屏若仍久则查 commit→paint 环节`)
   }
 
   lines.push(
