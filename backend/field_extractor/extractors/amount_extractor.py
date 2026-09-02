@@ -83,39 +83,68 @@ class AmountExtractor:
         candidates = {'hj': [], 'je': [], 'se': []}
 
         # ★ 最高优先级：从 LineSegmenter 结构化明细读取 JE/SE
-        # 列名契约：'额' = 金额列（聚合所有明细行）, '额_1' = 税额列
+        # 列名契约（两条通路均支持）：
+        #   PDF 文本通路(grid_to_excel_rows): '金额'=金额列, '税额'=税额列
+        #   OCR 通路: '额'=金额列, '额_1'=税额列
         # 归一化：'***' / '＊＊＊' / '*' → 0.00（免税）
+        # 抗污染：从 '21.73 21.73¥ 出行人' 中提取第一个有效数字
         if structured_items:
+            import re as _re
             from decimal import Decimal
             star_tokens = {'*', '**', '***', '＊', '＊＊', '＊＊＊'}
+            _AMT_NUM = _re.compile(r'\d+(?:\.\d+)?')
+            # 优先级：完整中文列名先（PDF 文本通路标准），再缩写列名
+            JE_KEYS = ['金额', '额']
+            SE_KEYS = ['税额', '额_1', '税']
             try:
                 je_sum = Decimal('0')
                 se_sum = Decimal('0')
                 je_has = False
                 se_has = False
                 for row in structured_items:
-                    # 取金额列
-                    v = row.get('额')
-                    if v is not None and str(v).strip():
-                        try:
-                            je_sum += Decimal(str(v).strip())
-                            je_has = True
-                        except Exception:
-                            pass
-                    # 取税额列
-                    v2 = row.get('额_1')
-                    if v2 is not None:
-                        v2s = str(v2).strip()
-                        if v2s in star_tokens:
-                            # *** / * → 0.00（免税）
-                            se_sum += Decimal('0')
-                            se_has = True
-                        elif v2s:
+                    # ── 金额列 ──
+                    v = None
+                    for k in JE_KEYS:
+                        v = row.get(k)
+                        if v is not None and str(v).strip():
+                            break
+                    if v is not None:
+                        v_str = str(v).strip()
+                        # 抗污染：如果被空格/¥/表头截断，提取第一个数字
+                        m = _AMT_NUM.search(v_str)
+                        if m:
                             try:
-                                se_sum += Decimal(v2s)
-                                se_has = True
+                                je_sum += Decimal(m.group(0))
+                                je_has = True
                             except Exception:
                                 pass
+                    # ── 税额列 ──
+                    v2 = None
+                    for k in SE_KEYS:
+                        v2 = row.get(k)
+                        if v2 is not None and str(v2).strip():
+                            break
+                    if v2 is not None:
+                        v2s = str(v2).strip()
+                        # 抗污染：先检查整串是否含星号
+                        # 优先找完整 star_token，再 fallback 到任意 *
+                        se_val = None
+                        for tok in star_tokens:
+                            if tok in v2s:
+                                se_val = '0.00'
+                                se_has = True
+                                break
+                        if se_val is None:
+                            m2 = _AMT_NUM.search(v2s)
+                            if m2:
+                                try:
+                                    se_sum += Decimal(m2.group(0))
+                                    se_has = True
+                                except Exception:
+                                    pass
+                        elif se_val == '0.00':
+                            # 已经标记为免税 (0.00)
+                            se_sum += Decimal('0')
                 if je_has:
                     je_str = f"{je_sum:.2f}"
                     candidates['je'].append(AmountCandidate(je_str, 100, 'excel_rows'))

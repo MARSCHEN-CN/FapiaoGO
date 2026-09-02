@@ -332,25 +332,53 @@ class InvoiceExtractor:
 
             # ★ D1: 适配层 —— 当传统 line_items 为空时，把 excel_rows 转换为 InvoiceLineItem 回填
             # 消费者（前端 API、validators、sanitizer）统一读 line_items
-            # 映射：项目名称→xmmc, 额→je, 额_1→se(***→0.00), 价→dj, 量→sl, 税率/征收率→slv
+            # 映射支持两套列名：
+            #   PDF 文本通路(grid_to_excel_rows): 完整中文 (项目名称/规格型号/单位/数量/单价/金额/税率/税额)
+            #   OCR 通路: 缩写 (项目名称/规格/位/量/价/额/税率/额_1)
             if not fields.line_items:
+                import re as _re
                 _STAR_TOKENS = {'*', '**', '***', '＊', '＊＊', '＊＊＊'}
-                _EXCEL_TO_LINEITEM = {
-                    '项目名称': 'xmmc', '规格型号': 'ggxh', '单位': 'dw',
-                    '量': 'sl', '价': 'dj', '额': 'je',
-                    '税率/征收率': 'slv', '额_1': 'se',
+                _AMT_NUM = _re.compile(r'\d+(?:\.\d+)?')
+                # 多列名 → 统一 InvoiceLineItem 英文名（priority: 完整中文先，再缩写）
+                _COLUMN_ALIASES = {
+                    'xmmc': ['项目名称'],
+                    'ggxh': ['规格型号', '规格'],
+                    'dw':   ['单位', '位'],
+                    'sl':   ['数量', '量'],
+                    'dj':   ['单价', '价'],
+                    'je':   ['金额', '额'],
+                    'slv':  ['税率/征收率', '税率', '征收率'],
+                    'se':   ['税额', '额_1', '税'],
                 }
+                # 需要从污染值中提取第一个有效数字的字段
+                _NUMERIC_FIELDS = {'je', 'se', 'dj', 'sl'}
+                # 需要做 ***→0.00 归一化的字段
+                _STAR_FIELDS = {'se'}
+
                 converted = []
                 for row in excel_rows:
                     item = InvoiceLineItem()
-                    for cn_key, en_key in _EXCEL_TO_LINEITEM.items():
-                        val = row.get(cn_key, '')
-                        if val is not None:
-                            val = str(val).strip()
-                            # 税额列 *** → 0.00（免税归一化）
-                            if cn_key == '额_1' and val in _STAR_TOKENS:
-                                val = '0.00'
-                            setattr(item, en_key, val)
+                    for en_key, cn_keys in _COLUMN_ALIASES.items():
+                        val = ''
+                        for cn_key in cn_keys:
+                            raw = row.get(cn_key)
+                            if raw is not None and str(raw).strip():
+                                val = str(raw).strip()
+                                break
+                        if val:
+                            # 抗污染：数值字段提取第一个有效数字
+                            if en_key in _NUMERIC_FIELDS:
+                                m = _AMT_NUM.search(val)
+                                if m:
+                                    val = m.group(0)
+                                else:
+                                    val = ''  # 没找到有效数字就清空
+                            # *** → 0.00（税额列免税归一化）
+                            if en_key in _STAR_FIELDS:
+                                if any(tok in val for tok in _STAR_TOKENS):
+                                    val = '0.00'
+                            if val:
+                                setattr(item, en_key, val)
                     converted.append(item)
                 if converted:
                     fields.line_items = converted
