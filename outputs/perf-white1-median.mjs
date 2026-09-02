@@ -156,6 +156,9 @@ const derivedFields = [
   ['derived.whiteToPaintMs', 'T5→T6p whiteToPaint'],
   ['derived.previewLagMs', 'T5→T7 PREVIEW_LAG'],
   ['derived.totalMs', 'T0→T7 total'],
+  // ── 归因判据（T4 重置前留档，见 importPerfProbe.mark 注释）──
+  ['derived.commitVsDismissMs', '判据 T5→首次commit（≤0=关闭前已渲染）'],
+  ['derived.firstCommitMs', 'T0→首次commit（含 T4 前）'],
 ]
 
 const out = []

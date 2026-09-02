@@ -96,6 +96,43 @@ test('T4 重置（反向顺序）：T4 之后无 T6 时报告不炸', () => {
   assert.equal(r.derived.whiteToPaintMs, null)
 })
 
+test('T4 重置保留 T6_pre：可判定「弹窗关闭前列表是否已渲染」', () => {
+  // 为什么必须留档：只保留「T4 之后的 T6」会丢掉关键判据 ——
+  // 若列表在弹窗关闭前就已 commit，白屏根本不是列表渲染问题，归因方向完全不同。
+  perfProbe.startSession('t4-keep-pre')
+  perfProbe.mark('T6')   // 弹窗还开着时的占位符 commit
+  perfProbe.mark('T4')   // 进度 100% → 清 T6，但留档为 T6_pre
+  perfProbe.mark('T5')   // 弹窗关闭
+  const r = perfProbe.finishSession('unit')
+  assert.ok(r.marksRel.T6_pre !== undefined, 'T4 重置前的 T6 必须留档为 T6_pre')
+  assert.equal(r.marksRel.T6, undefined, 'T4 之后的 T6 尚未触发，应为 undefined')
+  assert.equal(r.derived.listReadyBeforeDismiss, true, 'T6_pre 早于 T5 → 列表在弹窗关闭前已渲染')
+  assert.ok(r.derived.commitVsDismissMs <= 0, `commitVsDismissMs=${r.derived.commitVsDismissMs} 应 ≤ 0`)
+  assert.ok(r.derived.firstCommitMs >= 0, 'firstCommitMs 有值（首次 commit 相对 T0）')
+})
+
+test('T6 全程未触发：判据字段为 null 而非 0，missingMarks 含 T6', () => {
+  perfProbe.startSession('no-t6')
+  perfProbe.mark('T4')
+  perfProbe.mark('T5')
+  const r = perfProbe.finishSession('unit')
+  assert.equal(r.derived.whiteScreenMs, null)
+  assert.equal(r.derived.commitVsDismissMs, null, '既无 T6_pre 也无 T6 → null，不能用 0 冒充')
+  assert.equal(r.derived.firstCommitMs, null)
+  assert.equal(r.derived.listReadyBeforeDismiss, null)
+  assert.ok(r.missingMarks.includes('T6'), `missingMarks=${JSON.stringify(r.missingMarks)} 应含 T6`)
+  assert.ok(!r.missingMarks.includes('T4'), '已打的 T4 不应出现在 missingMarks')
+  assert.ok(!r.missingMarks.includes('T5'), '已打的 T5 不应出现在 missingMarks')
+  assert.ok(!r.missingMarks.includes('T0'), 'startSession 自动打的 T0 不应出现在 missingMarks')
+})
+
+test('missingMarks：全锚点齐备时为空数组', () => {
+  perfProbe.startSession('all-marks')
+  for (const k of ['T1', 'T2', 'T3', 'T4', 'T5', 'T6']) perfProbe.mark(k)
+  const r = perfProbe.finishSession('unit')
+  assert.deepEqual(r.missingMarks, [], '全锚点齐备 → 空数组')
+})
+
 test('begin/end 幂等：重复 end 只记一次', () => {
   perfProbe.startSession('idem')
   const end = perfProbe.begin('d2')

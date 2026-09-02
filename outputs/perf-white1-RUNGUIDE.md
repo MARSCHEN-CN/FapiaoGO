@@ -15,13 +15,17 @@
 
 | 项目 | 状态 | 说明 |
 |------|------|------|
-| 探针代码 | ✅ 已提交并推送 | `05b3164`（远端已确认同步） |
-| S-200 数据集 | ✅ 已生成 | `E:\print706\test_fixtures\perf\S-200\`，200 份 PDF / 0.69 MB |
-| 数据集发票号唯一性 | ✅ 已校验 | `25952000000127670001` … `…0200`，200 个互不重复 |
-| 中位数聚合器 | ✅ 已自测 | `outputs/perf-white1-median.mjs` |
+| 探针代码 | ✅ 已提交并推送 | `05b3164` 打底，`6d8886a`/本次新增 T4 留档与判据（远端已确认同步） |
+| **S-200-A / B / C 三组数据集** | ✅ 已生成并自检 | `E:\print706\test_fixtures\perf\S-200-{A,B,C}\`，各 200 份 / 0.69 MB，号码互不相交 |
+| 数据集发票号唯一性 | ✅ 已校验 | A `…0001~0200`、B `…0201~0400`、C `…0401~0600` |
+| 中位数聚合器 | ✅ 已自测 | `outputs/perf-white1-median.mjs`（10 项链路自检 `perf-white1-selftest-median.mjs`） |
+| 探针单元测试 | ✅ 11/11 通过 | `frontend/test/perfProbe.test.mjs` |
 
 ⚠️ **为什么发票号必须唯一**：前端 `importHistory` 是按发票号分组后批量查询的。若 200 份文件号码相同，
 `importHistoryQuery` 只会记到 **1 次**，「网络尾巴」这条归因链会被直接证伪（假的证伪）。这一点很容易踩。
+
+🔴 **为什么是三组而不是复用一组**：见 **0.65 节**。复用同一批文件会让第 1 轮走冷路径、
+第 2/3 轮走热路径，三轮不可比。这是本轮修掉的最严重缺陷。
 
 > 如果你手上有**真实的 200 张发票**，优先用真实的（更贴近线上）。生成数据仅用于「没有真实数据」时保底。
 > 用真实数据的话，把第 2 步的目标目录换成你自己的文件夹即可，其余步骤不变。
@@ -39,7 +43,7 @@
 ### 0.6 开工前先自检数据集（约 30 秒，强烈建议）
 
 ```powershell
-cd E:\print706; backend\venv\Scripts\python.exe outputs/perf-white1-verify-dataset.py test_fixtures/perf/S-200
+cd E:\print706; backend\venv\Scripts\python.exe outputs/perf-white1-verify-dataset.py test_fixtures/perf/S-200-A
 ```
 
 看到 `✅ 数据集可用` 再往下走。自检会拦下两类会让整轮基线白跑的问题：
@@ -49,6 +53,59 @@ cd E:\print706; backend\venv\Scripts\python.exe outputs/perf-white1-verify-datas
 
 > 换成你自己的真实数据集时，把最后的目录参数换掉即可，同样先自检。
 > 默认取样 5 份（首/中/尾三段）；要全量 200 份加 `--all`（约数分钟）。
+
+---
+
+## 0.65 🔴 必须先读：三轮基线为什么不能复用同一批文件
+
+这一条如果不遵守，**3 轮数据全部作废**，而且结论会**系统性地错**。
+
+**机制**（三处代码共同决定）：
+
+1. 后端 `backend/import_history.py` 按**发票号码**累计 `importCount`——**每次导入 +1**，
+   持久化的项目级数据，不随应用重启清零（`import_history.py:26`）。
+2. 前端 `FileContext.jsx:264` 有一条硬门槛：
+   ```js
+   if ((res.importCount ?? 0) < 2) return   // 首次导入直接放弃写入
+   ```
+3. 一旦写入 `importHistoryInfo`，就会触发 **Map 重建 + 后续全量重排**（`FileContext.jsx:265` 注释原文）。
+
+**于是三轮走的是两条完全不同的代码路径：**
+
+| 轮次 | importCount | importHistoryInfo 写入 | 全量重排 | 路径 |
+|------|------------|----------------------|---------|------|
+| 第 1 轮 | 1 | **0 次** | 无 | 冷 |
+| 第 2 轮 | 2 | **200 次** | 200 次 | 热 |
+| 第 3 轮 | 3 | **200 次** | 200 次 | 热 |
+
+**后果**：把冷 + 热混在一起取中位数，等于把两种场景平均成一个谁都不是的数。
+更糟的是「网络尾巴」这条归因链在第 1 轮**根本不存在**，会被**假证伪**。
+
+**解法：用 3 组发票号互不相交的数据集，让三轮都走冷路径。**
+
+```powershell
+cd E:\print706; backend\venv\Scripts\python.exe outputs/perf-white1-make-dataset.py --start 1 --count 200 --out test_fixtures/perf/S-200-A
+cd E:\print706; backend\venv\Scripts\python.exe outputs/perf-white1-make-dataset.py --start 201 --count 200 --out test_fixtures/perf/S-200-B
+cd E:\print706; backend\venv\Scripts\python.exe outputs/perf-white1-make-dataset.py --start 401 --count 200 --out test_fixtures/perf/S-200-C
+```
+
+✅ **已替你生成并自检完毕**（三组各 200 份 / 0.69MB / 解析成功 / 号码唯一）：
+
+| 数据集 | 发票号范围 | 用途 |
+|--------|-----------|------|
+| `S-200-A` | `…2767 0001` ~ `…2767 0200` | 第 1 轮 |
+| `S-200-B` | `…2767 0201` ~ `…2767 0400` | 第 2 轮 |
+| `S-200-C` | `…2767 0401` ~ `…2767 0600` | 第 3 轮 |
+
+> ⚠️ **不要用「删 `database/invoice_import_history.json`」来重置**（很容易想到但没用）：
+> 后端把历史缓存在**模块级全局变量** `_history_by_number`（`import_history.py:158`），
+> 且 `atexit.register(flush)` 会在退出时**从内存写回覆盖文件**。
+> 进程活着时删文件无效，退出时数据还会「复活」。
+> 真要重置必须：停后端 → 删文件 → 再起后端。用 `--start` 换号码可以完全绕开这个坑。
+
+> 💡 想**顺便**量化「网络尾巴」，可以在 A/B/C 跑完后**追加**第 4 轮：
+> 重新导入 `S-200-A`（此时 importCount=2，走热路径），单独存文件不参与中位数，
+> 与第 1 轮对比即可分离出网络回写的代价。这是**可选**的，先跑完冷路径 3 轮再说。
 
 ### 0.7 开工前再自检一遍分析链路（约 5 秒，强烈建议）
 
@@ -157,7 +214,8 @@ __perfProbe.isEnabled()
 
 1. **重启 FapiaoGO**（关掉窗口 → 终端 ③ 重新 `npm start`）
 2. 确认 DevTools **处于关闭状态**（没开过就不用管）
-3. 导入：把 `E:\print706\test_fixtures\perf\S-200\` 里的 **200 个 PDF 全选**，拖进 FapiaoGO，或用「选择文件」按钮批量选
+3. 导入：把 **`S-200-A`** 里的 **200 个 PDF 全选**，拖进 FapiaoGO，或用「选择文件」按钮批量选
+   （第 2 轮用 `S-200-B`，第 3 轮用 `S-200-C` —— 见 0.65，三轮必须换数据集）
 4. 盯着进度条，等它走完 → 弹窗自动关闭
 5. **弹窗关闭后继续等约 7 秒**（探针在 T5 之后 6000ms 自动结算，见 `useFileOps.js:1138`）
 6. 打开记事本，**Ctrl + V** 粘贴 —— 这就是本次 run 的完整报告（JSON）
@@ -206,12 +264,12 @@ copy(JSON.stringify(__perfProbe.getReport()))
 
 ## 3. 跑满 3 次
 
-把第 2 节完整重复 **3 次**，得到 3 行数据。
+把第 2 节完整重复 **3 次**，得到 3 份报告，**每轮换一个数据集**（A → B → C）。
 
 **控制变量清单（每次 run 都要一致）：**
 - DevTools 关闭
 - 应用刚重启，列表是空的
-- 同一个数据集（S-200）
+- **数据集按 A → B → C 轮换**（全部走冷路径，见 0.65）
 - 后端、Vite、Electron 都没有重启（只有 FapiaoGO 窗口重启）
 - 测量期间不要点别的、不要切窗口做重活
 
@@ -229,7 +287,27 @@ cd E:\print706; node outputs/perf-white1-median.mjs outputs/perf-runs-s200.jsonl
 
 ## 5. 判读 → 决策
 
-### 5.1 先看核心 KPI
+### 5.1 先看「白屏到底是不是列表渲染问题」（新增，第一步）
+
+**这一步先看，否则后面全白看。**
+
+```
+commitVsDismissMs = median(derived.commitVsDismissMs)   ← 列表首次 commit 相对弹窗关闭
+listReadyBeforeDismiss (布尔)                            ← 弹窗关闭时列表是否已 commit
+```
+
+| 判据 | 含义 | 下一步 |
+|------|------|--------|
+| `listReadyBeforeDismiss = true`<br>（`commitVsDismissMs ≤ 0`） | 弹窗关闭时列表**已经画好了** → **白屏不是列表渲染问题** | ⛔ 停止 A1/A2，改查：弹窗遮罩是否残留、预览区空白、布局塌陷、容器高度归零 |
+| `listReadyBeforeDismiss = false`<br>且 `WHITE_SCREEN > 500ms` | 列表确实在弹窗关闭之后才 commit，白屏窗口真实存在 | ✅ 走 5.3 归因分支 |
+| `WHITE_SCREEN = null`<br>且 `firstCommitMs` 有值 | 列表 commit 发生在 T4 之前，T4 之后就没再变过 | 等价于第 1 行：列表早就好了，白屏另有原因 |
+| `WHITE_SCREEN = null`<br>且 `firstCommitMs` 也为 null | **T6 从未触发** | 检查 FileList 是否挂载 / `files` 是否为空；报告里 `missingMarks` 会列出缺失锚点 |
+
+> 这段判据是 2026-09-02 补的。原来的探针在 T4 会把 T6 **直接删掉**，
+> 导致「列表早就渲染完了」和「列表一直没渲染」两种情况都表现为 `null`，无法区分。
+> 现已改为重置前留档为 `T6_pre`。
+
+### 5.2 再看核心 KPI
 
 ```
 WHITE_SCREEN = median(derived.whiteScreenMs)     ← 弹窗关闭 → 列表首次 commit
@@ -237,14 +315,14 @@ PAINT_GAP    = median(derived.paintGapMs)        ← commit → 真正上屏
 PREVIEW_LAG  = median(derived.previewLagMs)      ← 弹窗关闭 → 预览首帧
 ```
 
-### 5.2 决策规则
+### 5.3 决策规则
 
 | 条件 | 行动 |
 |------|------|
 | `WHITE_SCREEN < 500ms` | 白屏不是主要矛盾 → **A1 + A2 做完后停止**，不要因为发现了 O(N²) 就去重构 |
 | `WHITE_SCREEN > 500ms` | 按下面的归因分支定位，一次只动一个变量 |
 
-### 5.3 归因分支（`> 500ms` 时按顺序排查）
+### 5.4 归因分支（`> 500ms` 时按顺序排查）
 
 | 信号 | 指向 | 对应措施 |
 |------|------|----------|
@@ -254,7 +332,7 @@ PREVIEW_LAG  = median(derived.previewLagMs)      ← 弹窗关闭 → 预览首�
 | `counters.handlePreview` 在 T6 之前就 ≥ 1<br>且 `PREVIEW_LAG` 与 `WHITE_SCREEN` 接近 | **预览抢占** | B3（预览防抖） |
 | `derived.parseMs` 占大头 | **后端** | C 组（`/results` 分页、轻量视图） |
 
-### 5.4 判读陷阱（务必记住）
+### 5.5 判读陷阱（务必记住）
 
 - ❌ `renderPathConsoleLog` 计数大 **≠** console.log 是主因。必须同时满足：
   ① 白屏窗口内 longTask 忙时显著；② `invoiceDocumentsToRows` 累计时长同量级。
@@ -270,7 +348,8 @@ PREVIEW_LAG  = median(derived.previewLagMs)      ← 弹窗关闭 → 预览首�
 |------|------|------|
 | 导入后提示「所有文件均为重复，导入已跳过」 | 上次 run 的文件还在列表里 | 重启应用再导入 |
 | 剪贴板空的 | Electron 拒绝无手势的写剪贴板 | 用 `__perfProbe.summaryText()` 或 `copy(JSON.stringify(__perfProbe.getReport()))` |
-| 报告里 `whiteScreenMs` 为 `null` | T6 未触发（FileList 未在 100% 后 commit） | 先确认列表真的渲染出来了；若确认是 null，这本身就是强证据（弹窗关闭时列表还没提交） |
+| 报告里 `whiteScreenMs` 为 `null` | T6 未触发 / 或列表在 T4 前就渲染完了 | **看 `listReadyBeforeDismiss` 和 `firstCommitMs` 区分**（见 5.1 表格第 1、3、4 行）。不要直接断定「列表没渲染」 |
+| 报告里 `missingMarks` 非空 | 某个锚点没打上 | 报告摘要里会直接打印缺失清单；对照 5.1 表格判读 |
 | 报告 `longTasks.supported = false` | 浏览器不支持 longtask observer | 不影响 T0–T7 与计数器，只少一个维度 |
 | Vite 端口 5173 被占用 | 上次的 dev server 没关 | 关掉旧终端，或 `npm run dev -- --port 5174`（同时 main.js 的 URL 也得改，不推荐） |
 | 后端 5000 端口占用 | 上次的 python 没关 | 关掉旧终端 |
@@ -282,9 +361,12 @@ PREVIEW_LAG  = median(derived.previewLagMs)      ← 弹窗关闭 → 预览首�
 ## 7. 跑完之后
 
 把 `outputs/perf-runs-s200.jsonl` 和聚合器输出发给我，我会：
-1. 判读数据，确认归因分支
-2. 单独实施对应措施（Gate 1 起一次只改一个变量）
-3. 给你下一轮的复测指令
+1. 先看 `listReadyBeforeDismiss` 判据，确认白屏到底是不是列表渲染问题（5.1）
+2. 判读数据，确认归因分支（5.4）
+3. 单独实施对应措施（Gate 1 起一次只改一个变量）
+4. 给你下一轮的复测指令
+
+> 如果你按 0.65 的可选项追加跑了「热路径第 4 轮」，请单独存一个文件（如 `perf-runs-s200-warm.jsonl`）一并发我。
 
 ## 8. 关于 S-200-OFD（暂缓，已确认原因）
 

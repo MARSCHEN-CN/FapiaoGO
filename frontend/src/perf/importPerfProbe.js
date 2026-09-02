@@ -105,9 +105,15 @@ export function mark(name) {
   session.marks[name] = r1(now())
   // T4（进度 100%）= 白屏窗口起点，清除其后的可见性锚点
   if (name === 'T4') {
-    delete session.marks.T6
-    delete session.marks.T6p
-    delete session.marks.T7
+    // ⚠️ 重置前先留档。原因（2026-09-02 定位）：
+    // 只保留「T4 之后的 T6」会丢失一个关键判据 —— 列表在弹窗关闭前是否已经渲染完成。
+    // 若 T6_pre 存在且早于 T5，说明白屏**不是**列表渲染问题（列表早就画好了，
+    // 用户看到的是别的东西：被弹窗遮罩挡住 / 预览区空白 / 布局塌陷等），
+    // 归因方向完全不同。没有 T6_pre 就无法区分「白屏」和「从未白屏」。
+    for (const k of ['T6', 'T6p', 'T7']) {
+      if (session.marks[k] !== undefined) session.marks[k + '_pre'] = session.marks[k]
+      delete session.marks[k]
+    }
   }
 }
 
@@ -197,7 +203,25 @@ function buildReport(src) {
     whiteToPaintMs: gap('T5', 'T6p'),
     previewLagMs: gap('T5', 'T7'),
     totalMs: gap('T0', 'T7') ?? gap('T0', 'T6p'),
+
+    // ── 白屏归因判据（T4 重置前留档，见 mark() 注释）──
+    // 首次 commit 相对 T0 的时刻（无论发生在 T4 前后）
+    firstCommitMs: gap('T0', 'T6_pre') ?? gap('T0', 'T6'),
+    // ★ 判据：列表首次 commit 相对「弹窗关闭」的时刻。
+    //   <= 0 → 弹窗关闭时列表已 commit，白屏不是列表渲染问题（归因需换方向）
+    //   >  0 → 列表确实在弹窗关闭之后才 commit，白屏窗口真实存在
+    //   null → T6 从未触发（列表始终未 commit，或 files 在 T4 后未再变化）
+    commitVsDismissMs: gap('T5', 'T6_pre') ?? gap('T5', 'T6'),
+    // 弹窗关闭前列表是否已 commit（布尔，便于直接看）
+    listReadyBeforeDismiss:
+      marks.T6_pre !== undefined && marks.T5 !== undefined ? marks.T6_pre <= marks.T5
+        : (marks.T6 !== undefined && marks.T5 !== undefined ? false : null),
   }
+
+  // 缺失锚点清单：让「某个 T 没打上」这件事在报告里显式可见，
+  // 而不是只表现为一堆 null 让人猜。
+  const missingMarks = ['T0', 'T1', 'T2', 'T3', 'T4', 'T5', 'T6']
+    .filter((k) => marks[k] === undefined)
 
   const durations = {}
   for (const [k, v] of Object.entries(src.durations)) {
@@ -235,6 +259,7 @@ function buildReport(src) {
     finishReason: src.finishReason,
     marksRel: rel,
     derived,
+    missingMarks,
     counters: { ...src.counters },
     durations,
     longTasks,
@@ -288,10 +313,28 @@ export function summaryText() {
     `T0→T1 split=${d.splitMs}  T1→T2 parse=${d.parseMs}  T2→T3 hydrate=${d.hydrateMs}  T3→T4 seal=${d.sealMs}`,
     `T4→T5 dismissDelay=${d.dismissDelayMs}`,
     `★ T5→T6 WHITE_SCREEN=${d.whiteScreenMs}  T6→T6p paintGap=${d.paintGapMs}  T5→T6p=${d.whiteToPaintMs}  T5→T7 preview=${d.previewLagMs}`,
+  ]
+
+  // ── 归因判据：这一行决定「白屏」到底该往哪归因 ──
+  if (d.listReadyBeforeDismiss === true) {
+    lines.push(`★ 判据: 弹窗关闭时列表**已经**commit（T6_pre−T5=${d.commitVsDismissMs}ms ≤ 0）→ 白屏不是列表渲染问题，请查遮罩/预览区/布局`)
+  } else if (d.listReadyBeforeDismiss === false) {
+    lines.push(`★ 判据: 弹窗关闭时列表**尚未**commit → 白屏窗口真实存在，WHITE_SCREEN 有效`)
+  } else if (d.firstCommitMs != null) {
+    lines.push(`★ 判据: 列表首次 commit 在 T0+${d.firstCommitMs}ms（T4 之前已完成，T4 后未再变化）`)
+  } else {
+    lines.push(`⚠️ 判据: T6 从未触发 —— 列表在测量窗口内始终未 commit。检查 FileList 是否挂载、files 是否非空`)
+  }
+
+  if (r.missingMarks && r.missingMarks.length) {
+    lines.push(`⚠️ 缺失锚点: ${r.missingMarks.join(', ')}（对应指标将为 null）`)
+  }
+
+  lines.push(
     `longTasks n=${r.longTasks.count} busyMs=${r.longTasks.totalMs} | whiteWindow n=${r.longTasks.whiteWindow.count} busyMs=${r.longTasks.whiteWindow.totalMs}`,
     `counters ${JSON.stringify(r.counters)}`,
     `durations ${JSON.stringify(r.durations)}`,
-  ]
+  )
   return lines.join('\n')
 }
 
