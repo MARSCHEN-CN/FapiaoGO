@@ -24,6 +24,7 @@
   @apply shadow-2xl;
   overflow: hidden;
   animation: modalScaleIn 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
 }
 
 .invoice-detail-header {
