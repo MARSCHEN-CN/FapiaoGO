@@ -70,18 +70,58 @@ test('skip：目标已存在 → 不覆盖，新数据优先', () => {
   fs.rmSync(base, { recursive: true, force: true })
 })
 
-test('幂等：第二次启动全 skip（no-op 不重复追加）', () => {
+// ⚠️ 契约变更（2026-09-03，f02c59d）：迁移由「逐项 skip 的幂等重试」改为「一次性迁移」。
+// 第二次启动命中 legacyRoot/.migration_done → 整段短路返回，skipped 为空数组。
+// 因此旧断言 `r2.skipped.includes('invoices.oplog')` 不再成立，改判 skippedByMarker。
+test('一次性迁移：第二次启动命中 .migration_done 直接短路（不再逐项 skip）', () => {
   const m = fresh()
   const { base, legacy, data } = setup({ 'invoices.oplog': 'data-1' })
   const r1 = m.migrateLegacyBusinessData(legacy, data)
   assert.ok(r1.migrated.includes('invoices.oplog'))
-  // 第二次
+  assert.strictEqual(r1.skippedByMarker, undefined)
+  // 第二次：命中标记 → 整段跳过（skipped 为空，这是与旧"逐项 skip"契约的差异点）
   const r2 = m.migrateLegacyBusinessData(legacy, data)
+  assert.strictEqual(r2.skippedByMarker, true)
   assert.strictEqual(r2.migrated.length, 0)
-  assert.ok(r2.skipped.includes('invoices.oplog'))
-  // 不重复追加 migration.log（append 但 skip 行；内容检查）
+  assert.strictEqual(r2.skipped.length, 0)
+  assert.strictEqual(r2.completed, true)
+  // 短路发生在写日志之前 → 不重复追加 migration.log
   const log = fs.readFileSync(path.join(data, '.migration.log'), 'utf8')
   assert.strictEqual(log.match(/\[OK\] invoices.oplog/g).length, 1)
+  fs.rmSync(base, { recursive: true, force: true })
+})
+
+test('标记落点 legacyRoot：删光 dataRoot 后重启不回拷（"数据复活"回归）', () => {
+  const m = fresh()
+  const { base, legacy, data } = setup({
+    'invoices.oplog': 'oplog-20-entries',
+    'invoice_import_history.json': '{"a":1}',
+  })
+  const r1 = m.migrateLegacyBusinessData(legacy, data)
+  assert.ok(r1.migrated.includes('invoices.oplog'))
+  // 标记必须落在 legacyRoot（用户删不到的地方），绝不能落在 dataRoot
+  assert.strictEqual(fs.existsSync(path.join(legacy, '.migration_done')), true)
+  assert.strictEqual(fs.existsSync(path.join(data, '.migration_done')), false)
+
+  // 用户实测场景：删光 database/ 想重置
+  fs.rmSync(data, { recursive: true, force: true })
+
+  const r2 = m.migrateLegacyBusinessData(legacy, data)
+  assert.strictEqual(r2.skippedByMarker, true)
+  assert.strictEqual(r2.migrated.length, 0)
+  // 关键：dataRoot 不被旧数据复活（闸门在 mkdir 之前短路 → 连目录都不应重建）
+  assert.strictEqual(fs.existsSync(path.join(data, 'invoices.oplog')), false)
+  assert.strictEqual(fs.existsSync(data), false)
+  fs.rmSync(base, { recursive: true, force: true })
+})
+
+test('标记内容可诊断：含 ISO 时间戳与 migrated/skipped 计数', () => {
+  const m = fresh()
+  const { base, legacy, data } = setup({ 'invoices.oplog': 'x', 'Settings.json': '{}' })
+  m.migrateLegacyBusinessData(legacy, data)
+  const txt = fs.readFileSync(path.join(legacy, '.migration_done'), 'utf8')
+  assert.match(txt, /migrated at \d{4}-\d{2}-\d{2}T/)
+  assert.match(txt, /migrated: \d+ items, skipped: \d+/)
   fs.rmSync(base, { recursive: true, force: true })
 })
 
@@ -115,5 +155,8 @@ test('边界：旧根不存在 / 同路径 → no-op', () => {
   // 同路径
   const r2 = m.migrateLegacyBusinessData(data, data)
   assert.strictEqual(r2.migrated.length, 0)
+  assert.strictEqual(r2.completed, false)
+  // no-op 不得写标记 —— 否则 dev 模式（legacy===data）会把迁移永久锁死
+  assert.strictEqual(fs.existsSync(path.join(data, '.migration_done')), false)
   fs.rmSync(base, { recursive: true, force: true })
 })
