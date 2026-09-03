@@ -364,6 +364,7 @@
 }
 
 .sb-section-title {
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -513,25 +514,13 @@
   display: flex;
   flex-direction: column;
   gap: 6px;
-  overflow-y: auto;
-  scrollbar-width: thin;
-  scrollbar-color: var(--border) transparent;
-}
-
-.sb-files::-webkit-scrollbar { width: 4px; }
-.sb-files::-webkit-scrollbar-track { background: transparent; }
-.sb-files::-webkit-scrollbar-thumb {
-  background: var(--border);
-  border-radius: 2px;
-}
-.sb-files::-webkit-scrollbar-thumb:hover {
-  background: var(--text-4);
+  overflow: hidden;
 }
 
 /* -- Virtual scroll container -- */
 .sb-files-scrollable {
   flex: 1;
-  min-height: 200px;
+  min-height: 0;
   overflow-y: auto;
   scrollbar-width: thin;
   scrollbar-color: var(--border) transparent;

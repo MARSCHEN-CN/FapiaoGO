@@ -297,7 +297,7 @@ export default memo(function FileList({
   }
 
   return (
-    <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+    <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
       <List
         listRef={listRef}
         className="sb-files-scrollable"
