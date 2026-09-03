@@ -221,3 +221,87 @@ test('1B：100% 后渲染开始但未完成（C 方向）：end 缺失 → 判�
   assert.ok(r.missingMarks.includes('previewRenderEnd'), '缺失的 end 应进 missingMarks')
   assert.ok(!r.missingMarks.includes('previewRenderStart'), '已打的 start 不应进 missingMarks')
 })
+
+// ── PERF-WHITE-1 P0：epoch 世代守卫（陈旧异步回调污染锚点缺陷）──
+//
+// 缺陷现场（run-261 与 run-261-1B 两轮数据均中招）：
+//   FileList 在 T0+20.8ms 的 commit 里排程了 rAF→setTimeout(()=>mark('T6p'))，
+//   该回调被主线程 long task 饿到 **T4 之后 67 秒** 才执行。此时 T4 已经把
+//   T6p 清掉过，于是这个「20.8ms 那次 commit 的 paint」被当成 100% 后的首次 paint
+//   记录下来 → T6p(67878.1) 竟早于 T6(98307.5) 30.4 秒（paint 早于 commit 物理上不可能）。
+//   run-261 基线 T6p = T4+5.1ms 同病，导致「关闭前已 paint」结论部分失效。
+//
+// 修法：T4 递增 epoch；异步回调在排程时捕获 epoch，回调比对不符即作废。
+
+test('P0：stamp() 在 T4 前后返回不同 epoch（世代隔离）', () => {
+  perfProbe.enable('1')
+  perfProbe.startSession('epoch-bump')
+  const e0 = perfProbe.stamp()
+  assert.equal(typeof e0, 'number')
+  perfProbe.mark('T4')          // 100% → 世代 +1
+  const e1 = perfProbe.stamp()
+  assert.equal(e1, e0 + 1, 'T4 必须把 epoch 推进 1')
+  // ⚠️ 交互固化：T4 本身受 first-wins 约束，重复调用是 no-op → epoch **不**再推进。
+  // 即「一个会话内世代只前进一次（首次 100%）」，这也是我们要的语义：
+  // 白屏窗口起点 = 首次 100%，后续重复的 100% 不应再重置锚点 / 作废回调。
+  perfProbe.mark('T4')          // 重复的 100%（多批导入场景）
+  assert.equal(perfProbe.stamp(), e0 + 1, 'T4 first-wins → epoch 不再推进')
+  perfProbe.finishSession('unit')
+})
+
+test('P0：陈旧 T6p 落 _stale 留证，不污染真锚点（run-261 缺陷复现）', () => {
+  perfProbe.startSession('epoch-stale-t6p')
+  const e0 = perfProbe.stamp()
+  perfProbe.mark('T6', e0)      // 导入期占位符 commit
+  perfProbe.mark('T4')          // 100% → T6 归档为 T6_pre，epoch 推进
+  perfProbe.mark('T5')          // 弹窗关闭
+  // 模拟：20.8ms 排程的 setTimeout 回调，被 long task 饿了 60 秒才执行
+  perfProbe.mark('T6p', e0)     // 陈旧世代 → 必须作废
+  const r = perfProbe.finishSession('unit')
+  assert.equal(r.marksRel.T6p, undefined, '陈旧 paint 绝不能写入真锚点')
+  assert.ok(r.marksRel.T6p_stale !== undefined, '应落 T6p_stale 留证（不丢证据）')
+  assert.equal(r.counters.staleMarks, 1, '作废次数应可见')
+  assert.equal(r.derived.whiteToPaintMs, null, '作废后 whiteToPaintMs 为 null，不是伪造的小值')
+  assert.equal(r.derived.paintGapMs, null)
+  assert.ok(r.marksRel.T6_pre !== undefined, '导入期 commit 仍留档 T6_pre')
+})
+
+test('P0：同世代的 T6p 正常记录（epoch 守卫不误杀）', () => {
+  perfProbe.startSession('epoch-fresh-t6p')
+  perfProbe.mark('T4')
+  perfProbe.mark('T5')
+  const e = perfProbe.stamp()   // 100% 之后的世代
+  perfProbe.mark('T6', e)
+  perfProbe.mark('T6p', e)      // 同世代 → 正常记录
+  const r = perfProbe.finishSession('unit')
+  assert.ok(r.marksRel.T6 !== undefined, '同世代 T6 必须记录')
+  assert.ok(r.marksRel.T6p !== undefined, '同世代 T6p 必须记录')
+  assert.equal(r.marksRel.T6p_stale, undefined, '不该落 _stale')
+  assert.equal(r.counters.staleMarks, undefined, '不该计 staleMarks')
+  assert.ok(r.derived.whiteScreenMs >= 0)
+  assert.ok(r.derived.paintGapMs >= 0, `paintGap=${r.derived.paintGapMs} 应 ≥ 0（同毫秒内可为 0）`)
+  assert.ok(r.derived.whiteToPaintMs >= 0)
+})
+
+test('P0：跨 T4 的在途预览渲染不得伪造 D 判定', () => {
+  perfProbe.startSession('epoch-inflight-render')
+  const e0 = perfProbe.stamp()
+  perfProbe.mark('previewRenderStart', e0)   // T4 前就开始渲染
+  perfProbe.mark('T4')                        // 100% → start 归档 _pre
+  perfProbe.mark('T5')                        // 弹窗关闭
+  perfProbe.mark('previewRenderEnd', e0)      // 在途渲染直到 T4 后才完成
+  const r = perfProbe.finishSession('unit')
+  assert.ok(r.marksRel.previewRenderStart_pre !== undefined, 'T4 前的 start 归档 _pre')
+  assert.equal(r.marksRel.previewRenderEnd, undefined, '在途完成不得写入真 end —— 否则伪造 D「渲染完成」')
+  assert.ok(r.marksRel.previewRenderEnd_stale !== undefined, '落 _stale 留证')
+  assert.equal(r.derived.previewStartAfterDismissMs, null, '100% 后无新尝试 → 仍是 A 方向，不被伪造')
+  assert.equal(r.derived.previewStartedBeforeDismiss, true)
+})
+
+test('P0：禁用态 stamp() 返回 0，带 epoch 的 mark 为 no-op', () => {
+  perfProbe.disable()
+  assert.equal(perfProbe.stamp(), 0, '关闭态 epoch 恒为 0（调用方无需判空）')
+  assert.doesNotThrow(() => perfProbe.mark('T6', 7))
+  assert.doesNotThrow(() => perfProbe.mark('T6p', 7))
+  assert.equal(perfProbe.getReport(), null)
+})

@@ -40,6 +40,13 @@
  *   注：T4 到达时会重置 T6/T6p/T7/previewRenderStart/previewRenderEnd ——
  *       导入过程中占位符也会让 FileList commit / 触发渲染尝试，
  *       只有「100% 之后的首个锚点」才是白屏窗口的终点。
+ *   注2（P0 epoch 守卫）：光重置还不够 —— 导入期排程的异步回调
+ *       （rAF / setTimeout / await）可能延迟到 T4 之后才执行，届时槽位已被清空，
+ *       陈旧回调会把「导入期那一轮」的时间写成 100% 后的锚点
+ *       （实证：T6p 被打成 T4+6.6ms，早于真实 T6 达 30 秒 —— paint 早于 commit 不可能）。
+ *       故 T4 递增 epoch；异步打点须用 stamp() 捕获世代、回调时回传校验，
+ *       不符则作废并留证为 <name>_stale（不进真锚点、不参与 derived）。
+ *       同类风险：跨 T4 的在途预览渲染，其 previewRenderEnd 会伪造 D 判定。
  *
  * @module perf/importPerfProbe
  */
@@ -89,6 +96,11 @@ export function startSession(label = '') {
     longTasks: [],
     finished: false,
     finishReason: '',
+    /**
+     * 世代计数（P0，2026-09-03 引入）。每次 T4（进度 100%）递增。
+     * 用途：作废「跨 T4 的陈旧异步回调」打点 —— 见 mark() 的 epoch 守卫。
+     */
+    epoch: 0,
   }
   mark('T0')
   startLongTaskObserver()
@@ -106,16 +118,53 @@ export function setMeta(patch) {
 // ── 打点 ──────────────────────────────────────────────────────
 
 /**
+ * 取当前世代号（配合 mark(name, epoch) 使用）。
+ *
+ * 用法：**在排程异步回调之前**取一次，回调里把原值传回 mark()。
+ * 关闭态/无会话返回 0，调用方无需判空。
+ *
+ * @returns {number} 当前 epoch（关闭态恒为 0）
+ */
+export function stamp() {
+  if (!mode || !session) return 0
+  return session.epoch
+}
+
+/**
  * 记录时间线锚点。语义：**首次写入优先**（first-wins），
  * 同一锚点重复调用不覆盖 —— 保证 T6 是「100% 之后的首次 commit」。
+ *
+ * ── epoch 守卫（P0，2026-09-03）────────────────────────────────
+ * 传入 epoch 时，若与当前世代不符 → **作废这次打点**，改写入
+ * `<name>_stale` 留证，并计 `counters.staleMarks`。
+ *
+ * 为什么必须守卫（缺陷现场，run-261 与 run-261-1B 两轮数据均中招）：
+ *   FileList 在导入期 commit（T0+20.8ms）里排程了 rAF→setTimeout(()=>mark('T6p'))，
+ *   该回调被主线程 long task 饿到 **T4 之后 67 秒** 才执行；此时 T4 早已把 T6p 清掉，
+ *   于是这个「20.8ms 那次 commit 的 paint」被当成 100% 后的首次 paint 记录 →
+ *   T6p(67878.1) 竟早于 T6(98307.5) 30.4 秒（paint 早于 commit 物理上不可能）。
+ *   基线 run-261 的 T6p = T4+5.1ms 同病，「关闭前已 paint」结论因此部分失效。
+ *   同类风险：跨 T4 的**在途预览渲染**，其 previewRenderEnd 会伪造出 D「渲染完成」判定。
+ *
+ * 留证而非丢弃：陈旧打点写入 `<name>_stale`（首值优先），不进真锚点、
+ * 不参与任何 derived 计算，但证据不丢，判读时可见。
+ *
  * @param {string} name T0|T1|T2|T3|T4|T5|T6|T6p|T7|previewRenderStart|previewRenderEnd
+ * @param {number} [epoch] 排程时由 stamp() 取得的世代号；省略则不校验（同步打点）
  */
-export function mark(name) {
+export function mark(name, epoch) {
   if (!mode || !session) return
+  // 陈旧世代：异步回调跨越了 T4，其时间代表的是**旧**一轮的列表/渲染，必须作废
+  if (epoch !== undefined && epoch !== session.epoch) {
+    if (session.marks[name + '_stale'] === undefined) session.marks[name + '_stale'] = r1(now())
+    count('staleMarks')
+    return
+  }
   if (session.marks[name] !== undefined) return
   session.marks[name] = r1(now())
   // T4（进度 100%）= 白屏窗口起点，清除其后的可见性锚点
   if (name === 'T4') {
+    // 世代推进放在写入之后：T4 自身属于旧世代的最后一个锚点
     // ⚠️ 重置前先留档。原因（2026-09-02 定位）：
     // 只保留「T4 之后的 T6」会丢失一个关键判据 —— 列表在弹窗关闭前是否已经渲染完成。
     // 若 T6_pre 存在且早于 T5，说明白屏**不是**列表渲染问题（列表早就画好了，
@@ -127,6 +176,9 @@ export function mark(name) {
       if (session.marks[k] !== undefined) session.marks[k + '_pre'] = session.marks[k]
       delete session.marks[k]
     }
+    // 世代 +1：此前排程的异步回调（rAF/setTimeout/await）全部作废，
+    // 它们的打点只属于「导入期那一轮」，不能当作 100% 之后的锚点。
+    session.epoch += 1
   }
 }
 
@@ -420,12 +472,12 @@ export function dump() {
  * 关闭态下每个成员都是 `if (!mode) return` 的 no-op，调用方无需判空。
  */
 export const perfProbe = {
-  startSession, setMeta, mark, count, begin, time,
+  startSession, setMeta, mark, stamp, count, begin, time,
   finishSession, getReport, summaryText, dump,
   enable, disable, isEnabled,
 }
 
 // DevTools / 自动化取数入口
 try {
-  globalThis.__perfProbe = { enable, disable, isEnabled, getReport, finishSession, dump, summaryText, startSession, mark, count }
+  globalThis.__perfProbe = { enable, disable, isEnabled, getReport, finishSession, dump, summaryText, startSession, mark, stamp, count }
 } catch { /* 忽略 */ }

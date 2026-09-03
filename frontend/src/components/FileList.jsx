@@ -259,11 +259,17 @@ export default memo(function FileList({
   // T6  = 首次 commit（DOM 已变更、尚未 paint）
   // T6p = commit 之后的首次 paint（rAF + setTimeout(0) 逼近「用户真正看到像素」）
   // 只有 T4（进度 100%）之后的首个 commit 才算白屏窗口终点 —— probe 在 T4 会重置这两个锚点。
+  //
+  // ⚠️ epoch 守卫（P0，2026-09-03）：rAF→setTimeout 回调**不受 React 卸载/重置约束**，
+  // 若主线程被 long task 饿死，它会延迟到 T4 之后才跑（实证晚了 67 秒），
+  // 把「导入期那一轮的 paint」写成 100% 后的 T6p → T6p 早于 T6，判据直接失真。
+  // 故排程前捕获世代，回调时回传校验；跨世代的陈旧 paint 会被探针作废并留证为 T6p_stale。
   useLayoutEffect(() => {
     if (!files || files.length === 0) return
-    perfProbe.mark('T6')
+    const epoch = perfProbe.stamp()
+    perfProbe.mark('T6', epoch)
     const rafId = requestAnimationFrame(() => {
-      setTimeout(() => perfProbe.mark('T6p'), 0)
+      setTimeout(() => perfProbe.mark('T6p', epoch), 0)
     })
     return () => cancelAnimationFrame(rafId)
   }, [files])

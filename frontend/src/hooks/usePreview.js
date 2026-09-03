@@ -889,7 +889,12 @@ export function usePreview({ files, settings, electronAPIRef }) {
       try {
         // PERF-WHITE-1 1B：渲染尝试起点。随 T4 重置（first-wins）→ 捕获「100% 之后的首次尝试」；
         // 缺失 = 该窗口内无 canvas 渲染尝试（A 判据）。count 记录尝试/完成比（B/C 方向）。
-        perfProbe.mark('previewRenderStart')
+        //
+        // ⚠️ epoch 守卫（P0）：本函数是 async，跨 T4 的**在途渲染**若把完成点写进
+        // previewRenderEnd，会凭空造出一个 D「渲染完成」判定（实际触发发生在 100% 之前）。
+        // 故入口捕获世代，start/end 共用；跨世代的完成点由探针作废并留证为 *_stale。
+        const epoch = perfProbe.stamp()
+        perfProbe.mark('previewRenderStart', epoch)
         perfProbe.count('previewRenderAttempts')
         let canvas
         const isMerge = isMergeMode(settings.mergeMode) && mergePair?.some(Boolean)
@@ -1014,8 +1019,8 @@ export function usePreview({ files, settings, electronAPIRef }) {
           // ✅ 不清空旧 canvas：与 renderResultCache 共享同一对象，clearRect 会污染缓存
           unrotatedCanvasRef.current = canvas
           setPreviewCanvas(canvas)
-          perfProbe.mark('T7')   // 预览首帧渲染完成（PERF-WHITE-1）
-          perfProbe.mark('previewRenderEnd')   // 1B：渲染完成点（与 T7 同 tick）
+          perfProbe.mark('T7', epoch)   // 预览首帧渲染完成（PERF-WHITE-1）
+          perfProbe.mark('previewRenderEnd', epoch)   // 1B：渲染完成点（与 T7 同 tick）
           perfProbe.count('previewRenderCompleted')
           // ✅ Stage 0.8 commit：渲染完成 → 原子提交新帧 + 关闭 loading
           committedPreviewRef.current = {
