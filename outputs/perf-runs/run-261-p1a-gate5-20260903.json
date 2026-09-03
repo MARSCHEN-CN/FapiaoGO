@@ -1,0 +1,107 @@
+{
+  "id": 1,
+  "label": "import:261",
+  "meta": {
+    "fileCount": 261,
+    "rawCount": 261
+  },
+  "t0Wall": "2026-09-03T07:08:33.921Z",
+  "finishReason": "T5+15000ms",
+  "marksRel": {
+    "T0": 0,
+    "T1": 21670.9,
+    "T2": 82968.9,
+    "T3": 82968.9,
+    "T4": 82969,
+    "T6_pre": 24.2,
+    "T6p_pre": 279.5,
+    "T7_pre": 1130.2,
+    "previewRenderStart_pre": 863.8,
+    "previewRenderEnd_pre": 1130.2,
+    "T6p_stale": 82976.6,
+    "T5": 83253.5
+  },
+  "derived": {
+    "splitMs": 21670.9,
+    "parseMs": 61298,
+    "hydrateMs": 0,
+    "sealMs": 0.1,
+    "dismissDelayMs": 284.5,
+    "whiteScreenMs": null,
+    "paintGapMs": null,
+    "whiteToPaintMs": null,
+    "previewLagMs": null,
+    "totalMs": null,
+    "firstCommitMs": 24.2,
+    "commitVsDismissMs": -83229.3,
+    "previewStartAfterDismissMs": null,
+    "previewEndAfterDismissMs": null,
+    "previewWorkMs": null,
+    "previewStartedBeforeDismiss": true,
+    "listReadyBeforeDismiss": true
+  },
+  "missingMarks": [
+    "T6",
+    "T7",
+    "previewRenderStart",
+    "previewRenderEnd"
+  ],
+  "counters": {
+    "setFiles": 173,
+    "applySort": 51,
+    "handlePreview": 185,
+    "previewRenderAttempts": 2,
+    "previewRenderCompleted": 1,
+    "invoiceDocumentToRow": 538,
+    "renderPathConsoleLog": 529,
+    "importHistoryQuery": 738,
+    "importHistoryResponse": 203,
+    "importHistoryPublish": 43,
+    "importHistoryNoop": 65,
+    "staleMarks": 1
+  },
+  "durations": {
+    "buildDocumentViewModel": {
+      "n": 120,
+      "total": 59.4,
+      "max": 5.3,
+      "avg": 0.5
+    },
+    "selectDocumentRows": {
+      "n": 342,
+      "total": 26.3,
+      "max": 0.8,
+      "avg": 0.1
+    },
+    "invoiceDocumentsToRows": {
+      "n": 3,
+      "total": 10.1,
+      "max": 4.5,
+      "avg": 3.4
+    }
+  },
+  "longTasks": {
+    "supported": true,
+    "count": 180,
+    "totalMs": 27146,
+    "top10": [
+      { "start": 107231.8, "dur": 1057 },
+      { "start": 90040, "dur": 961 },
+      { "start": 67672.4, "dur": 804 },
+      { "start": 78214.3, "dur": 383 },
+      { "start": 79132.5, "dur": 346 },
+      { "start": 81267.6, "dur": 330 },
+      { "start": 80165.4, "dur": 324 },
+      { "start": 78714.3, "dur": 318 },
+      { "start": 80582.3, "dur": 294 },
+      { "start": 38463.4, "dur": 281 }
+    ],
+    "whiteWindow": {
+      "from": 108288.8,
+      "to": 111573.3,
+      "count": 0,
+      "totalMs": 0,
+      "top5": []
+    }
+  }
+}
