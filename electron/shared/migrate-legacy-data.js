@@ -9,9 +9,11 @@
  *   1. copy 不 move —— 源数据永久保留，迁移失败可重跑
  *   2. 目标已存在 → skip（新数据优先，绝不覆盖）
  *   3. 逐项 try/catch —— 单文件失败不中断整体
- *   4. 一次性迁移 —— 成功后写 legacyRoot/.migration_done 标记，后续启动直接跳过。
- *      标记放在 legacyRoot（而非 dataRoot），因为用户删 dataRoot 想重置时不
- *      会碰到 AppData 旧路径，确保"删 database/ = 全新开始"语义成立。
+ *   4. 一次性迁移 —— **完整成功一次**后在 legacyRoot 写 .migration_done 标记，
+ *      后续启动直接跳过。标记放在 legacyRoot（而非 dataRoot），因为用户删
+ *      dataRoot 想重置时不会碰到 AppData 旧路径，确保"删 database/ = 全新开始"。
+ *      ⚠️ 与 #1 的调和：**有失败项则不落标记**（下次重试补迁），
+ *      否则失败项会被永久跳过，与「迁移失败可重跑」相悖。详见函数内注释。
  *   5. 白名单冻结（blob_storage 已确认 = Chromium 内部 → 排除）
  *   6. 结果写 DATA_ROOT/.migration.log
  *   7. 失败不退出 —— 调用方自行决定（DATA_ROOT 不可写已在 bootstrap 报错退出）
@@ -134,18 +136,27 @@ function migrateLegacyBusinessData(legacyRoot, dataRoot, opts = {}) {
 
   // ── 完成标记（一次性迁移闸门的另一半） ────────────────────────
   // 写在 legacyRoot：下次启动发现标记 → 整段迁移逻辑直接跳过。
-  // 即使本次没有任何文件需要 migrate（全 skipped），也写标记 ——
-  // 说明"旧路径里已经没有什么值得搬的了"，同样阻止后续重跑。
-  try {
-    fsImpl.writeFileSync(
-      path.join(legacyRoot, DONE_MARKER),
-      `migrated at ${new Date().toISOString()}\nmigrated: ${result.migrated.length} items, skipped: ${result.skipped.length}\n`,
-      'utf8'
-    )
-    log(`[MARK] ${DONE_MARKER} written to legacy root (one-time migration complete)`)
-  } catch (e) {
-    // 标记写失败不阻塞 —— 下次还能再迁（保守正确）
-    log(`[WARN] failed to write ${DONE_MARKER}: ${e && e.message}`)
+  //
+  // ⚠️ 与冻结规则 #1 的调和点（2026-09-03）：**只在无失败项时**落标记。
+  //    若本次有 failed，说明还有数据没搬完 —— 此时落标记会让这些失败项
+  //    今后永远不再重试（源数据仍在 AppData 可手工捞回，但不会自动重试，且失败静默）。
+  //    故「一次性」的准确含义 = **完整成功一次**，而非「跑过一次」。
+  if (result.failed.length > 0) {
+    log(`[MARK-SKIP] ${result.failed.length} 个失败项 → 不落 ${DONE_MARKER}，下次启动重试`)
+  } else {
+    // 即使本次没有任何文件需要 migrate（全 skipped），也写标记 ——
+    // 说明"旧路径里已经没有什么值得搬的了"，同样阻止后续重跑。
+    try {
+      fsImpl.writeFileSync(
+        path.join(legacyRoot, DONE_MARKER),
+        `migrated at ${new Date().toISOString()}\nmigrated: ${result.migrated.length} items, skipped: ${result.skipped.length}\n`,
+        'utf8'
+      )
+      log(`[MARK] ${DONE_MARKER} written to legacy root (one-time migration complete)`)
+    } catch (e) {
+      // 标记写失败不阻塞 —— 下次还能再迁（保守正确）
+      log(`[WARN] failed to write ${DONE_MARKER}: ${e && e.message}`)
+    }
   }
 
   result.completed = true

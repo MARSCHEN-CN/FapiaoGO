@@ -125,6 +125,38 @@ test('标记内容可诊断：含 ISO 时间戳与 migrated/skipped 计数', () 
   fs.rmSync(base, { recursive: true, force: true })
 })
 
+// ⚠️ 冻结规则 #1「copy 不 move —— 迁移失败可重跑」 vs #4「一次性迁移」的冲突点：
+// 标记必须**只在全成功时**写，否则部分失败项会被永久跳过（源数据还在 AppData，
+// 能手工捞回，但不会再自动重试，且失败静默）。
+test('部分失败不落标记：失败项下次启动可重试补迁（冻结规则 #1）', () => {
+  const m = fresh()
+  const { base, legacy, data } = setup({ 'invoices.oplog': 'ok', 'Settings.json': 'cfg' })
+  const realFs = require('fs')
+  const fsImpl = Object.create(realFs)
+  fsImpl.copyFileSync = (s, d) => {
+    if (s.includes('Settings.json')) { const e = new Error('EACCES: access denied'); e.code = 'EACCES'; throw e }
+    return realFs.copyFileSync(s, d)
+  }
+  const r1 = m.migrateLegacyBusinessData(legacy, data, { fsImpl })
+  assert.strictEqual(r1.completed, true)
+  assert.ok(r1.failed.some(f => f.item === 'Settings.json'), 'Settings.json 应记为失败')
+  // 关键：部分失败 → 不得落标记，否则该失败项今后再也不会被重试
+  assert.strictEqual(fs.existsSync(path.join(legacy, '.migration_done')), false)
+
+  // 第二次启动（故障已解除）→ 必须重试，把上次失败的 Settings.json 补迁
+  const r2 = m.migrateLegacyBusinessData(legacy, data)
+  assert.strictEqual(r2.skippedByMarker, undefined, '无标记 → 不得短路')
+  assert.ok(r2.migrated.includes('Settings.json'), '上次失败项应被重试补迁')
+  assert.strictEqual(r2.failed.length, 0)
+  // 全成功 → 此时才落标记
+  assert.strictEqual(fs.existsSync(path.join(legacy, '.migration_done')), true)
+
+  // 补迁正确性：内容来自 legacy 源，且已有的 invoices.oplog 未被覆盖
+  assert.strictEqual(fs.readFileSync(path.join(data, 'Settings.json'), 'utf8'), 'cfg')
+  assert.strictEqual(fs.readFileSync(path.join(data, 'invoices.oplog'), 'utf8'), 'ok')
+  fs.rmSync(base, { recursive: true, force: true })
+})
+
 test('失败容错：单文件失败不中断，其他照常迁移，completed=true', () => {
   const m = fresh()
   const { base, legacy, data } = setup({ 'invoices.oplog': 'ok', 'Settings.json': 'cfg' })
