@@ -7,6 +7,7 @@ import { getRegisteredDocIds, getDocument } from '../stores/DocumentStore'
 import { getDocumentCacheIdentity } from '../utils/documentViewCacheIdentity'
 import { resolveMaterializedInvoiceDocuments } from '../utils/resolveMaterializedInvoiceDocuments'
 import { perfProbe } from '../perf/importPerfProbe'
+import { createImportHistoryBatcher } from './importHistoryBatcher'
 import { db } from '../db'
 
 // ── P1：发票重复导入历史（advisory 旁路）工具 ──────────────────
@@ -66,6 +67,32 @@ export function FileProvider({ children }) {
 
   // ── P1：发票重复导入历史（advisory 旁路，纯风险呈现，不拦截导入） ──
   const [importHistoryInfo, setImportHistoryInfo] = useState(() => new Map())
+
+  // ── P1-A：importHistory publication batching ──
+  // 目标：把「每条响应 → 立即发布新 Map state」（454 响应 = 454 次 Map 重建 +
+  // 454 次 Context value identity 变化 → 行级 memo 被击穿）改为
+  // 「响应合入 pending → 短 debounce(50ms) 单 flush → 至多一次发布」。
+  // 工厂自持 current Map（唯一写者），publish 即同步给 React —— 所有写入口收敛到工厂：
+  //   enqueue（响应命中）/ prune（files 变化剔除）/ dispose（卸载）。
+  // 内容无实际变化时工厂不调用 publish → React state 零更新（noop），
+  // 切断「热路径重复查询 → 无意义 Context 更新」的 churn。
+  // React state 仅在工厂 publish 时被写 → 与工厂 current 恒一致（initial 对齐初始值）。
+  const importHistoryBatcherRef = useRef(null)
+  if (importHistoryBatcherRef.current === null) {
+    importHistoryBatcherRef.current = createImportHistoryBatcher({
+      debounceMs: 50,
+      initial: importHistoryInfo,
+      publish: (next) => setImportHistoryInfo(next),
+      onPublish: () => perfProbe.count('importHistoryPublish'),
+      onNoop: () => perfProbe.count('importHistoryNoop'),
+    })
+  }
+  useEffect(() => {
+    return () => {
+      importHistoryBatcherRef.current?.dispose()
+      importHistoryBatcherRef.current = null   // StrictMode remount → 条件重建（initial=当前 state）
+    }
+  }, [])
 
   // 搜索过滤。filterFiles 是纯 O(n) 遍历，对预期数据量（几千条以内）开销可忽略，
   // 因此查询直接同步，不使用 useDeferredValue——后者在本场景无可证收益却引入时序复杂度。
@@ -211,20 +238,14 @@ export function FileProvider({ children }) {
   useEffect(() => {
     // 仅关注已解析且带发票号码的文件
     const liveKeys = new Set(files.map(f => f.key))
-    // 🔴 主动清理残留：importHistoryInfo 是异步旁路缓存，若文件已被移除而新查询
+    // 同步最新存活集合 → flush 时用最新 liveKeys 过滤（防删除竞态下旧快照复活已删文件）
+    importHistoryBatcherRef.current?.setLiveKeys(liveKeys)
+    // 主动清理残留：importHistoryInfo 是异步旁路缓存，若文件已被移除而新查询
     //    未命中（exists=false / importCount<2 / __error），旧条目不会被剔除 →
-    //    sb-stats 的 importHistoryCount 残留计数。不依赖查询结果，liveKeys 构建后
+    //    sb-stats 的 importHistoryCount 残留计数。此处不依赖查询结果，liveKeys 构建后
     //    立即剔除，与 previousYearInfo 同步派生语义对齐（往年发票移除即刷新）。
-    setImportHistoryInfo(prev => {
-      if (prev.size === 0) return prev
-      let changed = false
-      const next = new Map()
-      for (const [k, v] of prev) {
-        if (liveKeys.has(k)) next.set(k, v)
-        else changed = true
-      }
-      return changed ? next : prev
-    })
+    //    原 :218 剔除 + :238 无目标清理收敛到工厂 prune（无剔除 → 不发布）。
+    importHistoryBatcherRef.current?.prune(liveKeys)
     const byNumber = new Map()
     for (const f of files) {
       if (f.status !== 'parsed' || !f.invoiceNumber) continue
@@ -234,14 +255,7 @@ export function FileProvider({ children }) {
       byNumber.get(norm).push(f.key)
     }
     if (byNumber.size === 0) {
-      // 无查询目标：清理可能残留的过期条目（仅剔除已不存在的 file.key）
-      setImportHistoryInfo(prev => {
-        if (prev.size === 0) return prev
-        const next = new Map()
-        for (const [k, v] of prev) if (liveKeys.has(k)) next.set(k, v)
-        return next.size === prev.size ? prev : next
-      })
-      return
+      return  // 无查询目标（残留清理已由上方 prune 完成）
     }
 
     const sig = Array.from(byNumber.keys()).sort().join('|')
@@ -262,22 +276,20 @@ export function FileProvider({ children }) {
           // 🔴 首次导入不算重复报销：历史记录由本次导入创建（count 含本次），
           //    仅当 count>=2 才说明本次之前已导入过（=重复报销）；count==1 是首次导入。
           if ((res.importCount ?? 0) < 2) return
-          perfProbe.count('importHistoryWrite')   // 每次命中都触发一次 Map 重建 + 后续重排
-          setImportHistoryInfo(prev => {
-            const next = new Map()
-            for (const [k, v] of prev) if (liveKeys.has(k)) next.set(k, v)  // 剔除已移除
-            for (const k of fileKeys) {
-              if (liveKeys.has(k)) {
-                next.set(k, {
-                  exists: true,
-                  invoiceDate: res.invoiceDate,
-                  firstImportedAt: res.firstImportedAt,
-                  importCount: res.importCount,
-                  dateMismatchCount: res.dateMismatchCount,
-                })
-              }
-            }
-            return next
+          // P1-A：不再逐条发布新 Map state —— 合入 pending，短 debounce 单 flush 发布。
+          //   importHistoryResponse = 命中条数（= 旧 importHistoryWrite 语义，改名避混淆）；
+          //   importHistoryPublish / importHistoryNoop 由工厂 flush 处计数。
+          // 广播语义不变：同号 fileKeys 由 flush 统一写入同一 value 引用。
+          perfProbe.count('importHistoryResponse')
+          importHistoryBatcherRef.current?.enqueue({
+            fileKeys,
+            value: {
+              exists: true,
+              invoiceDate: res.invoiceDate,
+              firstImportedAt: res.firstImportedAt,
+              importCount: res.importCount,
+              dateMismatchCount: res.dateMismatchCount,
+            },
           })
         }).catch(() => { /* 静默降级 */ })
       )

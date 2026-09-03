@@ -127,11 +127,19 @@ function comparability(r, base) {
   const c = r.counters || {}
   const bc = base?.counters || {}
   let ok = true
-  if ((c.importHistoryWrite ?? 0) > 0) {
+  // P1-A 起计数器改名：importHistoryWrite → importHistoryResponse（响应命中数，语义不变）。
+  // 兼容读取：旧报告只有 Write；新报告只有 Response。
+  const histHit = c.importHistoryWrite ?? c.importHistoryResponse ?? 0
+  if (histHit > 0) {
     ok = false
-    lines.push(`🔴 importHistoryWrite=${c.importHistoryWrite}（>0）→ 热路径已激活（importCount≥2），与 run-261 冷路径不可比。检查是否忘记重置导入历史。`)
+    lines.push(`🔴 importHistory ${histHit} 次命中（Write=${c.importHistoryWrite ?? '—'}/Response=${c.importHistoryResponse ?? '—'}）→ 热路径已激活（importCount≥2），与 run-261 冷路径不可比。检查是否忘记重置导入历史。`)
   } else {
-    lines.push(`✅ importHistoryWrite=${c.importHistoryWrite ?? 0}（=0 → 冷路径，importCount=1）`)
+    lines.push(`✅ importHistory 命中=0（Write=${c.importHistoryWrite ?? '—'}/Response=${c.importHistoryResponse ?? '—'} → 冷路径，importCount=1）`)
+  }
+  // P1-A publication batching 观察：454 响应 → N 发布（N << 命中数）+ noop 计数
+  if (c.importHistoryPublish !== undefined || c.importHistoryNoop !== undefined) {
+    const hit = c.importHistoryResponse ?? c.importHistoryWrite ?? '?'
+    lines.push(`   importHistory publication: Response=${hit} → Publish=${c.importHistoryPublish ?? '?'}（Noop=${c.importHistoryNoop ?? '?'}）`)
   }
   const fc = r.meta?.fileCount ?? r.meta?.rawCount ?? '?'
   const bfc = base?.meta?.fileCount ?? '?'
