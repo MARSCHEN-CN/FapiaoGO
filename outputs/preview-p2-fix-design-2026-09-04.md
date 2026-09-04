@@ -3,6 +3,8 @@
 > 依据：R2 实机 dump（`outputs/perf-runs/preview-r2-8files-20260904.json`，79 events，8 PDFs）+ `PreviewScheduler-Contract-v2.md`（冻结）。
 > 本轮**只钉测试契约与设计，生产代码零改动**。修复基线 = `e6bbb89`（trace 已清理）+ 其后 3 个纯 docs commit，HEAD=`5442768`，无需回退。
 > 纪律：本地 commit，不 push。
+>
+> **2026-09-04 P2-GATE 修订**：X1 方案推翻「引入 `committed` phase」，收紧为 **hook 三出口直接 `previewExecutionRef.current = null`**（兑现 Contract §1.4 `commit → terminated`，scheduler 零改动）。详见 `outputs/preview-p2-gate-2026-09-04.md`。本文 §1.2/§1.4/§5 已同步为收紧后版本。
 
 ---
 
@@ -44,51 +46,51 @@
 | key/version 不匹配 | `ignore` | ❌ | — |
 | **`post-load` 残留（已 commit / 已 fuse-block，无在途代码）** | **`restart-required`** | **❌** | 🔴 **僵尸：defer 给一个永远不会再经过 boundary 的 execution** |
 
-**提案（v2.1 delta）——新增终态 `'committed'`：**
+**提案（P2-GATE 收紧，v2 无 delta）——不新增任何 phase，hook 三出口直接终态化：**
 
-| execution 状态 | refresh 后动作 | 是否新建 execution |
-|---|---|---|
-| `null`（idle） | `start-execution` | ✅ |
-| `loading`（在途） | `update-snapshot` | ❌ |
-| `post-load`（在途） | `restart-required`（不变，T12 保持） | ❌ |
-| `committing`（在途） | `restart-required`（不变） | ❌ |
-| **`committed`（终态，代码已返回，无 boundary 会发生）** | **`start-execution`** | **✅** |
-| key/version 不匹配 | `ignore` | ❌ |
+| execution 状态 | refresh 后动作 | 是否新建 execution | 说明 |
+|---|---|---|---|
+| `null`（idle / 已终态化） | `start-execution` | ✅ | **X1 修复后 refresh 走的路径**（T10 已绿） |
+| `loading`（在途） | `update-snapshot` | ❌ | — |
+| `post-load`（在途） | `restart-required`（不变，T12 保持） | ❌ | ANCHOR-1 锁定 |
+| `committing`（在途） | `restart-required`（不变） | ❌ | — |
+| key/version 不匹配 | `ignore` | ❌ | — |
+| ~~`committed`（终态）~~ | — | — | 🔴 已否决：commit 后 execution 直接置 `null`，不保留新状态 |
 
-Transition 图（Contract v2 §1.4 增补）：
+**否决 `committed` phase 的理由（P2-GATE）**：committed execution 不再有任何 consumer，本质上就是 terminated；Contract §1.4 本就规定 `commit → terminated`。引入 `committed` = 为修复残留状态再创造一个残留状态类型，且让红测试钉死实现方案而非根行为。**scheduler 层零改动**即满足 X1 语义（`null + refresh → start-execution` 已由 T10 覆盖）。
+
+hook 出口收尾（实施清单，X1 阶段执行）：
 
 ```
-committing
-   ├── continue → commit → committed（终态，保留 version 供 P4 clearCommitted 判定）
-   ├── restart  → loading（same id）
-   └── abort    → terminated（null）
-fuse-block（半壳/不可展示）→ terminated（null）   ← 新增出口
+COMMIT_SUCCESS（L2034-2053 段末）→ previewExecutionRef.current = null
+COMMIT_CACHE（L1947-1979 段末）  → previewExecutionRef.current = null
+FUSE_BLOCK（L1766-1769）         → previewExecutionRef.current = null（未 commit，无 P4 记录需求，直接 terminated）
 ```
 
-**INV-PS9 豁免声明**：`'committed'` 不是「有效 execution consumer」（其异步代码已返回，不再消费 snapshot），故对同一 `{key, version}` 启动新 execution **不违反** Single Execution Per Transaction。§1.3 Gap A 冻结条件（「仅当当前 transaction 不存在有效 execution consumer」）需补充一句：终态 execution 视为无 consumer。
+> 对照：merge 模式分支 L1715 已是此写法（唯一正确出口，作为模板）。restart 分支（L1830/1855/1875/1941）先 null 再递归 doLoadPreview，不受影响。`committedPreviewVersionRef` 在置 null **前**记录（L1962/2038 顺序不变），P4 clearCommitted 判定不受影响。
 
-### 1.3 与 Contract v2 冲突检查（X1）
+### 1.3 与 Contract v2 冲突检查（X1，P2-GATE 收紧后）
 
 | Contract v2 条款 | 冲突？ | 说明 |
 |---|---|---|
-| §1.2 phase 枚举 `loading/post-load/committing` | ⚠️ 缺口 | v2.1 增补 `'committed'`（delta doc） |
-| §1.3 表格 | ⚠️ 缺口 | 增补 committed 行（→ `start-execution`） |
-| §1.4 Transition（commit → terminated） | ✅ 不冲突 | **Contract 本就规定 commit 后要终止**；僵尸 = hook 未兑现「terminated」——X1 是契约未落地，不是契约矛盾 |
-| INV-PS7（L97：无论 loading/post-load/committing/idle 都必须最终 commit 最新 snapshot） | ⚠️ 缺口 | 补 `committed`；当前 MERGE_DEFERRED 正是违约点 |
-| INV-PS9（单活 execution） | ✅ 不冲突（需豁免注释） | committed 非 consumer |
-| INV-PS10（restart 不 fork） | ✅ 不冲突 | 只约束在途 execution |
-| 测试 T12 / T13（post-load/committing → restart-required / 永不 start） | ✅ 不冲突 | 断言集不含 `committed` 相位 |
+| §1.2 phase 枚举 | ✅ 无缺口 | 不新增 `committed`，枚举不变 |
+| §1.3 表格 | ✅ 无缺口 | 不新增行；`null` 行即 X1 修复后的路径 |
+| §1.4 Transition（commit → terminated） | ✅ **完全一致** | X1 修复 = hook 兑现 §1.4「commit → terminated」；僵尸 = hook 未兑现，非契约问题 |
+| INV-PS7（无论 loading/post-load/committing/idle 都必须最终 commit 最新 snapshot） | ✅ 一致 | 终态化后 refresh 走 `null → start-execution`（T10），INV-PS7 兑现 |
+| INV-PS9 / INV-PS10 | ✅ 不冲突 | 无新相位、无豁免需求；在途语义（T12/T13）原样保留 |
+| 测试 T10/T12/T13 | ✅ 不冲突 | scheduler 零改动，全部保持 |
 
-**结论：X1 = 契约缺口 + hook 未兑现，非契约矛盾。**
+**结论（收紧后）：X1 = hook 未兑现 Contract §1.4「commit → terminated」，scheduler 层无缺口、零改动。**
 
 ### 1.4 最小实现（step 5 执行，本轮不做）
 
-1. `previewScheduler.js`：`resolveRefreshExecution` 增加 `phase==='committed'` → `'start-execution'` 分支。
-2. `usePreview.js` 三处出口设终态：
-   - `COMMIT_SUCCESS` 后（L2038 之后）：`previewExecutionRef.current = { ...previewExecutionRef.current, phase: 'committed' }`；
-   - `COMMIT_CACHE` 后（L1962 之后）：同上；
-   - `FUSE_BLOCK`（L1766-1769）：`previewExecutionRef.current = null`（未 commit，无 P4 记录需求，直接 terminated）。
-3. Contract v2 delta 文档 + 回归测试 T25（红）→ T26/T27（绿）。
+1. `usePreview.js` **三处出口** `previewExecutionRef.current = null`：
+   - `COMMIT_SUCCESS`（L2034-2053 段末）；
+   - `COMMIT_CACHE`（L1947-1979 段末）；
+   - `FUSE_BLOCK`（L1766-1769）。
+   顺序：先记 `committedPreviewVersionRef`（L1962/2038）再置 null；merge 分支 L1715 为模板。
+2. `previewScheduler.js` **零改动**（`null + refresh → start-execution` 已绿 = T10）。
+3. 实施后以**一次性验收脚本**核对三出口（PASS 后删除）；`previewScheduler.test.js` 保持全绿（ANCHOR-1/ANCHOR-2 锁定 scheduler 两侧语义）。
 
 ---
 
@@ -187,7 +189,7 @@ v6 select → loading loop `loadFilePreview` 返回半壳（`docId=null`，`_pdf
 ```
 X3（拦半壳 commit）
    ↓ 若单独修：execution 残留 post-load → 下个 refresh 仍僵尸（X1 未修）→ 白屏依旧
-X1（终态化：committed/terminated + pure 决策）   ← 核心，先修
+X1（hook 三出口终态化 → null）                   ← 核心，先修（scheduler 零改动）
    ↓ 修复后 refresh 链自动恢复；但同窗口 select 仍可能被 refresh 顶掉
 X2（debounce 意图保真）                          ← 次之
    ↓
@@ -198,21 +200,15 @@ X3（防御层保险丝）                               ← 最后兜底
 
 ---
 
-## 5. 测试契约（本轮交付，生产代码零改动）
+## 5. 测试契约（GATE 收紧后，生产代码零改动）
 
-| 测试 | 位置 | 断言 | 本轮预期 |
+| 测试 | 位置 | 断言 | 当前状态 |
 |---|---|---|---|
-| **P2-X1-RED-1** | `previewScheduler.test.js`（追加） | 终态 `committed` execution + 同 key refresh → **必须 `start-execution`** | 🔴 红（现返回 `restart-required`）——真实断言红，可运行 |
-| **P2-X1-CTRL-1** | 同上 | 在途 `post-load` execution + refresh → 仍 `restart-required`（T12 不回归） | 🟢 绿（边界锁定） |
-| **P2-X2-*（4 条）** | `previewP2RedContracts.test.js`（新建） | `resolveDebouncePrecedence` 优先级表（2.2） | 🔴 红（seam 缺失：`TypeError: not a function`）——契约已钉、实现未到 |
-| **P2-X3-*（4 条）** | 同上 | `isDisplayablePreview` 半壳/就绪/图像/split-page 判定（3.3） | 🔴 红（同上） |
+| **P2-X1-ANCHOR-1** | `previewScheduler.test.js` | 在途 `post-load` + refresh → 仍 `restart-required`（T12 不回归，X1 修复不得误伤在途 restart） | 🟢 绿（边界锁定） |
+| **P2-X1-ANCHOR-2** | 同上 | `execution=null` + refresh → `start-execution`（三出口终态化后 refresh 走的路径 = INV-PS7） | 🟢 绿（T10 同语义，X1 叙事绑定） |
+| **P2-X2-1..5（5 条）** | `previewP2RedContracts.test.js` | `resolveDebouncePrecedence` 优先级表（2.2） | 🔴 红（seam 缺失：`TypeError: not a function`） |
+| **P2-X3-1..5（5 条）** | `previewPolicyRedContracts.test.js` | `isDisplayablePreview` 半壳/就绪/图像/split-page 判定（3.3），seam=`previewPolicy.js` | 🔴 红（module not found，文件级） |
 
-> X1 红测试放现有文件（import 正常 → 真实断言红）；X2/X3 红测试放新文件（引用尚不存在的导出 → 每测 TypeError 红）。
-> seam 落地（step 5）后：X1 断言转绿，X2/X3 文件整体转绿 = 验收。
-
-## 6. 本轮交付与纪律
-
-- commit 1（docs）：本设计文档。
-- commit 2（test）：`previewScheduler.test.js` 追加 P2-X1 RED + CTRL。
-- commit 3（test）：新建 `previewP2RedContracts.test.js`（X2/X3 契约红）。
-- 生产代码（`previewScheduler.js` / `usePreview.js` / Contract doc）**零改动**；不 push。
+> **G1 红测形态审计结论**：X1 收紧后 scheduler 层**无需红测**（T10/ANCHOR-2 已绿 = 三出口终态化后的收敛语义）；hook「三出口 → null」是纯副作用赋值，在当前测试设施（无 hook harness、仓库无源码审计先例）下**无行为红测形态**——实施时以**一次性验收脚本**核对三出口（PASS 后删除，符合仓库「验收脚本用完即删」纪律），不保留常驻结构护栏。
+> **G2 seam 位置结论**：`resolveDebouncePrecedence` → `previewScheduler.js`（debounce 意图仲裁与 select/refresh supersession 同源）；`isDisplayablePreview` → **新纯模块 `previewPolicy.js`**（preview snapshot policy，避免 scheduler 承担 transition/execution/debounce/displayability 四类职责）。
+> X2/X3 红 = 契约已钉、实现未到；seam 落地后各自转绿 = 验收。
