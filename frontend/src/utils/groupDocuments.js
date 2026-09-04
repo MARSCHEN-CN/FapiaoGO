@@ -96,18 +96,8 @@ export function groupFilesByDocument(files) {
   // ── P1：空输入直接 return，不 warn（纯 observability cleanup，零逻辑变更） ──
   if (!Array.isArray(files) || files.length === 0) return files || []
 
-  // ── [TRACE] 临时 dev 取证：groupFilesByDocument 调用栈 + 状态 ──
-  // 零逻辑改动，仅把原单条 DEPRECATED warn 展开为带栈快照的 trace
   if (process.env.NODE_ENV === 'development') {
-    const _stackLines = new Error().stack
-      .split('\n')
-      .slice(2, 6)   // 去掉 "Error" + 本行，取前 4 层调用者
-      .map(s => s.trim())
-    console.warn('[TRACE groupFilesByDocument]', {
-      fileCount: files?.length,
-      nonNullCount: files?.filter?.(Boolean)?.length ?? 0,
-      stack: _stackLines,
-    })
+    console.warn('[DEPRECATED] groupFilesByDocument: 仅允许 Render/Preview/Print，禁止 List/Store/Identity 用途。见 docs/invoice_entity_boundary.md §八。')
   }
 
   // Pass 1: 收集严格满足多页条件的文件，按复合键分区
