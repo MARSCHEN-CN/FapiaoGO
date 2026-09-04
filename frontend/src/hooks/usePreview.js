@@ -177,6 +177,8 @@ export function usePreview({ files, settings, electronAPIRef }) {
   // ✅ 切换防抖：快速连击时只渲染最后一次，跳过中间帧
   const switchTimeoutRef = useRef(null)
   const lastSwitchTimeRef = useRef(0)
+  // P2-X2（2026-09-04）：debounce 窗口内 pending 意图仲裁结果 { intent, key }，与 switchTimeoutRef 同生命周期
+  const pendingDebounceRef = useRef(null)
   // ✅ settings 的同步引用：doLoadPreview 的 useCallback 闭包未把 paperSize/margins 列入 deps，
   //    直接用闭包 settings 会拿到陈旧值，导致读写缓存 key 不一致。统一走 settingsRef.current 取最新布局。
   const settingsRef = useRef(settings)
