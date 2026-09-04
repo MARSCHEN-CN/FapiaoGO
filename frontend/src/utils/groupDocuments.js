@@ -93,8 +93,18 @@ function makeGroupKey(f) {
  *   - 非拆分页: 原 fileObj 引用不变（无 _isDocumentGroup 属性）
  */
 export function groupFilesByDocument(files) {
+  // ── [TRACE] 临时 dev 取证：groupFilesByDocument 调用栈 + 状态 ──
+  // 零逻辑改动，仅把原单条 DEPRECATED warn 展开为带栈快照的 trace
   if (process.env.NODE_ENV === 'development') {
-    console.warn('[DEPRECATED] groupFilesByDocument: 仅允许 Render/Preview/Print，禁止 List/Store/Identity 用途。见 docs/invoice_entity_boundary.md §八。')
+    const _stackLines = new Error().stack
+      .split('\n')
+      .slice(2, 6)   // 去掉 "Error" + 本行，取前 4 层调用者
+      .map(s => s.trim())
+    console.warn('[TRACE groupFilesByDocument]', {
+      fileCount: files?.length,
+      nonNullCount: files?.filter?.(Boolean)?.length ?? 0,
+      stack: _stackLines,
+    })
   }
   if (!Array.isArray(files) || files.length === 0) return files || []
 
