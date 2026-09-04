@@ -444,3 +444,40 @@ test('P4-3: 无 transaction → clear（无 execution 可杀，幂等安全）',
   })
   assert.equal(decision.action, 'clear', '无 transaction 时清理不影响任何 execution')
 })
+
+// ════════════════════════════════════════════════════════════
+// P2 — X1 僵尸死锁（2026-09-04，R2 runtime 取证：MERGE_DEFERRED 扑空）
+// 背景：commit 后 usePreview.js 从不清理 previewExecutionRef（COMMIT_SUCCESS/
+//       COMMIT_CACHE 只 setPreviewFile；FUSE_BLOCK 连清都不清），execution 恒残留
+//       phase='post-load'。后续同 key refresh → resolveRefreshExecution 见同绑定
+//       execution 且 phase!=='loading' → 'restart-required' → hook MERGE_DEFERRED
+//       return null，依赖「在途 execution 会在 boundary 自行 restart」——但该 execution
+//       的异步代码已返回，永远不再经过 boundary → INV-PS7 悬空（dump seq 45/49/65/69/73
+//       五个带 docId 的 refresh 全部被吃）。
+// 契约提案（v2.1 delta）：execution 增加终态 'committed'；终态不是「有效 consumer」，
+//       refresh 必须 start-execution（INV-PS9 豁免），不得 defer 给已死 execution。
+// 运行：node --test src/utils/previewScheduler.test.js
+// 预期：P2-X1-RED-1 红（现返回 restart-required）；P2-X1-CTRL-1 绿（在途语义不回归）。
+// ════════════════════════════════════════════════════════════
+
+// ── P2-X1-RED-1：终态 committed execution 遇同 key refresh → 必须 start-execution ──
+test('P2-X1-RED-1: committed 终态（代码已返回）refresh → start-execution，禁 defer 给已死 execution', () => {
+  // 场景复刻 dump：v6 已 commit（半壳），docId 后到 → refresh 带最新 snapshot 到达
+  const transaction = { key: 'A', version: 6, snapshot: 'snapA-docId-ready' }
+  // 僵尸：commit 后残留的 execution（phase 未终态化，consumingSnapshot 还是旧快照）
+  const zombie = exec({ id: 6, key: 'A', version: 6, phase: 'committed', consumingSnapshot: 'snapA-halfshell' })
+  const action = resolveRefreshExecution(transaction, zombie, { key: 'A', snapshot: 'snapA-docId-ready' })
+  assert.equal(action, 'start-execution',
+    '终态 committed execution 不是有效 consumer（INV-PS9 豁免）——refresh 必须启动新 execution 消费最新 snapshot，'
+    + '不得返回 restart-required defer 给一个永远不会再经过 boundary 的 execution')
+})
+
+// ── P2-X1-CTRL-1：在途 post-load（异步代码仍在跑，还会经过 boundary）→ 仍 restart-required ──
+// 边界锁定：X1 修复只针对「终态」，不得把在途 post-load 的 restart-required 语义一并改掉（T12 不回归）
+test('P2-X1-CTRL-1: 在途 post-load（真在 await docFacts）refresh → 仍 restart-required（T12 不回归）', () => {
+  const transaction = { key: 'A', version: 6, snapshot: 'snapA2' }
+  const inflight = exec({ id: 6, key: 'A', version: 6, phase: 'post-load', consumingSnapshot: 'snapA' })
+  const action = resolveRefreshExecution(transaction, inflight, { key: 'A', snapshot: 'snapA2' })
+  assert.equal(action, 'restart-required',
+    '在途 post-load execution 会经过下一个 resolveBoundary 并自行 restart（INV-PS10），语义不变')
+})
