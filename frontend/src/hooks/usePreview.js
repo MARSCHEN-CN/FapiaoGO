@@ -17,6 +17,7 @@ import { computeInitialDocFacts } from '../layout/docFacts.js'
 import { nextZoomStep } from './zoomStep.mjs'
 import { applyWheelZoom } from './continuousZoom.mjs'
 import { resolvePreviewTransition, resolveRefreshExecution, resolveBoundary, advanceLoadingStep, resolveCommittedClear, resolveDebouncePrecedence } from '../utils/previewScheduler'
+import { isDisplayablePreview } from '../utils/previewPolicy'
 import { perfProbe } from '../perf/importPerfProbe'
 import { previewTrace } from '../perf/previewTrace'
 
@@ -1770,6 +1771,19 @@ export function usePreview({ files, settings, electronAPIRef }) {
       // P2-X1（2026-09-04）：禁止 commit 即 execution 使命终结 → 终态化（Contract §1.4 terminate）。
       // 否则残留非 post-load execution 会让后续 refresh 撞 restart-required → MERGE_DEFERRED 扑空
       // （R2 dump seq 45/49/65/69/73：带 docId 的 refresh 五次被僵尸 execution 吃掉）。
+      previewExecutionRef.current = null
+      return
+    }
+
+    // 保险丝 2（P2-X3，2026-09-04）：displayability gate——phase/freshness 已过（post-load 且
+    // consumingSnapshot 新鲜），但快照不可展示 → 仍禁止 commit。
+    // 依据：dump seq 43 v6 半壳（docId=null + pdfData=true）COMMIT_SUCCESS → DisplayAdapter 按
+    // docId 哈希 miss → 展示空白固化。loadedFile 即本 execution 即将 commit 的 snapshot
+    // （loading loop 产物，COMMIT_SUCCESS/CACHE 均消费同一对象）。
+    // 出口复用 X1 既有终态机制（execution=null + return），不另设第二套。纯图像/OFD 走
+    // _previewImageUrl（非 pdf-backed）→ 不依赖 docId，不被误拦。
+    if (!isDisplayablePreview(loadedFile)) {
+      if (previewTrace.on) previewTrace.state('FUSE_BLOCK', { key, version, phase: execution?.phase ?? null, why: 'not-displayable' }, 'commit-fuse:P2-X3')
       previewExecutionRef.current = null
       return
     }
