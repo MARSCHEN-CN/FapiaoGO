@@ -16,7 +16,7 @@ import { extractContentPx } from '../geometry/extractContentPx.js'
 import { computeInitialDocFacts } from '../layout/docFacts.js'
 import { nextZoomStep } from './zoomStep.mjs'
 import { applyWheelZoom } from './continuousZoom.mjs'
-import { resolvePreviewTransition, resolveRefreshExecution, resolveBoundary, advanceLoadingStep, resolveCommittedClear } from '../utils/previewScheduler'
+import { resolvePreviewTransition, resolveRefreshExecution, resolveBoundary, advanceLoadingStep, resolveCommittedClear, resolveDebouncePrecedence } from '../utils/previewScheduler'
 import { perfProbe } from '../perf/importPerfProbe'
 import { previewTrace } from '../perf/previewTrace'
 
@@ -1604,6 +1604,8 @@ export function usePreview({ files, settings, electronAPIRef }) {
       clearTimeout(switchTimeoutRef.current)
       switchTimeoutRef.current = null
     }
+    // P2-X2：任何实际执行（immediate / timer fire / restart 递归）统一在此清 pending 意图
+    pendingDebounceRef.current = null
 
     const key = fileObj?.key
 
@@ -2122,16 +2124,25 @@ export function usePreview({ files, settings, electronAPIRef }) {
           hadPendingTimer: !!switchTimeoutRef.current,
         }, 'handlePreview:debounce')
       }
+      // P2-X2（2026-09-04）：意图仲裁——pending select 不得被同 key refresh 降级
+      // （R2 dump seq 55-63：docId-ready select 进 debounce 后被 auto-nav-3 refresh 无脑顶掉）。
+      // resolveDebouncePrecedence 只决 intent/key；payload 恒取最新 incoming fileObj；
+      // select(++version)/refresh(merge) 的调度语义不变——仲裁只决定到期后以哪个 intent 进 doLoadPreview。
+      const effective = resolveDebouncePrecedence(pendingDebounceRef.current, {
+        intent,
+        key: fileObj?.key ?? fileObj?.id ?? null,
+      })
+      pendingDebounceRef.current = effective
       // 清掉上次未执行的定时器
       if (switchTimeoutRef.current) {
         clearTimeout(switchTimeoutRef.current)
       }
       // 重新设定时器，到期后直接调用加载逻辑（不再递归 handlePreview）
-      // timeout 闭包必须捕获 intent（Contract §1：防抖不得丢失 intent 语义）
+      // timeout 闭包必须捕获仲裁后的 intent（Contract §1 + P2-X2：防抖不得丢失 select 意图）
       return new Promise(resolve => {
           switchTimeoutRef.current = setTimeout(async () => {
           switchTimeoutRef.current = null
-          const result = await doLoadPreview(fileObj, intent, 'handlePreview:timeout')
+          const result = await doLoadPreview(fileObj, effective.intent, 'handlePreview:timeout')
           resolve(result)
         }, 150)
       })
@@ -2424,6 +2435,8 @@ export function usePreview({ files, settings, electronAPIRef }) {
         clearTimeout(switchTimeoutRef.current)
         switchTimeoutRef.current = null
       }
+      // P2-X2：与 timer 同生命周期清理，避免 stale pending 把 cleanup 后的普通 refresh 误升格为 select
+      pendingDebounceRef.current = null
     }
   }, [cleanupAllBlobUrls])
 

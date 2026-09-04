@@ -340,3 +340,50 @@ export function resolveCommittedClear({ transaction, committedVersion }) {
 export function legacyResolveCommittedClear() {
   return { action: 'clear' }
 }
+
+// ════════════════════════════════════════════════════════════
+// P2-X2 — debounce 意图仲裁（2026-09-04，X2 最小实现）
+// ════════════════════════════════════════════════════════════
+
+/**
+ * resolveDebouncePrecedence — 150ms debounce 窗口内 pending 与 incoming 的意图仲裁。
+ *
+ * 背景（R2 runtime dump seq 55-63 取证，outputs/perf-runs/preview-r2-8files-20260904.json）：
+ *   docId 后到时，App scenario-2/3 的 select（docId=d8bf968f 已就绪，唯一能 supersede 僵尸
+ *   transaction 的意图）先进 debounce；auto-nav-3 的同 key refresh 后到。旧实现无脑
+ *   clearTimeout + 以 incoming.intent 重排定时器 → refresh 把 select 顶掉 → 意图丢失 →
+ *   展示区空白直到用户点击（seq 74，>150ms 走 immediate 才成功）。
+ *
+ * 冻结优先级表（用户批准的最小集，不得扩展）：
+ *   | pending                    | incoming                 | 仲裁结果 |
+ *   |---------------------------|--------------------------|---------|
+ *   | null                      | 任意                     | incoming |
+ *   | key ≠ incoming.key        | 任意                     | incoming（INV-PS3 新 selection）|
+ *   | select（同 key）          | refresh（同 key）        | select（保留，核心）|
+ *   | refresh（同 key）         | select（同 key）         | select（升级）|
+ *   | 同 intent（同 key）       | 同 intent                | incoming（last-wins）|
+ *
+ * 范围纪律（P2-GATE G2 冻结）：
+ *   - 本函数只仲裁「intent 与 key」；payload（snapshot）恒由调用方取最新 incoming 引用，
+ *     不在本模块建模。
+ *   - 不改变 resolvePreviewTransition 的既有调度语义：select 仍 ++version（supersede）、
+ *     refresh 仍 merge（不 ++version）——仲裁只决定 debounce 到期后以哪个 intent 调用执行层。
+ *
+ * @param {{intent: 'select'|'refresh', key: string|null}|null} pending - 窗口内已 pending 的动作
+ * @param {{intent: 'select'|'refresh', key: string|null}} incoming - 新到达的动作
+ * @returns {{intent: 'select'|'refresh', key: string|null}}
+ */
+export function resolveDebouncePrecedence(pending, incoming) {
+  const key = incoming?.key ?? null
+  const intent = incoming?.intent ?? 'select'
+  // 无 pending（首拍）或 key 不同 → incoming（新 selection 覆盖，INV-PS3）
+  if (!pending || pending.key !== key) {
+    return { intent, key }
+  }
+  // 同 key：pending select + incoming refresh → select 不得被降级（X2 核心）
+  if (pending.intent === 'select' && intent === 'refresh') {
+    return { intent: 'select', key }
+  }
+  // refresh → select 升级 / 同 intent last-wins → incoming
+  return { intent, key }
+}
