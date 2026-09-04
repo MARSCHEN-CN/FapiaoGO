@@ -18,6 +18,7 @@ import { nextZoomStep } from './zoomStep.mjs'
 import { applyWheelZoom } from './continuousZoom.mjs'
 import { resolvePreviewTransition, resolveRefreshExecution, resolveBoundary, advanceLoadingStep, resolveCommittedClear } from '../utils/previewScheduler'
 import { perfProbe } from '../perf/importPerfProbe'
+import { previewTrace } from '../perf/previewTrace'
 
 // ── 滚轮缩放常量（Ctrl/⌘ + wheel，跟随光标锚点）── V16.1 平滑增强 ──
 // 连续缩放：deltaY 走指数映射（乘性），rAF 合并高频事件为每帧一次更新；
@@ -1613,12 +1614,23 @@ export function usePreview({ files, settings, electronAPIRef }) {
       { intent, key, snapshot: fileObj },
     )
 
+    // R2-2 探针：调度器每次决策（含被忽略/失效的调用）
+    if (previewTrace.on) {
+      previewTrace.state('SCHED_DECISION', {
+        source, intent, key,
+        action: decision.action,
+        version: decision.version ?? null,
+      }, `doLoadPreview:${source}`)
+    }
+
     if (decision.action === 'ignore') {
+      if (previewTrace.on) previewTrace.state('IGNORED', { key, intent, source }, 'scheduler:ignore')
       // stale refresh：不得 resurrect 旧 selection（INV-PS2）
       return null
     }
 
     if (decision.action === 'invalidate') {
+      if (previewTrace.on) previewTrace.state('INVALIDATED', { key, intent, source }, 'scheduler:invalidate')
       // 防御：正常由 clearCommitted 处理（V-3）
       previewTransactionRef.current = null
       previewExecutionRef.current = null
@@ -1634,6 +1646,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
         decision.transaction, previewExecutionRef.current, { key, snapshot: fileObj },
       )
       if (execAction !== 'start-execution') {
+        if (previewTrace.on) previewTrace.state('MERGE_DEFERRED', { key, execAction, version: decision.version }, 'scheduler:refresh-exec')
         // update-snapshot / restart-required / ignore：
         // 在途 execution 会在它的 boundary（advanceLoadingStep / resolveBoundary）
         // 检测 consumingSnapshot 变化并自行 restart（INV-PS10）。
@@ -1654,6 +1667,15 @@ export function usePreview({ files, settings, electronAPIRef }) {
         id: ++executionIdRef.current, key, version,
         phase: 'loading', consumingSnapshot: fileObj,
       }
+    }
+
+    // R2-2 探针：正式 START（已确定 version / execution）
+    if (previewTrace.on) {
+      previewTrace.state('START', {
+        source, intent, key, version,
+        docId: previewTrace.docId(fileObj),
+        ...previewTrace.flags(fileObj),
+      }, `doLoadPreview:${source}`)
     }
 
     // ✅ 预览生命周期 token：用于追踪竞争条件
@@ -1678,6 +1700,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
         const validLoaded = loaded.filter(Boolean)
         // ✅ 检查版本号，确保只处理最新请求
         if (validLoaded.length > 0 && version === previewVersionRef.current) {
+          if (previewTrace.on) previewTrace.state('COMMIT_MERGE', { key, version, size: validLoaded.length }, 'commit:merge')
           // 保留用户点击意图：优先用用户点击的文件作为 primary，
           // 若该文件加载失败则 fallback 到 pair[0]
           const primary = validLoaded.find(item => item.key === fileObj.key) || validLoaded[0]
@@ -1710,12 +1733,27 @@ export function usePreview({ files, settings, electronAPIRef }) {
         return
       }
 
+      // R2-3 探针：loadFilePreview 进出（空壳判据在此捕获——永不返回 null 的兜底也在内）
+      if (previewTrace.on) {
+        previewTrace.state('LOAD_START', {
+          iter, key: execution.key, version: execution.version,
+          docId: previewTrace.docId(execution.consumingSnapshot),
+        }, 'loadFilePreview')
+      }
       loadedFile = await loadFilePreview(execution.consumingSnapshot)
+      if (previewTrace.on) {
+        previewTrace.state('LOAD_RETURN', {
+          iter, key: loadedFile?.key ?? null, version: execution.version,
+          docId: previewTrace.docId(loadedFile),
+          ...previewTrace.flags(loadedFile),
+        }, 'loadFilePreview')
+      }
 
       const step = advanceLoadingStep(previewTransactionRef.current, execution)
       execution = step.execution
       previewExecutionRef.current = execution
       if (step.action === 'terminate') {
+        if (previewTrace.on) previewTrace.state('TERMINATED', { iter, key, version }, 'loading-loop:terminate')
         return
       }
       if (step.action === 'post-load') {
@@ -1726,6 +1764,7 @@ export function usePreview({ files, settings, electronAPIRef }) {
 
     // 保险丝：持续晋升仍不稳定 / 被终止 → 禁止 commit（INV-PS6）
     if (!execution || execution.phase !== 'post-load') {
+      if (previewTrace.on) previewTrace.state('FUSE_BLOCK', { key, version, phase: execution?.phase ?? null }, 'commit-fuse:INV-PS6')
       return
     }
 
@@ -1784,10 +1823,12 @@ export function usePreview({ files, settings, electronAPIRef }) {
     {
       const b = resolveBoundary(previewTransactionRef.current, execution)
       if (b === 'abort') {
+        if (previewTrace.on) previewTrace.state('ABORTED', { key, version, at: 'after-loadDocFacts' }, 'resolveBoundary')
         return
       }
       if (b === 'restart') {
         previewExecutionRef.current = null
+        if (previewTrace.on) previewTrace.state('RESTART', { key, version, at: 'after-loadDocFacts' }, 'resolveBoundary')
         return doLoadPreview(previewTransactionRef.current.snapshot, 'refresh', 'restart-after-loadDocFacts')
       }
     }
@@ -1807,10 +1848,12 @@ export function usePreview({ files, settings, electronAPIRef }) {
       {
         const b = resolveBoundary(previewTransactionRef.current, execution)
         if (b === 'abort') {
+          if (previewTrace.on) previewTrace.state('ABORTED', { key, version, at: 'before-saveDocFacts' }, 'resolveBoundary')
           return
         }
         if (b === 'restart') {
           previewExecutionRef.current = null
+          if (previewTrace.on) previewTrace.state('RESTART', { key, version, at: 'before-saveDocFacts' }, 'resolveBoundary')
           return doLoadPreview(previewTransactionRef.current.snapshot, 'refresh', 'restart-before-saveDocFacts')
         }
       }
@@ -1825,10 +1868,12 @@ export function usePreview({ files, settings, electronAPIRef }) {
       {
         const b = resolveBoundary(previewTransactionRef.current, execution)
         if (b === 'abort') {
+          if (previewTrace.on) previewTrace.state('ABORTED', { key, version, at: 'after-saveDocFacts' }, 'resolveBoundary')
           return
         }
         if (b === 'restart') {
           previewExecutionRef.current = null
+          if (previewTrace.on) previewTrace.state('RESTART', { key, version, at: 'after-saveDocFacts' }, 'resolveBoundary')
           return doLoadPreview(previewTransactionRef.current.snapshot, 'refresh', 'restart-after-saveDocFacts')
         }
       }
@@ -1889,16 +1934,26 @@ export function usePreview({ files, settings, electronAPIRef }) {
     {
       const b = resolveBoundary(previewTransactionRef.current, execution)
       if (b === 'abort') {
+        if (previewTrace.on) previewTrace.state('ABORTED', { key, version, at: 'before-commit' }, 'resolveBoundary')
         return
       }
       if (b === 'restart') {
         previewExecutionRef.current = null
+        if (previewTrace.on) previewTrace.state('RESTART', { key, version, at: 'before-commit' }, 'resolveBoundary')
         return doLoadPreview(previewTransactionRef.current.snapshot, 'refresh', 'restart-before-commit')
       }
     }
 
     const cachedCanvas = fullCacheRef.current.get(cacheKey)
     if (cachedCanvas) {
+      // R2-3 探针：L2 全缓存命中 commit（空壳判据同样适用）
+      if (previewTrace.on) {
+        previewTrace.state('COMMIT_CACHE', {
+          key: loadedFile?.key ?? null, version,
+          docId: previewTrace.docId(loadedFile),
+          ...previewTrace.flags(loadedFile),
+        }, 'commit:full-cache')
+      }
       // 直接设置缓存画布，跳过整个异步渲染管线
       skipRenderRef.current = true
       previewFileRef.current = loadedFile
@@ -1968,18 +2023,40 @@ export function usePreview({ files, settings, electronAPIRef }) {
     }
 
     // ── 正常预览加载（全缓存未命中） ──
+    // R2-3 探针：commit 尝试（含版本守卫读数——supersede 雪崩的直接证据位）
+    if (previewTrace.on) {
+      previewTrace.state('COMMIT_ATTEMPT', {
+        key: loadedFile?.key ?? null, version, currentVersion: previewVersionRef.current,
+        docId: previewTrace.docId(loadedFile),
+        ...previewTrace.flags(loadedFile),
+      }, 'commit:normal')
+    }
     if (version === previewVersionRef.current) {
       previewFileRef.current = loadedFile
       setMergePair(null)
       // P4：记录 commit 对应的 execution.version（clearCommitted 清理权判定依据）
       committedPreviewVersionRef.current = previewExecutionRef.current?.version ?? version
       setPreviewFile(loadedFile)
+      if (previewTrace.on) {
+        previewTrace.state('COMMIT_SUCCESS', {
+          key: loadedFile.key, version,
+          docId: previewTrace.docId(loadedFile),
+          ...previewTrace.flags(loadedFile),
+        }, 'commit:normal')
+      }
       setPreviewPage(1)
       setNumPages(loadedFile._fileFormat === 'pdf' ? 0 : 1)
 
       if (loadedFile._previewImageUrl) {
         previewUrlRef.current = loadedFile._previewImageUrl
       }
+    }
+
+    // R2-3 探针：版本已过期 → loaded 但不 commit（superseded）
+    if (previewTrace.on && version !== previewVersionRef.current) {
+      previewTrace.state('COMMIT_SKIPPED_VERSION', {
+        key: loadedFile?.key ?? null, version, currentVersion: previewVersionRef.current,
+      }, 'commit:normal')
     }
 
     // ✅ 新预览加载完成后清理旧的 blob URL
@@ -2008,11 +2085,30 @@ export function usePreview({ files, settings, electronAPIRef }) {
     // ── 防抖层：让 UI 指示器即时响应，渲染逻辑延迟 150ms ──
     const now = Date.now()
 
+    // R2-1 探针：入口计数 + 来源归因（skip=1 → App 自动预览 effect / FileList 点击）
+    if (previewTrace.on) {
+      previewTrace.log('HANDLE_PREVIEW', {
+        intent,
+        key: fileObj?.key ?? null,
+        docId: previewTrace.docId(fileObj),
+        version: previewVersionRef.current,
+      }, { skip: 1 })
+    }
+
     // 1. 立即更新 UI 指示器（文件列表高亮等），不触发 render effect
     setSelectedFileKey(fileObj.key || fileObj.id)
 
     // 2. 快速连击 → 延迟执行，只保留最后一次
     if (now - lastSwitchTimeRef.current < 150) {
+      // R2-2 探针：防抖分支（饥饿观察——连续 <150ms 调用会不断重排此定时器）
+      if (previewTrace.on) {
+        previewTrace.state('DEBOUNCED', {
+          key: fileObj?.key ?? null,
+          intent,
+          sinceLastSwitchMs: now - lastSwitchTimeRef.current,
+          hadPendingTimer: !!switchTimeoutRef.current,
+        }, 'handlePreview:debounce')
+      }
       // 清掉上次未执行的定时器
       if (switchTimeoutRef.current) {
         clearTimeout(switchTimeoutRef.current)
@@ -2073,6 +2169,13 @@ export function usePreview({ files, settings, electronAPIRef }) {
 
     // ✅ 导入文件后自动预览第一个文件（纯逻辑，不关心状态）
     if (!previewFile && files.length > 0) {
+      // R2-1 探针：来源 = usePreview 内置「无预览 → files[0]」分支
+      if (previewTrace.on) {
+        previewTrace.state('AUTO_PREVIEW', {
+          branch: 'usePreview:no-preview-first', filesLen: files.length,
+          firstKey: files[0]?.key ?? null,
+        }, 'usePreview:files-effect')
+      }
       handlePreviewRef.current?.(files[0])
       return
     }
@@ -2128,11 +2231,27 @@ export function usePreview({ files, settings, electronAPIRef }) {
   )
   useEffect(() => {
     const pf = previewFileRef.current
-    if (!pf) return
+    if (!pf) {
+      // R2-4 探针：docId 重试被跳过——previewFile 为 null（自动预览从未 commit 的凝固证据）
+      if (previewTrace.on) {
+        previewTrace.state('DOCID_RETRY_SKIP', {
+          reason: 'no-previewFile', filesLen: filesRef.current.length,
+        }, 'usePreview:docId-retry')
+      }
+      return
+    }
     const live = filesRef.current.find(f => f.key === pf.key)
-    if (!live) return
+    if (!live) {
+      if (previewTrace.on) previewTrace.state('DOCID_RETRY_SKIP', { reason: 'live-not-found', pfKey: pf.key }, 'usePreview:docid-retry')
+      return
+    }
     // 触发条件：docId 从 null/undefined/'' 跃迁到非空，或两个不同的非空 docId 之间切换
     const changed = live.docId !== pf.docId
+    if (previewTrace.on) {
+      previewTrace.state('DOCID_RETRY_EVAL', {
+        pfKey: pf.key, pfDocId: pf.docId ?? null, liveDocId: live.docId ?? null, changed,
+      }, 'usePreview:docid-retry')
+    }
     if (changed) {
       // Contract §1：docId 晋升 = refresh（同 key snapshot 更新，不 supersede）
       handlePreviewRef.current?.(live, 'refresh')
@@ -2174,12 +2293,18 @@ export function usePreview({ files, settings, electronAPIRef }) {
 
     // 1. 当前预览文件已不存在 → 切到第一个文件
     if (pfKey && !live) {
+      if (previewTrace.on) {
+        previewTrace.state('AUTO_PREVIEW', { branch: 'usePreview:auto-nav-1-gone', pfKey }, 'usePreview:files-change')
+      }
       handlePreviewRef.current?.(files[0])
       return
     }
 
     // 2. 当前无预览 → 预览第一个文件
     if (!pf) {
+      if (previewTrace.on) {
+        previewTrace.state('AUTO_PREVIEW', { branch: 'usePreview:auto-nav-2-none', filesLen: files.length }, 'usePreview:files-change')
+      }
       handlePreviewRef.current?.(files[0])
       return
     }
@@ -2188,6 +2313,9 @@ export function usePreview({ files, settings, electronAPIRef }) {
     //    典型场景：占位符 → 解析完成，groupFilesByDocument → invoiceDocumentsToRows
     //    Contract §1：引用替换 = refresh（同 key snapshot 更新，不 supersede）
     if (pfChanged) {
+      if (previewTrace.on) {
+        previewTrace.state('AUTO_PREVIEW', { branch: 'usePreview:auto-nav-3-replaced', pfKey }, 'usePreview:files-change')
+      }
       handlePreviewRef.current?.(live, 'refresh')
       return
     }

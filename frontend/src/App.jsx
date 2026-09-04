@@ -25,6 +25,7 @@ import { buildDocumentViewModel, documentPages } from './utils/documentViewModel
 import { selectDocumentRows, selectParsedFiles } from './utils/documentSelector'
 import { buildFileObj } from './utils/fileHelpers'
 import { perfProbe } from './perf/importPerfProbe'
+import { previewTrace } from './perf/previewTrace'
 
 import { useSettings } from './hooks/useSettings'
 import { useExcelExportSettings } from './hooks/useExcelExportSettings'
@@ -991,6 +992,14 @@ function AppContent() {
     const firstItem = displayFiles[0]
     const firstReady = !!(firstItem?.documentId || firstItem?.docId)
     if (lenIncreased && !previewFile && firstReady) {
+      // R2-1 探针：来源 = App 场景1（首次导入 + 无预览 + 首条就绪）
+      if (previewTrace.on) {
+        previewTrace.state('AUTO_PREVIEW', {
+          branch: 'App:scenario-1-first-import',
+          lenIncreased, hasPreviewFile: !!previewFile, firstReady,
+          firstDocId: firstItem?.documentId || firstItem?.docId || null,
+        }, 'App:auto-preview')
+      }
       handlePreview(displayFiles[0])
     }
 
@@ -1000,12 +1009,24 @@ function AppContent() {
     if (firstHasDocId && !prevDocIdPresenceRef.current) {
       const pvHasDocumentId = !!previewFile?.documentId
       if (!previewFile || !pvHasDocumentId) {
+        if (previewTrace.on) {
+          previewTrace.state('AUTO_PREVIEW', {
+            branch: 'App:scenario-2-docid-arrives',
+            firstDocId, pvHasDocumentId, hasPreviewFile: !!previewFile,
+          }, 'App:auto-preview')
+        }
         handlePreview(displayFiles[0])
       }
     }
 
     // 场景 3: 首个条目的 documentId 发生变化（如 assembly 重新绑定）→ 强制重新预览
     if (firstDocId && firstDocId !== prevFirstDocId) {
+      if (previewTrace.on) {
+        previewTrace.state('AUTO_PREVIEW', {
+          branch: 'App:scenario-3-first-docid-changed',
+          firstDocId, prevFirstDocId,
+        }, 'App:auto-preview')
+      }
       handlePreview(displayFiles[0])
     }
 
@@ -1016,6 +1037,12 @@ function AppContent() {
     if (previewFile) {
       const previewIdentity = resolveDocumentIdentity(previewFile)
       if (previewIdentity && !displayFiles.some(f => resolveDocumentIdentity(f) === previewIdentity)) {
+        if (previewTrace.on) {
+          previewTrace.state('AUTO_PREVIEW', {
+            branch: 'App:scenario-4-preview-orphanned',
+            previewIdentity, displayLen: displayFiles.length,
+          }, 'App:auto-preview')
+        }
         handlePreview(displayFiles[0])
       }
     }
