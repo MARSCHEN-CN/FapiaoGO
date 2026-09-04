@@ -454,30 +454,36 @@ test('P4-3: 无 transaction → clear（无 execution 可杀，幂等安全）',
 //       return null，依赖「在途 execution 会在 boundary 自行 restart」——但该 execution
 //       的异步代码已返回，永远不再经过 boundary → INV-PS7 悬空（dump seq 45/49/65/69/73
 //       五个带 docId 的 refresh 全部被吃）。
-// 契约提案（v2.1 delta）：execution 增加终态 'committed'；终态不是「有效 consumer」，
-//       refresh 必须 start-execution（INV-PS9 豁免），不得 defer 给已死 execution。
+//
+// P2-GATE 收紧（2026-09-04）：X1 最小实现 = hook 三出口（COMMIT_SUCCESS/COMMIT_CACHE/
+//   FUSE_BLOCK）直接 `previewExecutionRef.current = null`（兑现 Contract §1.4
+//   `commit → terminated`），**不引入 committed phase**（那等于为修残留状态再造一个
+//   残留状态类型，且让红测试钉死实现方案而非根行为）。
+//   → scheduler 层零改动即满足：execution=null + refresh → start-execution（T10 已绿），
+//     在途 post-load/committing + refresh → restart-required（T12 已绿，本文件 ANCHOR 锁定）。
+//   → X1 的「hook 生命周期」层红测在当前测试设施（无 hook harness、仓库无源码审计先例）
+//     下无行为红测形态；实施时以一次性验收脚本核对三出口终态化（PASS 后删除）。
 // 运行：node --test src/utils/previewScheduler.test.js
-// 预期：P2-X1-RED-1 红（现返回 restart-required）；P2-X1-CTRL-1 绿（在途语义不回归）。
+// 预期：本文件全绿（scheduler 层语义锚点）；X1 的红不在本层。
 // ════════════════════════════════════════════════════════════
 
-// ── P2-X1-RED-1：终态 committed execution 遇同 key refresh → 必须 start-execution ──
-test('P2-X1-RED-1: committed 终态（代码已返回）refresh → start-execution，禁 defer 给已死 execution', () => {
-  // 场景复刻 dump：v6 已 commit（半壳），docId 后到 → refresh 带最新 snapshot 到达
-  const transaction = { key: 'A', version: 6, snapshot: 'snapA-docId-ready' }
-  // 僵尸：commit 后残留的 execution（phase 未终态化，consumingSnapshot 还是旧快照）
-  const zombie = exec({ id: 6, key: 'A', version: 6, phase: 'committed', consumingSnapshot: 'snapA-halfshell' })
-  const action = resolveRefreshExecution(transaction, zombie, { key: 'A', snapshot: 'snapA-docId-ready' })
-  assert.equal(action, 'start-execution',
-    '终态 committed execution 不是有效 consumer（INV-PS9 豁免）——refresh 必须启动新 execution 消费最新 snapshot，'
-    + '不得返回 restart-required defer 给一个永远不会再经过 boundary 的 execution')
-})
-
-// ── P2-X1-CTRL-1：在途 post-load（异步代码仍在跑，还会经过 boundary）→ 仍 restart-required ──
-// 边界锁定：X1 修复只针对「终态」，不得把在途 post-load 的 restart-required 语义一并改掉（T12 不回归）
-test('P2-X1-CTRL-1: 在途 post-load（真在 await docFacts）refresh → 仍 restart-required（T12 不回归）', () => {
+// ── P2-X1-ANCHOR-1：在途 post-load（异步代码仍在跑，还会经过 boundary）→ 仍 restart-required ──
+// 边界锁定：三出口终态化只清「已返回」的 execution；在途 post-load 的 restart-required 语义
+// 必须保持（T12 不回归）——否则 X1 修复会误伤 W2/W3/W4 正常 restart 路径。
+test('P2-X1-ANCHOR-1: 在途 post-load（真在 await docFacts）refresh → 仍 restart-required（T12 不回归）', () => {
   const transaction = { key: 'A', version: 6, snapshot: 'snapA2' }
   const inflight = exec({ id: 6, key: 'A', version: 6, phase: 'post-load', consumingSnapshot: 'snapA' })
   const action = resolveRefreshExecution(transaction, inflight, { key: 'A', snapshot: 'snapA2' })
   assert.equal(action, 'restart-required',
     '在途 post-load execution 会经过下一个 resolveBoundary 并自行 restart（INV-PS10），语义不变')
+})
+
+// ── P2-X1-ANCHOR-2：execution 已终态化（null）→ refresh 必须 start-execution ──
+// X1 修复后 hook 三出口把 execution 置 null，refresh 走的就是这条路径；T10 已覆盖同语义，
+// 此处以 X1 叙事显式绑定，作为实施后「三出口终态化 → scheduler 侧收敛」的验收语义锚点。
+test('P2-X1-ANCHOR-2: execution=null（commit 已终态化）refresh → start-execution（INV-PS7）', () => {
+  const transaction = { key: 'A', version: 6, snapshot: 'snapA-docId-ready' }
+  const action = resolveRefreshExecution(transaction, null, { key: 'A', snapshot: 'snapA-docId-ready' })
+  assert.equal(action, 'start-execution',
+    'execution 为 null（三出口终态化后）时 refresh 必须启动新 execution 消费最新 snapshot（INV-PS7）')
 })
