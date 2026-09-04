@@ -113,6 +113,11 @@ function parseAmount(amountStr) {
  * }}
  */
 export function buildDocumentViewModel(files, invoiceDocs = null) {
+  // ── [TRACE] 临时 dev 取证：完整状态表 ──
+  if (process.env.NODE_ENV === 'development') {
+    if (!buildDocumentViewModel._seq) buildDocumentViewModel._seq = 0
+    buildDocumentViewModel._seq++
+  }
   const hasInvoiceDocs = Array.isArray(invoiceDocs) && invoiceDocs.length > 0
   let documents
   // [V3-P3] 行来源闭环：进入哪个分支（invoiceDocumentsToRows vs groupFilesByDocument）
@@ -125,6 +130,20 @@ export function buildDocumentViewModel(files, invoiceDocs = null) {
     const remainingFiles = (Array.isArray(files) ? files : []).filter(
       (f) => f && f.key && !coveredKeys.has(f.key),
     )
+
+    // ── [TRACE] 路径 A ──
+    if (process.env.NODE_ENV === 'development') {
+      console.log('[TRACE buildDocumentViewModel]', {
+        seq: buildDocumentViewModel._seq,
+        path: 'A: remainingFiles',
+        filesLength: files?.length ?? null,
+        invoiceDocsLength: invoiceDocs?.length ?? null,
+        invoiceRowsLength: invoiceRows.length,
+        coveredKeysSize: coveredKeys.size,
+        remainingFilesLength: remainingFiles.length,
+      })
+    }
+
     // 未被 InvoiceDocument 覆盖的 page-level file：
     // 使用 groupFilesByDocument 聚合多页文件，确保同票多页不被拆分。
     // 单页文件（不满足多页条件）保持独立展示。
@@ -136,6 +155,15 @@ export function buildDocumentViewModel(files, invoiceDocs = null) {
     }))
     documents = [...invoiceRows, ...remainingRows]
   } else {
+    // ── [TRACE] 路径 B ──
+    if (process.env.NODE_ENV === 'development') {
+      console.log('[TRACE buildDocumentViewModel]', {
+        seq: buildDocumentViewModel._seq,
+        path: 'B: full fallback',
+        filesLength: files?.length ?? null,
+        invoiceDocsLength: invoiceDocs?.length ?? null,
+      })
+    }
     // 降级路径（session.documents 为空时的 fallback）：
     // 使用 groupFilesByDocument 按 instanceId + sourceDocId 聚合多页文件，
     // 确保同票多页不被拆成独立行。单页文件（无 sourceDocId / 无 totalPages / 无 pageNum）
