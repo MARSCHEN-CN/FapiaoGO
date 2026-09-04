@@ -147,7 +147,11 @@ export function buildDocumentViewModel(files, invoiceDocs = null) {
     // 未被 InvoiceDocument 覆盖的 page-level file：
     // 使用 groupFilesByDocument 聚合多页文件，确保同票多页不被拆分。
     // 单页文件（不满足多页条件）保持独立展示。
-    const groupedRemaining = groupFilesByDocument(remainingFiles)
+    // ── P2：remainingFiles 为空时短路，避免一次已知空计算 + 空输入 warn ──
+    const groupedRemaining =
+      remainingFiles.length > 0
+        ? groupFilesByDocument(remainingFiles)
+        : []
     const remainingRows = groupedRemaining.map((f) => ({
       ...f,
       originalName: f.originalName !== undefined ? f.originalName : f.name,

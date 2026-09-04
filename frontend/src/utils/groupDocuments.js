@@ -93,6 +93,9 @@ function makeGroupKey(f) {
  *   - 非拆分页: 原 fileObj 引用不变（无 _isDocumentGroup 属性）
  */
 export function groupFilesByDocument(files) {
+  // ── P1：空输入直接 return，不 warn（纯 observability cleanup，零逻辑变更） ──
+  if (!Array.isArray(files) || files.length === 0) return files || []
+
   // ── [TRACE] 临时 dev 取证：groupFilesByDocument 调用栈 + 状态 ──
   // 零逻辑改动，仅把原单条 DEPRECATED warn 展开为带栈快照的 trace
   if (process.env.NODE_ENV === 'development') {
@@ -106,7 +109,6 @@ export function groupFilesByDocument(files) {
       stack: _stackLines,
     })
   }
-  if (!Array.isArray(files) || files.length === 0) return files || []
 
   // Pass 1: 收集严格满足多页条件的文件，按复合键分区
   // 关键约束：instanceId + sourceDocId 复合键，严格防止跨实例合并
