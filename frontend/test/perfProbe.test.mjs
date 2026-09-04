@@ -305,3 +305,49 @@ test('P0：禁用态 stamp() 返回 0，带 epoch 的 mark 为 no-op', () => {
   assert.doesNotThrow(() => perfProbe.mark('T6p', 7))
   assert.equal(perfProbe.getReport(), null)
 })
+
+// ── 回退期缺陷：clipboard 模式结算不得逃逸 unhandled rejection ──
+//
+// 现场（主线 92b2460 实测，2026-09-04）：
+//   弹窗关闭 15s 后 finishSession 自动结算（useFileOps.js:1140）。此时窗口通常已经失焦 →
+//   navigator.clipboard.writeText reject `NotAllowedError: Document is not focused`。
+//   原实现用**同步** try/catch 包**异步** Promise —— 同步块捕获不到 rejection，
+//   逃逸为「Uncaught (in promise) NotAllowedError」，既污染控制台也干扰取证判读。
+//
+// 语义约定：剪贴板只是「无 DevTools 环境取数」的旁路，失败必须静默 ——
+//   报告始终另有两条取数路径：console.log('[PERF_REPORT]') 与 localStorage REPORT_KEY。
+
+test('clipboard 模式：writeText 被拒绝时不逃逸为 unhandled rejection', async () => {
+  const prevNavigator = globalThis.navigator
+  const unhandled = []
+  const onUnhandled = (err) => { unhandled.push(err) }
+  try {
+    Object.defineProperty(globalThis, 'navigator', {
+      value: {
+        clipboard: {
+          writeText: () => Promise.reject(
+            Object.assign(new Error('Document is not focused'), { name: 'NotAllowedError' }),
+          ),
+        },
+      },
+      configurable: true,
+      writable: true,
+    })
+    process.on('unhandledRejection', onUnhandled)
+    perfProbe.enable('clipboard')
+    perfProbe.startSession('clipboard-reject')
+    perfProbe.mark('T4')
+    const r = perfProbe.finishSession('unit')
+    assert.ok(r, '剪贴板失败不应影响报告产出')
+    await new Promise((resolve) => { setTimeout(resolve, 10) })   // 给 rejection 一个浮出窗口
+  } finally {
+    process.off('unhandledRejection', onUnhandled)
+    if (prevNavigator === undefined) {
+      try { delete globalThis.navigator } catch { /* 不可删则保持替身 */ }
+    } else {
+      Object.defineProperty(globalThis, 'navigator', { value: prevNavigator, configurable: true, writable: true })
+    }
+    perfProbe.disable()
+  }
+  assert.deepEqual(unhandled, [], `writeText rejection 不得逃逸：${unhandled.map((e) => e && e.name).join(',')}`)
+})

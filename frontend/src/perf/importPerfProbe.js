@@ -369,8 +369,15 @@ export function finishSession(reason = 'manual') {
 
   if (mode === 'clipboard') {
     try {
-      globalThis.navigator?.clipboard?.writeText(JSON.stringify(report, null, 2))
-    } catch { /* 剪贴板不可用 → 忽略 */ }
+      // ⚠️ writeText 返回 **Promise**：同步 try/catch 捕获不到它的 rejection。
+      // 现场：弹窗关闭 15s 后自动结算（useFileOps.js finishSession 调用点），此时窗口
+      //   通常已失焦 → NotAllowedError: Document is not focused。若不显式挂 catch，
+      //   rejection 会逃逸成「Uncaught (in promise)」，污染控制台并干扰取证判读。
+      // 剪贴板只是「无 DevTools 环境取数」的旁路，失败必须静默 —— 报告始终另有两条
+      //   取数路径：console.log('[PERF_REPORT]') 与 localStorage REPORT_KEY。
+      const pending = globalThis.navigator?.clipboard?.writeText(JSON.stringify(report, null, 2))
+      pending?.catch?.(() => { /* 剪贴板不可写 → 忽略（不阻断结算） */ })
+    } catch { /* 剪贴板 API 缺失等同步失败 → 忽略 */ }
   }
   // 唯一输出：一条 console.log
   console.log('[PERF_REPORT]', report)
