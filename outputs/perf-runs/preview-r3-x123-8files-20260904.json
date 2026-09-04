@@ -1,0 +1,1333 @@
+{
+  "enabled": true,
+  "eventCount": 104,
+  "dropped": 0,
+  "counters": {
+    "DOCID_RETRY_SKIP": 2,
+    "AUTO_PREVIEW": 18,
+    "HANDLE_PREVIEW": 18,
+    "SCHED_DECISION": 10,
+    "START": 10,
+    "LOAD_START": 10,
+    "DEBOUNCED": 11,
+    "LOAD_RETURN": 10,
+    "TERMINATED": 3,
+    "FUSE_BLOCK": 3,
+    "COMMIT_ATTEMPT": 4,
+    "COMMIT_SUCCESS": 4,
+    "DOCID_RETRY_EVAL": 1
+  },
+  "events": [
+    {
+      "seq": 1,
+      "t": 81.8,
+      "type": "DOCID_RETRY_SKIP",
+      "caller": "usePreview:docId-retry",
+      "fields": {
+        "reason": "no-previewFile",
+        "filesLen": 0
+      }
+    },
+    {
+      "seq": 2,
+      "t": 90.1,
+      "type": "DOCID_RETRY_SKIP",
+      "caller": "usePreview:docId-retry",
+      "fields": {
+        "reason": "no-previewFile",
+        "filesLen": 0
+      }
+    },
+    {
+      "seq": 3,
+      "t": 3116,
+      "type": "AUTO_PREVIEW",
+      "caller": "usePreview:files-effect",
+      "fields": {
+        "branch": "usePreview:no-preview-first",
+        "filesLen": 8,
+        "firstKey": "26317000002502070209_上海三快智送科技有限公司_2.30.pdf_1788512817057_bd25ef2f-6378-4cf5-9f2a-23213fb111a1"
+      }
+    },
+    {
+      "seq": 4,
+      "t": 3116.7,
+      "type": "HANDLE_PREVIEW",
+      "caller": "hooks/usePreview.js:2342:30",
+      "fields": {
+        "intent": "select",
+        "key": "26317000002502070209_上海三快智送科技有限公司_2.30.pdf_1788512817057_bd25ef2f-6378-4cf5-9f2a-23213fb111a1",
+        "docId": null,
+        "version": 2
+      }
+    },
+    {
+      "seq": 5,
+      "t": 3117.5,
+      "type": "SCHED_DECISION",
+      "caller": "doLoadPreview:handlePreview:immediate",
+      "fields": {
+        "source": "handlePreview:immediate",
+        "intent": "select",
+        "key": "26317000002502070209_上海三快智送科技有限公司_2.30.pdf_1788512817057_bd25ef2f-6378-4cf5-9f2a-23213fb111a1",
+        "action": "start",
+        "version": 3
+      }
+    },
+    {
+      "seq": 6,
+      "t": 3117.7,
+      "type": "START",
+      "caller": "doLoadPreview:handlePreview:immediate",
+      "fields": {
+        "source": "handlePreview:immediate",
+        "intent": "select",
+        "key": "26317000002502070209_上海三快智送科技有限公司_2.30.pdf_1788512817057_bd25ef2f-6378-4cf5-9f2a-23213fb111a1",
+        "version": 3,
+        "docId": null,
+        "hasPreviewImageUrl": false,
+        "hasPdfData": false,
+        "hasPreviewImage": false
+      }
+    },
+    {
+      "seq": 7,
+      "t": 3118,
+      "type": "LOAD_START",
+      "caller": "loadFilePreview",
+      "fields": {
+        "iter": 0,
+        "key": "26317000002502070209_上海三快智送科技有限公司_2.30.pdf_1788512817057_bd25ef2f-6378-4cf5-9f2a-23213fb111a1",
+        "version": 3,
+        "docId": null
+      }
+    },
+    {
+      "seq": 8,
+      "t": 3118.7,
+      "type": "AUTO_PREVIEW",
+      "caller": "usePreview:files-change",
+      "fields": {
+        "branch": "usePreview:auto-nav-2-none",
+        "filesLen": 8
+      }
+    },
+    {
+      "seq": 9,
+      "t": 3118.9,
+      "type": "HANDLE_PREVIEW",
+      "caller": "hooks/usePreview.js:2477:30",
+      "fields": {
+        "intent": "select",
+        "key": "26317000002502070209_上海三快智送科技有限公司_2.30.pdf_1788512817057_bd25ef2f-6378-4cf5-9f2a-23213fb111a1",
+        "docId": null,
+        "version": 3
+      }
+    },
+    {
+      "seq": 10,
+      "t": 3119.1,
+      "type": "DEBOUNCED",
+      "caller": "handlePreview:debounce",
+      "fields": {
+        "key": "26317000002502070209_上海三快智送科技有限公司_2.30.pdf_1788512817057_bd25ef2f-6378-4cf5-9f2a-23213fb111a1",
+        "intent": "select",
+        "sinceLastSwitchMs": 1,
+        "hadPendingTimer": false
+      }
+    },
+    {
+      "seq": 11,
+      "t": 3185.2,
+      "type": "AUTO_PREVIEW",
+      "caller": "usePreview:files-effect",
+      "fields": {
+        "branch": "usePreview:no-preview-first",
+        "filesLen": 8,
+        "firstKey": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a"
+      }
+    },
+    {
+      "seq": 12,
+      "t": 3185.7,
+      "type": "HANDLE_PREVIEW",
+      "caller": "hooks/usePreview.js:2342:30",
+      "fields": {
+        "intent": "select",
+        "key": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a",
+        "docId": null,
+        "version": 3
+      }
+    },
+    {
+      "seq": 13,
+      "t": 3185.9,
+      "type": "DEBOUNCED",
+      "caller": "handlePreview:debounce",
+      "fields": {
+        "key": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a",
+        "intent": "select",
+        "sinceLastSwitchMs": 68,
+        "hadPendingTimer": true
+      }
+    },
+    {
+      "seq": 14,
+      "t": 3186.2,
+      "type": "AUTO_PREVIEW",
+      "caller": "usePreview:files-change",
+      "fields": {
+        "branch": "usePreview:auto-nav-2-none",
+        "filesLen": 8
+      }
+    },
+    {
+      "seq": 15,
+      "t": 3186.5,
+      "type": "HANDLE_PREVIEW",
+      "caller": "hooks/usePreview.js:2477:30",
+      "fields": {
+        "intent": "select",
+        "key": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a",
+        "docId": null,
+        "version": 3
+      }
+    },
+    {
+      "seq": 16,
+      "t": 3186.8,
+      "type": "DEBOUNCED",
+      "caller": "handlePreview:debounce",
+      "fields": {
+        "key": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a",
+        "intent": "select",
+        "sinceLastSwitchMs": 69,
+        "hadPendingTimer": true
+      }
+    },
+    {
+      "seq": 17,
+      "t": 3321.7,
+      "type": "AUTO_PREVIEW",
+      "caller": "usePreview:files-effect",
+      "fields": {
+        "branch": "usePreview:no-preview-first",
+        "filesLen": 8,
+        "firstKey": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a"
+      }
+    },
+    {
+      "seq": 18,
+      "t": 3322.2,
+      "type": "HANDLE_PREVIEW",
+      "caller": "hooks/usePreview.js:2342:30",
+      "fields": {
+        "intent": "select",
+        "key": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a",
+        "docId": null,
+        "version": 3
+      }
+    },
+    {
+      "seq": 19,
+      "t": 3322.5,
+      "type": "SCHED_DECISION",
+      "caller": "doLoadPreview:handlePreview:immediate",
+      "fields": {
+        "source": "handlePreview:immediate",
+        "intent": "select",
+        "key": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a",
+        "action": "start",
+        "version": 4
+      }
+    },
+    {
+      "seq": 20,
+      "t": 3322.7,
+      "type": "START",
+      "caller": "doLoadPreview:handlePreview:immediate",
+      "fields": {
+        "source": "handlePreview:immediate",
+        "intent": "select",
+        "key": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a",
+        "version": 4,
+        "docId": null,
+        "hasPreviewImageUrl": false,
+        "hasPdfData": false,
+        "hasPreviewImage": false
+      }
+    },
+    {
+      "seq": 21,
+      "t": 3323,
+      "type": "LOAD_START",
+      "caller": "loadFilePreview",
+      "fields": {
+        "iter": 0,
+        "key": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a",
+        "version": 4,
+        "docId": null
+      }
+    },
+    {
+      "seq": 22,
+      "t": 3323.4,
+      "type": "AUTO_PREVIEW",
+      "caller": "usePreview:files-change",
+      "fields": {
+        "branch": "usePreview:auto-nav-2-none",
+        "filesLen": 8
+      }
+    },
+    {
+      "seq": 23,
+      "t": 3323.7,
+      "type": "HANDLE_PREVIEW",
+      "caller": "hooks/usePreview.js:2477:30",
+      "fields": {
+        "intent": "select",
+        "key": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a",
+        "docId": null,
+        "version": 4
+      }
+    },
+    {
+      "seq": 24,
+      "t": 3324,
+      "type": "DEBOUNCED",
+      "caller": "handlePreview:debounce",
+      "fields": {
+        "key": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a",
+        "intent": "select",
+        "sinceLastSwitchMs": 1,
+        "hadPendingTimer": false
+      }
+    },
+    {
+      "seq": 25,
+      "t": 3480.4,
+      "type": "SCHED_DECISION",
+      "caller": "doLoadPreview:handlePreview:timeout",
+      "fields": {
+        "source": "handlePreview:timeout",
+        "intent": "select",
+        "key": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a",
+        "action": "start",
+        "version": 5
+      }
+    },
+    {
+      "seq": 26,
+      "t": 3480.9,
+      "type": "START",
+      "caller": "doLoadPreview:handlePreview:timeout",
+      "fields": {
+        "source": "handlePreview:timeout",
+        "intent": "select",
+        "key": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a",
+        "version": 5,
+        "docId": null,
+        "hasPreviewImageUrl": false,
+        "hasPdfData": false,
+        "hasPreviewImage": false
+      }
+    },
+    {
+      "seq": 27,
+      "t": 3481.1,
+      "type": "LOAD_START",
+      "caller": "loadFilePreview",
+      "fields": {
+        "iter": 0,
+        "key": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a",
+        "version": 5,
+        "docId": null
+      }
+    },
+    {
+      "seq": 28,
+      "t": 3653.8,
+      "type": "AUTO_PREVIEW",
+      "caller": "usePreview:files-effect",
+      "fields": {
+        "branch": "usePreview:no-preview-first",
+        "filesLen": 8,
+        "firstKey": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a"
+      }
+    },
+    {
+      "seq": 29,
+      "t": 3654.4,
+      "type": "HANDLE_PREVIEW",
+      "caller": "hooks/usePreview.js:2342:30",
+      "fields": {
+        "intent": "select",
+        "key": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a",
+        "docId": null,
+        "version": 5
+      }
+    },
+    {
+      "seq": 30,
+      "t": 3654.9,
+      "type": "SCHED_DECISION",
+      "caller": "doLoadPreview:handlePreview:immediate",
+      "fields": {
+        "source": "handlePreview:immediate",
+        "intent": "select",
+        "key": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a",
+        "action": "start",
+        "version": 6
+      }
+    },
+    {
+      "seq": 31,
+      "t": 3655.5,
+      "type": "START",
+      "caller": "doLoadPreview:handlePreview:immediate",
+      "fields": {
+        "source": "handlePreview:immediate",
+        "intent": "select",
+        "key": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a",
+        "version": 6,
+        "docId": null,
+        "hasPreviewImageUrl": false,
+        "hasPdfData": false,
+        "hasPreviewImage": false
+      }
+    },
+    {
+      "seq": 32,
+      "t": 3656,
+      "type": "LOAD_START",
+      "caller": "loadFilePreview",
+      "fields": {
+        "iter": 0,
+        "key": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a",
+        "version": 6,
+        "docId": null
+      }
+    },
+    {
+      "seq": 33,
+      "t": 3656.6,
+      "type": "AUTO_PREVIEW",
+      "caller": "usePreview:files-change",
+      "fields": {
+        "branch": "usePreview:auto-nav-2-none",
+        "filesLen": 8
+      }
+    },
+    {
+      "seq": 34,
+      "t": 3657.1,
+      "type": "HANDLE_PREVIEW",
+      "caller": "hooks/usePreview.js:2477:30",
+      "fields": {
+        "intent": "select",
+        "key": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a",
+        "docId": null,
+        "version": 6
+      }
+    },
+    {
+      "seq": 35,
+      "t": 3657.6,
+      "type": "DEBOUNCED",
+      "caller": "handlePreview:debounce",
+      "fields": {
+        "key": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a",
+        "intent": "select",
+        "sinceLastSwitchMs": 3,
+        "hadPendingTimer": false
+      }
+    },
+    {
+      "seq": 36,
+      "t": 3692.2,
+      "type": "LOAD_RETURN",
+      "caller": "loadFilePreview",
+      "fields": {
+        "iter": 0,
+        "key": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a",
+        "version": 4,
+        "docId": null,
+        "hasPreviewImageUrl": false,
+        "hasPdfData": true,
+        "hasPreviewImage": false
+      }
+    },
+    {
+      "seq": 37,
+      "t": 3692.5,
+      "type": "TERMINATED",
+      "caller": "loading-loop:terminate",
+      "fields": {
+        "iter": 0,
+        "key": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a",
+        "version": 4
+      }
+    },
+    {
+      "seq": 38,
+      "t": 3692.6,
+      "type": "LOAD_RETURN",
+      "caller": "loadFilePreview",
+      "fields": {
+        "iter": 0,
+        "key": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a",
+        "version": 5,
+        "docId": null,
+        "hasPreviewImageUrl": false,
+        "hasPdfData": true,
+        "hasPreviewImage": false
+      }
+    },
+    {
+      "seq": 39,
+      "t": 3692.7,
+      "type": "TERMINATED",
+      "caller": "loading-loop:terminate",
+      "fields": {
+        "iter": 0,
+        "key": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a",
+        "version": 5
+      }
+    },
+    {
+      "seq": 40,
+      "t": 3692.8,
+      "type": "LOAD_RETURN",
+      "caller": "loadFilePreview",
+      "fields": {
+        "iter": 0,
+        "key": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a",
+        "version": 6,
+        "docId": null,
+        "hasPreviewImageUrl": false,
+        "hasPdfData": true,
+        "hasPreviewImage": false
+      }
+    },
+    {
+      "seq": 41,
+      "t": 3692.9,
+      "type": "FUSE_BLOCK",
+      "caller": "commit-fuse:P2-X3",
+      "fields": {
+        "key": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a",
+        "version": 6,
+        "phase": "post-load",
+        "why": "not-displayable"
+      }
+    },
+    {
+      "seq": 42,
+      "t": 3701,
+      "type": "LOAD_RETURN",
+      "caller": "loadFilePreview",
+      "fields": {
+        "iter": 0,
+        "key": "26317000002502070209_上海三快智送科技有限公司_2.30.pdf_1788512817057_bd25ef2f-6378-4cf5-9f2a-23213fb111a1",
+        "version": 3,
+        "docId": null,
+        "hasPreviewImageUrl": false,
+        "hasPdfData": true,
+        "hasPreviewImage": false
+      }
+    },
+    {
+      "seq": 43,
+      "t": 3701.2,
+      "type": "TERMINATED",
+      "key": "26317000002502070209_上海三快智送科技有限公司_2.30.pdf_1788512817057_bd25ef2f-6378-4cf5-9f2a-23213fb111a1",
+      "caller": "loading-loop:terminate",
+      "fields": {
+        "iter": 0,
+        "version": 3
+      }
+    },
+    {
+      "seq": 44,
+      "t": 3842.3,
+      "type": "AUTO_PREVIEW",
+      "caller": "usePreview:files-effect",
+      "fields": {
+        "branch": "usePreview:no-preview-first",
+        "filesLen": 8,
+        "firstKey": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a"
+      }
+    },
+    {
+      "seq": 45,
+      "t": 3842.9,
+      "type": "HANDLE_PREVIEW",
+      "caller": "hooks/usePreview.js:2342:30",
+      "fields": {
+        "intent": "select",
+        "key": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a",
+        "docId": null,
+        "version": 6
+      }
+    },
+    {
+      "seq": 46,
+      "t": 3843.2,
+      "type": "SCHED_DECISION",
+      "caller": "doLoadPreview:handlePreview:immediate",
+      "fields": {
+        "source": "handlePreview:immediate",
+        "intent": "select",
+        "key": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a",
+        "action": "start",
+        "version": 7
+      }
+    },
+    {
+      "seq": 47,
+      "t": 3843.5,
+      "type": "START",
+      "caller": "doLoadPreview:handlePreview:immediate",
+      "fields": {
+        "source": "handlePreview:immediate",
+        "intent": "select",
+        "key": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a",
+        "version": 7,
+        "docId": null,
+        "hasPreviewImageUrl": false,
+        "hasPdfData": false,
+        "hasPreviewImage": false
+      }
+    },
+    {
+      "seq": 48,
+      "t": 3843.8,
+      "type": "LOAD_START",
+      "caller": "loadFilePreview",
+      "fields": {
+        "iter": 0,
+        "key": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a",
+        "version": 7,
+        "docId": null
+      }
+    },
+    {
+      "seq": 49,
+      "t": 3844.2,
+      "type": "AUTO_PREVIEW",
+      "caller": "usePreview:files-change",
+      "fields": {
+        "branch": "usePreview:auto-nav-2-none",
+        "filesLen": 8
+      }
+    },
+    {
+      "seq": 50,
+      "t": 3844.6,
+      "type": "HANDLE_PREVIEW",
+      "caller": "hooks/usePreview.js:2477:30",
+      "fields": {
+        "intent": "select",
+        "key": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a",
+        "docId": null,
+        "version": 7
+      }
+    },
+    {
+      "seq": 51,
+      "t": 3844.9,
+      "type": "DEBOUNCED",
+      "caller": "handlePreview:debounce",
+      "fields": {
+        "key": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a",
+        "intent": "select",
+        "sinceLastSwitchMs": 1,
+        "hadPendingTimer": false
+      }
+    },
+    {
+      "seq": 52,
+      "t": 3846.5,
+      "type": "LOAD_RETURN",
+      "caller": "loadFilePreview",
+      "fields": {
+        "iter": 0,
+        "key": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a",
+        "version": 7,
+        "docId": null,
+        "hasPreviewImageUrl": false,
+        "hasPdfData": true,
+        "hasPreviewImage": false
+      }
+    },
+    {
+      "seq": 53,
+      "t": 3846.8,
+      "type": "FUSE_BLOCK",
+      "caller": "commit-fuse:P2-X3",
+      "fields": {
+        "key": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a",
+        "version": 7,
+        "phase": "post-load",
+        "why": "not-displayable"
+      }
+    },
+    {
+      "seq": 54,
+      "t": 3995.4,
+      "type": "SCHED_DECISION",
+      "caller": "doLoadPreview:handlePreview:timeout",
+      "fields": {
+        "source": "handlePreview:timeout",
+        "intent": "select",
+        "key": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a",
+        "action": "start",
+        "version": 8
+      }
+    },
+    {
+      "seq": 55,
+      "t": 3995.7,
+      "type": "START",
+      "caller": "doLoadPreview:handlePreview:timeout",
+      "fields": {
+        "source": "handlePreview:timeout",
+        "intent": "select",
+        "key": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a",
+        "version": 8,
+        "docId": null,
+        "hasPreviewImageUrl": false,
+        "hasPdfData": false,
+        "hasPreviewImage": false
+      }
+    },
+    {
+      "seq": 56,
+      "t": 3995.8,
+      "type": "LOAD_START",
+      "caller": "loadFilePreview",
+      "fields": {
+        "iter": 0,
+        "key": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a",
+        "version": 8,
+        "docId": null
+      }
+    },
+    {
+      "seq": 57,
+      "t": 3995.9,
+      "type": "LOAD_RETURN",
+      "caller": "loadFilePreview",
+      "fields": {
+        "iter": 0,
+        "key": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a",
+        "version": 8,
+        "docId": null,
+        "hasPreviewImageUrl": false,
+        "hasPdfData": true,
+        "hasPreviewImage": false
+      }
+    },
+    {
+      "seq": 58,
+      "t": 3996.1,
+      "type": "FUSE_BLOCK",
+      "caller": "commit-fuse:P2-X3",
+      "fields": {
+        "key": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a",
+        "version": 8,
+        "phase": "post-load",
+        "why": "not-displayable"
+      }
+    },
+    {
+      "seq": 59,
+      "t": 7591.9,
+      "type": "AUTO_PREVIEW",
+      "caller": "usePreview:files-effect",
+      "fields": {
+        "branch": "usePreview:no-preview-first",
+        "filesLen": 8,
+        "firstKey": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a"
+      }
+    },
+    {
+      "seq": 60,
+      "t": 7592.5,
+      "type": "HANDLE_PREVIEW",
+      "caller": "hooks/usePreview.js:2342:30",
+      "fields": {
+        "intent": "select",
+        "key": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a",
+        "docId": "d8bf968f4381db391a45cea6",
+        "version": 8
+      }
+    },
+    {
+      "seq": 61,
+      "t": 7592.8,
+      "type": "SCHED_DECISION",
+      "caller": "doLoadPreview:handlePreview:immediate",
+      "fields": {
+        "source": "handlePreview:immediate",
+        "intent": "select",
+        "key": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a",
+        "action": "start",
+        "version": 9
+      }
+    },
+    {
+      "seq": 62,
+      "t": 7593,
+      "type": "START",
+      "caller": "doLoadPreview:handlePreview:immediate",
+      "fields": {
+        "source": "handlePreview:immediate",
+        "intent": "select",
+        "key": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a",
+        "version": 9,
+        "docId": "d8bf968f4381db391a45cea6",
+        "hasPreviewImageUrl": false,
+        "hasPdfData": false,
+        "hasPreviewImage": false
+      }
+    },
+    {
+      "seq": 63,
+      "t": 7593.3,
+      "type": "LOAD_START",
+      "caller": "loadFilePreview",
+      "fields": {
+        "iter": 0,
+        "key": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a",
+        "version": 9,
+        "docId": "d8bf968f4381db391a45cea6"
+      }
+    },
+    {
+      "seq": 64,
+      "t": 7595,
+      "type": "AUTO_PREVIEW",
+      "caller": "usePreview:files-change",
+      "fields": {
+        "branch": "usePreview:auto-nav-2-none",
+        "filesLen": 8
+      }
+    },
+    {
+      "seq": 65,
+      "t": 7595.2,
+      "type": "HANDLE_PREVIEW",
+      "caller": "hooks/usePreview.js:2477:30",
+      "fields": {
+        "intent": "select",
+        "key": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a",
+        "docId": "d8bf968f4381db391a45cea6",
+        "version": 9
+      }
+    },
+    {
+      "seq": 66,
+      "t": 7595.5,
+      "type": "DEBOUNCED",
+      "caller": "handlePreview:debounce",
+      "fields": {
+        "key": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a",
+        "intent": "select",
+        "sinceLastSwitchMs": 3,
+        "hadPendingTimer": false
+      }
+    },
+    {
+      "seq": 67,
+      "t": 7595.9,
+      "type": "AUTO_PREVIEW",
+      "caller": "App:auto-preview",
+      "fields": {
+        "branch": "App:scenario-2-docid-arrives",
+        "firstDocId": "d8bf968f4381db391a45cea6_inv_26317000002502070429",
+        "pvHasDocumentId": false,
+        "hasPreviewFile": false
+      }
+    },
+    {
+      "seq": 68,
+      "t": 7596.1,
+      "type": "HANDLE_PREVIEW",
+      "caller": "App.jsx:993:5",
+      "fields": {
+        "intent": "select",
+        "key": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a",
+        "docId": "d8bf968f4381db391a45cea6",
+        "version": 9
+      }
+    },
+    {
+      "seq": 69,
+      "t": 7596.3,
+      "type": "DEBOUNCED",
+      "caller": "handlePreview:debounce",
+      "fields": {
+        "key": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a",
+        "intent": "select",
+        "sinceLastSwitchMs": 4,
+        "hadPendingTimer": true
+      }
+    },
+    {
+      "seq": 70,
+      "t": 7596.5,
+      "type": "AUTO_PREVIEW",
+      "caller": "App:auto-preview",
+      "fields": {
+        "branch": "App:scenario-3-first-docid-changed",
+        "firstDocId": "d8bf968f4381db391a45cea6_inv_26317000002502070429",
+        "prevFirstDocId": null
+      }
+    },
+    {
+      "seq": 71,
+      "t": 7596.7,
+      "type": "HANDLE_PREVIEW",
+      "caller": "App.jsx:1005:4",
+      "fields": {
+        "intent": "select",
+        "key": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a",
+        "docId": "d8bf968f4381db391a45cea6",
+        "version": 9
+      }
+    },
+    {
+      "seq": 72,
+      "t": 7596.9,
+      "type": "DEBOUNCED",
+      "caller": "handlePreview:debounce",
+      "fields": {
+        "key": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a",
+        "intent": "select",
+        "sinceLastSwitchMs": 4,
+        "hadPendingTimer": true
+      }
+    },
+    {
+      "seq": 73,
+      "t": 7621.5,
+      "type": "AUTO_PREVIEW",
+      "caller": "usePreview:files-effect",
+      "fields": {
+        "branch": "usePreview:no-preview-first",
+        "filesLen": 8,
+        "firstKey": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a"
+      }
+    },
+    {
+      "seq": 74,
+      "t": 7622.1,
+      "type": "HANDLE_PREVIEW",
+      "caller": "hooks/usePreview.js:2342:30",
+      "fields": {
+        "intent": "select",
+        "key": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a",
+        "docId": "d8bf968f4381db391a45cea6",
+        "version": 9
+      }
+    },
+    {
+      "seq": 75,
+      "t": 7622.4,
+      "type": "DEBOUNCED",
+      "caller": "handlePreview:debounce",
+      "fields": {
+        "key": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a",
+        "intent": "select",
+        "sinceLastSwitchMs": 29,
+        "hadPendingTimer": true
+      }
+    },
+    {
+      "seq": 76,
+      "t": 7622.9,
+      "type": "AUTO_PREVIEW",
+      "caller": "usePreview:files-change",
+      "fields": {
+        "branch": "usePreview:auto-nav-2-none",
+        "filesLen": 8
+      }
+    },
+    {
+      "seq": 77,
+      "t": 7623.3,
+      "type": "HANDLE_PREVIEW",
+      "caller": "hooks/usePreview.js:2477:30",
+      "fields": {
+        "intent": "select",
+        "key": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a",
+        "docId": "d8bf968f4381db391a45cea6",
+        "version": 9
+      }
+    },
+    {
+      "seq": 78,
+      "t": 7623.6,
+      "type": "DEBOUNCED",
+      "caller": "handlePreview:debounce",
+      "fields": {
+        "key": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a",
+        "intent": "select",
+        "sinceLastSwitchMs": 31,
+        "hadPendingTimer": true
+      }
+    },
+    {
+      "seq": 79,
+      "t": 7624.5,
+      "type": "LOAD_RETURN",
+      "caller": "loadFilePreview",
+      "fields": {
+        "iter": 0,
+        "key": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a",
+        "version": 9,
+        "docId": "d8bf968f4381db391a45cea6",
+        "hasPreviewImageUrl": true,
+        "hasPdfData": false,
+        "hasPreviewImage": false
+      }
+    },
+    {
+      "seq": 80,
+      "t": 7711.9,
+      "type": "COMMIT_ATTEMPT",
+      "caller": "commit:normal",
+      "fields": {
+        "key": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a",
+        "version": 9,
+        "currentVersion": 9,
+        "docId": "d8bf968f4381db391a45cea6",
+        "hasPreviewImageUrl": true,
+        "hasPdfData": false,
+        "hasPreviewImage": false
+      }
+    },
+    {
+      "seq": 81,
+      "t": 7712.2,
+      "type": "COMMIT_SUCCESS",
+      "caller": "commit:normal",
+      "fields": {
+        "key": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a",
+        "version": 9,
+        "docId": "d8bf968f4381db391a45cea6",
+        "hasPreviewImageUrl": true,
+        "hasPdfData": false,
+        "hasPreviewImage": false
+      }
+    },
+    {
+      "seq": 82,
+      "t": 7758.3,
+      "type": "DOCID_RETRY_EVAL",
+      "caller": "usePreview:docid-retry",
+      "fields": {
+        "pfKey": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a",
+        "pfDocId": "d8bf968f4381db391a45cea6",
+        "liveDocId": "d8bf968f4381db391a45cea6",
+        "changed": false
+      }
+    },
+    {
+      "seq": 83,
+      "t": 7799.6,
+      "type": "SCHED_DECISION",
+      "caller": "doLoadPreview:handlePreview:timeout",
+      "fields": {
+        "source": "handlePreview:timeout",
+        "intent": "select",
+        "key": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a",
+        "action": "start",
+        "version": 10
+      }
+    },
+    {
+      "seq": 84,
+      "t": 7799.8,
+      "type": "START",
+      "caller": "doLoadPreview:handlePreview:timeout",
+      "fields": {
+        "source": "handlePreview:timeout",
+        "intent": "select",
+        "key": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a",
+        "version": 10,
+        "docId": "d8bf968f4381db391a45cea6",
+        "hasPreviewImageUrl": false,
+        "hasPdfData": false,
+        "hasPreviewImage": false
+      }
+    },
+    {
+      "seq": 85,
+      "t": 7799.9,
+      "type": "LOAD_START",
+      "caller": "loadFilePreview",
+      "fields": {
+        "iter": 0,
+        "key": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a",
+        "version": 10,
+        "docId": "d8bf968f4381db391a45cea6"
+      }
+    },
+    {
+      "seq": 86,
+      "t": 7800,
+      "type": "LOAD_RETURN",
+      "caller": "loadFilePreview",
+      "fields": {
+        "iter": 0,
+        "key": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a",
+        "version": 10,
+        "docId": "d8bf968f4381db391a45cea6",
+        "hasPreviewImageUrl": true,
+        "hasPdfData": false,
+        "hasPreviewImage": false
+      }
+    },
+    {
+      "seq": 87,
+      "t": 7813.1,
+      "type": "COMMIT_ATTEMPT",
+      "caller": "commit:normal",
+      "fields": {
+        "key": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a",
+        "version": 10,
+        "currentVersion": 10,
+        "docId": "d8bf968f4381db391a45cea6",
+        "hasPreviewImageUrl": true,
+        "hasPdfData": false,
+        "hasPreviewImage": false
+      }
+    },
+    {
+      "seq": 88,
+      "t": 7813.2,
+      "type": "COMMIT_SUCCESS",
+      "caller": "commit:normal",
+      "fields": {
+        "key": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a",
+        "version": 10,
+        "docId": "d8bf968f4381db391a45cea6",
+        "hasPreviewImageUrl": true,
+        "hasPdfData": false,
+        "hasPreviewImage": false
+      }
+    },
+    {
+      "seq": 89,
+      "t": 8705.3,
+      "type": "AUTO_PREVIEW",
+      "caller": "usePreview:files-change",
+      "fields": {
+        "branch": "usePreview:auto-nav-3-replaced",
+        "pfKey": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a"
+      }
+    },
+    {
+      "seq": 90,
+      "t": 8705.8,
+      "type": "HANDLE_PREVIEW",
+      "caller": "hooks/usePreview.js:2490:30",
+      "fields": {
+        "intent": "refresh",
+        "key": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a",
+        "docId": "d8bf968f4381db391a45cea6",
+        "version": 10
+      }
+    },
+    {
+      "seq": 91,
+      "t": 8706.2,
+      "type": "SCHED_DECISION",
+      "caller": "doLoadPreview:handlePreview:immediate",
+      "fields": {
+        "source": "handlePreview:immediate",
+        "intent": "refresh",
+        "key": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a",
+        "action": "merge",
+        "version": 10
+      }
+    },
+    {
+      "seq": 92,
+      "t": 8706.5,
+      "type": "START",
+      "caller": "doLoadPreview:handlePreview:immediate",
+      "fields": {
+        "source": "handlePreview:immediate",
+        "intent": "refresh",
+        "key": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a",
+        "version": 10,
+        "docId": "d8bf968f4381db391a45cea6",
+        "hasPreviewImageUrl": false,
+        "hasPdfData": false,
+        "hasPreviewImage": false
+      }
+    },
+    {
+      "seq": 93,
+      "t": 8706.9,
+      "type": "LOAD_START",
+      "caller": "loadFilePreview",
+      "fields": {
+        "iter": 0,
+        "key": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a",
+        "version": 10,
+        "docId": "d8bf968f4381db391a45cea6"
+      }
+    },
+    {
+      "seq": 94,
+      "t": 8717.9,
+      "type": "LOAD_RETURN",
+      "caller": "loadFilePreview",
+      "fields": {
+        "iter": 0,
+        "key": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a",
+        "version": 10,
+        "docId": "d8bf968f4381db391a45cea6",
+        "hasPreviewImageUrl": true,
+        "hasPdfData": false,
+        "hasPreviewImage": false
+      }
+    },
+    {
+      "seq": 95,
+      "t": 8722,
+      "type": "COMMIT_ATTEMPT",
+      "caller": "commit:normal",
+      "fields": {
+        "key": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a",
+        "version": 10,
+        "currentVersion": 10,
+        "docId": "d8bf968f4381db391a45cea6",
+        "hasPreviewImageUrl": true,
+        "hasPdfData": false,
+        "hasPreviewImage": false
+      }
+    },
+    {
+      "seq": 96,
+      "t": 8722.2,
+      "type": "COMMIT_SUCCESS",
+      "caller": "commit:normal",
+      "fields": {
+        "key": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a",
+        "version": 10,
+        "docId": "d8bf968f4381db391a45cea6",
+        "hasPreviewImageUrl": true,
+        "hasPdfData": false,
+        "hasPreviewImage": false
+      }
+    },
+    {
+      "seq": 97,
+      "t": 9816.2,
+      "type": "AUTO_PREVIEW",
+      "caller": "usePreview:files-change",
+      "fields": {
+        "branch": "usePreview:auto-nav-3-replaced",
+        "pfKey": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a"
+      }
+    },
+    {
+      "seq": 98,
+      "t": 9816.6,
+      "type": "HANDLE_PREVIEW",
+      "caller": "hooks/usePreview.js:2490:30",
+      "fields": {
+        "intent": "refresh",
+        "key": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a",
+        "docId": "d8bf968f4381db391a45cea6",
+        "version": 10
+      }
+    },
+    {
+      "seq": 99,
+      "t": 9816.8,
+      "type": "SCHED_DECISION",
+      "caller": "doLoadPreview:handlePreview:immediate",
+      "fields": {
+        "source": "handlePreview:immediate",
+        "intent": "refresh",
+        "key": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a",
+        "action": "merge",
+        "version": 10
+      }
+    },
+    {
+      "seq": 100,
+      "t": 9817.2,
+      "type": "START",
+      "caller": "doLoadPreview:handlePreview:immediate",
+      "options": {
+        "source": "handlePreview:immediate",
+        "intent": "refresh",
+        "key": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a",
+        "version": 10
+      }
+    },
+    {
+      "seq": 101,
+      "t": 9817.4,
+      "type": "LOAD_START",
+      "caller": "loadFilePreview",
+      "fields": {
+        "iter": 0,
+        "key": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a",
+        "version": 10,
+        "docId": "d8bf968f4381db391a45cea6"
+      }
+    },
+    {
+      "seq": 102,
+      "t": 9825.6,
+      "type": "LOAD_RETURN",
+      "caller": "loadFilePreview",
+      "fields": {
+        "iter": 0,
+        "key": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a",
+        "version": 10,
+        "docId": "d8bf968f4381db391a45cea6",
+        "hasPreviewImageUrl": true,
+        "hasPdfData": false,
+        "hasPreviewImage": false
+      }
+    },
+    {
+      "seq": 103,
+      "t": 9829.1,
+      "type": "COMMIT_ATTEMPT",
+      "caller": "commit:normal",
+      "fields": {
+        "key": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a",
+        "version": 10,
+        "currentVersion": 10,
+        "docId": "d8bf968f4381db391a45cea6",
+        "hasPreviewImageUrl": true,
+        "hasPdfData": false,
+        "hasPreviewImage": false
+      }
+    },
+    {
+      "seq": 104,
+      "t": 9829.2,
+      "type": "COMMIT_SUCCESS",
+      "caller": "commit:normal",
+      "fields": {
+        "key": "26317000002502070429_上海三快智送科技有限公司_0.80.pdf_1788512817057_6c7fbb1b-3644-4d2e-b51f-98c094469c0a",
+        "version": 10,
+        "docId": "d8bf968f4381db391a45cea6",
+        "hasPreviewImageUrl": true,
+        "hasPdfData": false,
+        "hasPreviewImage": false
+      }
+    }
+  ]
+}
