@@ -61,10 +61,18 @@ function snapshotOf(ev) {
   }
 }
 
-/** 空壳分级：shell-full(可展示) / id-only(有身份无载荷) / empty-shell(全空) */
+/**
+ * 空壳分级：
+ *   payload(有载荷+有 docId) / half-shell(有载荷但 docId=null——载荷在、身份缺，
+ *   展示区若以 docId/identity 定位渲染资源则不可显示) / id-only(有身份无载荷) /
+ *   empty-shell(全空)
+ */
 function shellGrade(snap) {
   const anyPayload = snap.hasPreviewImageUrl || snap.hasPdfData || snap.hasPreviewImage
-  if (anyPayload) return 'payload'
+  if (anyPayload) {
+    if (empty(snap.docId)) return 'half-shell'
+    return 'payload'
+  }
   if (!empty(snap.docId)) return 'id-only'
   return 'empty-shell'
 }
@@ -145,6 +153,7 @@ function adjudicate(dump) {
   }
   let emptyCommitted = 0
   let idOnlyCommitted = 0
+  let halfShellCommitted = 0
   for (const ev of commits) {
     const snap = snapshotOf(ev)
     const grade = shellGrade(snap)
@@ -153,27 +162,38 @@ function adjudicate(dump) {
     if (ev.type !== 'COMMIT_ATTEMPT') {
       if (grade === 'empty-shell') emptyCommitted++
       if (grade === 'id-only') idOnlyCommitted++
+      if (grade === 'half-shell') halfShellCommitted++
     }
-    const mark = grade === 'payload' ? '  正常(有载荷)' : grade === 'id-only' ? '  🟡 有身份无载荷' : '  🔴 空壳'
+    const mark = grade === 'payload' ? '  正常(载荷+docId)' : grade === 'half-shell' ? '  🟠 半壳(载荷在但 docId=null)' : grade === 'id-only' ? '  🟡 有身份无载荷' : '  🔴 空壳'
     push(`  seq=${String(ev.seq).padStart(3)} t=${String(ev.t).padStart(8)} ${ev.type.padEnd(22)} ${tag} key=${f(ev.fields, 'key')} docId=${snap.docId} img/pdf/img3=${flag}${mark}${ev.type === 'COMMIT_ATTEMPT' ? `（currentVersion=${f(ev.fields, 'currentVersion')}）` : ''}`)
   }
   if (emptyCommitted) push(`  ⇒ 🔴 空壳被 commit：${emptyCommitted} 次（docId=null + 三 flag 全 false）—— 「空壳被 commit」从静态嫌疑升级为 runtime 事实`)
+  if (halfShellCommitted) push(`  ⇒ 🟠 半壳 commit：${halfShellCommitted} 次（docId=null 但有载荷）——「docId 就绪 ≠ 载荷就绪」的另一半：载荷先到、docId 后到；若展示区渲染以 docId/identity 定位资源，则半壳与空壳同样不可显示`)
   if (idOnlyCommitted) push(`  ⇒ 🟡 有身份无载荷 commit：${idOnlyCommitted} 次（docId 已就绪但载荷未到）——「docId 就绪 ≠ 载荷就绪」窗口的 runtime 证据`)
-  if (emptyCommitted || idOnlyCommitted) issues.push(`${emptyCommitted ? '空壳' : ''}${emptyCommitted && idOnlyCommitted ? '+' : ''}${idOnlyCommitted ? 'id-only' : ''} commit 存在——若其后展示区空白，需要看这些 commit 是否被后续 SUCCESS 覆盖、中间有没有重试`)
+  if (emptyCommitted || halfShellCommitted || idOnlyCommitted) issues.push(`${emptyCommitted ? '空壳' : ''}${halfShellCommitted ? '半壳' : ''}${idOnlyCommitted ? 'id-only' : ''} commit 存在——若其后展示区空白，需要看这些 commit 是否被后续 SUCCESS 覆盖、中间有没有重试`)
 
   // ── 4. 末次 START 结局 + 全部 START 终局矩阵 ──
   push('')
   push('══════════ 4 · R2-2 每次 START 的终局（谁取消了/谁成功了）══════════')
   const starts = events.filter((ev) => ev.type === 'START')
-  // 匹配：对每个终局事件，从后向前找第一个未结且 key 匹配的 START
+  // 匹配：①优先同 key+同 version（同 key 多版本可并行在途，按 key 会错配）；
+  //      ②无同 version 时退回同 key 最近未结
   const open = starts.map((s) => ({ ...s, ended: false, endType: null, endSeq: null, endAt: null }))
   const orphans = []
   for (const ev of events) {
     if (!TERMINAL.has(ev.type)) continue
     const key = f(ev.fields, 'key')
+    const version = f(ev.fields, 'version')
     let hit = null
-    for (let i = open.length - 1; i >= 0; i--) {
-      if (!open[i].ended && (open[i].fields.key === key || key === null)) { hit = open[i]; break }
+    if (version !== null && version !== undefined) {
+      for (let i = open.length - 1; i >= 0; i--) {
+        if (!open[i].ended && open[i].fields.key === key && open[i].fields.version === version) { hit = open[i]; break }
+      }
+    }
+    if (!hit) {
+      for (let i = open.length - 1; i >= 0; i--) {
+        if (!open[i].ended && (open[i].fields.key === key || key === null)) { hit = open[i]; break }
+      }
     }
     if (hit) { hit.ended = true; hit.endType = ev.type; hit.endSeq = ev.seq; hit.endAt = f(ev.fields, 'at') }
     else orphans.push(ev)
@@ -280,10 +300,12 @@ function adjudicate(dump) {
 
   const verdicts = []
   if (emptyCommitted) verdicts.push(`🔴 空壳 commit ×${emptyCommitted} —— 已由 runtime 证据坐实（此前为静态嫌疑）`)
+  if (halfShellCommitted) verdicts.push(`🟠 半壳 commit ×${halfShellCommitted}（载荷在但 docId=null）——若展示区以 docId/identity 定位资源，半壳 commit 后同样空白且屏蔽后续重试`)
   if (lastCommitEmpty && !lastStartEndedAborted && !unended.length) {
-    verdicts.push('🔴 展示区空白的机制证据链完整：最后一次 commit 内容不可展示，其后无重试（见静默窗口）——「自动预览失效」=「空壳/半壳 commit 后无人覆盖」')
+    const grade = lastCommit && shellGrade(snapshotOf(lastCommit))
+    verdicts.push(`🔴 展示区空白的机制证据链完整：最后一次 commit 内容不可展示（${grade}），其后无重试（见静默窗口）——「自动预览失效」=「${grade} commit 后无人覆盖」`)
   } else if (!lastCommitEmpty && lastCommit && !unended.length) {
-    verdicts.push('🟢 最后一次 commit 有载荷——若展示区仍空白，问题不在 commit 内容而在 commit 之后（渲染/资源解析），或你 dump 的是对照组会话')
+    verdicts.push('🟢 最后一次 commit 有载荷且有 docId——若展示区仍空白，问题不在 commit 内容而在 commit 之后（渲染/资源解析），或你 dump 的是对照组会话')
   }
   if (lastStartEndedAborted) verdicts.push('🟡 末次 START 终结于取消（abort/terminate/fuse）——展示区可能停在更早的陈旧 commit')
   if (unended.length) verdicts.push(`🟡 ${unended.length} 个 START 悬空未终结——加载被中断或会话提前 dump`)
