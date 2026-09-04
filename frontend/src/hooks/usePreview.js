@@ -1765,6 +1765,10 @@ export function usePreview({ files, settings, electronAPIRef }) {
     // 保险丝：持续晋升仍不稳定 / 被终止 → 禁止 commit（INV-PS6）
     if (!execution || execution.phase !== 'post-load') {
       if (previewTrace.on) previewTrace.state('FUSE_BLOCK', { key, version, phase: execution?.phase ?? null }, 'commit-fuse:INV-PS6')
+      // P2-X1（2026-09-04）：禁止 commit 即 execution 使命终结 → 终态化（Contract §1.4 terminate）。
+      // 否则残留非 post-load execution 会让后续 refresh 撞 restart-required → MERGE_DEFERRED 扑空
+      // （R2 dump seq 45/49/65/69/73：带 docId 的 refresh 五次被僵尸 execution 吃掉）。
+      previewExecutionRef.current = null
       return
     }
 
@@ -2019,6 +2023,10 @@ export function usePreview({ files, settings, electronAPIRef }) {
       if (oldPreviewUrl && oldPreviewUrl !== previewUrlRef.current) {
         try { URL.revokeObjectURL(oldPreviewUrl) } catch (e) {}
       }
+      // P2-X1（2026-09-04）：L2 全缓存 commit 完成 → execution 终态化（Contract §1.4 commit → terminated）。
+      // P4 记账（committedPreviewVersionRef / committedPreviewRef）均已在上方完成，此处置 null 不改变提交顺序。
+      // 模板 = merge 分支（L1715）既有清理；若残留 post-load，后续 refresh 会撞 MERGE_DEFERRED 死锁。
+      previewExecutionRef.current = null
       return
     }
 
@@ -2050,6 +2058,11 @@ export function usePreview({ files, settings, electronAPIRef }) {
       if (loadedFile._previewImageUrl) {
         previewUrlRef.current = loadedFile._previewImageUrl
       }
+      // P2-X1（2026-09-04）：commit 成功 → execution 终态化（Contract §1.4 commit → terminated）。
+      // P4 记账（committedPreviewVersionRef）已在上方完成；必须放块内——块外是 superseded 路径，
+      // 届时 previewExecutionRef.current 已指向新 execution，块外清理会误杀新在途 execution。
+      // 残留 post-load 是 R2 dump 僵尸根因（v6 半壳 commit 后 refresh 五次撞 MERGE_DEFERRED）。
+      previewExecutionRef.current = null
     }
 
     // R2-3 探针：版本已过期 → loaded 但不 commit（superseded）
