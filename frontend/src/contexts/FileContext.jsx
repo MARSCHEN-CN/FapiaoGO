@@ -8,15 +8,8 @@ import { getDocumentCacheIdentity } from '../utils/documentViewCacheIdentity'
 import { resolveMaterializedInvoiceDocuments } from '../utils/resolveMaterializedInvoiceDocuments'
 import { perfProbe } from '../perf/importPerfProbe'
 import { createImportHistoryBatcher } from './importHistoryBatcher'
+import { buildQueryTargets, shouldFireQuery } from './importHistoryQuery'
 import { db } from '../db'
-
-// ── P1：发票重复导入历史（advisory 旁路）工具 ──────────────────
-// 号码归一化与后端 import_history.normalize_invoice_number 保持一致：trim → 去内部空白 → uppercase
-function normalizeInvoiceNumber(raw) {
-  if (raw == null) return null
-  const s = String(raw).trim().replace(/\s+/g, '').toUpperCase()
-  return s || null
-}
 
 // 并发受限执行器：保持 concurrency 个在途 Promise
 function runPool(items, concurrency, worker) {
@@ -228,9 +221,10 @@ export function FileProvider({ children }) {
   // ── P1：发票重复导入历史查询（advisory，fire-and-forget，绝不作为导入 pipeline 的 dependency） ──
   // 竞态防护：
   //  - importHistoryReqIdRef：每轮查询自增令牌，过期回写直接丢弃（防旧请求回写）
-  //  - firedSigRef：签名去重避免同集合重复查询；cleanup 重置 → StrictMode remount 不会错误跳过查询
+  //  - firedSigRef：号码集合签名去重。**只在真正发起查询时写入**（下方 timer 回调），
+  //    不再由 cleanup 重置（P2-L1）—— 守卫基准 = 号码集合是否变化，与 effect 生命周期无关
   //  - liveKeys 快照：回写/剔除只对当前仍存活的 file.key 生效（防结果晚于文件生命周期）
-  //  - 同号去重：归一化号 → fileKey[]，一次 GET 广播到多个 file.key
+  //  - 同号去重：归一化号 → fileKey[]，一次查询广播到多个 file.key
   //  - 失败静默：dbError / 抛错均忽略，不影响正常导入
   const importHistoryReqIdRef = useRef(0)
   const firedSigRef = useRef('')
@@ -246,20 +240,12 @@ export function FileProvider({ children }) {
     //    立即剔除，与 previousYearInfo 同步派生语义对齐（往年发票移除即刷新）。
     //    原 :218 剔除 + :238 无目标清理收敛到工厂 prune（无剔除 → 不发布）。
     importHistoryBatcherRef.current?.prune(liveKeys)
-    const byNumber = new Map()
-    for (const f of files) {
-      if (f.status !== 'parsed' || !f.invoiceNumber) continue
-      const norm = normalizeInvoiceNumber(f.invoiceNumber)
-      if (!norm) continue
-      if (!byNumber.has(norm)) byNumber.set(norm, [])
-      byNumber.get(norm).push(f.key)
-    }
+    // P2-L1：查询目标与去重守卫由纯模块给出（判定基准 = 归一化号码集合，与 effect 生命周期解绑）
+    const { byNumber, sig } = buildQueryTargets(files)
     if (byNumber.size === 0) {
       return  // 无查询目标（残留清理已由上方 prune 完成）
     }
-
-    const sig = Array.from(byNumber.keys()).sort().join('|')
-    if (firedSigRef.current === sig) return  // 同集合已查过，跳过（StrictMode 双调用靠 cleanup 重置）
+    if (!shouldFireQuery(firedSigRef.current, sig)) return  // 同号码集合已查过 → 跳过
 
     if (importHistoryTimerRef.current) clearTimeout(importHistoryTimerRef.current)
     importHistoryTimerRef.current = setTimeout(() => {
@@ -300,7 +286,11 @@ export function FileProvider({ children }) {
         clearTimeout(importHistoryTimerRef.current)
         importHistoryTimerRef.current = null
       }
-      firedSigRef.current = ''  // StrictMode remount 后允许重新查询
+      // 🔴 P2-L1：此处**不再**重置 firedSigRef。
+      //   旧实现无条件清空 → 任何 files 引用变化（含 useSort「重复报销置顶」触发的
+      //   纯排序）都会让守卫失效 → 同一批号码整轮重查（实测 3.5 轮 / 738 次请求）。
+      //   firedSigRef 只在下方 timer 回调内（真正发起查询时）写入，因此 StrictMode 的
+      //   mount→cleanup→mount 发生在 300ms 去抖窗内、从未写入过 → remount 仍会正常查询。
     }
   }, [files])
 
