@@ -130,6 +130,23 @@ export const db = {
     return apiGet(`/api/import-history/${encodeURIComponent(number)}`)
   },
 
+  /**
+   * 发票重复导入历史批量查询（advisory，不拦截导入）
+   *
+   * P2-L2：1 次请求替代 N 次逐号 GET。实测 100 个号码：逐号并发 6 = 217ms，
+   * 单次批量 = 6.3ms（约 34x）—— 后端查表本身仅 0.335ms/100 条，成本几乎全在 HTTP 往返。
+   *
+   * @param {string[]} numbers 归一化后的发票号码
+   * @returns {Promise<{results: Object}>} 命中表：{ 归一化号: rec | null }；
+   *   失败时返回 dbError（调用方静默降级）
+   */
+  getImportHistoryBatch(numbers) {
+    return api('/api/import-history/batch', {
+      method: 'POST',
+      body: JSON.stringify({ numbers }),
+    })
+  },
+
   /** 插入或更新发票记录（按 hash 去重） */
   upsert(row) {
     return api('/api/db/upsert', {

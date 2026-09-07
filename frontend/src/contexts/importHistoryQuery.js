@@ -50,6 +50,40 @@ export function buildQueryTargets(files) {
 }
 
 /**
+ * 从批量响应构建本轮全部 entry（P2-L2）。
+ *
+ * 冻结语义（与旧「逐号 GET 逐条 enqueue」逐条等价）：
+ *   - 未命中（null / exists !== true）→ 跳过
+ *   - importCount < 2 → 跳过：首次导入的历史记录由本次导入创建（count 含本次），
+ *     只有 count>=2 才说明本次之前已导入过（= 重复报销）
+ *   - 同号 fileKeys 原样保留 → flush 时广播写入同一 value 引用
+ *
+ * @param {Map<string, string[]>} byNumber buildQueryTargets 的输出
+ * @param {Object} results 后端批量响应：{ 归一化号: rec | null }
+ * @returns {Array<{fileKeys: string[], value: object}>}
+ */
+export function buildHistoryEntries(byNumber, results) {
+  const entries = []
+  if (!byNumber || byNumber.size === 0) return entries
+  for (const [norm, fileKeys] of byNumber) {
+    const rec = results ? results[norm] : null
+    if (!rec || rec.exists !== true) continue
+    if ((rec.importCount ?? 0) < 2) continue
+    entries.push({
+      fileKeys,
+      value: {
+        exists: true,
+        invoiceDate: rec.invoiceDate,
+        firstImportedAt: rec.firstImportedAt,
+        importCount: rec.importCount,
+        dateMismatchCount: rec.dateMismatchCount,
+      },
+    })
+  }
+  return entries
+}
+
+/**
  * 去重守卫：是否应发起新一轮查询。
  *
  * 语义（P2-L1 冻结）：「同一个归一化号码集合，只允许触发一次检测」。

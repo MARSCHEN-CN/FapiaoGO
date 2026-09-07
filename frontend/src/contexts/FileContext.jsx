@@ -8,20 +8,8 @@ import { getDocumentCacheIdentity } from '../utils/documentViewCacheIdentity'
 import { resolveMaterializedInvoiceDocuments } from '../utils/resolveMaterializedInvoiceDocuments'
 import { perfProbe } from '../perf/importPerfProbe'
 import { createImportHistoryBatcher } from './importHistoryBatcher'
-import { buildQueryTargets, shouldFireQuery } from './importHistoryQuery'
+import { buildQueryTargets, shouldFireQuery, buildHistoryEntries } from './importHistoryQuery'
 import { db } from '../db'
-
-// 并发受限执行器：保持 concurrency 个在途 Promise
-function runPool(items, concurrency, worker) {
-  let i = 0
-  const exec = () => {
-    if (i >= items.length) return
-    const cur = i++
-    Promise.resolve(worker(items[cur])).finally(exec)
-  }
-  const n = Math.min(concurrency, items.length)
-  for (let c = 0; c < n; c++) exec()
-}
 
 // ── Reducer ──────────────────────────────────────────────────
 
@@ -252,33 +240,24 @@ export function FileProvider({ children }) {
       importHistoryTimerRef.current = null
       const myReq = ++importHistoryReqIdRef.current
       firedSigRef.current = sig
-      const entries = Array.from(byNumber.entries())
-      perfProbe.count('importHistoryQuery', entries.length)
-      runPool(entries, 6, ([norm, fileKeys]) =>
-        db.getImportHistory(norm).then(res => {
-          if (myReq !== importHistoryReqIdRef.current) return  // 已被新轮换取代
-          if (res && res.__error) return                       // 静默失败
-          if (!res || res.exists !== true) return             // 未命中
-          // 🔴 首次导入不算重复报销：历史记录由本次导入创建（count 含本次），
-          //    仅当 count>=2 才说明本次之前已导入过（=重复报销）；count==1 是首次导入。
-          if ((res.importCount ?? 0) < 2) return
-          // P1-A：不再逐条发布新 Map state —— 合入 pending，短 debounce 单 flush 发布。
-          //   importHistoryResponse = 命中条数（= 旧 importHistoryWrite 语义，改名避混淆）；
-          //   importHistoryPublish / importHistoryNoop 由工厂 flush 处计数。
-          // 广播语义不变：同号 fileKeys 由 flush 统一写入同一 value 引用。
-          perfProbe.count('importHistoryResponse')
-          importHistoryBatcherRef.current?.enqueue({
-            fileKeys,
-            value: {
-              exists: true,
-              invoiceDate: res.invoiceDate,
-              firstImportedAt: res.firstImportedAt,
-              importCount: res.importCount,
-              dateMismatchCount: res.dateMismatchCount,
-            },
-          })
-        }).catch(() => { /* 静默降级 */ })
-      )
+      // P2-L2：一次批量请求替代 N 次逐号 GET（实测 100 号：217ms → 6.3ms）
+      const numbers = Array.from(byNumber.keys())
+      perfProbe.count('importHistoryQuery', numbers.length)
+      db.getImportHistoryBatch(numbers).then(res => {
+        if (myReq !== importHistoryReqIdRef.current) return  // 已被新轮换取代
+        if (!res || res.__error) return                      // 静默失败（advisory 旁路）
+        const batcher = importHistoryBatcherRef.current
+        if (!batcher) return
+        // 一次性构建本轮全部命中（门控/广播语义与旧逐条路径逐条等价，见 buildHistoryEntries）
+        const entries = buildHistoryEntries(byNumber, res.results || {})
+        if (entries.length === 0) return
+        perfProbe.count('importHistoryResponse', entries.length)
+        // 先全部入队、再立即 flush —— 只产生 1 次 publication，
+        // 切断旧的「partial result → publish → sort → rerender → 反馈」链。
+        // （enqueue 内部排的 50ms debounce 在 flush 后 pending 已空，空转一次无害）
+        for (const entry of entries) batcher.enqueue(entry)
+        batcher.flush()
+      }).catch(() => { /* 静默降级 */ })
     }, 300)
 
     return () => {
