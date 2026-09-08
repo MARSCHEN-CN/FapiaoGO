@@ -1,5 +1,11 @@
 # 切换发票 → 展示区加载慢：根因诊断
 
+> ⚠️ **本文的 R2 / R5 / R7 结论已被 Phase 1 实测修正**，请以
+> [`switch-slow-phase1-experiment.md`](./switch-slow-phase1-experiment.md) 为准：
+> - R3 消除重复渲染：**CPU 工作量确为 2→1，但并发墙钟只省 8~30%**（原报告按串行估算，高估了体感收益）；
+> - R2 预取竞争：实测前台 **+113%**（原报告 +84%，低估）；
+> - 「200 文件把后端缓存挤掉」**证伪**：RenderCache 上限 1000，210 份文档切回 A 时 MISS=0、0.0 ms。
+
 日期：2026-09-07 · 分支 `rotation-b1-hardening` @ `e2fa158` · **只读诊断，未改动任何生产代码**
 
 测量环境：PyMuPDF 1.28.0 / Python 3.12 / Flask(threaded=True) / 220 份测试发票。
