@@ -150,6 +150,19 @@ def preview(doc_id: str):
     return resp
 
 
+def _neighbor_prefetch_enabled() -> bool:
+    """P1-B 实验开关：页内邻居预取总闸。
+
+    默认开启（既有行为）。设 RE_PREFETCH_ENABLED=0 可关闭，用于取「无后台竞争」
+    的前台真实基线（见 outputs/switch-slow-root-cause.md §R2）。
+
+    注意语义：prefetch_neighbors 预取的是**同一文档内的** page ±1，
+    与前端「文件间 ±3」预取是两件不同的事；单页发票 neighbor_pages 为空、
+    不产生任何后台任务，因此本开关对单页发票无影响。
+    """
+    return os.environ.get("RE_PREFETCH_ENABLED", "1") != "0"
+
+
 def _render_spec_log_enabled() -> bool:
     """Commit A DEV 日志开关：环境变量 RE_DEBUG=1 或 Flask debug 模式开启时记录。"""
     if os.environ.get("RE_DEBUG") == "1":
@@ -607,7 +620,8 @@ def _render_and_respond(doc_id: str, preset_name: str,
     resp = Response(data, status=200, headers=headers)
 
     # --- trigger neighbor prefetch after first-page render ---
-    if page == 1 and preset_name == "preview":
+    # P1-B 实验开关：RE_PREFETCH_ENABLED=0 时整体停投（默认开启，行为不变）。
+    if _neighbor_prefetch_enabled() and page == 1 and preset_name == "preview":
         render_queue.submit(
             "background",
             prefetch_neighbors,

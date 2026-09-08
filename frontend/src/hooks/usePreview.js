@@ -7,6 +7,7 @@ import { detectDocumentOrientation } from '../utils/detectOrientation'
 import { getForcedLandscape } from '../utils/mergeMode'
 import { buildPreviewCacheKey } from '../utils/previewCacheKey'
 import { getRenderEnginePreviewUrl } from '../utils/previewTarget'
+import { isLegacyReProbeDisabled } from '../utils/perfExperimentFlags'
 import { emptyContentLayout, initialRenderState, computePaperLayout, getDocNaturalOrientation } from '../previewState'
 import { buildRenderCommand } from '../layout/RenderLayoutFactory.js'
 import { buildRenderSpec, RENDER_SPEC_VERSION, renderSpecSignature } from '../layout/renderSpec.js'
@@ -46,7 +47,7 @@ async function getRenderers() {
 // ✅ 使用统一的 PREVIEW_DPI，移除重复的 PREVIEW_DPI_VALUE
 // PREVIEW_DPI 用于渲染，也用于旋转计算，保持一致
 
-export function usePreview({ files, settings, electronAPIRef }) {
+export function usePreview({ files, settings, electronAPIRef, documentViewerActiveRef }) {
   // ── Preview state ──
   const [previewFile, setPreviewFile] = useState(null)
   const [selectedFileKey, setSelectedFileKey] = useState(null)  // 文件列表高亮用，立即更新，不进 render effect
@@ -864,6 +865,21 @@ export function usePreview({ files, settings, electronAPIRef }) {
     // 当用户旋转了内容（previewRotation ≠ 0），强制走 Canvas 本地渲染路径，
     // 让 drawRenderCommand 正确执行旋转。旋转归零后自动切回 RE 快速路径。
     const reRotateSupported = previewRotation === 0
+
+    // ── P1-A 实验开关（默认 OFF）：DocumentViewer 激活时跳过遗留 RE probe ──
+    // 事实链（代码审计确认，见 outputs/switch-slow-root-cause.md §R3）：
+    //   • 本 probe 的 URL 由 buildRenderSpec 追加 ?spec=&spec_sig= → 后端 /preview
+    //     解析出 render_spec 非 None → engine.py:321 spec_tag 非空 → 与展示区
+    //     DocumentViewer 请求（无 spec → legacy 路径）**cache_key 不同**，
+    //     且执行路径分叉（X-Render-Executor: renderspec vs legacy）。
+    //     ⇒ 一次切换 = 两次真实渲染 + 两条缓存条目。
+    //   • probe 产物 previewUrl 在 activeDocument 存在时无人消费：App.jsx legacy
+    //     遮罩的判据是 `!activeDocument && (...)`，前提不成立 ⇒ 纯浪费。
+    // 时序：documentViewerActiveRef 由 App 在 render 期间同步写入，本 effect 在其后
+    //   执行，读到的是本帧值（不会滞后一帧）。
+    if (isLegacyReProbeDisabled() && documentViewerActiveRef?.current) {
+      return
+    }
     if (hasRenderEngineUrl && reBlockedDocId !== previewFile.docId && reRotateSupported) {
       const url = reUrl
       renderEngineUrlRef.current = url
