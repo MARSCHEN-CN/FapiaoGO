@@ -23,6 +23,7 @@ import React, { useRef, useState, useCallback, useEffect, memo } from 'react'
 import { buildTransformString, computeFitScale, computeDisplaySize, rotatedDimensions } from '../utils/viewerTransform'
 import { effectiveRotation } from '../models/InvoiceDocument'
 import { wheelZoomFactor } from '../hooks/continuousZoom.mjs'
+import { beginSwitch, markLoaded, markVisible } from '../utils/previewSwitchTrace'
 
 /**
  * @param {Object} props
@@ -74,6 +75,8 @@ function ViewerViewportInner({
 }) {
   const viewportRef = useRef(null)
   const dragState = useRef({ dragging: false, startX: 0, startY: 0, startPanX: 0, startPanY: 0 })
+  // Phase 2 探针：当前切换的计时 token（探针默认 OFF，beginSwitch 返回 null，零开销）
+  const switchTokenRef = useRef(null)
 
   // 图片自然像素尺寸（PageMeta 为 0×0 时的渲染回退 + 回填来源）。
   // 切换页面（previewUrl 变化）时重置，等待新图加载。
@@ -83,6 +86,11 @@ function ViewerViewportInner({
   const [loadAttempt, setLoadAttempt] = useState(0)
   const retryRef = useRef(0)
   useEffect(() => {
+    // Phase 2 探针 T1：收到新的 previewUrl（默认 OFF 时为 no-op）
+    switchTokenRef.current = beginSwitch(previewUrl, {
+      docId: document?.docId,
+      pageIndex: page?.index,
+    })
     setNaturalDims(null)
     retryRef.current = 0
     // Architecture Law D1：强制延迟测量机制
@@ -221,6 +229,19 @@ function ViewerViewportInner({
     const w = e.target?.naturalWidth || 0
     const h = e.target?.naturalHeight || 0
     if (w <= 0 || h <= 0) return
+    // Phase 2 探针 T4/T5：onload + decode（默认 OFF 时为 no-op）
+    markLoaded(switchTokenRef.current, e.target)
+    // T6：真正可见 —— setNaturalDims 触发 commit（opacity 0→1）后再等两帧。
+    // ⚠️ 刻意**不新增 useEffect**：本组件在上方有 `if (!page || !previewUrl) return`
+    //    早退分支，任何新增 hook 都会落在早退之后 ⇒ 违反 hooks 规则（hook 数量随
+    //    分支变化）。改用 rAF 链，不引入 hook。
+    //    token 为 null（探针 OFF）时完全不排帧，零开销。
+    const tok = switchTokenRef.current
+    if (tok) {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => markVisible(tok))
+      })
+    }
     setNaturalDims({ width: w, height: h })
     // Architecture Law D1：强制使用上报的真实物理尺寸 (naturalDims)。
     // 移除对 PageMeta 尺寸是否为 0 的判断，确保能彻底纠正数据模型中可能存在的

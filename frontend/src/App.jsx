@@ -51,6 +51,7 @@ import { clearActiveSession, getActiveSessionId, getSession, removeFilesFromSess
 import { resolvePreviewUrl } from './utils/previewResourceResolver'
 import { prefetchPreviewUrls } from './utils/previewPrefetcher'
 import { isFrontendPrefetchDisabled } from './utils/perfExperimentFlags'
+import { markUserSelect } from './utils/previewSwitchTrace'
 import ActionBar from './components/ActionBar'
 import InvoiceDetail from './components/InvoiceDetail'
 
@@ -338,6 +339,22 @@ function AppContent() {
   // ── 用 ref 打破 handlePreview 的依赖闭环 ──
   const handlePreviewRef = useRef(handlePreview)
   useEffect(() => { handlePreviewRef.current = handlePreview }, [handlePreview])
+
+  // Phase 2 探针 T0：用户点击选择发票的起点（仅透传，不改任何逻辑；
+  // 探针默认 OFF 时 markUserSelect 为 no-op，等价于直接调用 handlePreview）。
+  //
+  // ⚠️ 关于 hooks 顺序：本文件顶部有 `if (isDevViewer) return <DevDocumentViewerDemo />` 早退，
+  //    本 hook 位于其后。这与**既有模式一致**——usePreview(第 156 行) 等大量 hooks 同样
+  //    在早退之后，且 isDevViewer 取自 location.hash/search，是挂载期常量（无监听、
+  //    不会在同一次挂载内翻转），因此不会出现 hook 数量变化。
+  //    ⚠️ 若将来让 hash 变化触发重渲染，必须把早退整体下移，否则此处会先炸。
+  //
+  // 引用稳定性：deps=[handlePreview]，与直接传 handlePreview 的变化时机完全一致，
+  // 不会额外触发 FileList 重渲染（零行为变化）。
+  const tracedHandlePreview = useCallback((...args) => {
+    markUserSelect(args[0]?.name || args[0]?.fileName || '')
+    return handlePreview(...args)
+  }, [handlePreview])
 
   // 在最新 files 状态里取出「已解析、带 docId」的对象重新导入，保证 Render Engine 预览正确。
   useEffect(() => {
@@ -1099,7 +1116,7 @@ function AppContent() {
         // actions
         handleOpenDialog={handleOpenDialog}
         handleOpenFolder={handleOpenFolder}
-        handlePreview={handlePreview}
+        handlePreview={tracedHandlePreview}
         handleHoverFile={preloadHD}
         removeFile={removeFile}
         clearFiles={clearFiles}
