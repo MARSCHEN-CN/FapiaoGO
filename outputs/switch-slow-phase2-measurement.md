@@ -51,24 +51,62 @@ T5→T6   commit + 布局 + 合成上屏
 
 ---
 
-## 2. 真机开启步骤
+## 2. 真机开启步骤（**开发模式**，三进程）
 
-### 步骤 1：后端加资源时序授权（**关键**，否则判不出 304 / 缓存）
+> ⚠️ 必须用开发模式。`release_final_v5/` 里的打包产物是 10 天前的，
+> **不包含本次 Phase 1 / Phase 2 的任何探针代码**（该目录下也只有
+> `FapiaoGO-Setup-1.0.0.exe` 与 Portable.zip，没有可直接运行的 `FapiaoGO.exe`）。
+> 用打包版测等于测旧代码。
 
-前端 origin 与后端不同端口 ⇒ 跨域。后端不返回 `Timing-Allow-Origin` 时，
-Chrome 对跨域资源只暴露 `startTime/responseEnd/duration`，
-`transferSize / decodedBodySize / responseStatus` **全部为 0**，
-探针只能标注 `NO-TAO`，**无法判断缓存路径**。
+开发模式由**三个独立进程**组成（`electron/main.js` 判定 `isDev = !app.isPackaged`）：
 
-PowerShell **单行**（设置环境变量后启动应用）：
+| 进程 | 端口/入口 | 说明 |
+|---|---|---|
+| Flask 后端 | `127.0.0.1:5000` | **需手动启动** —— `main.js:931` 开发模式跳过自动 spawn |
+| Vite dev server | `localhost:5173` | `main.js:229` 开发模式 `loadURL('http://localhost:5173')` |
+| Electron | — | `npm start` |
+
+按**下表的 1 → 2 → 3 顺序**开（后端先起，避免首屏连不上）。三个窗口各自保持运行。
+
+### 步骤 1：后端（带资源时序授权，关键）
+
+前端 origin `http://localhost:5173` 与预览地址 `http://localhost:5000` **不同端口 ⇒ 跨域**。
+后端不返回 `Timing-Allow-Origin` 时，Chrome 对跨域资源只暴露
+`startTime/responseEnd/duration`，`transferSize / decodedBodySize / responseStatus`
+**全部为 0**，探针只能标注 `NO-TAO`，**无法判断缓存路径**（而 304 与 memory cache 的优化方向完全不同）。
+
+PowerShell **单行**（PowerShell 5.1 请务必用 `;` 而非 `&&`）：
 
 ```text
-$env:RE_TIMING_ALLOW_ORIGIN=1; & "E:\print706\release_final_v5\FapiaoGO\FapiaoGO.exe"
+cd E:\print706; $env:RE_TIMING_ALLOW_ORIGIN=1; backend\venv\Scripts\python.exe backend\app.py
 ```
 
-> 路径按你的实际安装位置调整。默认不设此变量 ⇒ 后端不发该头，行为与改动前完全一致。
+看到 `Running on http://127.0.0.1:5000` 即就绪。
+不设此变量 ⇒ 后端不发该头，行为与改动前完全一致。
 
-### 步骤 2：DevTools Console 开前端探针（单行一条）
+### 步骤 2：Vite dev server（新开一个窗口）
+
+```text
+cd E:\print706\frontend; npm run dev
+```
+
+确认输出里有 `Local: http://localhost:5173/`。
+（若你已有 dev server 在跑，可跳过；但**改动过前端代码后它会 HMR 热更新，无需重启**。）
+
+> 注意 `vite.config.js` 的 proxy 只代理了 `/api`、`/parse_invoice`、`/get_pdf_pages`、
+> `/split_pdf`、`/import/batch`，**不含 `/preview/`**。预览走的是
+> `config.js:27` 的 `BACKEND_URL = 'http://localhost:5000'` 直连，不经代理 ——
+> 这正是跨域、从而需要 `Timing-Allow-Origin` 的原因。
+
+### 步骤 3：Electron（再开一个窗口）
+
+```text
+cd E:\print706; npm start
+```
+
+开发模式 `devTools: true`，窗口起来后直接 DevTools 可用。
+
+### 步骤 4：DevTools Console 开前端探针（单行一条）
 
 ```text
 localStorage.setItem('fapiao.perf.switchTrace','1')
@@ -76,7 +114,7 @@ localStorage.setItem('fapiao.perf.switchTrace','1')
 
 无需重启应用（探针实时读 localStorage）。
 
-### 步骤 3（可选）：叠加 Phase 1 的去噪开关
+### 步骤 5（可选）：叠加 Phase 1 的去噪开关
 
 ```text
 localStorage.setItem('fapiao.perf.disableLegacyReProbe','1')
@@ -85,10 +123,30 @@ localStorage.setItem('fapiao.perf.disableFrontendPrefetch','1')
 
 > 「去噪基线」要求**两层预取全部关闭**：前端 `disableFrontendPrefetch`
 > + 后端 `RE_PREFETCH_ENABLED=0`。只关一个不干净。
+>
+> 后端那个是**环境变量**，必须在步骤 1 启动后端时就带上（改完要**重启后端进程**，
+> 前端 localStorage 不用重启）。把步骤 1 换成这一行：
+>
+> ```text
+> cd E:\print706; $env:RE_TIMING_ALLOW_ORIGIN=1; $env:RE_PREFETCH_ENABLED=0; backend\venv\Scripts\python.exe backend\app.py
+> ```
 
 ---
 
 ## 3. 测量动作
+
+> ### ⚠️ 开发模式的读数口径：只看**分层占比**，不看**绝对毫秒**
+>
+> 开发模式跑的是 React **development build**，且 `main.jsx:8` 启用了 `StrictMode`
+> （effect 会双跑）。因此：
+>
+> - ✅ 可用：**哪一段大**（`T1→T4` 网络？`T4→T5` 解码？`T5→T6` 上屏？）—— 这是 Phase 2 的唯一目标
+> - ❌ 不可用作交付 KPI：总耗时的绝对值（会比生产版显著偏高）
+>
+> 绝对性能数字要等优化落地后**重新打包**再测。
+>
+> 附带影响：`StrictMode` 会让 `ViewerViewport` 的 effect 触发两次，探针的 token 机制
+> 取后一次写入，误差在同一帧内，可忽略。
 
 ### 3.1 清空并开始
 
