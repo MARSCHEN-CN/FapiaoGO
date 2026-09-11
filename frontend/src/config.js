@@ -3,7 +3,7 @@
 // ============================
 
 // 应用版本号（唯一来源，修改此处即全局同步）
-export const APP_VERSION = '1.0.0'
+export const APP_VERSION = '1.0.1'
 
 // ── 打印管线版本开关 ──
 // 'source' = 源文件直通 Sumatra（新管线）
