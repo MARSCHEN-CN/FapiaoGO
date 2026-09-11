@@ -34,28 +34,6 @@ logger = logging.getLogger(__name__)
 
 render_bp = Blueprint("render", __name__, url_prefix="")
 
-
-def _timing_allow_origin_enabled() -> bool:
-    """Phase 2 测量开关：跨域资源时序授权（默认关闭）。
-
-    前端 origin（Electron 渲染进程）与后端不同端口 ⇒ 跨域。若后端不返回
-    `Timing-Allow-Origin`，Chrome 对跨域资源只暴露 startTime/responseEnd/duration，
-    而 transferSize / encodedBodySize / decodedBodySize / responseStatus 全部为 0
-    ⇒ **无法**判断本次请求走的是 memory cache / disk cache / 304 / 完整 200
-    （前端探针 `previewSwitchTrace` 会标注 `NO-TAO` 而不是猜）。
-
-    仅为 Phase 2 分层测量而存在，默认不发此头。
-    """
-    return os.environ.get("RE_TIMING_ALLOW_ORIGIN", "0") == "1"
-
-
-@render_bp.after_request
-def _maybe_timing_allow_origin(resp):
-    if _timing_allow_origin_enabled():
-        resp.headers["Timing-Allow-Origin"] = "*"
-    return resp
-
-
 _content_index = ContentIndex(registry)
 
 
