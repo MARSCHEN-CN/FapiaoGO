@@ -237,9 +237,30 @@ localStorage.setItem('fapiao.perf.disableFrontendPrefetch','1')
 | `frontend/src/hooks/usePreview.js` | RE probe 门控 | 同上 |
 | `backend/render_engine/api.py` | `RE_PREFETCH_ENABLED` / `RE_TIMING_ALLOW_ORIGIN` | 均默认原行为 |
 
-⚠️ **打包决策**（留给打包人）：以上代码**会随包发布**。全部默认 OFF，功能上零风险；
-若要求发布包纯净，可剔除这 3 个 commit（`5280fa4` / `e4e56f9` / `46c3f23`），
-剔除后行为与诊断开始前**完全一致**——但后续任何真机取证都要重新植入探针。
+### ⚠️ 打包决策：**已剔除**（2026-09-11 15:0x，用户拍板）
+
+用户拍板原文精神：
+
+> 不要因为"以后可能还要测"就让实验代码永久跟着生产走。
+
+**执行结果：3 个诊断 commit 已回退，发布包为诊断前原行为。**
+
+| 回退 commit | 对应原始 commit |
+|---|---|
+| `63df1b7` | `46c3f23` 探针修复 |
+| `db99d6d` | `e4e56f9` Phase 2 探针 |
+| `f29f58b` | `5280fa4` Phase 1 实验开关 |
+
+**验收：**
+
+- `git diff e2fa158..HEAD -- frontend/src backend electron` → **空**（与诊断前基准完全一致）
+- 残留符号扫描：`perfExperimentFlags` / `__fapiaoSwitchTrace` / `disableLegacyReProbe` / `disableFrontendPrefetch` → **0**
+- `previewSwitchTrace.js`、`perfExperimentFlags.js` → **已删除**
+- 后端 `RE_PREFETCH_ENABLED` / `RE_TIMING_ALLOW_ORIGIN` → 源码已无（仅 `__pycache__` 残留，不进包）
+- 工作树干净
+
+**取证历史保留在分支 `backup/preview-perf-investigation`（= `9dc5695`）**，需要时用
+`git cherry-pick` 或 `git show <commit> -- <path>` 取回，**不必重新实现**。
 
 ### 若日后重启本线
 
