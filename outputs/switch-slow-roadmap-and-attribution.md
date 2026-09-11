@@ -1,7 +1,7 @@
 # Preview Switch 优化：路线锁定 + Phase 2 归因门槛
 
-日期：2026-09-11 · 分支 `rotation-b1-hardening` · **未改动任何生产代码**
-状态：**实现已暂停** —— 阻塞于 313ms Constant-Latency Attribution Gate（§3）
+日期：2026-09-11 · 分支 `rotation-b1-hardening` · **生产逻辑零变更**
+状态：**⏹ 已终结（用户决定打包新版本）** —— 313ms Attribution Gate 未完成，主动终止
 
 ---
 
@@ -211,21 +211,40 @@ localStorage.setItem('fapiao.perf.disableFrontendPrefetch','1')
 
 ---
 
-## 5. 当前阶段状态：锁定，暂停实现
+## 5. 终态：已终结（2026-09-11 14:5x，用户决定打包新版本）
 
-本轮工作到此**收口**。结论状态如下：
+**本条优化线到此终结，不再推进。** 313ms Attribution Gate **未完成**，属**主动终止**而非解决。
 
 | 类别 | 项 | 状态 |
 |---|---|---|
-| 已证实 | R1 位图输出上限 | ✅ 收益由预期转实测（交叉验证 0.0% 误差） |
+| 已证实 | R1 位图输出上限 1.9×~29× | ✅ 收益由预期转实测（交叉验证 0.0% 误差）—— **未实施** |
 | 已证实 | 浏览器 warm cache 6–8ms | ✅ 无值得动的空间 |
-| 已证实 | 后端 RenderCache 非瓶颈 | ✅ Phase 1 证伪 + Phase 2 实测 304 仅 2~3ms |
-| 已证实 | R3 双渲染 CPU 2→1 | ✅ |
-| 已证实 | R2 前后台竞争 +113% | ✅（但不等同于 313ms 的成因） |
-| **待证实** | **313ms 恒定延迟成因** | ⏸ **Attribution Gate 未完成** |
+| 已证实 | 后端 RenderCache 非瓶颈 | ✅ 证伪 + 304 实测 2~3ms |
+| 已证实 | R3 双渲染 CPU 2→1 | ✅ —— **未正式实施**（仅实验开关） |
+| 已证实 | R2 前后台竞争 +113% | ✅（≠313ms 成因）—— **未实施** |
+| **未决** | **313ms 恒定延迟成因** | ⏹ **主动终止，归因未完成** |
 
-**下一步唯一动作**：跑 §3.3 的 DevTools Timing 归因（零改动，5 分钟）。
-在此之前不改任何生产代码、不改任何网络行为。
+### 终结时的实际代码状态
+
+**生产逻辑零变更**，仅新增「默认 OFF 的观测/实验设施」：
+
+| 文件 | 性质 | 默认行为 |
+|---|---|---|
+| `frontend/src/utils/perfExperimentFlags.js` | 新增 | 全 OFF，无行为变化 |
+| `frontend/src/utils/previewSwitchTrace.js` | 新增 | 全 OFF，mark* 为 no-op |
+| `frontend/src/components/ViewerViewport.jsx` | 3 处埋点 | 同上 |
+| `frontend/src/App.jsx` | 2 处门控/透传 | 同上 |
+| `frontend/src/hooks/usePreview.js` | RE probe 门控 | 同上 |
+| `backend/render_engine/api.py` | `RE_PREFETCH_ENABLED` / `RE_TIMING_ALLOW_ORIGIN` | 均默认原行为 |
+
+⚠️ **打包决策**（留给打包人）：以上代码**会随包发布**。全部默认 OFF，功能上零风险；
+若要求发布包纯净，可剔除这 3 个 commit（`5280fa4` / `e4e56f9` / `46c3f23`），
+剔除后行为与诊断开始前**完全一致**——但后续任何真机取证都要重新植入探针。
+
+### 若日后重启本线
+
+唯一入口是 §3.3 的 DevTools Timing 归因（零改动，5 分钟）。
+在此之前不要设计 QoS 架构，也不要改网络行为。
 
 ---
 
