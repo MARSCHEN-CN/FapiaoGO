@@ -50,7 +50,6 @@ import { removeDocument, getRegisteredDocIds, resolveDocumentIdentity } from './
 import { clearActiveSession, getActiveSessionId, getSession, removeFilesFromSession, deleteInvoiceDocument, deleteDocumentsByPageKeys, deleteDocumentByInstanceKey, resolveDocumentInstanceKey } from './stores/ImportSessionStore'
 import { resolvePreviewUrl } from './utils/previewResourceResolver'
 import { prefetchPreviewUrls } from './utils/previewPrefetcher'
-import { isFrontendPrefetchDisabled } from './utils/perfExperimentFlags'
 import ActionBar from './components/ActionBar'
 import InvoiceDetail from './components/InvoiceDetail'
 
@@ -147,13 +146,7 @@ function AppContent() {
     sortBy, sortOrder, toggleSort, sortByRef, sortOrderRef,
   } = useSort(setFiles, files, duplicatePageInfo, previousYearInfo, importHistoryInfo)
 
-  // P1-A 实验：DocumentViewer 是否激活的 ref 桥。
-  // usePreview 在 activeDocument / documentViewerActive 之前调用（循环依赖：
-  // activeDocument 需要 previewFile ← usePreview 产出），故以 ref 反向传递。
-  // App 在 render 期间同步写入 → usePreview 的 effect 在其后执行，读到本帧值。
-  const documentViewerActiveRef = useRef(false)
-
-  const preview = usePreview({ files: displayFiles, settings, electronAPIRef, documentViewerActiveRef })
+  const preview = usePreview({ files: displayFiles, settings, electronAPIRef })
   // ✅ 从正确的分组中解构属性
   const {
     previewFile, mergePair, numPages, previewPage, previewCanvas,
@@ -175,10 +168,6 @@ function AppContent() {
   // 不做 LRU/缓存管理/方向感知（v2）。effect cleanup 自动取消未开始任务（token 语义）。
   const PREFETCH_RANGE = 3
   useEffect(() => {
-    // P1-B 实验开关（默认 OFF）：关闭文件间预取，取无后台竞争的前台真实基线。
-    // 注意与后端 prefetch_neighbors 区分：后端那个是「页内 ±1」（单页发票
-    // neighbor_pages 为空、不产生任务），这里是「文件间 ±3」= 最多 6 个 /preview。
-    if (isFrontendPrefetchDisabled()) return
     if (!previewFile) return
     const curDocId = resolveDocId(previewFile)
     if (!curDocId) return
@@ -207,9 +196,6 @@ function AppContent() {
   // 同级走 DocumentViewer，统一由 documentViewerActive 驱动新 ZoomToolbar。
   const documentViewerActive = activeDocument && activeDocument.pageCount > 0
     && !isMergeMode(settings.mergeMode)
-  // P1-A：同步写 ref（幂等赋值，StrictMode 双渲染安全）。必须在 usePreview 的
-  // effect 执行前完成 —— render 阶段赋值早于任何 effect，时序成立。
-  documentViewerActiveRef.current = !!documentViewerActive
 
   // D2-4.1：viewer 缩放控制桥接接收端。DocumentViewer 经 onViewerController 上抬
   // {mode, zoomPercent, actions}（仅 zoom 显示/档位相关值变化时更新，拖拽平移不触发）；
