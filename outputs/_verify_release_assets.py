@@ -1,8 +1,40 @@
-import hashlib, base64, zipfile, os, json, time, re, sys
+"""发布产物完整性复核（通用版）。
 
-D = r'E:\print706\release_final_v5'
-setup = os.path.join(D, 'FapiaoGO-Setup-1.0.0.exe')
-portable = os.path.join(D, 'FapiaoGO-v1.0.0-Windows-x64-Portable.zip')
+用法：python _verify_release_assets.py <产物目录> [期望Setup的SHA256] [期望Portable的SHA256]
+
+校验 4 项：
+1. Setup.exe 与 Portable.zip 的 SHA-256（给了期望值则逐字符比对）
+2. Portable.zip CRC 全量解压校验（SHA 只证传输未变，CRC 才证压缩包结构未损）
+3. latest.yml 的 size == Setup.exe 实际字节数
+4. latest.yml 的 sha512(base64) == Setup.exe 实测
+"""
+import hashlib
+import base64
+import zipfile
+import os
+import re
+import sys
+import json
+import glob
+import time
+
+D = sys.argv[1] if len(sys.argv) > 1 else r'E:\print706\release_final_v5'
+WANT_SETUP = sys.argv[2] if len(sys.argv) > 2 else None
+WANT_PORT = sys.argv[3] if len(sys.argv) > 3 else None
+
+setups = [p for p in glob.glob(os.path.join(D, '*-Setup-*.exe'))]
+ports = glob.glob(os.path.join(D, '*-Portable.zip'))
+if not setups or not ports:
+    print('FAIL: 产物目录缺少 Setup.exe 或 Portable.zip ->', D)
+    sys.exit(1)
+setup, portable = setups[0], ports[0]
+
+t0 = time.time()
+r = {'dir': D,
+     'setup': os.path.basename(setup),
+     'portable': os.path.basename(portable),
+     'setup_size': os.path.getsize(setup),
+     'portable_size': os.path.getsize(portable)}
 
 
 def h_of(p, algo):
@@ -13,40 +45,49 @@ def h_of(p, algo):
     return h
 
 
-r = {}
-t0 = time.time()
-r['setup_size'] = os.path.getsize(setup)
-r['portable_size'] = os.path.getsize(portable)
-
-h = h_of(setup, 'sha256'); r['setup_sha256'] = h.hexdigest()
-r['setup_sha512_b64'] = base64.b64encode(h.copy().digest()).decode() if False else None
-print('setup sha256', time.time() - t0, flush=True)
-
-h2 = h_of(setup, 'sha512'); r['setup_sha512_b64'] = base64.b64encode(h2.digest()).decode()
-print('setup sha512', time.time() - t0, flush=True)
-
+r['setup_sha256'] = h_of(setup, 'sha256').hexdigest()
+r['setup_sha512_b64'] = base64.b64encode(h_of(setup, 'sha512').digest()).decode()
 r['portable_sha256'] = h_of(portable, 'sha256').hexdigest()
-print('portable sha256', time.time() - t0, flush=True)
 
-yml = open(os.path.join(D, 'latest.yml'), encoding='utf-8').read()
-r['yml_size'] = int(re.search(r'size:\s*(\d+)', yml).group(1))
-r['yml_sha512'] = re.search(r'sha512:\s*(\S+)', yml).group(1)
-r['yml_version'] = re.search(r'version:\s*(\S+)', yml).group(1)
-
-t = time.time()
 with zipfile.ZipFile(portable) as z:
-    infos = z.infolist()
-    r['zip_entries'] = len(infos)
+    r['zip_entries'] = len(z.infolist())
     bad = z.testzip()
 r['zip_crc_bad'] = bad
 r['zip_crc_ok'] = bad is None
-print('zip crc', time.time() - t, flush=True)
 
-r['MATCH_setup_sha256_vs_sums'] = (r['setup_sha256'] == '5213a4411162719a6f22fb5acd0aeb2bfde5802f74bb52aa847cd88b32e61626')
-r['MATCH_portable_sha256_vs_sums'] = (r['portable_sha256'] == '488c398fdd5a706b73b26e0e6b77b98fdb6b45f65d34baccae28067568eb2520')
-r['MATCH_yml_size'] = (r['yml_size'] == r['setup_size'])
-r['MATCH_yml_sha512'] = (r['yml_sha512'] == r['setup_sha512_b64'])
+yml_path = os.path.join(D, 'latest.yml')
+if os.path.exists(yml_path):
+    yml = open(yml_path, encoding='utf-8').read()
+    r['yml_version'] = re.search(r'version:\s*(\S+)', yml).group(1)
+    r['yml_size'] = int(re.search(r'size:\s*(\d+)', yml).group(1))
+    r['yml_sha512'] = re.search(r'sha512:\s*(\S+)', yml).group(1)
+    r['MATCH_yml_size'] = (r['yml_size'] == r['setup_size'])
+    r['MATCH_yml_sha512'] = (r['yml_sha512'] == r['setup_sha512_b64'])
+else:
+    r['MATCH_yml_size'] = None
+    r['MATCH_yml_sha512'] = None
 
-print(json.dumps(r, indent=2, ensure_ascii=False))
-with open(r'E:\print706\outputs\_v5_asset_verify.json', 'w', encoding='utf-8') as f:
+if WANT_SETUP:
+    r['MATCH_setup_sha256'] = (r['setup_sha256'] == WANT_SETUP)
+if WANT_PORT:
+    r['MATCH_portable_sha256'] = (r['portable_sha256'] == WANT_PORT)
+
+r['elapsed_sec'] = round(time.time() - t0, 2)
+
+print('=== 产物完整性复核 ===')
+for k, v in r.items():
+    print(f'{k:24} {v}')
+
+ok = (r['zip_crc_ok']
+      and (WANT_SETUP is None or r['MATCH_setup_sha256'])
+      and (WANT_PORT is None or r['MATCH_portable_sha256'])
+      and (r['MATCH_yml_size'] in (None, True))
+      and (r['MATCH_yml_sha512'] in (None, True)))
+print()
+print('RESULT:', 'PASS' if ok else 'FAIL')
+
+out = os.path.join(D, '_asset_verify.json')
+with open(out, 'w', encoding='utf-8') as f:
     json.dump(r, f, indent=2, ensure_ascii=False)
+print('saved:', out)
+sys.exit(0 if ok else 1)

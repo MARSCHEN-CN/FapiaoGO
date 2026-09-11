@@ -1,0 +1,19 @@
+{
+  "dir": "release_final_v6",
+  "setup": "FapiaoGO-Setup-1.0.1.exe",
+  "portable": "FapiaoGO-v1.0.1-Windows-x64-Portable.zip",
+  "setup_size": 245433568,
+  "portable_size": 314857104,
+  "setup_sha256": "ab7c12478f25ae88e24e10c2259413efc16902ebf04ed637718448db69905a71",
+  "setup_sha512_b64": "VnMG6udAQFtvEnFg6DQI7TkBMlqg33peNfQLqAHXhED+zv51PpRodeQVCC9P0SXSqb2Oos+syNLdRmMYgTlCjw==",
+  "portable_sha256": "8da3be6cc40b0c7b737d85a9a0a3cf16eda499df58f0676e661b84fb04723d85",
+  "zip_entries": 528,
+  "zip_crc_bad": null,
+  "zip_crc_ok": true,
+  "yml_version": "1.0.1",
+  "yml_size": 245433568,
+  "yml_sha512": "VnMG6udAQFtvEnFg6DQI7TkBMlqg33peNfQLqAHXhED+zv51PpRodeQVCC9P0SXSqb2Oos+syNLdRmMYgTlCjw==",
+  "MATCH_yml_size": true,
+  "MATCH_yml_sha512": true,
+  "elapsed_sec": 5.62
+}

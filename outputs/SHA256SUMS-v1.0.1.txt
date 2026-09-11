@@ -1,0 +1,8 @@
+# FapiaoGO v1.0.1 — SHA-256 校验和
+# 构建：RC-v6（release_final_v6，2026-09-11）
+# Source commit: 7cc4a53（版本号 1.0.0 → 1.0.1），基于 149fff7（诊断已回退的发布冻结基准）
+# 产物标准：两件套（Setup.exe 安装版 + Portable.zip 绿色版）；Installer.zip 已废止
+# 解包体积：win-unpacked 650MB（与 RC-v5 一致）
+
+ab7c12478f25ae88e24e10c2259413efc16902ebf04ed637718448db69905a71 *FapiaoGO-Setup-1.0.1.exe
+8da3be6cc40b0c7b737d85a9a0a3cf16eda499df58f0676e661b84fb04723d85 *FapiaoGO-v1.0.1-Windows-x64-Portable.zip

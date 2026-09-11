@@ -16,7 +16,8 @@ import os
 import sys
 import json
 
-P = r'E:\print706\release_final_v5\FapiaoGO-Setup-1.0.0.exe'
+P = sys.argv[1] if len(sys.argv) > 1 else r'E:\print706\release_final_v5\FapiaoGO-Setup-1.0.0.exe'
+OUT = sys.argv[2] if len(sys.argv) > 2 else r'E:\print706\outputs\_v5_setup_verify.json'
 size = os.path.getsize(P)
 MAGIC = struct.pack('<I', 0xDEADBEEF)
 
@@ -135,6 +136,6 @@ ok = r['pe_mz'] and r['pe_sig'] and r['NSIS_HEADER_OK']
 print()
 print('RESULT:', 'PASS' if ok else 'FAIL')
 
-with open(r'E:\print706\outputs\_v5_setup_verify.json', 'w', encoding='utf-8') as f:
+with open(OUT, 'w', encoding='utf-8') as f:
     json.dump(r, f, indent=2, ensure_ascii=False, default=str)
 sys.exit(0 if ok else 1)
