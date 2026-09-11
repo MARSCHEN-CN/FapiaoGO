@@ -60,75 +60,6 @@ function now() {
 }
 
 /**
- * ⚠️ 已知陷阱：Chrome 的 resource timing buffer **默认只有 250 条**。
- * vite dev 模式下每个 ES module 都是一个独立请求，几百个模块瞬间把 buffer 打满，
- * 之后产生的 /preview/ 条目**根本不会被记录** ——
- * 首轮真机数据里 cache 列 100% 是 unknown(no-resource-timing)，就是这个原因。
- *
- * 对策两条：
- *   1. 扩容 resource timing buffer（仅在探针开启时执行，关闭时零影响）；
- *   2. PerformanceObserver 在条目产生的瞬间就拷到自己的 Map —— 即使
- *      performance buffer 之后被清空，我们仍持有数据。
- */
-const RT_BUFFER_SIZE = 5000
-
-/** @type {Map<string, Object>} url -> 资源时序快照（自持，不依赖 performance buffer） */
-const rtIndex = new Map()
-let observerStarted = false
-
-function snapshotEntry(e) {
-  const transferSize = e.transferSize || 0
-  const encodedBodySize = e.encodedBodySize || 0
-  const decodedBodySize = e.decodedBodySize || 0
-  const responseStatus = typeof e.responseStatus === 'number' ? e.responseStatus : 0
-  return {
-    startTime: Number((e.startTime || 0).toFixed(1)),
-    responseEnd: Number((e.responseEnd || 0).toFixed(1)),
-    duration: Number((e.duration || 0).toFixed(1)),
-    transferSize,
-    encodedBodySize,
-    decodedBodySize,
-    responseStatus,
-    // 跨域且无 TAO 时：status=0 且三个 size 全为 0（真实请求不可能全 0）
-    noTao: responseStatus === 0 && transferSize === 0 && decodedBodySize === 0,
-  }
-}
-
-function startObserver() {
-  if (observerStarted) return
-  observerStarted = true
-  try {
-    if (typeof performance.setResourceTimingBufferSize === 'function') {
-      performance.setResourceTimingBufferSize(RT_BUFFER_SIZE)
-    }
-  } catch (_e) { /* noop */ }
-  try {
-    if (typeof PerformanceObserver === 'undefined') return
-    const po = new PerformanceObserver((list) => {
-      try {
-        const entries = list.getEntries ? list.getEntries() : []
-        for (let i = 0; i < entries.length; i++) {
-          const e = entries[i]
-          if (!e || typeof e.name !== 'string') continue
-          if (e.name.indexOf('/preview/') < 0) continue
-          rtIndex.set(e.name, snapshotEntry(e))
-          if (rtIndex.size > 600) {
-            // 粗粒度裁剪：丢掉最早写入的一批（Map 保持插入序）
-            const it = rtIndex.keys()
-            for (let k = 0; k < 200; k++) {
-              const n = it.next()
-              if (n.done) break
-              rtIndex.delete(n.value)
-            }
-          }
-        }
-      } catch (_e) { /* noop */ }
-    })
-    po.observe({ type: 'resource', buffered: true })
-  } catch (_e) { /* noop */ }
-}
-
-/**
  * 采集该 URL 最近一次资源加载的 PerformanceResourceTiming。
  *
  * ⚠️ 跨域资源（前端 origin ≠ 后端 origin）若后端未返回 `Timing-Allow-Origin`，
@@ -141,13 +72,25 @@ function startObserver() {
  */
 function collectResourceTiming(url) {
   try {
-    // ① 优先用自持快照（不受 performance buffer 被清空影响）
-    const hit = rtIndex.get(url)
-    if (hit) return hit
-    // ② 兜底：直接查 performance timeline
     const list = performance.getEntriesByName(url, 'resource')
     if (!list || list.length === 0) return null
-    return snapshotEntry(list[list.length - 1])
+    const e = list[list.length - 1]
+    const transferSize = e.transferSize || 0
+    const encodedBodySize = e.encodedBodySize || 0
+    const decodedBodySize = e.decodedBodySize || 0
+    const responseStatus = typeof e.responseStatus === 'number' ? e.responseStatus : 0
+    // 跨域且无 TAO 时：status=0 且三个 size 全为 0（真实请求不可能全 0）
+    const noTao = responseStatus === 0 && transferSize === 0 && decodedBodySize === 0
+    return {
+      startTime: Number(e.startTime.toFixed(1)),
+      responseEnd: Number(e.responseEnd.toFixed(1)),
+      duration: Number(e.duration.toFixed(1)),
+      transferSize,
+      encodedBodySize,
+      decodedBodySize,
+      responseStatus,
+      noTao,
+    }
   } catch (_e) {
     return null
   }
@@ -197,8 +140,6 @@ export function markUserSelect(label) {
  */
 export function beginSwitch(url, meta = {}) {
   if (!enabled()) return null
-  // 首次启用时启动 observer（之后产生的 /preview/ 条目才能被捕获）
-  if (!observerStarted) startObserver()
   const row = {
     seq: ++state.seq,
     url: shortUrl(url),
@@ -258,17 +199,11 @@ export function markLoaded(token, img) {
 export function markVisible(token) {
   if (!enabled() || !token || token.done) return
   token.t6 = now()
-  // img.decode() 是异步的，可能晚于本帧才 resolve；此时 t5 还是 null，
-  // 会在 dump 里表现为 T4→T5 缺失 / T5→T6 负值。以 load 时刻兜底。
-  if (token.t5 == null) token.t5 = token.t4
   token.done = true
   finish(token)
 }
 
 function finish(row) {
-  // decode 的 promise 可能在本帧之后才落定，导致 t5 晚于 t6、出现负值。
-  // 这只是「decode 与可见实际同帧完成」的观测假象，clamp 成 0 以免误读。
-  if (row.t5 != null && row.t6 != null && row.t5 > row.t6) row.t5 = row.t6
   const ms = (a, b) => (a != null && b != null ? Number((b - a).toFixed(1)) : null)
   const summary = {
     '#': row.seq,
@@ -315,15 +250,6 @@ export function dump() {
       natural: r.natural,
     }
   })
-  // 自检行：buffer 是否被 vite dev 的模块请求打满 / 自持快照是否采到 —— 直接决定 cache 列可信度
-  try {
-    const total = typeof performance.getEntriesByType === 'function'
-      ? performance.getEntriesByType('resource').length : -1
-    console.debug(
-      `[switchTrace] 自检: performance.resource=${total} 自持快照=${rtIndex.size} ` +
-      `observer=${observerStarted}（resource 接近 ${RT_BUFFER_SIZE} 或快照=0 ⇒ cache 列不可信）`
-    )
-  } catch (_e) { /* noop */ }
   try {
     console.table(rows)
   } catch (_e) { /* noop */ }
@@ -345,10 +271,4 @@ export function raw() {
 // 挂载到 window 便于 DevTools 调用（挂载本身零开销、零副作用）
 try {
   window.__fapiaoSwitchTrace = { dump, reset, raw, enabled }
-} catch (_e) { /* noop */ }
-
-// 开关在刷新/重启后仍然保留在 localStorage ⇒ 模块加载阶段就扩容 + 挂 observer，
-// 保证应用启动期发出的 /preview/ 请求也能被捕获。开关关闭时这里什么都不做。
-try {
-  if (enabled()) startObserver()
 } catch (_e) { /* noop */ }
